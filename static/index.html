@@ -109,7 +109,7 @@
                 <label for="prompt" id="prompt-label">Prompt</label>
                 <span class="label-actions">
                   <button type="button" class="link" id="btn-write" title="Turn your idea into an H3 shot list with a local LLM">✨ Write for me</button>
-                  <button type="button" class="link" id="btn-writer-window" title="Open the Prompt Writer: your idea and the live H3 prompt side by side">↗ Writer window</button>
+                  <button type="button" class="link" id="btn-writer-window" title="Show the Prompt Writer next to the viewer: your idea and the live H3 prompt side by side (Alt+W)">✍ Prompt Writer</button>
                   <button type="button" class="link" id="btn-template">Insert template</button>
                   <button type="button" class="link" id="btn-tips">Tips</button>
                 </span>
@@ -273,9 +273,19 @@
           <div class="gallery" id="gallery"></div>
         </div>
         <div class="vsplit" id="bin-split" role="separator" aria-orientation="vertical" aria-label="Resize the gallery and viewer (double-click to reset)" tabindex="0"></div>
+        <div class="writer-pane" id="writer-pane" hidden aria-label="Prompt Writer">
+          <div class="wp-head">
+            <b>✍ Prompt Writer</b><span class="grow"></span>
+            <button type="button" class="btn sm ghost" id="wp-pop" title="Open the writer in its own window instead">↗ Pop out</button>
+            <button type="button" class="btn sm ghost" id="wp-close" title="Hide the writer (Alt+W)" aria-label="Hide the writer">✕</button>
+          </div>
+          <iframe id="writer-frame" title="Prompt Writer"></iframe>
+        </div>
+        <div class="vsplit" id="writer-split" hidden role="separator" aria-orientation="vertical" aria-label="Resize the writer (double-click to reset)" tabindex="0"></div>
         <div class="monitor" id="monitor">
           <div class="mon-head">
             <button type="button" class="btn sm ghost mon-gal" id="btn-gallery" aria-pressed="true" title="Show or hide the results gallery (Alt+G)">🗂 Gallery</button>
+            <button type="button" class="btn sm ghost mon-gal" id="btn-writer-pane" aria-pressed="false" title="Show or hide the Prompt Writer: your idea and the live H3 prompt side by side (Alt+W)">✍ Writer</button>
             <div class="seg sm" id="mon-seg" role="tablist" aria-label="Viewer shows">
               <button type="button" data-m="result" class="active" title="The selected result">Result</button>
               <button type="button" data-m="timeline" title="Timeline playback">Timeline</button>

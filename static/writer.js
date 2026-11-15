@@ -348,6 +348,8 @@ function useInStudio() {
 
 /* ------------------------------------------------------------------ init */
 function init() {
+  // In the studio's Writer pane (an iframe): drop the page's own title bar brand.
+  if (new URLSearchParams(location.search).has("embed") || window.self !== window.top) document.body.classList.add("embedded");
   loadDraft();
   $("#w-idea").value = state.idea;
   $("#w-auto").checked = state.auto;

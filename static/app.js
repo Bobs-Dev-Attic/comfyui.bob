@@ -407,9 +407,9 @@ function initRefs() {
   });
 }
 
-/* ------------------------------------------------------------------ Prompt Writer window link */
-// The writer (static/writer.html) runs in its own window. This channel tells it what the
-// studio is set to and receives "Use in studio" from it.
+/* ------------------------------------------------------------------ Prompt Writer link */
+// The writer (static/writer.html) runs in the top section's Writer pane (an iframe) or, popped out,
+// in its own window. This channel tells it what the studio is set to and receives "Use in studio".
 const studioChannel = new BroadcastChannel("bob-studio");
 let contextTimer = null;
 let writerWin = null;
@@ -878,7 +878,8 @@ function init() {
   Bin.init();
   Layout.init();
   $$("#mon-seg button").forEach(b => b.onclick = () => Monitor.show(b.dataset.m));
-  $("#btn-writer-window").onclick = openWriterWindow;
+  $("#btn-writer-window").onclick = () => Layout.setWriter(true);
+  $("#wp-pop").onclick = () => { Layout.setWriter(false); openWriterWindow(); };
   $("#btn-media").onclick = () => Media.openWindow();
   $("#prompt").addEventListener("input", () => postContext());
   $("#aspect").innerHTML = Object.keys(ASPECT).map(a => `<option>${a}</option>`).join("");

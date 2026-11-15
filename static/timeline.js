@@ -2374,7 +2374,7 @@ const TL = (() => {
       ["Shift+M", "Mixer"], ["S (track header button)", "Solo the track"], ["Ctrl+S", "Save the project (when auto-save is off)"],
       ["G", "Use the frame at the playhead as a first frame"], ["Ctrl+E", "Render options…"], ["Ctrl+Shift+A", "Activity console (logs, time left)"], ["T (on the clock)", "Frames / seconds"]]],
     ["Results bin", [["1 – 5", "Rate the selected result"], ["0", "Clear the rating"], ["Shift+T", "Tags…"], ["Enter", "Add to the timeline"], ["← / →", "Previous / next result"]]],
-    ["Layout", [["Alt+G", "Show / hide the results gallery"], ["Alt+1 … Alt+4", "Default, Edit, Review, Bin layouts"], ["Alt+5 … Alt+9", "Your saved layouts"], ["?", "This list"]]],
+    ["Layout", [["Alt+G", "Show / hide the results gallery"], ["Alt+W", "Show / hide the Prompt Writer"], ["Alt+1 … Alt+4", "Default, Edit, Review, Bin layouts"], ["Alt+5 … Alt+9", "Your saved layouts"], ["?", "This list"]]],
   ];
   function showShortcuts() {
     const box = document.createElement("div");
@@ -2649,7 +2649,8 @@ const Layout = (() => {
   function current() {
     const css = getComputedStyle(document.documentElement);
     return { monitor: parseFloat(css.getPropertyValue("--mon-frac")) || 0.55, bin: parseFloat(css.getPropertyValue("--bin-w")) || 340,
-      side: parseFloat(css.getPropertyValue("--side-w")) || 460, zoom: TL.model?.zoom, gallery: !$("#top").classList.contains("no-gallery") };
+      side: parseFloat(css.getPropertyValue("--side-w")) || 460, zoom: TL.model?.zoom, gallery: !$("#top").classList.contains("no-gallery"),
+      writer: !$("#writer-pane").hidden };
   }
   function setMonitor(f, persist = true) {
     f = Math.max(0.18, Math.min(0.86, f));
@@ -2661,6 +2662,29 @@ const Layout = (() => {
     $("#top").classList.toggle("no-gallery", !on);
     $("#btn-gallery").setAttribute("aria-pressed", String(!!on));
     if (persist) write({ gallery: !!on });
+    layoutTop();
+  }
+  // The Prompt Writer pane sits between the gallery and the viewer (button next to Gallery, Alt+W).
+  function setWriter(on, persist = true) {
+    const pane = $("#writer-pane"), frame = $("#writer-frame");
+    pane.hidden = !on; $("#writer-split").hidden = !on;
+    $("#btn-writer-pane").setAttribute("aria-pressed", String(!!on));
+    if (on && !frame.getAttribute("src")) frame.src = "/writer?embed=1";  // loaded the first time it's shown
+    if (persist) write({ writer: !!on });
+    layoutTop();
+  }
+  function setWriterWidth(w, persist = true) {
+    const top = $(".top")?.clientWidth || 1400, bin = $("#top").classList.contains("no-gallery") ? 0 : (parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--bin-w")) || 340) + 10;
+    w = Math.round(Math.max(300, Math.min(top - bin - 330, w)));
+    document.documentElement.style.setProperty("--writer-w", w + "px");
+    if (persist) write({ writerWidth: w });
+  }
+  function layoutTop() {
+    const top = $("#top"); if (!top) return;
+    const g = !top.classList.contains("no-gallery"), w = !$("#writer-pane").hidden;
+    // Each pane has a minimum, so on narrow screens they share the room and the viewer keeps at least 300 px.
+    top.style.gridTemplateColumns = [g && (w ? "minmax(200px, var(--bin-w, 340px))" : "var(--bin-w, 340px)"), g && "10px",
+      w && "minmax(280px, var(--writer-w, 560px))", w && "10px", w ? "minmax(300px, 1fr)" : "minmax(0, 1fr)"].filter(Boolean).join(" ");
   }
   function setBin(w, persist = true) {
     const stage = $(".top")?.clientWidth || 1000;
@@ -2672,6 +2696,7 @@ const Layout = (() => {
     if (!l) return;
     setMonitor(l.monitor); setBin(l.bin);
     if (l.gallery != null) setGallery(l.gallery);
+    if (l.writer != null) setWriter(l.writer);
     if (l.side) setSideWidth(l.side);
     if (l.zoom) TL.setZoom(l.zoom);
     write({ layout: l.name });
@@ -2726,6 +2751,19 @@ const Layout = (() => {
     setMonitor(ui.monitor ?? 0.55, false);
     setBin(ui.binWidth ?? 340, false);
     setGallery(ui.gallery ?? true, false);
+    setWriterWidth(ui.writerWidth ?? 560, false);
+    setWriter(!!ui.writer, false);
+    $("#btn-writer-pane").addEventListener("click", () => setWriter($("#writer-pane").hidden));
+    $("#wp-close").addEventListener("click", () => setWriter(false));
+    splitter($("#writer-split"), "x", (e, done) => setWriterWidth(e.clientX - $("#writer-pane").getBoundingClientRect().left, done), () => setWriterWidth(560));
+    $("#writer-split").addEventListener("keydown", e => {
+      const w = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--writer-w")) || 560;
+      if (e.key === "ArrowLeft") { e.preventDefault(); setWriterWidth(w - 24); }
+      if (e.key === "ArrowRight") { e.preventDefault(); setWriterWidth(w + 24); }
+    });
+    addEventListener("keydown", e => {
+      if (e.altKey && !e.ctrlKey && e.key.toLowerCase() === "w" && !e.target.closest?.("input, textarea, select")) { e.preventDefault(); setWriter($("#writer-pane").hidden); }
+    });
     $("#btn-gallery").addEventListener("click", () => setGallery($("#top").classList.contains("no-gallery")));
     addEventListener("keydown", e => {
       if (e.altKey && !e.ctrlKey && e.key.toLowerCase() === "g" && !e.target.closest?.("input, textarea, select")) { e.preventDefault(); setGallery($("#top").classList.contains("no-gallery")); }
@@ -2750,5 +2788,5 @@ const Layout = (() => {
       if (e.key === "ArrowRight") { e.preventDefault(); setBin(w + 24); }
     });
   }
-  return { init, menu, applyIndex, apply, saveCurrent, setGallery };
+  return { init, menu, applyIndex, apply, saveCurrent, setGallery, setWriter };
 })();
