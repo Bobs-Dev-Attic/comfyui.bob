@@ -5,6 +5,17 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.16.1] - 2026-11-15
+
+### Added
+- **Parallax in the main viewer.**
+  - **Where:** inside a camera move that has depth, the program monitor draws the shot with the same 3D
+    renderer as the Camera window's Look through: the picture as a relief seen through the camera.
+  - **Playback:** it plays along, with the depth video kept in step.
+  - **What carries over:** the Video Fx grade is applied.
+  - **What doesn't:** Fx lights, vignette overlays and transitions aren't drawn inside a camera move with depth.
+  - **Outside such a move**, the viewer is unchanged.
+
 ## [0.16.0] - 2026-11-15
 
 ### Added

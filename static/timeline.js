@@ -1073,10 +1073,67 @@ const TL = (() => {
     const vids = new Set(tl.tracks.filter(t => t.kind === "video").map(t => t.id));
     return [...tl.clips].sort((a, b) => a.start - b.start).find(c => vids.has(c.track) && (c.kind === "video" || c.kind === "image"));
   }
+  /* Parallax in the program monitor: inside a camera move with depth, the shot is drawn by the
+     3D renderer (viewport3d.js, the same as the Camera window's Look through) over the flat layers. */
+  const mainDepth = { vp: null, canvas: null, video: null, clipId: null };
+  function depthViewer(c, t) {
+    const on = !!(c?.cam?.depth && c.cam.depth.amount > 1e-3 && typeof Viewport3D !== "undefined");
+    if (!on) {
+      if (mainDepth.canvas) mainDepth.canvas.hidden = true;
+      mainDepth.video?.pause();
+      return false;
+    }
+    if (!mainDepth.canvas) {
+      const cv = document.createElement("canvas");
+      cv.className = "prog-depth"; cv.setAttribute("aria-hidden", "true");
+      $("#program").insertBefore(cv, $(".prog-hud", $("#program")));
+      const v = document.createElement("video");
+      v.muted = true; v.preload = "auto"; v.playsInline = true;
+      v.addEventListener("seeked", () => mainDepth.vp?.readDepth(v));
+      v.addEventListener("loadeddata", () => { syncDepthVideo(clip(mainDepth.clipId), tl.playhead); mainDepth.vp?.readDepth(v); });
+      Object.assign(mainDepth, { canvas: cv, video: v });
+      mainDepth.vp = Viewport3D.create(cv, {
+        scene() {
+          const cc = clip(mainDepth.clipId);
+          if (!cc?.cam) return null;
+          const b = canvasClip(), i = b && probeInfo.get(b.ref);
+          const pic = picAt(tl.playhead)?.a;
+          return { W: i?.width || 1280, H: i?.height || 720, cam: camParamsAt(cc.cam, srcTime(cc, tl.playhead), tl.playhead - cc.start), path: [], keys: [],
+            colorEl: pic ? (pic.kind === "image" ? $("#prog-img") : $("#prog-video")) : null, depth: true, amount: cc.cam.depth.amount };
+        },
+        change() {}, playing: () => playing,
+      });
+      mainDepth.vp?.setLook(true);
+      cv.tabIndex = -1;  // display only: not focusable, no pointer events
+    }
+    if (mainDepth.clipId !== c.id || mainDepth.video.dataset.ref !== c.cam.depth.ref) {
+      mainDepth.clipId = c.id;
+      if (mainDepth.video.dataset.ref !== c.cam.depth.ref) { mainDepth.video.dataset.ref = c.cam.depth.ref; mainDepth.video.src = mediaUrl(c.cam.depth.ref); }
+    }
+    mainDepth.canvas.hidden = false;
+    mainDepth.canvas.style.filter = $("#prog-video").style.filter || "";  // the Video Fx grade, as on the layer
+    syncDepthVideo(c, t);
+    mainDepth.vp?.draw();
+    return true;
+  }
+  function syncDepthVideo(c, t) {
+    const v = mainDepth.video, d = c?.cam?.depth;
+    if (!v || !d || v.readyState < 1) return;
+    const want = Math.max(0, Math.min(t - d.t0, (v.duration || 1e9) - 0.02));
+    if (playing) {
+      if (Math.abs(v.currentTime - want) > 0.2) v.currentTime = want;
+      if (v.paused) v.play().catch(() => {});
+      mainDepth.vp?.readDepth(v);  // follow the relief while playing
+    } else {
+      v.pause();
+      if (Math.abs(v.currentTime - want) > 0.03) v.currentTime = want; else mainDepth.vp?.readDepth(v);
+    }
+  }
   function applyCamera(t) {
     const el = $("#prog-cam");
     if (!el) return;
     const c = camClips().find(x => x.start <= t && end(x) > t);
+    depthViewer(c, t);
     if (!c) { el.style.transform = ""; return; }
     const base = canvasClip();
     const r = base ? picRect(base, $("#prog-video")) : (() => { const b = $("#program").getBoundingClientRect(); return { left: 0, top: 0, width: b.width, height: b.height }; })();

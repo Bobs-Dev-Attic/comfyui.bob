@@ -78,7 +78,7 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
     the move: FLUX Klein fills in what the camera newly sees from your description and reference pictures, then
     MiniMax H3 makes the video; it lands on its own track. The Camera window has a **3D view** like Blender's:
     the picture as a card (a relief once **Analyse depth** has run Depth Anything 3), the camera as an object you drag
-    to move, rotate or orbit, its path and keyframes, and **Look through** to see the shot with parallax. Idea from
+    to move, rotate or orbit, its path and keyframes, and **Look through** to see the shot with parallax (the main viewer shows that parallax too while the playhead is in the move). Idea from
     [Reshoot 4D](https://github.com/itsmetamike/reshoot-4d) (AGPL-3.0, no code used), built on the models here.
   - **⬇ Render…** opens the render options: file name, where to save (outputs or a bookmarked folder), format
     (H.264, H.264 on NVENC, H.265, VP9/WebM, ProRes, WAV, MP3), resolution, frame rate, quality, speed and

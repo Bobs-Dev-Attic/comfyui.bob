@@ -286,3 +286,8 @@ kbd { font: 11px ui-monospace, Consolas, monospace; padding: 1px 5px; border-rad
 .cam3d-canvas { width: 100%; height: clamp(220px, 42vh, 420px); border-radius: 10px; border: 1px solid var(--line); background: #121318; display: block; outline: none; touch-action: none; }
 .cam3d-canvas:focus-visible { border-color: var(--accent); }
 .cam3d-modes button.active, .cam3d-bar .btn.active { background: color-mix(in srgb, var(--accent) 22%, transparent); border-color: var(--accent); color: var(--text); }
+
+/* the program monitor's parallax preview (camera moves with depth) */
+.prog-depth { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 5; pointer-events: none; background: #000; display: block; }
+.prog-depth[hidden] { display: none; }
+.program .prog-hud { z-index: 6; }
