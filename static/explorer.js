@@ -290,7 +290,10 @@
       const sel = current();
       const entries = sel
         ? [[sel.type === "folder" ? "Open folder" : mode === "open" ? "Open project" : null, () => activate(sel)],
-           st.recent ? null : ["Rename", rename], ["Delete", remove]]
+           st.recent ? null : ["Rename", rename],
+           sel.type === "project" && sel.id ? ["Duplicate…", () => duplicateProjectDialog({ id: sel.id, name: sel.title || sel.name, path: sel.path },
+             { open: mode === "open", onDone: async p => { if (mode === "open") win.close(); else { await load(st.recent ? "::recent" : st.path, { push: false }); select(p.path); } } })] : null,
+           ["Delete", remove]]
         : [st.recent ? null : ["New folder", newFolder], ["Refresh", () => load(st.recent ? "::recent" : st.path, { push: false })]];
       menu(e.clientX, e.clientY, entries.filter(x => x && x[0]));
     });

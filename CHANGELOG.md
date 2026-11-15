@@ -5,6 +5,29 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.21.0] - 2026-11-15
+
+### Added
+- **⧉ Duplicate a project:** from the project card (**Duplicate…**) or by right-clicking a project in the Explorer.
+  - **Always copied:** settings (model, prompt, LoRAs, Shots, inputs), notes and options.
+  - **Optional:** the timeline, the media library (tags, ratings, folders) and the results, each with its own
+    switch.
+  - **The copy:** goes next to the original or anywhere you browse to. It can open right away. A name that's
+    taken becomes "Name (2)".
+  - **Experiment:** its card has **Copy to a project…**, which also brings its timeline, library and results
+    (Save as project only takes the settings).
+  - **Files:** media isn't duplicated; both projects point at the same uploads and outputs. Copied results
+    record `copied_from`.
+- `POST /api/projects/copy`.
+
+### Changed
+- Deleting a result with its files keeps any file another result still uses (a copied project's results share
+  them).
+
+### Fixed
+- A project whose saved Shots list had shots with missing fields (a hand-edited or partial file) failed to open
+  with "Cannot read properties of undefined". Missing shot fields now get their defaults.
+
 ## [0.20.0] - 2026-11-15
 
 ### Added
