@@ -234,3 +234,9 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
   .ex-nav { display: none; }
   .ex-search { width: 110px; }
 }
+
+/* earlier versions */
+.hist-list { display: grid; gap: 6px; }
+.hist-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel-2); }
+.hist-row span { min-width: 0; display: grid; }
+.hist-row small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

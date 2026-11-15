@@ -272,6 +272,16 @@ async def projects_update(project_id: str, req: ProjectPatch):
                          timeline=req.timeline)
 
 
+@app.get("/api/projects/{project_id}/history")
+async def projects_history(project_id: str):
+    return {"versions": _project_call(projects.history, project_id)}
+
+
+@app.post("/api/projects/{project_id}/restore")
+async def projects_restore(project_id: str, req: PathName):
+    return _project_call(projects.restore, project_id, req.name)
+
+
 @app.post("/api/projects/folder")
 async def projects_folder(req: PathName):
     return _project_call(projects.make_folder, req.path, req.name)

@@ -112,8 +112,18 @@ Saved as you work. Times are seconds on the frame grid (`1/fps`).
     "trim_out": 2.0,               // last second used (exclusive); length = trim_out − trim_in
     "source_duration": 2.333,      // null for stills
     "volume": 1, "color": "",
-    "job": "b20789d2c88a"          // the studio result it came from
+    "job": "b20789d2c88a",         // the studio result it came from
+    "link": "9c1e…",               // clips with the same link move, trim, split and delete together
+    "audio_off": true              // a video whose sound is on its linked audio clip instead
   }],
+  "transitions": [{                // two clips on one track overlap; the overlap is the transition
+    "id": "…", "track": "<track id>",
+    "a": "<outgoing clip id>", "b": "<incoming clip id>",
+    "type": "fade"                 // ffmpeg xfade name: fade, fadeblack, fadewhite, dissolve, wipeleft…, slideleft…,
+                                   // smoothleft…, coverleft/right, circleopen/close, radial, zoomin, pixelize,
+                                   // hblur, squeezeh, horzopen. Audio tracks always crossfade.
+  }],
+  "link_audio": true,              // adding a video with sound also puts its sound on an audio track
   "markers": [{ "id": "…", "t": 0.5, "label": "Marker 1", "color": "" }],
   "playhead": 1.21, "zoom": 60,    // pixels per second
   "range_in": 0.5, "range_out": 3.0, // In/Out: Render can export just this range
@@ -122,13 +132,26 @@ Saved as you work. Times are seconds on the frame grid (`1/fps`).
 }
 ```
 
+A transition's length is the overlap (`a.end − b.start`), and each clip uses its own frames, so no spare footage
+is needed.
+
 Rendering (`POST /api/timeline/render`, `app/render.py`) uses ffmpeg:
 - **Picture:** at each moment the uppermost visible video track wins, and gaps are black.
 - **Sound:** every clip on an unmuted track that has sound is mixed in, at its clip and track volume.
 - **Result:** the MP4 comes back as a studio result in the same project.
 
-`GET /api/timeline/fcpxml?project=<id>` exports the same timeline as FCPXML 1.9 for DaVinci Resolve. The bottom
-video track becomes the storyline, and the other tracks become lanes.
+`GET /api/timeline/fcpxml?project=<id>` exports the same timeline as FCPXML 1.9 for DaVinci Resolve.
+- **Tracks:** the bottom video track becomes the storyline, and the other tracks become lanes.
+- **Transitions:** on the storyline, a transition becomes a cut in the middle of the overlap plus a Cross Dissolve
+  spanning it. On other tracks, overlaps become cuts.
+- **Linked sound:** a video whose sound moved to a linked clip is exported at −96 dB, so the sound isn't doubled.
+
+### Earlier versions
+
+Every project keeps its previous `project.json` files in `<project>/.history/` (Experiment: `data/experiment/.history/`),
+at most one a minute and the last 30. **Earlier versions…** on the Project step lists them and can restore one
+(`GET /api/projects/{id}/history`, `POST /api/projects/{id}/restore`). The state being replaced is kept as a version
+first.
 
 ### Media refs
 
@@ -154,6 +177,7 @@ one.
 
 | From | What happens |
 |---|---|
+| `bob.project/2` from 0.8–0.9 | No change needed: `transitions` (empty) and `link_audio: true` are added on load. |
 | `bob.project/2` from 0.7.0 | No change needed: `timeline` is added with one video and one audio track the first time the project loads. |
 | `"version": 1` (0.6.0) | `schema` is set, and `config` and `library` are added with defaults. Pictures already used as inputs (`settings.refs` and `settings.frames`) become the first library items. |
 

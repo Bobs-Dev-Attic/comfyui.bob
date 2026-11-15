@@ -171,6 +171,8 @@ class Clip(BaseModel):
     volume: float = Field(1.0, ge=0, le=2)
     color: str = ""
     job: str | None = Field(None, description="the studio result this clip came from")
+    link: str | None = Field(None, description="clips sharing a link id move, trim, split and delete together")
+    audio_off: bool = Field(False, description="video clip whose own sound is off because a linked audio clip carries it")
 
     @property
     def end(self) -> float:
@@ -184,6 +186,26 @@ class Marker(BaseModel):
     color: str = ""
 
 
+TRANSITIONS = {  # ffmpeg xfade name -> label; audio transitions are always a crossfade
+    "fade": "Cross dissolve", "fadeblack": "Dip to black", "fadewhite": "Dip to white", "dissolve": "Pixel dissolve",
+    "wipeleft": "Wipe left", "wiperight": "Wipe right", "wipeup": "Wipe up", "wipedown": "Wipe down",
+    "slideleft": "Slide left", "slideright": "Slide right", "slideup": "Slide up", "slidedown": "Slide down",
+    "smoothleft": "Smooth left", "smoothright": "Smooth right", "coverleft": "Push left", "coverright": "Push right",
+    "circleopen": "Circle open", "circleclose": "Circle close", "radial": "Radial", "zoomin": "Zoom in",
+    "pixelize": "Pixelate", "hblur": "Blur", "squeezeh": "Squeeze", "horzopen": "Barn door",
+}
+
+
+class Transition(BaseModel):
+    """Two clips on the same track overlap and blend: `a` plays out while `b` comes in.
+    Its length is the overlap (a.end − b.start); each clip uses its own frames."""
+    id: str = Field(default_factory=new_id)
+    track: str
+    a: str = Field(..., description="outgoing clip id")
+    b: str = Field(..., description="incoming clip id")
+    type: str = Field("fade", description="one of TRANSITIONS (ffmpeg xfade names)")
+
+
 class Timeline(BaseModel):
     """The project's edit: tracks, clips, markers and view state. Saved as you work."""
     fps: int = Field(24, ge=1, le=120)
@@ -195,6 +217,8 @@ class Timeline(BaseModel):
     range_in: float | None = Field(None, ge=0)
     range_out: float | None = Field(None, ge=0)
     snap: bool = True
+    transitions: list[Transition] = Field(default_factory=list)
+    link_audio: bool = Field(True, description="adding a video with sound also puts its sound on an audio track")
     render: dict[str, Any] = Field(default_factory=dict, description="export settings: width, height, crf")
 
 
