@@ -117,24 +117,44 @@ def _match(pattern: str, filename: str) -> bool:
     return True
 
 
-def resolve(model_set: ModelSet, installed: dict[str, list[str]]) -> dict:
-    """Return {"ready": bool, "files": {slot: filename|None}, "missing": [...]}."""
+def _find(slot: Slot, names) -> str | None:
+    for cand in slot.candidates:
+        found = next((f for f in names if _match(cand, f)), None)
+        if found:
+            return found
+    return None
+
+
+def resolve(model_set: ModelSet, installed: dict[str, list[str]],
+            disk: dict[str, dict[str, str]] | None = None) -> dict:
+    """Match a model set against what ComfyUI reports.
+
+    ``installed`` is ComfyUI's /models listing; only those files can be used.
+    ``disk`` (from modelpaths.scan) adds files found in extra_model_paths.yaml
+    folders, so a slot ComfyUI can't see reports where the file actually is.
+    Returns {"ready", "files": {slot: name|None}, "missing": [...], "on_disk": n}.
+    """
     files: dict[str, str | None] = {}
     missing: list[dict] = []
     for slot in model_set.slots:
-        found = None
-        for cand in slot.candidates:
-            found = next((f for f in installed.get(slot.folder, []) if _match(cand, f)), None)
-            if found:
-                break
+        found = _find(slot, installed.get(slot.folder, []))
         files[slot.key] = found
-        if not found and not slot.optional:
-            missing.append({"slot": slot.key, "folder": slot.folder, "label": slot.label, "want": slot.candidates[0]})
+        if found:
+            continue
+        local = disk.get(slot.folder, {}) if disk else {}
+        hit = _find(slot, local)
+        if hit or not slot.optional:
+            missing.append({"slot": slot.key, "folder": slot.folder, "label": slot.label,
+                            "want": slot.candidates[0], "optional": slot.optional,
+                            "on_disk": local[hit] if hit else None})
+    required = [m for m in missing if not m["optional"]]
     return {
         "key": model_set.key,
         "title": model_set.title,
-        "ready": not missing,
+        "ready": not required,
         "files": files,
-        "missing": missing,
+        "missing": required,
+        "optional_on_disk": [m for m in missing if m["optional"]],
+        "all_on_disk": bool(required) and all(m["on_disk"] for m in required),
         "source": model_set.source,
     }

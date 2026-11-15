@@ -12,15 +12,18 @@ browser ── FastAPI (app/) ── comfy-sdk ── comfy-api-proxy :8189 ─�
 
 ## Run
 
-ComfyUI must already be running on `127.0.0.1:8188`.
+ComfyUI must already be running on `127.0.0.1:8188`. On Windows, double-click **`start.bat`**. On first run it
+creates `.venv` and installs the packages; every run checks the system, starts the app and opens the browser. Use
+`start.bat --no-browser` or `start.bat --skip-check` to change that. By hand:
 
 ```bash
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
-.venv\Scripts\python run.py
+.venv\Scripts\python -m app.syscheck
+.venv\Scripts\python run.py --open
 ```
 
-Open http://127.0.0.1:8700. The app starts `comfy-api-proxy` (Comfy API v2) on
+The app is at http://127.0.0.1:8700. The app starts `comfy-api-proxy` (Comfy API v2) on
 port 8189 by itself if nothing is listening there.
 
 ## What it does
@@ -48,6 +51,18 @@ Other features:
   fields, repeated or looping dialogue, and missing or invalid `<Picture N>` tags, and sends the problems back for up to
   3 tries. Vision models also look at your keyframes and reference pictures. Ollama unloads the model after each prompt
   so H3 gets the VRAM back.
+- **System check:** checks the following:
+  - Python and its packages.
+  - RAM (16 GB minimum, 32 GB+ recommended).
+  - The NVIDIA GPU and its VRAM (16 GB+ for H3).
+  - Disk space.
+  - ComfyUI, the model folders and the installed models.
+  - The API proxy and the prompt-writer LLM.
+
+  The check runs from `start.bat`, at startup, and from the **System** chip in the top bar.
+- **Model folders:** set `BOB_EXTRA_MODEL_PATHS` in `.env` to your ComfyUI `extra_model_paths.yaml`. The app then finds
+  models on disk that the running ComfyUI isn't loading, and tells you which `--extra-model-paths-config` file to
+  restart ComfyUI with.
 - **Model check:** each engine checks its model files. Music 3 isn't installed here yet, so the app shows which files to get from https://huggingface.co/Comfy-Org/MiniMax-Music-3.
 
 ## Layout
@@ -56,13 +71,16 @@ Other features:
   (`video_minimax_h3_t2v` / `_i2v`, `image_flux3_klein_distilled_t2i`, `audio_minimax_music_3`).
 - `app/models.py`: model files per engine, with fallbacks (int8 or nvfp4 text encoder, 8- or 4-step LoRA).
 - `app/llm.py`: the prompt writer (backends, schema, validator, assembler).
+- `app/syscheck.py`: the system check (command line and `/api/syscheck`).
+- `app/modelpaths.py`: reads `extra_model_paths.yaml` and scans model folders on disk.
+- `start.bat`: the Windows launcher.
 - `app/comfy.py`: comfy-sdk client, proxy lifecycle, and native ComfyUI calls.
 - `app/jobs.py`: submits jobs, streams progress, downloads outputs to `outputs/`, keeps history in `data/history.json`.
 - `app/main.py`: the HTTP API.
 - `static/`: the UI (vanilla JS, no build step).
 
 Settings are environment variables, or lines in a local `.env` file (copy `.env.example`): `COMFYUI_URL`, `COMFY_BASE_URL` (proxy),
-`BOB_PORT`, `BOB_HOST`, and `BOB_AUTO_START_PROXY=0` to skip starting the proxy. Prompt writer defaults:
+`BOB_PORT`, `BOB_HOST`, `BOB_EXTRA_MODEL_PATHS` (your `extra_model_paths.yaml`), and `BOB_AUTO_START_PROXY=0` to skip starting the proxy. Prompt writer defaults:
 `BOB_LLM_BACKEND` (`ollama` or `openai`), `OLLAMA_URL`, `BOB_OLLAMA_MODEL`, `BOB_OLLAMA_KEEP_ALIVE` (default `0`),
 `BOB_LLM_URL` (default `http://127.0.0.1:8080`, llama-server's port) and `BOB_LLM_MODEL`. The UI remembers its own choice.
 

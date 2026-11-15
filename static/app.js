@@ -223,11 +223,18 @@ function renderMissing() {
   const btn = $("#btn-generate");
   if (!state.caps) { box.hidden = true; return; }
   if (cap && !cap.ready) {
-    const files = cap.missing.map(m => `<li>${esc(m.label)} → <code>models/${esc(m.folder)}/${esc(m.want.replace("*", "…"))}</code></li>`).join("");
+    const files = cap.missing.map(m => m.on_disk
+      ? `<li>${esc(m.label)} → found at <code>${esc(m.on_disk)}</code></li>`
+      : `<li>${esc(m.label)} → <code>models/${esc(m.folder)}/${esc(m.want.replace("*", "…"))}</code></li>`).join("");
     const nodes = cap.missing_nodes?.length ? `<p>Missing nodes: <code>${cap.missing_nodes.map(esc).join(", ")}</code> — update ComfyUI.</p>` : "";
-    box.innerHTML = `<strong>${esc(cap.title)} isn't installed.</strong><ul>${files}</ul>${nodes}
-      Download from <a href="${esc(cap.source)}" target="_blank" rel="noopener">${esc(cap.source.replace("https://", ""))}</a>, then
-      <button type="button" class="link" id="btn-recheck">check again</button>.`;
+    const yaml = state.caps.model_paths?.[0];
+    const how = cap.all_on_disk
+      ? `<p>These files are on this PC, but the running ComfyUI doesn't load their folders${state.caps.comfyui_paths_config?.length ? ` (it was started with <code>${esc(state.caps.comfyui_paths_config[0])}</code>)` : ""}.
+         Restart ComfyUI with <code>--extra-model-paths-config "${esc(yaml || "your extra_model_paths.yaml")}"</code>, then
+         <button type="button" class="link" id="btn-recheck">check again</button>.</p>`
+      : `Download from <a href="${esc(cap.source)}" target="_blank" rel="noopener">${esc(cap.source.replace("https://", ""))}</a>, then
+         <button type="button" class="link" id="btn-recheck">check again</button>.`;
+    box.innerHTML = `<strong>${esc(cap.title)} ${cap.all_on_disk ? "isn't loaded by ComfyUI." : "isn't installed."}</strong><ul>${files}</ul>${nodes}${how}`;
     box.hidden = false;
     $("#btn-recheck").onclick = () => loadCaps(true);
     btn.disabled = true;
@@ -400,6 +407,44 @@ function initRefs() {
     if (ref) return addRef(ref, "/" + ref);
     uploadRefs([...e.dataTransfer.files]);
   });
+}
+
+/* ------------------------------------------------------------------ system check */
+async function runSysCheck(show = false) {
+  const chip = $("#st-sys");
+  chip.className = "chip chip-btn"; chip.lastChild.textContent = "Checking…";
+  if (show) { $("#sys-summary").textContent = "Checking…"; $("#sys-list").innerHTML = ""; }
+  try {
+    const r = await api("/api/syscheck");
+    state.syscheck = r;
+    const label = { ok: "System OK", warn: "System: warnings", fail: "System: problems" }[r.status];
+    chip.className = "chip chip-btn " + (r.status === "ok" ? "ok" : r.status === "warn" ? "warn" : "bad");
+    chip.lastChild.textContent = label;
+    renderSysCheck();
+    if (r.status === "fail" && !show) $("#sys-dialog").showModal();  // don't let a broken setup go unnoticed
+  } catch (e) {
+    chip.className = "chip chip-btn bad"; chip.lastChild.textContent = "System check failed";
+    $("#sys-summary").textContent = e.message;
+  }
+}
+
+function renderSysCheck() {
+  const r = state.syscheck; if (!r) return;
+  const counts = r.checks.reduce((a, c) => (a[c.status] = (a[c.status] || 0) + 1, a), {});
+  $("#sys-summary").textContent = { ok: "Everything Bob Studio needs is in place.", warn: "Ready, with warnings.",
+    fail: "Some checks failed; generation may not work until they're fixed." }[r.status]
+    + ` ${counts.ok || 0} ok · ${counts.warn || 0} warning(s) · ${counts.fail || 0} failed · checked ${new Date(r.time * 1000).toLocaleTimeString()}`;
+  const tag = { ok: "OK", warn: "WARN", fail: "FAIL", info: "INFO" };
+  $("#sys-list").innerHTML = r.checks.map(c => `<li class="${esc(c.status)}"><span class="badge">${tag[c.status]}</span>
+    <div><b>${esc(c.label)}</b><div class="detail">${esc(c.detail)}</div>${c.fix && c.status !== "ok" ? `<div class="fix">→ ${esc(c.fix)}</div>` : ""}</div></li>`).join("");
+}
+
+function initSysCheck() {
+  $("#st-sys").onclick = () => { renderSysCheck(); $("#sys-dialog").showModal(); };
+  $("#btn-sys-close").onclick = () => $("#sys-dialog").close();
+  $("#btn-sys-rerun").onclick = () => runSysCheck(true);
+  $("#sys-dialog").addEventListener("click", e => { if (e.target.id === "sys-dialog") $("#sys-dialog").close(); });
+  runSysCheck();
 }
 
 /* ------------------------------------------------------------------ prompt writer (local LLM) */
@@ -802,6 +847,7 @@ function init() {
   initDrops();
   initRefs();
   initWriter();
+  initSysCheck();
   $("#aspect").innerHTML = Object.keys(ASPECT).map(a => `<option>${a}</option>`).join("");
   renderForm();
 
