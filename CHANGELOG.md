@@ -5,6 +5,45 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.11.0] - 2026-11-15
+
+### Added
+- **Startup backup.** When the app starts, every project (and Experiment) gets a copy of its `project.json` in
+  `.history`, unless nothing changed since the last copy.
+- **Project settings** (⚙ Settings… on the Project step, for projects and Experiment):
+  - **Auto-save** on or off, and how soon after a change it saves.
+    - When it's off, the top bar shows **Unsaved · Save**.
+    - **Ctrl+S** saves.
+    - Switching projects asks Save / Don't save / Cancel, and closing the tab warns.
+  - **Linked audio** on or off, and where the sound goes: a new audio track for each video (new default) or the
+    first free one.
+  - A link to earlier versions.
+- **Audio mixing.**
+  - **Mixer** (🎚, Shift+M): a strip per track with mute, solo, pan and volume in dB. Double-click a slider to
+    reset it.
+  - **Master strip:** volume, a loudness target (Off, −14, −16 or −23 LUFS) and a limiter, plus a live peak meter.
+  - **Sound…** on a clip's right-click menu: volume (dB), pan, fade in, fade out and mute. On a video whose
+    sound is linked, it edits the sound clip.
+  - **Fades:** drag the dots at a clip's top corners; the faded corners are shaded.
+  - **Solo:** the **S** button on track headers.
+- **Preview through Web Audio:** the program monitor plays the mix you'll render, including gains above 100 %,
+  pan, fades, crossfades, solo, mute, the master volume and the limiter.
+- `project.json`:
+  - Clips: `pan`, `muted`, `fade_in`, `fade_out`.
+  - Tracks: `pan`, `solo`.
+  - Timeline: `master`, `link_audio_track`.
+  - Config: `autosave`, `autosave_delay`.
+
+### Changed
+- **Video sound gets its own track.** Adding videos with sound puts each one's sound on its own audio track
+  (A1, A2, A3…), so they can be mixed separately.
+- **Render mix.** Rendering mixes with pan, fades and solo.
+  - Linked sound clips on other tracks crossfade with their videos' transition.
+  - The master runs volume, then two-pass `loudnorm` (measured, then applied: −14.0, −16.7 and −23.7 LUFS in
+    tests), then a limiter.
+- Rendering and FCPXML export save the timeline first, even when auto-save is off.
+- FCPXML exports muted clips at −96 dB.
+
 ## [0.10.0] - 2026-11-15
 
 ### Added

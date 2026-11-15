@@ -56,6 +56,8 @@ versions can add fields without breaking older files.
     "kind": "all"                  // all | image | video | audio
   },
   "writer": { "backend": null, "model": null, "dialogue": false, "shots": null },
+  "autosave": true,                // Project settings: false = save with Ctrl+S or the Save button
+  "autosave_delay": 0.7,           // seconds after the last change (0.2–300)
   "defaults": {}                   // settings to reset to (reserved)
 }
 ```
@@ -94,14 +96,16 @@ its file to the library.
 
 ## `timeline`: the edit
 
-Saved as you work. Times are seconds on the frame grid (`1/fps`).
+Saved as you work (or with Ctrl+S when auto-save is off). Times are seconds on the frame grid (`1/fps`).
 
 ```jsonc
 "timeline": {
   "fps": 24,
   "tracks": [                      // top to bottom; an upper video track covers the ones below
-    { "id": "…", "kind": "video", "name": "V1", "muted": false, "locked": false, "hidden": false, "volume": 1, "height": 56 },
-    { "id": "…", "kind": "audio", "name": "A1", "muted": false, "locked": false, "hidden": false, "volume": 1, "height": 44 }
+    { "id": "…", "kind": "video", "name": "V1", "muted": false, "solo": false, "locked": false, "hidden": false,
+      "volume": 1, "pan": 0, "height": 56 },
+    { "id": "…", "kind": "audio", "name": "A1", "muted": false, "solo": false, "locked": false, "hidden": false,
+      "volume": 1, "pan": 0, "height": 44 }    // volume 0–2 (×), pan −1 left … 1 right; any solo = only soloed tracks heard
   ],
   "clips": [{
     "id": "…", "track": "<track id>", "ref": "outputs/2026-11-15/b20789d2c88a_00001_.mp4",
@@ -111,7 +115,9 @@ Saved as you work. Times are seconds on the frame grid (`1/fps`).
     "trim_in": 0.25,               // first second of the source used
     "trim_out": 2.0,               // last second used (exclusive); length = trim_out − trim_in
     "source_duration": 2.333,      // null for stills
-    "volume": 1, "color": "",
+    "volume": 1, "color": "",       // volume 0–2 (× the source; 0.5 ≈ −6 dB)
+    "pan": 0, "muted": false,       // the clip's own sound: pan −1…1, mute
+    "fade_in": 0, "fade_out": 0.5,  // seconds of sound fade at the start / end (transitions add their crossfade)
     "job": "b20789d2c88a",         // the studio result it came from
     "link": "9c1e…",               // clips with the same link move, trim, split and delete together
     "audio_off": true              // a video whose sound is on its linked audio clip instead
@@ -124,6 +130,8 @@ Saved as you work. Times are seconds on the frame grid (`1/fps`).
                                    // hblur, squeezeh, horzopen. Audio tracks always crossfade.
   }],
   "link_audio": true,              // adding a video with sound also puts its sound on an audio track
+  "link_audio_track": "new",       // new = an audio track of its own per video | free = the first free audio track
+  "master": { "volume": 1, "loudness": -14, "limiter": true },  // loudness: null or −36…−6 LUFS (two-pass loudnorm)
   "markers": [{ "id": "…", "t": 0.5, "label": "Marker 1", "color": "" }],
   "playhead": 1.21, "zoom": 60,    // pixels per second
   "range_in": 0.5, "range_out": 3.0, // In/Out: Render can export just this range
@@ -137,7 +145,10 @@ is needed.
 
 Rendering (`POST /api/timeline/render`, `app/render.py`) uses ffmpeg:
 - **Picture:** at each moment the uppermost visible video track wins, and gaps are black.
-- **Sound:** every clip on an unmuted track that has sound is mixed in, at its clip and track volume.
+- **Sound:** every clip with sound on an unmuted (and, when anything is soloed, soloed) track is mixed in: clip ×
+  track volume, pan, its fades, and crossfades at transitions. Linked sound clips on other tracks crossfade with
+  their videos' transition. Then the master: volume, loudness normalisation (measured first, then applied), and a
+  limiter at −0.5 dBFS.
 - **Result:** the MP4 comes back as a studio result in the same project.
 
 `GET /api/timeline/fcpxml?project=<id>` exports the same timeline as FCPXML 1.9 for DaVinci Resolve.
@@ -145,11 +156,13 @@ Rendering (`POST /api/timeline/render`, `app/render.py`) uses ffmpeg:
 - **Transitions:** on the storyline, a transition becomes a cut in the middle of the overlap plus a Cross Dissolve
   spanning it. On other tracks, overlaps become cuts.
 - **Linked sound:** a video whose sound moved to a linked clip is exported at −96 dB, so the sound isn't doubled.
+  Muted clips are too. Pan, fades and the master aren't exported; set them in Resolve's mixer.
 
 ### Earlier versions
 
 Every project keeps its previous `project.json` files in `<project>/.history/` (Experiment: `data/experiment/.history/`),
-at most one a minute and the last 30. **Earlier versions…** on the Project step lists them and can restore one
+at most one a minute while it changes, plus one each time the app starts (`project-…-startup.json`, skipped when
+nothing changed), the last 30. **Earlier versions…** on the Project step lists them and can restore one
 (`GET /api/projects/{id}/history`, `POST /api/projects/{id}/restore`). The state being replaced is kept as a version
 first.
 
@@ -177,6 +190,7 @@ one.
 
 | From | What happens |
 |---|---|
+| `bob.project/2` from 0.10 | No change needed: mixing fields default to neutral (volume 1, pan 0, no fades, no solo), `master` has no loudness target and the limiter on, `link_audio_track` is `"new"`, and auto-save is on. |
 | `bob.project/2` from 0.8–0.9 | No change needed: `transitions` (empty) and `link_audio: true` are added on load. |
 | `bob.project/2` from 0.7.0 | No change needed: `timeline` is added with one video and one audio track the first time the project loads. |
 | `"version": 1` (0.6.0) | `schema` is set, and `config` and `library` are added with defaults. Pictures already used as inputs (`settings.refs` and `settings.frames`) become the first library items. |

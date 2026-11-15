@@ -94,6 +94,8 @@ class ProjectConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
     gallery: GalleryConfig = Field(default_factory=GalleryConfig)
     writer: WriterConfig = Field(default_factory=WriterConfig)
+    autosave: bool = Field(True, description="save changes automatically; off = save with Ctrl+S or the Save button")
+    autosave_delay: float = Field(0.7, ge=0.2, le=300, description="seconds after the last change before saving")
     defaults: dict[str, Any] = Field(default_factory=dict, description="settings a reset goes back to")
 
 
@@ -154,6 +156,8 @@ class Track(BaseModel):
     locked: bool = False
     hidden: bool = Field(False, description="video tracks only: leave out of the picture")
     volume: float = Field(1.0, ge=0, le=2)
+    pan: float = Field(0, ge=-1, le=1)
+    solo: bool = Field(False, description="when any track is soloed, only soloed tracks are heard")
     height: int = Field(56, ge=28, le=200)
 
 
@@ -173,6 +177,10 @@ class Clip(BaseModel):
     job: str | None = Field(None, description="the studio result this clip came from")
     link: str | None = Field(None, description="clips sharing a link id move, trim, split and delete together")
     audio_off: bool = Field(False, description="video clip whose own sound is off because a linked audio clip carries it")
+    muted: bool = Field(False, description="this clip's sound is off")
+    pan: float = Field(0, ge=-1, le=1, description="-1 = left, 0 = centre, 1 = right")
+    fade_in: float = Field(0, ge=0, description="seconds of sound fade-in at the clip's start")
+    fade_out: float = Field(0, ge=0, description="seconds of sound fade-out at the clip's end")
 
     @property
     def end(self) -> float:
@@ -206,6 +214,13 @@ class Transition(BaseModel):
     type: str = Field("fade", description="one of TRANSITIONS (ffmpeg xfade names)")
 
 
+class Master(BaseModel):
+    """The final mix."""
+    volume: float = Field(1.0, ge=0, le=2)
+    loudness: float | None = Field(None, ge=-36, le=-6, description="normalise to this many LUFS (e.g. -14 for web, -23 for broadcast); None = off")
+    limiter: bool = Field(True, description="catch peaks so the mix never clips")
+
+
 class Timeline(BaseModel):
     """The project's edit: tracks, clips, markers and view state. Saved as you work."""
     fps: int = Field(24, ge=1, le=120)
@@ -219,6 +234,8 @@ class Timeline(BaseModel):
     snap: bool = True
     transitions: list[Transition] = Field(default_factory=list)
     link_audio: bool = Field(True, description="adding a video with sound also puts its sound on an audio track")
+    link_audio_track: Literal["new", "free"] = Field("new", description="new = a new audio track for each video; free = the first free audio track")
+    master: Master = Field(default_factory=Master)
     render: dict[str, Any] = Field(default_factory=dict, description="export settings: width, height, crf")
 
 

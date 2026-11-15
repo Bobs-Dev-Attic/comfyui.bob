@@ -37,6 +37,9 @@ async def lifespan(_: FastAPI):
     for c in report["checks"]:
         if c["status"] in ("warn", "fail"):
             logging.getLogger("bob.syscheck").warning("%s: %s %s", c["label"], c["detail"], c["fix"] and f"({c['fix']})")
+    # A version of every project is kept at startup, so the state before this session can always come back.
+    result = await asyncio.to_thread(projects.backup_all)
+    logging.getLogger("bob.projects").info("startup backup: %s", result)
     await comfy.start()
     yield
     await comfy.stop()
