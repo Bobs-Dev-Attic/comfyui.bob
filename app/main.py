@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import subprocess
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -430,6 +431,16 @@ async def media_list(source: str, path: str = "", id: str = "", project: str = "
 
 
 _thumb_slots = asyncio.Semaphore(4)
+
+
+@app.get("/api/media/peaks")
+async def media_peaks(path: str):
+    """Sound levels of a file for waveform graphs (cached)."""
+    async with _thumb_slots:
+        try:
+            return await asyncio.to_thread(media.peaks, path)
+        except (media.MediaError, OSError, subprocess.SubprocessError) as exc:
+            raise HTTPException(404, str(exc)) from exc
 
 
 @app.get("/api/media/thumb")

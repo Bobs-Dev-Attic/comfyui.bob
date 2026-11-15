@@ -226,6 +226,48 @@ def ffmpeg() -> str | None:
     return os.environ.get("BOB_FFMPEG") or shutil.which("ffmpeg")
 
 
+def peaks(ref: str) -> dict[str, Any]:
+    """Sound levels for drawing a waveform graph: per bucket the peak and RMS level (0–255,
+    linear), `rate` buckets per second of the file. Cached next to the thumbnails."""
+    import array
+    import json
+    import math
+
+    src = resolve(ref)
+    st = src.stat()
+    key = hashlib.sha1(f"{src}|{st.st_size}|{st.st_mtime_ns}|peaks2".encode()).hexdigest()
+    out = THUMB_DIR / key[:2] / f"{key}.peaks.json"
+    if out.is_file():
+        try:
+            return json.loads(out.read_text("utf-8"))
+        except (OSError, ValueError):
+            pass
+    exe = ffmpeg()
+    if not exe:
+        raise MediaError("ffmpeg isn't installed")
+    sr = 8000
+    r = subprocess.run([exe, "-nostdin", "-v", "error", "-i", str(src), "-vn", "-ac", "1", "-ar", str(sr), "-f", "s16le", "-"],
+                       capture_output=True, timeout=300, creationflags=NO_WINDOW)
+    data = array.array("h")
+    data.frombytes(r.stdout[: len(r.stdout) // 2 * 2])
+    seconds = len(data) / sr
+    rate = 100 if seconds <= 600 else 25
+    n = sr // rate
+    peak, rms = bytearray(), bytearray()
+    for i in range(0, len(data), n):
+        b = data[i:i + n]
+        if not b:
+            break
+        peak.append(min(255, round(max(max(b), -min(b)) / 32768 * 255)))
+        rms.append(min(255, round(math.sqrt(math.sumprod(b, b) / len(b)) / 32768 * 255)))
+    res = {"rate": rate, "seconds": round(seconds, 3), "peak": list(peak), "rms": list(rms)}
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_suffix(".tmp")
+    tmp.write_text(json.dumps(res, separators=(",", ":")), "utf-8")
+    tmp.replace(out)
+    return res
+
+
 def thumbnail(ref: str, width: int = 256) -> Path:
     """Path of a cached WebP thumbnail for ref, making it first if needed."""
     width = max(64, min(640, int(width)))
@@ -269,7 +311,7 @@ def thumbnail(ref: str, width: int = 256) -> Path:
 
 
 def cache_size() -> dict[str, Any]:
-    files = list(THUMB_DIR.rglob("*.webp")) if THUMB_DIR.exists() else []
+    files = [*THUMB_DIR.rglob("*.webp"), *THUMB_DIR.rglob("*.peaks.json")] if THUMB_DIR.exists() else []
     return {"files": len(files), "bytes": sum(f.stat().st_size for f in files)}
 
 

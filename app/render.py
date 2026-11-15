@@ -65,70 +65,185 @@ def _hex(c: str) -> tuple[float, float, float]:
 def fx_active(fx: Any) -> bool:
     if not fx or not fx.enabled:
         return False
+    if fx.keys:
+        return True
     return bool(abs(fx.exposure) > 1e-3 or abs(fx.contrast - 1) > 1e-3 or abs(fx.saturation - 1) > 1e-3
                 or abs(fx.temperature) > 0.5 or abs(fx.tint) > 0.5 or fx.look != "none" or fx.vignette > 1e-3
                 or fx.blur > 1e-3 or fx.sharpen > 1e-3 or fx.grain > 1e-3 or any(l.intensity > 1e-3 for l in fx.lights))
 
 
-def fx_filters(fx: Any, src: str, dst: str, tag: str, length: float, height: int) -> list[str]:
-    """Filter-graph pieces that take [src] (any format) to [dst] (gbrp) with the clip's effects.
+class _Track:
+    """One animatable value over the clip's local time: [(t, value, ease)] sorted, or a constant."""
 
-    Lights are soft masks drawn with geq at a quarter of the size (they're smooth, so that's
-    invisible and 16× cheaper), scaled back up and blended in RGB:
+    def __init__(self, pts: list[tuple[float, float, str]]):
+        self.pts = sorted(pts, key=lambda p: p[0]) or [(0.0, 0.0, "hold")]
+
+    @property
+    def const(self) -> bool:
+        return len({round(v, 6) for _, v, _ in self.pts}) <= 1
+
+    def at(self, t: float) -> float:
+        p = self.pts
+        if t <= p[0][0]:
+            return p[0][1]
+        for (t0, v0, e), (t1, v1, _) in zip(p, p[1:]):
+            if t < t1:
+                u = (t - t0) / max(1e-9, t1 - t0)
+                u = 0.0 if e == "hold" else u * u * (3 - 2 * u) if e == "smooth" else u
+                return v0 + (v1 - v0) * u
+        return p[-1][1]
+
+    def expr(self, var: str, fmt: str = "{:.5f}", f=None) -> str:
+        """ffmpeg expression of `var` (T for geq, t for eq/vignette). `f` maps each value first."""
+        f = f or (lambda v: v)
+        p = self.pts
+        if self.const:
+            return fmt.format(f(p[0][1]))
+        e = fmt.format(f(p[-1][1]))
+        for (t0, v0, ease), (t1, v1, _) in reversed(list(zip(p, p[1:]))):
+            a0, a1 = f(v0), f(v1)
+            u = f"(({var}-{t0:.4f})/{max(1e-6, t1 - t0):.4f})"
+            seg = (fmt.format(a0) if ease == "hold" or abs(a1 - a0) < 1e-9 else
+                   f"({fmt.format(a0)}+({a1 - a0:.6f})*{u}*{u}*(3-2*{u}))" if ease == "smooth" else
+                   f"({fmt.format(a0)}+({a1 - a0:.6f})*{u})")
+            e = f"if(lt({var},{t1:.4f}),{seg},{e})"
+        return f"if(lt({var},{p[0][0]:.4f}),{fmt.format(f(p[0][1]))},{e})"
+
+
+def _anim(fx: Any, trim_in: float) -> tuple[dict[str, _Track], list[dict[str, _Track]]]:
+    """Per-setting tracks in clip-local time from the keyframes (or the plain settings)."""
+    keys = sorted(fx.keys, key=lambda k: k.t)
+    top: dict[str, _Track] = {}
+    for name in ("exposure", "contrast", "saturation", "temperature", "tint", "vignette", "blur"):
+        base = float(getattr(fx, name))
+        top[name] = _Track([(k.t - trim_in, float(k.values.get(name, base)), k.ease) for k in keys] or [(0.0, base, "hold")])
+    lights = []
+    for i, lt in enumerate(fx.lights):
+        tr: dict[str, _Track] = {}
+        for name in ("x", "y", "radius", "intensity", "flicker"):
+            base = float(getattr(lt, name))
+            tr[name] = _Track([(k.t - trim_in, float((k.lights[i] if i < len(k.lights) else {}).get(name, base)), k.ease) for k in keys]
+                              or [(0.0, base, "hold")])
+        for ch in range(3):
+            base = _hex(lt.color)[ch]
+            tr[f"c{ch}"] = _Track([(k.t - trim_in, _hex(str((k.lights[i] if i < len(k.lights) else {}).get("color", lt.color)))[ch], k.ease)
+                                   for k in keys] or [(0.0, base, "hold")])
+        lights.append(tr)
+    return top, lights
+
+
+def _gains(exposure: float, tint: float) -> tuple[float, float]:
+    gain = 2 ** exposure
+    return gain * (1 + 0.06 * max(0.0, tint) / 100), gain * (1 - 0.18 * tint / 100)  # (red/blue, green)
+
+
+def fx_filters(fx: Any, src: str, dst: str, tag: str, length: float, height: int,
+               trim_in: float = 0.0, fps: float = 24, cmdfile: str | None = None) -> tuple[list[str], str]:
+    """Filter-graph pieces that take [src] (any format) to [dst] (gbrp) with the clip's effects,
+    plus the text of a sendcmd file (empty when nothing is keyframed through commands).
+
+    Keyframed settings change over the clip: contrast, saturation and the vignette as frame
+    expressions; exposure, tint, temperature and blur by commands sent every frame; lights as geq
+    expressions of T. Lights are soft masks drawn at a quarter of the size (they're smooth, so
+    that's invisible and 16× cheaper), scaled back up and blended in RGB:
       relight  A·(1 + I·B)   light falling on the plate, keeping its texture
       glow     A + I·B       light added on top
       shade    A·(1 − d·B)   a soft shadow
-    A light can travel from (x, y) to (x2, y2) over the clip, and flicker."""
+    Without keyframes a light can still travel from (x, y) to (x2, y2) and flicker."""
+    top, ltr = _anim(fx, trim_in)
+    L = max(length, 1e-3)
+    frames = [i / fps for i in range(int(L * fps) + 1)]
     out: list[str] = []
+    cmds: dict[float, list[str]] = {}
+
+    def send(t: float, target: str, arg: str, value: float) -> None:
+        cmds.setdefault(round(t, 4), []).append(f"{target} {arg} {value:.5f}")
+
     chain = []
-    if abs(fx.contrast - 1) > 1e-3 or abs(fx.saturation - 1) > 1e-3:
-        chain.append(f"eq=contrast={fx.contrast:.3f}:saturation={fx.saturation:.3f}")
+    if cmdfile and any(not top[k].const for k in ("exposure", "tint", "temperature", "blur")):
+        chain.append(f"sendcmd=f='{cmdfile.replace(chr(92), '/').replace(':', chr(92) + ':')}'")
+    if not (top["contrast"].const and top["saturation"].const) or abs(top["contrast"].at(0) - 1) > 1e-3 or abs(top["saturation"].at(0) - 1) > 1e-3:
+        if top["contrast"].const and top["saturation"].const:
+            chain.append(f"eq=contrast={top['contrast'].at(0):.3f}:saturation={top['saturation'].at(0):.3f}")
+        else:
+            chain.append(f"eq=contrast='{top['contrast'].expr('t')}':saturation='{top['saturation'].expr('t')}':eval=frame")
     chain.append("format=gbrp")
-    gain = 2 ** fx.exposure
-    if abs(gain - 1) > 1e-3 or abs(fx.tint) > 0.5:
-        g_green = gain * (1 - 0.18 * fx.tint / 100)
-        g_rb = gain * (1 + 0.06 * max(0.0, fx.tint) / 100)
-        chain.append(f"colorchannelmixer=rr={g_rb:.4f}:gg={g_green:.4f}:bb={g_rb:.4f}")
-    if abs(fx.temperature) > 0.5:
-        chain.append(f"colortemperature=temperature={6500 - fx.temperature * 35:.0f}")
+    # Exposure and tint: channel gains. colorchannelmixer takes at most 2, so big gains are split
+    # over several mixers (each gets the n-th root).
+    gains_t = [_gains(top["exposure"].at(t), top["tint"].at(t)) for t in frames] if not (top["exposure"].const and top["tint"].const) \
+        else [_gains(top["exposure"].at(0), top["tint"].at(0))]
+    peak = max(max(g) for g in gains_t)
+    n = 1 if peak <= 1.99 else 2 if peak <= 3.9 else 4
+    if any(abs(g[0] - 1) > 1e-3 or abs(g[1] - 1) > 1e-3 for g in gains_t):
+        for j in range(n):
+            g0 = gains_t[0]
+            chain.append(f"colorchannelmixer@{tag}m{j}=rr={g0[0] ** (1 / n):.4f}:gg={g0[1] ** (1 / n):.4f}:bb={g0[0] ** (1 / n):.4f}")
+        if len(gains_t) > 1:
+            for t, g in zip(frames, gains_t):
+                for j in range(n):
+                    for ch, v in (("rr", g[0]), ("gg", g[1]), ("bb", g[0])):
+                        send(t, f"colorchannelmixer@{tag}m{j}", ch, v ** (1 / n))
+    temp = top["temperature"]
+    if not temp.const or abs(temp.at(0)) > 0.5:
+        chain.append(f"colortemperature@{tag}k=temperature={6500 - temp.at(0) * 35:.0f}")
+        if not temp.const:
+            for t in frames:
+                send(t, f"colortemperature@{tag}k", "temperature", 6500 - temp.at(t) * 35)
     if fx.look == "bw":
         chain.append("colorchannelmixer=.299:.587:.114:0:.299:.587:.114:0:.299:.587:.114")
     elif fx.look == "sepia":
         chain.append("colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131")
     cur = f"{tag}g"
     out.append(f"[{src}]{','.join(chain)}[{cur}]")
-    L = max(length, 1e-3)
-    for i, lt in enumerate(l for l in fx.lights if l.intensity > 1e-3):
-        x2 = lt.x if lt.x2 is None else lt.x2
-        y2 = lt.y if lt.y2 is None else lt.y2
-        p = f"min(1,max(0,T/{L:.4f}))"
-        cx, cy = f"({lt.x:.4f}+({x2 - lt.x:.4f})*{p})", f"({lt.y:.4f}+({y2 - lt.y:.4f})*{p})"
-        r = f"({lt.radius:.4f}*min(W,H))"
+
+    for i, (lt, tr) in enumerate(zip(fx.lights, ltr)):
+        imax = max(v for _, v, _ in tr["intensity"].pts)
+        if imax <= 1e-3:
+            continue
+        if fx.keys:
+            cx, cy = f"({tr['x'].expr('T')})", f"({tr['y'].expr('T')})"
+        else:
+            x2 = lt.x if lt.x2 is None else lt.x2
+            y2 = lt.y if lt.y2 is None else lt.y2
+            p = f"min(1,max(0,T/{L:.4f}))"
+            cx, cy = f"({lt.x:.4f}+({x2 - lt.x:.4f})*{p})", f"({lt.y:.4f}+({y2 - lt.y:.4f})*{p})"
+        r = f"(({tr['radius'].expr('T')})*min(W,H))"
         g = f"exp(-(pow(X-{cx}*W,2)+pow(Y-{cy}*H,2))/(2*{r}*{r}))"
-        if lt.flicker > 1e-3:
-            g += f"*(1-{lt.flicker * 0.6:.3f}*0.5*(1+sin(T*13.1)*sin(T*5.3+1)))"
-        rgb = (1.0, 1.0, 1.0) if lt.mode == "shade" else _hex(lt.color)
+        fl = tr["flicker"]
+        if not fl.const or fl.at(0) > 1e-3:
+            g += f"*(1-({fl.expr('T')})*0.3*(1+sin(T*13.1)*sin(T*5.3+1)))"
+        if not tr["intensity"].const:
+            g += f"*({tr['intensity'].expr('T')})/{imax:.4f}"
+        rgb = ["1"] * 3 if lt.mode == "shade" else [tr[f"c{ch}"].expr("T", "{:.4f}") for ch in range(3)]
         b, m, ms, nxt = f"{tag}b{i}", f"{tag}m{i}", f"{tag}s{i}", f"{tag}l{i}"
         out.append(f"[{cur}]split[{b}][{m}]")
-        out.append(f"[{m}]scale=iw/4:ih/4,geq=r='255*{rgb[0]:.3f}*{g}':g='255*{rgb[1]:.3f}*{g}':b='255*{rgb[2]:.3f}*{g}'[{ms}0]")
+        out.append(f"[{m}]scale=iw/4:ih/4,geq=r='255*({rgb[0]})*{g}':g='255*({rgb[1]})*{g}':b='255*({rgb[2]})*{g}'[{ms}0]")
         out.append(f"[{ms}0][{b}]scale2ref[{ms}][{b}r]")
-        I = lt.intensity
-        expr = {"relight": f"min(255,A*(1+{I:.3f}*B/255))", "glow": f"min(255,A+{I:.3f}*B)",
-                "shade": f"A*(1-{min(1.0, I * 0.7):.3f}*B/255)"}[lt.mode]
+        expr = {"relight": f"min(255,A*(1+{imax:.3f}*B/255))", "glow": f"min(255,A+{imax:.3f}*B)",
+                "shade": f"A*(1-{min(1.0, imax * 0.7):.3f}*B/255)"}[lt.mode]
         out.append(f"[{b}r][{ms}]blend=all_expr='{expr}'[{nxt}]")
         cur = nxt
+
     tail = []
-    if fx.vignette > 1e-3:
-        tail.append(f"vignette=angle={0.15 + 0.85 * fx.vignette:.3f}")
+    vig = top["vignette"]
+    if not vig.const:
+        tail.append(f"vignette=angle='{vig.expr('t', '{:.4f}', lambda v: 0.15 + 0.85 * v if v > 1e-3 else 0)}':eval=frame")
+    elif vig.at(0) > 1e-3:
+        tail.append(f"vignette=angle={0.15 + 0.85 * vig.at(0):.3f}")
     scale = max(0.25, height / 1080)
-    if fx.blur > 1e-3:
-        tail.append(f"gblur=sigma={fx.blur * scale:.2f}")
+    blur = top["blur"]
+    if not blur.const or blur.at(0) > 1e-3:
+        tail.append(f"gblur@{tag}z=sigma={max(0.0, blur.at(0)) * scale:.2f}")
+        if not blur.const:
+            for t in frames:
+                send(t, f"gblur@{tag}z", "sigma", max(0.0, blur.at(t)) * scale)
     if fx.sharpen > 1e-3:
         tail.append(f"unsharp=5:5:{fx.sharpen:.2f}")
     if fx.grain > 1e-3:
         tail.append(f"noise=alls={int(4 + 36 * fx.grain)}:allf=t")
     out.append(f"[{cur}]{','.join(tail) if tail else 'null'}[{dst}]")
-    return out
+    text = "".join(f"{t:.4f} [enter] {', '.join(c)};\n" for t, c in sorted(cmds.items()))
+    return out, text
 
 
 def formats() -> list[dict[str, Any]]:
@@ -258,6 +373,7 @@ def commands(tl: Timeline, out: str, w0: float | None = None, w1: float | None =
     loud_opt = o.get("loudness", "mixer")
     loudness = tl.master.loudness if loud_opt in (None, "mixer") else (None if loud_opt == "off" else float(loud_opt))
     out_of, into = transitions_by_clip(tl)
+    cmdfiles: list[str] = []  # sendcmd files for keyframed effects (deleted with the other temporaries)
 
     head = [exe, "-nostdin", "-v", "error", "-y", "-nostats", "-progress", "pipe:1"]
     vargs, aargs = list(head), list(head)
@@ -302,7 +418,13 @@ def commands(tl: Timeline, out: str, w0: float | None = None, w1: float | None =
             if fx_active(c.fx):  # effects run on the picture itself (lights follow it), then it's placed
                 pre, post = f"{lab}p", f"{lab}x"
                 filters.append(f"[{idx}:v]{fit},trim=duration={_dur(c):.4f},setpts=PTS-STARTPTS[{pre}]")
-                filters.extend(fx_filters(c.fx, pre, post, f"{lab}f", _dur(c), H))
+                cmdfile = f"{out}.{lab}.cmd"
+                pieces_fx, cmdtext = fx_filters(c.fx, pre, post, f"{lab}f", _dur(c), H,
+                                                0.0 if c.kind == "image" else c.trim_in, fps, cmdfile)
+                filters.extend(pieces_fx)
+                if cmdtext:
+                    Path(cmdfile).write_text(cmdtext, encoding="utf-8")
+                    cmdfiles.append(cmdfile)
                 filters.append(f"[{post}]{place}[{lab}]")
             else:
                 filters.append(f"[{idx}:v]{norm},trim=duration={_dur(c):.4f},setpts=PTS-STARTPTS[{lab}]")
@@ -411,7 +533,7 @@ def commands(tl: Timeline, out: str, w0: float | None = None, w1: float | None =
     if want_audio and raw != afile:
         steps.append(("loudnorm", raw, afile, float(loudness), bool(tl.master.limiter)))
     steps.append(mux)
-    return steps, D_out, [f for f in (vfile, afile, raw if raw != afile else "") if f]
+    return steps, D_out, [f for f in (vfile, afile, raw if raw != afile else "") if f] + cmdfiles
 
 
 def loudnorm_two_pass(src: str, dst: str, target: float, limiter: bool) -> None:
@@ -513,7 +635,7 @@ async def render(jobs, project_id: str | None, tl: Timeline, *, w0: float | None
     jobs.items[item_id] = item
     jobs._update(item)
     say = lambda msg, level="info": jobs.log(item, msg, level)  # noqa: E731
-    say(f"Render: {len(tl.clips)} clips, {duration:.2f} s of timeline" + (f" (In {w0:.2f}s – Out {w1:.2f}s)" if (w0 or w1) else ""))
+    say(f"Render: {len(tl.clips)} clips, {duration:.2f} s of timeline" + (f" (In {w0 or 0:.2f}s – Out {w1 if w1 is not None else (w0 or 0) + duration:.2f}s)" if (w0 or w1) else ""))
     say(f"Format {fmt['label']}" + (f", {width}×{height}" if width else ", size of the first clip") +
         f", {o.get('fps') or tl.fps} fps, quality {o.get('quality') or 'high'}, speed {o.get('speed') or 'balanced'}")
     if kind == "video":
