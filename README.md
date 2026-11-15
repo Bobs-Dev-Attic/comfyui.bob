@@ -12,9 +12,14 @@ browser ── FastAPI (app/) ── comfy-sdk ── comfy-api-proxy :8189 ─�
 
 ## Run
 
-ComfyUI must already be running on `127.0.0.1:8188`. On Windows, double-click **`start.bat`**. On first run it
-creates `.venv` and installs the packages; every run checks the system, starts the app and opens the browser. Use
-`start.bat --no-browser` or `start.bat --skip-check` to change that. By hand:
+On Windows, double-click **`start.bat`**. On first run it creates `.venv` and installs the packages. Every run then
+does the following:
+1. Starts ComfyUI if it isn't running and `BOB_COMFYUI_DIR` is set in `.env`.
+2. Checks the system.
+3. Starts the app and opens the browser.
+
+Options: `--no-browser`, `--skip-check`, `--no-comfyui`. Without `BOB_COMFYUI_DIR`, start ComfyUI yourself on
+`127.0.0.1:8188` first. By hand:
 
 ```bash
 python -m venv .venv
@@ -73,14 +78,15 @@ Other features:
 - `app/llm.py`: the prompt writer (backends, schema, validator, assembler).
 - `app/syscheck.py`: the system check (command line and `/api/syscheck`).
 - `app/modelpaths.py`: reads `extra_model_paths.yaml` and scans model folders on disk.
-- `start.bat`: the Windows launcher.
+- `start.bat`: the Windows launcher; `app/comfylaunch.py` starts ComfyUI for it.
 - `app/comfy.py`: comfy-sdk client, proxy lifecycle, and native ComfyUI calls.
 - `app/jobs.py`: submits jobs, streams progress, downloads outputs to `outputs/`, keeps history in `data/history.json`.
 - `app/main.py`: the HTTP API.
 - `static/`: the UI (vanilla JS, no build step).
 
 Settings are environment variables, or lines in a local `.env` file (copy `.env.example`): `COMFYUI_URL`, `COMFY_BASE_URL` (proxy),
-`BOB_PORT`, `BOB_HOST`, `BOB_EXTRA_MODEL_PATHS` (your `extra_model_paths.yaml`), and `BOB_AUTO_START_PROXY=0` to skip starting the proxy. Prompt writer defaults:
+`BOB_PORT`, `BOB_HOST`, `BOB_EXTRA_MODEL_PATHS` (your `extra_model_paths.yaml`), `BOB_COMFYUI_DIR` and
+`BOB_COMFYUI_ARGS` (the ComfyUI that `start.bat` starts), and `BOB_AUTO_START_PROXY=0` to skip starting the proxy. Prompt writer defaults:
 `BOB_LLM_BACKEND` (`ollama` or `openai`), `OLLAMA_URL`, `BOB_OLLAMA_MODEL`, `BOB_OLLAMA_KEEP_ALIVE` (default `0`),
 `BOB_LLM_URL` (default `http://127.0.0.1:8080`, llama-server's port) and `BOB_LLM_MODEL`. The UI remembers its own choice.
 

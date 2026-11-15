@@ -5,6 +5,25 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.4.0] - 2026-11-15
+
+### Added
+- `start.bat` starts ComfyUI when it isn't running. It uses the install set in `BOB_COMFYUI_DIR` (a ComfyUI folder or a
+  `ComfyUI_windows_portable` folder) and the extra arguments in `BOB_COMFYUI_ARGS`.
+  - ComfyUI runs in its own window and keeps running after the launcher exits.
+  - The launcher waits up to 180 s for ComfyUI to answer.
+  - `start.bat --no-comfyui` skips this.
+- `python -m app.comfylaunch` (`--dry-run` prints the command).
+  - It picks the portable build's `python_embeded`, a venv inside the install, or the system Python.
+  - It passes `--extra-model-paths-config` only for yaml files that aren't the install's own.
+
+### Changed
+- The **Model folders** check compares the model files on disk with what ComfyUI actually lists, instead of reading
+  ComfyUI's command line. The portable build loads its own `extra_model_paths.yaml` without any flag, which the old
+  test misreported.
+- Model scanning matches the file types core ComfyUI lists; `.gguf` files, which need custom loaders, are skipped.
+- When ComfyUI is unreachable, the system check points to `start.bat` or `BOB_COMFYUI_DIR`.
+
 ## [0.3.0] - 2026-11-15
 
 ### Added
@@ -50,6 +69,7 @@ All notable changes to Bob Studio are recorded here. The format follows
 - "Write for me" prompt writer using Ollama or any OpenAI-compatible local server, with a validator and retries.
 - Live step progress over SSE, takes, a gallery with reuse and re-roll, and per-engine model checks.
 
+[0.4.0]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Bobs-Dev-Attic/comfyui.bob/releases/tag/v0.1.0

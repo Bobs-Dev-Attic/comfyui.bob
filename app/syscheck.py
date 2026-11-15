@@ -216,7 +216,8 @@ def check_disk() -> Check:
 def check_comfyui(stats: dict[str, Any] | None) -> Check:
     if not stats:
         return Check("comfyui", "ComfyUI", "fail", f"Not reachable at {config.COMFYUI_URL}",
-                     "Start ComfyUI first (or set COMFYUI_URL in .env)")
+                     "Run start.bat to start it from BOB_COMFYUI_DIR" if config.COMFYUI_DIR
+                     else "Start ComfyUI first, or set BOB_COMFYUI_DIR in .env so start.bat starts it")
     sysinfo = stats.get("system", {})
     detail = f"{sysinfo.get('comfyui_version', '?')} at {config.COMFYUI_URL}, PyTorch {sysinfo.get('pytorch_version', '?')}"
     return Check("comfyui", "ComfyUI", "ok", detail)
@@ -252,14 +253,21 @@ def check_model_paths(stats: dict[str, Any] | None) -> Check:
                      "Fix BOB_EXTRA_MODEL_PATHS in .env")
     gone = modelpaths.missing_dirs()
     detail = f"{len(files)} paths file(s)" + (f"; {len(gone)} listed folder(s) don't exist" if gone else "")
+    if not stats:
+        return Check("model_paths", "Model folders", "ok", detail)
+    # Compare by file name: the portable build loads its own yaml without any
+    # command-line flag, so ComfyUI's argv can't tell us which folders it uses.
+    visible = {n.replace("\\", "/").rsplit("/", 1)[-1].lower() for names in comfy_models().values() for n in names}
+    on_disk = {name.rsplit("/", 1)[-1].lower() for files_ in modelpaths.scan().values() for name in files_}
+    hidden = on_disk - visible
+    if not hidden:
+        return Check("model_paths", "Model folders", "ok", detail + "; ComfyUI sees every model file in them")
     used = comfy_paths_config(stats)
-    if stats and not any(_same_file(f, str(y)) for f in used for y in files):
-        cmd = f'--extra-model-paths-config "{files[0]}"'
-        return Check("model_paths", "Model folders", "warn",
-                     detail + "; the running ComfyUI was started with "
-                     + (", ".join(used) if used else "no extra paths file"),
-                     f"Start ComfyUI with {cmd} so it loads these models")
-    return Check("model_paths", "Model folders", "ok", detail + "; ComfyUI uses the same file")
+    detail += (f"; {len(hidden)} model file(s) on disk are not visible to the running ComfyUI"
+               + (f" (started with {used[0]})" if used else ""))
+    fix = (f"Close the running ComfyUI, then run start.bat to start {config.COMFYUI_DIR}" if config.COMFYUI_DIR
+           else f'Start ComfyUI with --extra-model-paths-config "{files[0]}"')
+    return Check("model_paths", "Model folders", "warn", detail, fix)
 
 
 def check_models(stats: dict[str, Any] | None) -> Check:
@@ -281,7 +289,8 @@ def check_models(stats: dict[str, Any] | None) -> Check:
         detail += " · On disk but not loaded by ComfyUI: " + ", ".join(hidden)
     if missing:
         detail += " · Not installed: " + ", ".join(missing)
-    fix = "Start ComfyUI with your extra_model_paths.yaml to use the models on disk" if hidden else ""
+    fix = ("Start ComfyUI with your extra_model_paths.yaml to use the models on disk "
+           "(see Model folders)") if hidden else ""
     if not ready:
         return Check("models", "Models", "fail", detail, fix or "Download the MiniMax H3 models (see README)")
     if not models.resolve(models.H3, installed)["ready"]:
