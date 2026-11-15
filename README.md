@@ -61,10 +61,22 @@ Other features:
 - `app/main.py`: the HTTP API.
 - `static/`: the UI (vanilla JS, no build step).
 
-Settings are environment variables: `COMFYUI_URL`, `COMFY_BASE_URL` (proxy),
+Settings are environment variables, or lines in a local `.env` file (copy `.env.example`): `COMFYUI_URL`, `COMFY_BASE_URL` (proxy),
 `BOB_PORT`, `BOB_HOST`, and `BOB_AUTO_START_PROXY=0` to skip starting the proxy. Prompt writer defaults:
 `BOB_LLM_BACKEND` (`ollama` or `openai`), `OLLAMA_URL`, `BOB_OLLAMA_MODEL`, `BOB_OLLAMA_KEEP_ALIVE` (default `0`),
 `BOB_LLM_URL` (default `http://127.0.0.1:8080`, llama-server's port) and `BOB_LLM_MODEL`. The UI remembers its own choice.
+
+## Secrets
+
+Keys and tokens live only in the environment or in `.env`, which git ignores. The one secret the app uses today
+is `BOB_LLM_API_KEY`: it is sent only to the server in `BOB_LLM_URL` and is never shown in the UI or returned by the
+API. Run `.venv\Scripts\python scripts\check_secrets.py` before committing; it fails on anything that looks like a
+key, token, or secret file.
+
+## Releases
+
+Every change ships through a pull request: bump `__version__` in `app/__init__.py`, add an entry to
+[CHANGELOG.md](CHANGELOG.md), merge, then tag the merge commit `vX.Y.Z`.
 
 ## Credits
 

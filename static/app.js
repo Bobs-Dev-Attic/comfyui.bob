@@ -483,7 +483,8 @@ async function loadLlmModels() {
       sel.value = j.models.some(m => m.name === saved) ? saved : j.default;
       $("#llm-hint").textContent = backend === "ollama"
         ? "Models that see images also read your keyframes and reference pictures. Ollama unloads the model after each prompt to free VRAM for H3."
-        : "Any OpenAI-compatible server (llama.cpp llama-server, LM Studio, vLLM). For pictures, run a vision model (llama-server --mmproj).";
+        : "Any OpenAI-compatible server (llama.cpp llama-server, LM Studio, vLLM). For pictures, run a vision model (llama-server --mmproj)."
+          + (writer.backends.find(b => b.key === "openai")?.api_key ? " API key from .env is sent only to the server URL set there." : "");
     }
   } catch (e) { if (ticket !== writer.ticket) return; sel.innerHTML = ""; $("#llm-hint").textContent = e.message; }
   writerSummary();
@@ -743,6 +744,7 @@ function connectEvents() {
 async function pollStatus() {
   try {
     const s = await api("/api/status");
+    if (s.version) $("#app-version").textContent = `· v${s.version}`;
     $("#st-comfy").className = "chip " + (s.comfyui ? "ok" : "bad");
     $("#st-comfy").lastChild.textContent = s.comfyui ? `ComfyUI ${s.comfyui_version || ""}` : "ComfyUI offline";
     $("#st-proxy").className = "chip " + (s.proxy ? "ok" : "bad");

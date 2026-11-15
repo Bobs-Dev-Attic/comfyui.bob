@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, llm, models, workflows
+from . import __version__, config, llm, models, workflows
 from .comfy import ComfyService
 from .jobs import GenerateRequest, JobManager, media_path
 
@@ -38,7 +38,7 @@ async def lifespan(_: FastAPI):
     await comfy.stop()
 
 
-app = FastAPI(title="ComfyUI.Bob Studio", lifespan=lifespan)
+app = FastAPI(title="ComfyUI.Bob Studio", version=__version__, lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -59,6 +59,7 @@ async def status():
         gpu = {"name": name.split(" ", 1)[1] if name.startswith("cuda:") else name,
                "vram_total": d.get("vram_total"), "vram_free": d.get("vram_free")}
     return {
+        "version": __version__,
         "comfyui": bool(stats),
         "comfyui_version": stats and stats["system"].get("comfyui_version"),
         "proxy": proxy_ok,
@@ -128,8 +129,11 @@ async def delete(item_id: str, files: bool = False):
 
 @app.get("/api/llm/backends")
 async def llm_backends():
+    # Report only whether a key is configured, never the key itself.
+    keyed = {"openai": bool(config.LLM_API_KEY)}
     return {"default": config.LLM_BACKEND,
-            "backends": [{"key": k, "label": v["label"], "url": v["url"]} for k, v in llm.BACKENDS.items()]}
+            "backends": [{"key": k, "label": v["label"], "url": v["url"], "api_key": keyed.get(k, False)}
+                         for k, v in llm.BACKENDS.items()]}
 
 
 @app.get("/api/llm/models")
