@@ -161,6 +161,39 @@ class Track(BaseModel):
     height: int = Field(56, ge=28, le=200)
 
 
+class Light(BaseModel):
+    """A light painted onto the picture (ideas from AInVFX Paint a Plate, Apache-2.0).
+
+    relight: multiplies the picture by a soft light ratio, so its texture stays (light falling on things);
+    glow: adds light on top (a lamp, a haze); shade: darkens (a shadow, a flag). Position is a fraction
+    of the picture; with x2/y2 the light travels there over the clip."""
+    mode: Literal["relight", "glow", "shade"] = "relight"
+    x: float = Field(0.5, ge=-0.5, le=1.5, description="0 = left edge, 1 = right edge")
+    y: float = Field(0.35, ge=-0.5, le=1.5, description="0 = top, 1 = bottom")
+    x2: float | None = Field(None, ge=-0.5, le=1.5, description="where it ends up at the clip's end (None = still)")
+    y2: float | None = Field(None, ge=-0.5, le=1.5)
+    radius: float = Field(0.35, ge=0.02, le=3, description="soft radius, × the picture's shorter side")
+    intensity: float = Field(1.0, ge=0, le=4)
+    color: str = Field("#ffd890", pattern=r"^#[0-9a-fA-F]{6}$")
+    flicker: float = Field(0, ge=0, le=1, description="0 = steady, 1 = strong flicker (fire, a failing bulb)")
+
+
+class VideoFx(BaseModel):
+    """Picture effects of one clip, applied before it's placed on the canvas."""
+    enabled: bool = True
+    exposure: float = Field(0, ge=-3, le=3, description="stops")
+    contrast: float = Field(1, ge=0.2, le=3)
+    saturation: float = Field(1, ge=0, le=3)
+    temperature: float = Field(0, ge=-100, le=100, description="− cooler (blue), + warmer (orange)")
+    tint: float = Field(0, ge=-100, le=100, description="− green, + magenta")
+    look: Literal["none", "bw", "sepia"] = "none"
+    vignette: float = Field(0, ge=0, le=1)
+    blur: float = Field(0, ge=0, le=20, description="pixels at 1080p")
+    sharpen: float = Field(0, ge=0, le=2)
+    grain: float = Field(0, ge=0, le=1)
+    lights: list[Light] = Field(default_factory=list, max_length=4)
+
+
 class Clip(BaseModel):
     """A piece of a media file placed on a track. Times are seconds."""
     id: str = Field(default_factory=new_id)
@@ -181,6 +214,7 @@ class Clip(BaseModel):
     pan: float = Field(0, ge=-1, le=1, description="-1 = left, 0 = centre, 1 = right")
     fade_in: float = Field(0, ge=0, description="seconds of sound fade-in at the clip's start")
     fade_out: float = Field(0, ge=0, description="seconds of sound fade-out at the clip's end")
+    fx: VideoFx | None = Field(None, description="picture effects: grading, lights, vignette, blur, grain")
 
     @property
     def end(self) -> float:

@@ -118,6 +118,20 @@ Saved as you work (or with Ctrl+S when auto-save is off). Times are seconds on t
     "volume": 1, "color": "",       // volume 0–2 (× the source; 0.5 ≈ −6 dB)
     "pan": 0, "muted": false,       // the clip's own sound: pan −1…1, mute
     "fade_in": 0, "fade_out": 0.5,  // seconds of sound fade at the start / end (transitions add their crossfade)
+    "fx": {                         // Video Fx (null = none); pictures on video tracks only
+      "enabled": true,
+      "exposure": 0, "contrast": 1, "saturation": 1,   // stops, ×, ×
+      "temperature": 0, "tint": 0,  // −100…100: cooler/warmer, green/magenta
+      "look": "none",               // none | bw | sepia
+      "vignette": 0, "blur": 0, "sharpen": 0, "grain": 0,
+      "lights": [{                  // up to 4
+        "mode": "relight",          // relight (brightens what's there) | glow (adds light) | shade (darkens)
+        "x": 0.2, "y": 0.3,         // position as a fraction of the picture
+        "x2": 0.8, "y2": 0.3,       // optional: where it travels to by the clip's end
+        "radius": 0.35,             // × the picture's shorter side
+        "intensity": 1, "color": "#ffd890", "flicker": 0
+      }]
+    },
     "job": "b20789d2c88a",         // the studio result it came from
     "link": "9c1e…",               // clips with the same link move, trim, split and delete together
     "audio_off": true              // a video whose sound is on its linked audio clip instead
@@ -141,7 +155,9 @@ Saved as you work (or with Ctrl+S when auto-save is off). Times are seconds on t
     "format": "mp4-h264",          // mp4-h264 | mp4-h264-nvenc | mp4-h265 | webm-vp9 | mov-prores | wav | mp3
     "size": "s1080",               // original | s2160…s480 (short side) | 1920x1080 | 1080x1920 | 1080x1080 | custom
     "fps": "", "quality": "high", "speed": "balanced", "range": "all",
-    "audio": true, "audio_bitrate": 192, "sample_rate": 48000, "channels": 2, "loudness": "mixer"
+    "audio": true, "audio_bitrate": 192, "sample_rate": 48000, "channels": 2, "loudness": "mixer",
+    "timestamp": false,            // add "YYYY-MM-DD HH.MM.SS" to the file name
+    "burn_timecode": false          // draw the timecode on the picture
   }
 }
 ```
@@ -163,6 +179,10 @@ formats this ffmpeg can write and the places a render can be saved:
 - **Tracks:** the bottom video track becomes the storyline, and the other tracks become lanes.
 - **Transitions:** on the storyline, a transition becomes a cut in the middle of the overlap plus a Cross Dissolve
   spanning it. On other tracks, overlaps become cuts.
+- **Video Fx:** a clip's effects run on its own picture before it's placed: grade (ffmpeg `eq`, `colorchannelmixer`,
+  `colortemperature`), lights as soft masks drawn with `geq` at quarter size and blended in RGB
+  (relight `A·(1+I·B)`, glow `A+I·B`, shade `A·(1−d·B)`, the ratio idea from AInVFX Paint a Plate, Apache-2.0),
+  then `vignette`, `gblur`, `unsharp` and `noise`. FCPXML doesn't carry them.
 - **Linked sound:** a video whose sound moved to a linked clip is exported at −96 dB, so the sound isn't doubled.
   Muted clips are too. Pan, fades and the master aren't exported; set them in Resolve's mixer.
 
@@ -198,6 +218,7 @@ one.
 
 | From | What happens |
 |---|---|
+| `bob.project/2` from 0.11–0.12 | No change needed: `clips[].fx` is `null` (no effects). |
 | `bob.project/2` from 0.10 | No change needed: mixing fields default to neutral (volume 1, pan 0, no fades, no solo), `master` has no loudness target and the limiter on, `link_audio_track` is `"new"`, and auto-save is on. |
 | `bob.project/2` from 0.8–0.9 | No change needed: `transitions` (empty) and `link_audio: true` are added on load. |
 | `bob.project/2` from 0.7.0 | No change needed: `timeline` is added with one video and one audio track the first time the project loads. |

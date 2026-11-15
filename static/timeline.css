@@ -210,3 +210,33 @@ kbd { font: 11px ui-monospace, Consolas, monospace; padding: 1px 5px; border-rad
 .wm-form label.check, .tl-mixer label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; cursor: pointer; }
 .wm-form input[type="range"], .wm-form input[type="checkbox"] { padding: 0; border: 0; background: none; box-shadow: none; }
 .wm-form input[type="checkbox"] { width: auto; }
+
+/* Video Fx: preview overlays and light handles on the program monitor */
+.prog-fx { position: absolute; pointer-events: none; overflow: hidden; }
+.prog-fx > i { position: absolute; inset: 0; }
+.prog-fx-handles { position: absolute; z-index: 6; pointer-events: none; outline: 1px dashed rgba(255,255,255,.25); }
+.prog-fx-handles .fxh { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; pointer-events: auto; cursor: grab;
+  background: var(--c, #ffd890); border: 2px solid #fff; box-shadow: 0 0 0 1px #000, 0 0 12px var(--c, #ffd890); display: grid; place-items: center; touch-action: none; }
+.prog-fx-handles .fxh span { font: 700 10px/1 system-ui; color: #000; mix-blend-mode: difference; filter: invert(1); }
+.prog-fx-handles .fxh.end { width: 16px; height: 16px; margin: -8px 0 0 -8px; background: transparent; border: 2px dashed #fff; box-shadow: 0 0 0 1px #000; }
+.prog-fx-handles .fxh-now { position: absolute; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; background: #fff; box-shadow: 0 0 6px #fff; }
+.prog-fx-handles .fxh-path { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.prog-fx-handles .fxh-path line { stroke: #fff; stroke-width: 1.5; stroke-dasharray: 5 4; opacity: .8; }
+.prog-fx-handles .fxh-note { position: absolute; left: 8px; top: 8px; font-size: 12px; color: #fff; background: rgba(0,0,0,.6); padding: 3px 8px; border-radius: 6px; }
+.tl-clip.has-fx .tl-cname::before { content: "✨ "; }
+
+/* Video Fx window */
+.fxd fieldset { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px 12px; display: grid; gap: 10px; margin: 0; min-width: 0; }
+.fxd legend { font-size: 12px; font-weight: 700; padding: 0 6px; color: var(--muted); }
+.fx-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.fxs input[type="range"] { width: 100%; }
+.fx-lights { display: grid; gap: 8px; }
+.fx-light { display: grid; grid-template-columns: auto auto auto 1fr 1fr 1fr auto auto; gap: 6px 10px; align-items: center; font-size: 12px;
+  padding: 6px 8px; border-radius: 8px; background: var(--panel-2); }
+.fx-light label { display: flex; flex-direction: column; gap: 2px; color: var(--muted); }
+.fx-light label.check { flex-direction: row; }
+.fx-light select { width: auto; padding: 4px 6px; }
+.fx-light input[type="color"] { width: 30px; height: 26px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: none; }
+.fx-ln { width: 20px; height: 20px; border-radius: 50%; background: var(--c); border: 2px solid #fff; display: grid; place-items: center; font: 700 10px/1 system-ui; color: #000; }
+@media (max-width: 620px) { .fx-light { grid-template-columns: auto auto auto 1fr auto; } .fx-light label:not(.check) { grid-column: span 2; } }
+.rd-checks { display: flex; flex-wrap: wrap; gap: 6px 18px; }
