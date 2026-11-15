@@ -181,6 +181,7 @@ const Enhance = (() => {
   async function run(it, opts) {
     try {
       const { items } = await api("/api/enhance", { method: "POST", body: JSON.stringify({ item: it.id, options: opts }) });
+      if (!items.length) return Media.toast("That enhance is already being set up.");
       for (const x of items) { state.items.set(x.id, x); Activity.onEvent({ type: "item", item: x }); }
       renderGallery(); renderQueue();
       Activity.show(items[0].id);
@@ -217,17 +218,8 @@ const Enhance = (() => {
     document.getElementById("btn-enhance-after").onclick = () => dialog(null);
     renderAfter();
   }
-  // A generation that asked to be enhanced afterwards (its params carry the chain) has finished.
-  const doneKey = KEY + ".done";
-  async function onItem(it) {
-    if (it.status !== "done" || !it.params?.enhance_after || it.engine === "enhance") return;
-    let done = [];
-    try { done = JSON.parse(localStorage.getItem(doneKey) || "[]"); } catch {}
-    if (done.includes(it.id)) return;
-    done = [...done, it.id].slice(-200);
-    try { localStorage.setItem(doneKey, JSON.stringify(done)); } catch {}
-    const o = afterOpts(it);
-    if (o) await run(it, o);
-  }
+  // A generation that asked to be enhanced afterwards is enhanced by the server when it's done
+  // (app/jobs.py _enhance_after): once, whether or not a page is open. Nothing to do here.
+  function onItem() {}
   return { dialog, after, initSettings, onItem, estimate, expected, afterTime, fmtTime, renderAfter };
 })();

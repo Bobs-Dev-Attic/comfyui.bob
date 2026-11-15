@@ -5,6 +5,42 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.22.0] - 2026-11-15
+
+### Added
+- **🔄 Angles:** re-shoot a picture from other camera angles with **Qwen Image Edit 2511** and fal's multiple-angles
+  LoRA (4 steps with the Lightning LoRA, about 10 s per angle once loaded).
+  - **Where:** a picture's **🔄 Angles…** in the viewer, the results menu, or the media library.
+  - **Choosing angles:** a grid of 8 directions (front, ¾ views, profiles, back) × 4 heights (low, eye level,
+    elevated, high). Presets: **24 head angles** (8 × low/eye/elevated, close-up), 8 around at eye level, all 32.
+    The distance is close-up, medium or wide.
+  - **Prompt:** an "Also ask for" line, by default a plain pure-white studio background, even light, and the same
+    face, hair and clothing. Every angle uses the same seed.
+  - **Enhance:** each angle can be upscaled with SeedVR2 to 1080p, 1440p or 2160p as it finishes, using the
+    Enhance chain.
+  - **Projects:** results go in the current project, or in a new one that keeps the reference in its library
+    (tagged "reference") and a note of what was made.
+  - The window estimates the total time.
+  - `POST /api/angles {ref, poses, prompt, project, enhance_after}` and `GET /api/angles/options`. Generation
+    requests have a new `pose` field, and there's a new engine, `angles`.
+- `scripts/convert_lightx2v_fp8.py`: makes lightx2v-style fp8 checkpoints loadable.
+  - **Why:** these files keep a per-channel `weight_scale`, which ComfyUI ignores, so they render noise. That
+    includes `qwen_image_edit_2511_fp8_e4m3fn_scaled`.
+  - **What it does:** folds the scales into plain fp8 weights.
+  - **Use:** the Angles engine looks for the result as `qwen_image_edit_2511_fp8_e4m3fn_plain.safetensors`, or
+    the official bf16 or fp8mixed file.
+
+### Changed
+- "Reuse settings" is hidden for Enhance and Angles results. They aren't settings the form can hold.
+
+### Fixed
+- **Settings › After generating now runs on the server, once per result.**
+  - **Before:** each open Bob Studio page started its own enhance when a result finished, so two open pages
+    meant two identical enhances. It also needed a page to be open.
+  - **Duplicate guard:** a repeat request for the same enhance of the same result returns the one already
+    made. This covers a request within two minutes, or one still being set up, which also catches pages
+    still running the old code.
+
 ## [0.21.0] - 2026-11-15
 
 ### Added

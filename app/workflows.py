@@ -375,6 +375,61 @@ def build_klein(
                  info={"width": width, "height": height, "steps": steps, "enhanced": use_enhance})
 
 
+# ------------------------------------------------------------------- Angles (Qwen Image Edit 2511)
+
+# fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA: "<sks> <azimuth> <elevation> <distance>".
+ANGLE_AZIMUTHS = ["front view", "front-right quarter view", "right side view", "back-right quarter view",
+                  "back view", "back-left quarter view", "left side view", "front-left quarter view"]
+ANGLE_ELEVATIONS = ["low-angle shot", "eye-level shot", "elevated shot", "high-angle shot"]
+ANGLE_DISTANCES = ["close-up", "medium shot", "wide shot"]
+
+
+def angle_prompt(pose: str, extra: str = "") -> str:
+    return f"<sks> {pose.strip()}" + (f". {extra.strip()}" if extra.strip() else "")
+
+
+def build_angles(
+    files: dict[str, str | None],
+    *,
+    pose: str,
+    prompt: str = "",
+    seed: int,
+    steps: int | None = None,
+    megapixels: float = 1.0,
+    strength: float = 0.9,
+    prefix: str = "bob/angles",
+    loras: list[tuple[str, float]] | None = None,
+) -> Built:
+    """One picture of the reference from another camera angle. image_inputs: ref_0."""
+    g = Graph()
+    o = Graph.out
+    model = g.add("UNETLoader", unet_name=files["unet"], weight_dtype="default")
+    clip = g.add("CLIPLoader", clip_name=files["clip"], type="qwen_image", device="default")
+    vae = g.add("VAELoader", vae_name=files["vae"])
+    fast = bool(files.get("lightning_lora"))
+    if fast:
+        model = g.add("LoraLoaderModelOnly", model=o(model), lora_name=files["lightning_lora"], strength_model=1.0)
+    model = g.add("LoraLoaderModelOnly", model=o(model), lora_name=files["angles_lora"], strength_model=float(strength))
+    model = chain_loras(g, model, loras)
+    model = g.add("ModelSamplingAuraFlow", model=o(model), shift=3.1)
+    model = g.add("CFGNorm", model=o(model), strength=1.0)
+    load = g.add("LoadImage", image="")  # filled with an SDK asset by the caller
+    ref = g.add("ImageScaleToTotalPixels", image=o(load), upscale_method="lanczos", megapixels=float(megapixels), resolution_steps=16)
+    text = angle_prompt(pose, prompt)
+    pos = g.add("TextEncodeQwenImageEditPlus", clip=o(clip), prompt=text, vae=o(vae), image1=o(ref))
+    neg = g.add("TextEncodeQwenImageEditPlus", clip=o(clip), prompt="", vae=o(vae), image1=o(ref))
+    pos = g.add("FluxKontextMultiReferenceLatentMethod", conditioning=o(pos), reference_latents_method="index_timestep_zero")
+    neg = g.add("FluxKontextMultiReferenceLatentMethod", conditioning=o(neg), reference_latents_method="index_timestep_zero")
+    latent = g.add("VAEEncode", pixels=o(ref), vae=o(vae))
+    n_steps = int(steps or (4 if fast else 20))
+    sampled = g.add("KSampler", model=o(model), positive=o(pos), negative=o(neg), latent_image=o(latent), seed=int(seed),
+                    steps=n_steps, cfg=1.0 if fast else 4.0, sampler_name="euler", scheduler="simple", denoise=1.0)
+    decoded = g.add("VAEDecode", samples=o(sampled), vae=o(vae))
+    save = g.add("SaveImage", images=o(decoded), filename_prefix=prefix)
+    return Built(graph=g.nodes, outputs=[save], image_inputs={"ref_0": load},
+                 info={"pose": pose, "steps": n_steps, "final_prompt": text, "megapixels": megapixels})
+
+
 # ------------------------------------------------------------------- AI reshoot
 
 def build_reshoot(

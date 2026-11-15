@@ -23,7 +23,7 @@ from .comfy import ComfyService
 log = logging.getLogger("bob.jobs")
 
 Kind = Literal["video", "image", "audio"]
-Engine = Literal["h3", "h3ref", "klein", "music3", "reshoot", "enhance"]
+Engine = Literal["h3", "h3ref", "klein", "music3", "reshoot", "enhance", "angles"]
 
 
 class LoraUse(BaseModel):
@@ -65,6 +65,7 @@ class GenerateRequest(BaseModel):
     enhance_opts: EnhanceOpts | None = None  # engine "enhance": the chain
     enhance_of: str | None = Field(None, max_length=64)  # enhance: the studio item it came from
     enhance_after: dict[str, Any] | None = None  # set by the page: enhance this result when it's done (Settings)
+    pose: str | None = Field(None, max_length=200)  # angles: "<azimuth> <elevation> <distance>" (workflows.ANGLE_*)
     clean_audio: bool = True  # clean them and keep the best 6-10 s of speech (H3RefAudioPrep, when installed)
     max_fidelity: bool = False  # reference pictures at 2048px instead of the output's size
     enhance: bool = False  # Klein prompt upsampler
@@ -86,6 +87,7 @@ class JobManager:
         self._handles: dict[str, Any] = {}  # item id -> AsyncJob
         self._tasks: dict[str, asyncio.Task] = {}
         self._subscribers: set[asyncio.Queue] = set()
+        self._enhancing: set[tuple[str, str]] = set()  # enhance requests being set up (see enhance_item)
         self._load()
 
     # ------------------------------------------------------------------ persistence
@@ -210,6 +212,75 @@ class JobManager:
         self._publish({"type": "deleted", "id": item_id})
         return True
 
+    # ------------------------------------------------------------------ enhance
+    async def enhance_ref(self, ref: str, opts: EnhanceOpts, *, seed: int = -1, project: str | None = None,
+                          params: dict[str, Any] | None = None, of: str | None = None) -> list[dict[str, Any]]:
+        """Enhance a picture or video (FaceRefine -> DLSS 5 -> SeedVR2 or RelayVSR). params: the
+        generation it came from (FaceRefine re-uses its prompt, references, sounds and LoRAs)."""
+        params = params or {}
+        kind = media.kind_of(ref)
+        if kind not in ("image", "video"):
+            raise ValueError("Enhance works on pictures and videos")
+        if opts.facerefine and params.get("engine") not in ("h3", "h3ref"):
+            raise ValueError("FaceRefine re-samples faces with H3, so it needs a video made with H3 or H3 Reference here")
+        return await self.generate(GenerateRequest(
+            kind=kind, engine="enhance", prompt=params.get("prompt") or "", seed=seed,
+            references=params.get("references") or [], ref_audios=params.get("ref_audios") or [], clean_audio=params.get("clean_audio", True),
+            loras=params.get("loras") or [], source=ref, enhance_opts=opts, enhance_of=of, project=project,
+        ))
+
+    async def enhance_item(self, it: dict[str, Any], opts: EnhanceOpts, *, seed: int = -1) -> list[dict[str, Any]]:
+        # The same enhance of the same result asked for again within two minutes (a second open
+        # page, an old page that still auto-enhances, a double click) gets the one already made.
+        want = opts.model_dump()
+
+        def same(had: dict[str, Any] | None) -> bool:  # an empty SeedVR2 model means "the default", filled in later
+            if not had:
+                return False
+            a, b = dict(had), dict(want)
+            if not a.get("seedvr2_model") or not b.get("seedvr2_model"):
+                a.pop("seedvr2_model", None)
+                b.pop("seedvr2_model", None)
+            return a == b
+
+        for other in self.items.values():
+            p = other.get("params") or {}
+            if (other.get("engine") == "enhance" and p.get("enhance_of") == it["id"] and same(p.get("enhance_opts"))
+                    and other.get("status") not in ("failed", "cancelled", "interrupted") and time.time() - other["created"] < 120):
+                return [other]
+        key = (it["id"], json.dumps({k: v for k, v in want.items() if k != "seedvr2_model"}, sort_keys=True))
+        if key in self._enhancing:  # the same request is being set up right now
+            return []
+        self._enhancing.add(key)
+        try:
+            f = next((x for x in it["files"] if (x.get("content_type") or "").split("/")[0] in ("video", "image")), it["files"][0])
+            return await self.enhance_ref(f["path"], opts, seed=seed, project=it.get("project"), params=it.get("params") or {}, of=it["id"])
+        finally:
+            self._enhancing.discard(key)
+
+    async def _enhance_after(self, item: dict[str, Any]) -> None:
+        """Settings > After generating (or Angles' "Enhance each"): the result asked to be enhanced
+        when done. Runs here, once, so it doesn't depend on a page being open (or on how many are)."""
+        params = item.get("params") or {}
+        try:
+            opts = EnhanceOpts.model_validate(params["enhance_after"])
+        except (ValueError, TypeError) as exc:
+            self.log(item, f"Not enhancing afterwards: {exc}", "warn")
+            return
+        if item["kind"] != "video":
+            opts.facerefine = False
+            if opts.upscaler == "relayvsr":
+                opts.upscaler = "none"
+        if opts.facerefine and params.get("engine") not in ("h3", "h3ref"):
+            opts.facerefine = False
+        if not (opts.facerefine or opts.dlss or opts.upscaler != "none"):
+            return
+        try:
+            made = await self.enhance_item(item, opts)
+            self.log(item, f"Enhancing afterwards: {', '.join(x['id'] for x in made)}")
+        except Exception as exc:  # noqa: BLE001 - never let this break the finished result
+            self.log(item, f"Couldn't enhance afterwards: {_short_error(exc)}", "warn")
+
     def copy_items(self, src_project: str, dst_project: str) -> int:
         """Give a copied project its own copy of the source's finished results (same files)."""
         n = 0
@@ -314,6 +385,17 @@ class JobManager:
                 raise ValueError("A reshoot needs at least two guide frames, each with a mask")
             for ref in (*req.guides, *req.guide_masks):
                 media_path(ref)
+        if req.engine == "angles":
+            if req.kind != "image":
+                raise ValueError("Angles makes pictures")
+            if len(req.references) != 1:
+                raise ValueError("Angles needs exactly one reference picture")
+            if not (req.pose or "").strip():
+                raise ValueError("Pick a camera angle")
+            if media.kind_of(req.references[0]) != "image":
+                raise ValueError("The reference must be a picture")
+            media_path(req.references[0])
+            return
         if req.engine == "enhance":
             if not req.source or not req.enhance_opts:
                 raise ValueError("Nothing to enhance")
@@ -378,6 +460,9 @@ class JobManager:
             if kind == "video" and src.get("duration") and src.get("fps"):
                 built.info["frames"] = max(1, round(src["duration"] * src["fps"]))
             return built
+        if req.engine == "angles":
+            return workflows.build_angles(files, pose=req.pose or "", prompt=req.prompt, seed=seed, steps=req.steps,
+                                          prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras])
         if req.engine == "reshoot":
             with Image.open(media_path(req.guides[0])) as im:
                 w, h = im.size
@@ -504,6 +589,8 @@ class JobManager:
             saved = await self._download(item, done, built.outputs)
             self.log(item, f"Done in {time.time() - t_start:.1f} s: " + ", ".join(f"{f['name']} ({f['size'] / 2**20:.1f} MB)" for f in saved))
             self._update(item, status="done", files=saved, progress=1.0, finished=time.time())
+            if req.enhance_after and req.engine != "enhance" and saved:
+                asyncio.create_task(self._enhance_after(item))
             if item.get("project"):
                 from . import projects  # the project's thumbnail and "modified" follow its latest result
 
