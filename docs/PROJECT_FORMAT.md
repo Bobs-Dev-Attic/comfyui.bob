@@ -42,6 +42,8 @@ versions can add fields without breaking older files.
 | `batch` | 1–4 | Takes per run |
 | `turbo`, `enhance`, `fidelity` | boolean | Turbo LoRA, FLUX prompt upsampler, max reference detail |
 | `refs` | `[{ref, url}]` | H3 Reference pictures, in `<Picture N>` order |
+| `audios` | `[{ref, url}]` | H3 Reference sounds (voices to clone; a sound file or a video's soundtrack), in `<Audio N>` order, up to 3 |
+| `clean_audio` | bool | Clean the sounds and keep their best 6–10 s of speech (the `H3RefAudioPrep` node, when installed) |
 | `frames` | `{first_frame, last_frame}` | Keyframes, each `{ref, url}` or `null` |
 
 ## `config`: preferences

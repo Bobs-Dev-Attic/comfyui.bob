@@ -95,6 +95,18 @@
               <input type="file" id="ref-input" accept="image/png,image/jpeg,image/webp,image/bmp" multiple hidden>
             </div>
 
+    <div class="field" id="f-arefs" hidden>
+              <label>Reference sound <span class="opt">voices to clone · up to 3</span></label>
+              <p class="hint aref-switch">Voice cloning uses the <b>H3 Reference</b> model.
+                <button type="button" class="link" id="btn-use-h3ref">Switch to H3 Reference</button></p>
+              <div class="arefs" id="arefs"></div>
+              <label class="check aref-opt"><input type="checkbox" id="clean-audio" checked> Clean it up and keep the best 6–10 s of speech</label>
+              <p class="hint aref-opt">Upload a clear recording of the voice: a sound file, or a video whose soundtrack has it. In the prompt, say who
+                speaks with it, e.g. <code>The woman from &lt;Picture 1&gt; says “See you tomorrow” in the voice of &lt;Audio 1&gt;</code>.
+                Only clone voices you have permission to use.</p>
+              <input type="file" id="aref-input" accept="audio/*,video/mp4,video/webm,video/quicktime" multiple hidden>
+            </div>
+
             <div class="noinputs" id="no-inputs" hidden>This model doesn't take pictures. Go on to the prompt.</div>
             <div class="field" id="f-media">
               <div class="label-row"><label>Media</label><span class="opt">double-click or drag a picture onto a slot</span></div>

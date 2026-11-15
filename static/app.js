@@ -81,6 +81,7 @@ const state = {
   engine: { video: "h3", image: "h3", audio: "h3" },
   frames: { first_frame: null, last_frame: null },
   refs: [],  // [{ref, url}] for H3 Reference
+  arefs: [],  // [{ref, url, name}] reference sounds (voices to clone) for H3 Reference
   items: new Map(),
   selected: null,
   filter: "all",
@@ -138,6 +139,8 @@ function renderForm() {
   const isH3 = eng === "h3" || isRef, isKlein = eng === "klein", isMusic = eng === "music3";
   $("#f-frames").hidden = !(kind === "video") || isRef;
   $("#f-refs").hidden = !isRef;
+  $("#f-arefs").hidden = !(kind === "video" && isH3);
+  $("#f-arefs").classList.toggle("needs-ref", !isRef);
   $("#f-fidelity").hidden = !isRef;
   $("#f-lyrics").hidden = !isMusic;
   $("#f-aspect").hidden = kind === "audio";
@@ -258,6 +261,8 @@ function collectRequest() {
     first_frame: kind === "video" && eng === "h3" ? state.frames.first_frame?.ref ?? null : null,
     last_frame: kind === "video" && eng === "h3" ? state.frames.last_frame?.ref ?? null : null,
     references: eng === "h3ref" ? state.refs.map(r => r.ref) : [],
+    ref_audios: eng === "h3ref" && kind === "video" ? state.arefs.map(a => a.ref) : [],
+    clean_audio: $("#clean-audio").checked,
     max_fidelity: eng === "h3ref" && $("#fidelity").checked,
     project: state.project?.id ?? null,
   };
@@ -274,7 +279,11 @@ function applyParams(p) {
   $("#turbo").checked = p.turbo !== false;
   $("#enhance").checked = !!p.enhance;
   $("#fidelity").checked = !!p.max_fidelity;
-  if (p.engine === "h3ref") { state.refs = (p.references || []).map(r => ({ ref: r, url: mediaUrl(r) })); renderRefs(); }
+  if (p.engine === "h3ref") {
+    state.refs = (p.references || []).map(r => ({ ref: r, url: mediaUrl(r) })); renderRefs();
+    state.arefs = (p.ref_audios || []).map(r => ({ ref: r, url: mediaUrl(r), name: r.split("/").pop() })); renderArefs();
+    $("#clean-audio").checked = p.clean_audio !== false;
+  }
   $("#steps").value = p.steps ?? "";
   for (const role of ["first_frame", "last_frame"]) {
     if (p[role]) setFrame(role, p[role], mediaUrl(p[role])); else clearFrame(role);
@@ -405,6 +414,72 @@ function initRefs() {
     if (ref) return addRef(ref, e.dataTransfer.getData("text/x-bob-url") || mediaUrl(ref));
     uploadRefs([...e.dataTransfer.files]);
   });
+}
+
+/* ------------------------------------------------------------------ reference sounds (voice cloning) */
+const MAX_AREFS = 3;
+
+function renderArefs() {
+  const box = $("#arefs");
+  if (!box) return;
+  scheduleSave();
+  box.innerHTML = state.arefs.map((a, i) => `
+    <div class="aref">
+      <button type="button" class="tag" data-i="${i}" title="Insert into prompt">Audio ${i + 1}</button>
+      <audio controls preload="metadata" src="${esc(a.url)}"></audio>
+      <span class="aref-name" title="${esc(a.ref)}">${esc(a.name || a.ref.split("/").pop())}</span>
+      <button type="button" class="x" data-i="${i}" title="Remove">×</button>
+    </div>`).join("")
+    + (state.arefs.length < MAX_AREFS ? `<button type="button" class="aref-add" id="aref-add">＋ Add a voice recording</button>` : "");
+  $$(".aref .x", box).forEach(b => b.onclick = () => { state.arefs.splice(+b.dataset.i, 1); renderArefs(); });
+  $$(".aref .tag", box).forEach(b => b.onclick = () => insertAtCursor($("#prompt"), `<Audio ${+b.dataset.i + 1}>`));
+  const add = $("#aref-add");
+  if (add) add.onclick = () => $("#aref-input").click();
+}
+
+function addAref(ref, url, name) {
+  if (state.arefs.length >= MAX_AREFS) { $("#form-error").textContent = `Up to ${MAX_AREFS} reference sounds.`; return; }
+  if (state.arefs.some(a => a.ref === ref)) return;
+  state.arefs.push({ ref, url: url || mediaUrl(ref), name: name || ref.split("/").pop() });
+  renderArefs();
+}
+
+async function uploadArefs(files) {
+  for (const f of files) {
+    if (state.arefs.length >= MAX_AREFS) break;
+    if (!/^(audio|video)\//.test(f.type) && !/\.(mp3|wav|flac|ogg|m4a|aac|opus|mp4|webm|mov|mkv)$/i.test(f.name)) {
+      $("#form-error").textContent = `${f.name} isn't a sound or video file.`; continue;
+    }
+    const fd = new FormData(); fd.append("file", f);
+    try {
+      const res = await fetch("/api/upload", { method: "POST", body: fd });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.detail || res.statusText);
+      addAref(j.ref, j.url, f.name);
+    } catch (e) { $("#form-error").textContent = e.message; }
+  }
+}
+
+function initArefs() {
+  const input = $("#aref-input");
+  input.addEventListener("change", () => { uploadArefs([...input.files]); input.value = ""; });
+  $("#btn-use-h3ref").onclick = () => { state.engine.video = "h3ref"; renderForm(); scheduleSave(); };
+  $("#clean-audio").addEventListener("change", () => scheduleSave());
+  const field = $("#f-arefs");
+  field.addEventListener("dragover", e => { e.preventDefault(); field.classList.add("over"); });
+  field.addEventListener("dragleave", e => { if (!field.contains(e.relatedTarget)) field.classList.remove("over"); });
+  field.addEventListener("drop", e => {
+    e.preventDefault(); field.classList.remove("over");
+    if (field.classList.contains("needs-ref")) { $("#form-error").textContent = "Switch to H3 Reference to use reference sounds."; return; }
+    const ref = e.dataTransfer.getData("text/x-bob-ref");
+    if (ref) {
+      const kind = e.dataTransfer.getData("text/x-bob-kind") || (/\.(mp3|wav|flac|ogg|m4a|aac|opus)$/i.test(ref) ? "audio" : /\.(mp4|webm|mov|mkv)$/i.test(ref) ? "video" : "");
+      if (kind !== "audio" && kind !== "video") { $("#form-error").textContent = "A reference sound is a sound file or a video with sound."; return; }
+      return addAref(ref, e.dataTransfer.getData("text/x-bob-url") || mediaUrl(ref), e.dataTransfer.getData("text/x-bob-name") || "");
+    }
+    uploadArefs([...e.dataTransfer.files]);
+  });
+  renderArefs();
 }
 
 /* ------------------------------------------------------------------ Prompt Writer link */
@@ -872,6 +947,7 @@ function init() {
   $("#prompt").addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $("#form").requestSubmit(); } });
   initDrops();
   initRefs();
+  initArefs();
   initWriter();
   initSysCheck();
   TL.mount($("#timeline"));

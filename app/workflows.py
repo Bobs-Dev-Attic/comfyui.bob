@@ -183,11 +183,21 @@ def build_h3(
 H3_MAX_REFS = 9
 
 
+def _listed(tags: list[str]) -> str:
+    return tags[0] if len(tags) == 1 else ", ".join(tags[:-1]) + " and " + tags[-1]
+
+
 def h3_reference_lead(count: int) -> str:
     """Default sentence naming the reference pictures, used when the prompt has no tags."""
     tags = [f"<Picture {i}>" for i in range(1, count + 1)]
-    listed = tags[0] if count == 1 else ", ".join(tags[:-1]) + " and " + tags[-1]
-    return f"Use {listed} as reference{'s' if count > 1 else ''} for the characters, objects and style."
+    return f"Use {_listed(tags)} as reference{'s' if count > 1 else ''} for the characters, objects and style."
+
+
+def h3_audio_lead(count: int) -> str:
+    """Default sentence naming the reference sounds, used when the prompt has no <Audio> tags."""
+    tags = [f"<Audio {i}>" for i in range(1, count + 1)]
+    return (f"Use {_listed(tags)} as the voice reference{'s' if count > 1 else ''}: whoever speaks keeps "
+            f"{'that voice' if count == 1 else 'the matching voice'}, its timbre, accent and delivery.")
 
 
 def build_h3_ref(
@@ -202,16 +212,21 @@ def build_h3_ref(
     turbo: bool,
     steps: int | None = None,
     max_fidelity: bool = False,
+    audios: int = 0,
+    clean_audio: bool = True,
     prefix: str = "bob/h3ref",
 ) -> Built:
-    """Reference-to-video (template ``video_minimax_h3_r2v``): 1-9 reference pictures.
+    """Reference-to-video (template ``video_minimax_h3_r2v``): 0-9 reference pictures and
+    0-3 reference sounds (voices to clone), at least one of either.
 
-    Reference images are tagged in connection order as <Picture 1>, <Picture 2>...
-    The node sizes them itself (``match`` = down to the generation's area; ``max`` =
-    2048px short edge, sharper identity but several times slower).
+    Reference images are tagged in connection order as <Picture 1>, <Picture 2>... and sounds
+    as <Audio 1>... The node sizes pictures itself (``match`` = down to the generation's area;
+    ``max`` = 2048px short edge, sharper identity but several times slower). With clean_audio,
+    each sound goes through H3RefAudioPrep first: noise removal and the best 6-10 s window of
+    speech, which is what voice cloning works best from.
     """
-    if not 1 <= references <= H3_MAX_REFS:
-        raise ValueError(f"Reference-to-video takes 1 to {H3_MAX_REFS} pictures")
+    if not 0 <= references <= H3_MAX_REFS or not 0 <= audios <= 3 or references + audios == 0:
+        raise ValueError(f"Reference-to-video takes 1 to {H3_MAX_REFS} pictures and/or 1 to 3 sounds")
     g = Graph()
     o = Graph.out
 
@@ -230,8 +245,13 @@ def build_h3_ref(
     vae = g.add("VAELoader", vae_name=files["vae"])
     audio_vae = g.add("VAELoader", vae_name=files["audio_vae"])
 
-    if "<Picture" not in prompt:
-        prompt = f"{h3_reference_lead(references)}\n\n{prompt}"
+    leads = []
+    if references and "<Picture" not in prompt:
+        leads.append(h3_reference_lead(references))
+    if audios and "<Audio" not in prompt:
+        leads.append(h3_audio_lead(audios))
+    if leads:
+        prompt = " ".join(leads) + f"\n\n{prompt}"
     length = h3_length(seconds)
     cond_inputs: dict[str, Any] = dict(
         clip=o(clip), vae=o(vae), audio_vae=o(audio_vae), prompt=prompt, width=width, height=height,
@@ -242,6 +262,14 @@ def build_h3_ref(
         load = g.add("LoadImage", image="")  # filled with an SDK asset by the caller
         image_inputs[f"ref_{i}"] = load
         cond_inputs[f"ref_images.ref_image_{i}"] = o(load)  # autogrow input: <group>.<slot>
+    for i in range(audios):
+        load = g.add("LoadAudio", audio="")  # filled with an SDK asset by the caller (audio or a video's soundtrack)
+        image_inputs[f"aref_{i}"] = load
+        src = o(load)
+        if clean_audio:
+            src = o(g.add("H3RefAudioPrep", audio=src, clean="voice_focus", crop_mode="best_window", target_seconds=8.0,
+                          max_seconds=10.0, max_pause_seconds=0.8, fade_ms=25, normalize_peak_db=-3.0, snap_to_latent_grid=True))
+        cond_inputs[f"ref_audios.ref_audio_{i}"] = src
     cond = g.add("MiniMaxH3ReferenceToVideo", **cond_inputs)
 
     noise = g.add("RandomNoise", noise_seed=int(seed))
@@ -265,7 +293,8 @@ def build_h3_ref(
         outputs=[save],
         image_inputs=image_inputs,
         info={"width": width, "height": height, "frames": length, "steps": n_steps, "turbo": use_turbo,
-              "references": references, "max_fidelity": max_fidelity, "scheduler": scheduler, "final_prompt": prompt,
+              "references": references, "audios": audios, "clean_audio": bool(audios and clean_audio),
+              "max_fidelity": max_fidelity, "scheduler": scheduler, "final_prompt": prompt,
               "seconds": round(length / FPS, 2)},
     )
 

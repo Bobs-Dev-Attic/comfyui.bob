@@ -68,6 +68,8 @@ class StudioSettings(BaseModel):
     enhance: bool = False
     fidelity: bool = False
     refs: list[PictureRef] = Field(default_factory=list, description="H3 Reference pictures, in <Picture N> order")
+    audios: list[PictureRef] = Field(default_factory=list, description="H3 Reference sounds (voices to clone), in <Audio N> order")
+    clean_audio: bool = Field(True, description="clean reference sounds and keep their best 6–10 s of speech")
     frames: Frames = Field(default_factory=Frames)
 
 

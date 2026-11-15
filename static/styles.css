@@ -322,3 +322,21 @@ details.writer .field + .field, details.writer .row2 + .field, details.writer .f
 /* gallery tile: kind badge over the cached thumbnail */
 .thumb { position: relative; }
 .thumb .tile-kind { position: absolute; left: 6px; bottom: 6px; font-size: 10px; padding: 1px 6px; border-radius: 6px; background: rgba(0,0,0,.65); color: #fff; }
+
+/* reference sounds (voice cloning) on the Inputs step */
+#f-arefs .aref-switch { display: none; }
+#f-arefs.needs-ref .aref-switch { display: block; }
+#f-arefs.needs-ref .arefs, #f-arefs.needs-ref .aref-opt { display: none; }
+#f-arefs.over { outline: 2px dashed var(--accent); outline-offset: 4px; border-radius: 10px; }
+.arefs { display: grid; gap: 6px; }
+.aref { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "tag player x" "tag name x"; gap: 2px 8px; align-items: center;
+  padding: 6px 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }
+.aref .tag { grid-area: tag; border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; cursor: pointer; background: var(--panel); color: var(--text); font: 600 11px/1.4 inherit; }
+.aref .tag:hover { border-color: var(--accent); }
+.aref audio { grid-area: player; width: 100%; height: 32px; min-width: 0; }
+.aref-name { grid-area: name; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aref .x { grid-area: x; border: 0; background: none; color: var(--muted); font-size: 18px; cursor: pointer; padding: 0 4px; }
+.aref .x:hover { color: var(--bad); }
+.aref-add { border: 1px dashed var(--line); border-radius: 10px; background: none; color: var(--muted); padding: 10px; cursor: pointer; font: inherit; font-size: 13px; }
+.aref-add:hover { border-color: var(--accent); color: var(--text); }
+.check { display: inline-flex; gap: 8px; align-items: center; font-size: 13px; cursor: pointer; }
