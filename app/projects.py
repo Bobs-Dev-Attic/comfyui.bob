@@ -101,21 +101,48 @@ HISTORY_KEEP = 30          # versions kept per project
 HISTORY_EVERY = 60.0       # seconds between versions (autosave runs much more often)
 
 
-def backup(p: Path) -> Path | None:
-    """Keep the current project.json in <project>/.history before it's overwritten (rate-limited)."""
+def backup(p: Path, *, force: bool = False, tag: str = "") -> Path | None:
+    """Keep the current project.json in <project>/.history before it's overwritten.
+
+    Normal saves are rate-limited to one version a minute; force (startup) always copies,
+    unless the file is identical to the newest version. Keeps the last HISTORY_KEEP versions."""
     src = p / PROJECT_FILE
     if not src.is_file():
         return None
     hist = p / HISTORY_DIR
     hist.mkdir(exist_ok=True)
     versions = sorted(hist.glob("project-*.json"), key=lambda f: f.stat().st_mtime)
-    if versions and time.time() - versions[-1].stat().st_mtime < HISTORY_EVERY:
-        return None
-    dst = hist / f"project-{time.strftime('%Y%m%d-%H%M%S')}.json"
-    shutil.copy2(src, dst)
+    if versions:
+        if not force and time.time() - versions[-1].stat().st_mtime < HISTORY_EVERY:
+            return None
+        if versions[-1].read_bytes() == src.read_bytes():
+            return None  # nothing changed since the last version
+    stem = f"project-{time.strftime('%Y%m%d-%H%M%S')}{'-' + tag if tag else ''}"
+    dst, n = hist / f"{stem}.json", 2
+    while dst.exists():  # two versions in the same second
+        dst, n = hist / f"{stem}-{n}.json", n + 1
+    shutil.copy(src, dst)  # copy (not copy2): the version's time is when it was kept
     for old in versions[: max(0, len(versions) + 1 - HISTORY_KEEP)]:
         old.unlink(missing_ok=True)
     return dst
+
+
+def backup_all(tag: str = "startup") -> dict[str, int]:
+    """Back up every project (and Experiment) once, e.g. when the app starts."""
+    done = skipped = failed = 0
+    dirs = [f.parent for f in root().rglob(PROJECT_FILE) if TRASH not in f.relative_to(root()).parts]
+    exp = config.DATA_DIR / "experiment"
+    if (exp / PROJECT_FILE).is_file():
+        dirs.append(exp)
+    for d in dirs:
+        try:
+            if backup(d, force=True, tag=tag):
+                done += 1
+            else:
+                skipped += 1
+        except OSError:
+            failed += 1
+    return {"backed_up": done, "unchanged": skipped, "failed": failed}
 
 
 def history(project_id: str) -> list[dict[str, Any]]:

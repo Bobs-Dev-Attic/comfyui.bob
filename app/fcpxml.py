@@ -138,7 +138,7 @@ def build(tl: Timeline, name: str = "Bob Studio") -> bytes:
             el.set("enabled", "0")
         if tr.hidden and tr.kind == "video":
             el.set("enabled", "0")
-        gain = 0.0 if (c.kind == "video" and c.audio_off) else c.volume * tr.volume
+        gain = 0.0 if (c.kind == "video" and c.audio_off) or c.muted else c.volume * tr.volume
         if c.kind != "image" and abs(gain - 1) > 1e-3 and (a["audio"] or c.kind == "audio"):
             db = -96.0 if gain <= 0 else 20 * math.log10(gain)
             ET.SubElement(el, "adjust-volume", amount=f"{db:+.1f}dB")

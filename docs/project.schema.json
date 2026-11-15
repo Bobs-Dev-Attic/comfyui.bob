@@ -105,6 +105,34 @@
           "description": "video clip whose own sound is off because a linked audio clip carries it",
           "title": "Audio Off",
           "type": "boolean"
+        },
+        "muted": {
+          "default": false,
+          "description": "this clip's sound is off",
+          "title": "Muted",
+          "type": "boolean"
+        },
+        "pan": {
+          "default": 0,
+          "description": "-1 = left, 0 = centre, 1 = right",
+          "maximum": 1,
+          "minimum": -1,
+          "title": "Pan",
+          "type": "number"
+        },
+        "fade_in": {
+          "default": 0,
+          "description": "seconds of sound fade-in at the clip's start",
+          "minimum": 0,
+          "title": "Fade In",
+          "type": "number"
+        },
+        "fade_out": {
+          "default": 0,
+          "description": "seconds of sound fade-out at the clip's end",
+          "minimum": 0,
+          "title": "Fade Out",
+          "type": "number"
         }
       },
       "required": [
@@ -246,6 +274,41 @@
       "title": "Marker",
       "type": "object"
     },
+    "Master": {
+      "description": "The final mix.",
+      "properties": {
+        "volume": {
+          "default": 1.0,
+          "maximum": 2,
+          "minimum": 0,
+          "title": "Volume",
+          "type": "number"
+        },
+        "loudness": {
+          "anyOf": [
+            {
+              "maximum": -6,
+              "minimum": -36,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "normalise to this many LUFS (e.g. -14 for web, -23 for broadcast); None = off",
+          "title": "Loudness"
+        },
+        "limiter": {
+          "default": true,
+          "description": "catch peaks so the mix never clips",
+          "title": "Limiter",
+          "type": "boolean"
+        }
+      },
+      "title": "Master",
+      "type": "object"
+    },
     "MediaItem": {
       "description": "A file in the project's library. Only the reference is stored; the file stays where it is.",
       "properties": {
@@ -341,6 +404,20 @@
         },
         "writer": {
           "$ref": "#/$defs/WriterConfig"
+        },
+        "autosave": {
+          "default": true,
+          "description": "save changes automatically; off = save with Ctrl+S or the Save button",
+          "title": "Autosave",
+          "type": "boolean"
+        },
+        "autosave_delay": {
+          "default": 0.7,
+          "description": "seconds after the last change before saving",
+          "maximum": 300,
+          "minimum": 0.2,
+          "title": "Autosave Delay",
+          "type": "number"
         },
         "defaults": {
           "additionalProperties": true,
@@ -583,6 +660,19 @@
           "title": "Link Audio",
           "type": "boolean"
         },
+        "link_audio_track": {
+          "default": "new",
+          "description": "new = a new audio track for each video; free = the first free audio track",
+          "enum": [
+            "new",
+            "free"
+          ],
+          "title": "Link Audio Track",
+          "type": "string"
+        },
+        "master": {
+          "$ref": "#/$defs/Master"
+        },
         "render": {
           "additionalProperties": true,
           "description": "export settings: width, height, crf",
@@ -634,6 +724,19 @@
           "minimum": 0,
           "title": "Volume",
           "type": "number"
+        },
+        "pan": {
+          "default": 0,
+          "maximum": 1,
+          "minimum": -1,
+          "title": "Pan",
+          "type": "number"
+        },
+        "solo": {
+          "default": false,
+          "description": "when any track is soloed, only soloed tracks are heard",
+          "title": "Solo",
+          "type": "boolean"
         },
         "height": {
           "default": 56,
@@ -812,7 +915,7 @@
       "type": "number"
     },
     "app_version": {
-      "default": "0.10.0",
+      "default": "0.11.0",
       "title": "App Version",
       "type": "string"
     },

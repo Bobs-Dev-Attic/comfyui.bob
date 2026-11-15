@@ -46,24 +46,29 @@ const TL = (() => {
     return { fps: 24, tracks: [{ id: uid(), kind: "video", name: "V1", muted: false, locked: false, hidden: false, volume: 1, height: 56 },
       { id: uid(), kind: "audio", name: "A1", muted: false, locked: false, hidden: false, volume: 1, height: 44 }],
       clips: [], markers: [], playhead: 0, zoom: 60, range_in: null, range_out: null, snap: true, render: {},
-      transitions: [], link_audio: true };
+      transitions: [], link_audio: true, link_audio_track: "new", master: { volume: 1, loudness: null, limiter: true } };
   }
 
   /* ------------------------------------------------------------------ history and saving */
   const snapshot = () => JSON.stringify({ tracks: tl.tracks, clips: tl.clips, markers: tl.markers, range_in: tl.range_in, range_out: tl.range_out,
-    transitions: tl.transitions });
+    transitions: tl.transitions, master: tl.master });
   function checkpoint() { undoStack.push(snapshot()); if (undoStack.length > UNDO_MAX) undoStack.shift(); redoStack = []; }
   function restore(s) { Object.assign(tl, JSON.parse(s)); for (const id of [...sel]) if (!clip(id)) sel.delete(id); selTrans = null; }
   function undo() { if (!undoStack.length) return toast("Nothing to undo"); redoStack.push(snapshot()); restore(undoStack.pop()); changed(); }
   function redo() { if (!redoStack.length) return toast("Nothing to redo"); undoStack.push(snapshot()); restore(redoStack.pop()); changed(); }
-  function changed() { render(); save(); }
-  function save(delay = 700) {
+  function changed() { render(); save(); refreshMixer(); }
+  // Auto-save lives in shell.js (Project settings). `soft` saves (playhead, zoom) don't count as unsaved changes.
+  const auto = () => (typeof Autosave === "undefined" ? { enabled: true, delay: 0.7, mark() {}, dirty: new Set(), render() {} } : Autosave);
+  function save(delay, soft = false) {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(saveNow, delay);
+    if (!auto().enabled) { if (!soft) auto().mark("timeline"); return; }
+    saveTimer = setTimeout(saveNow, delay ?? auto().delay * 1000);
   }
-  async function saveNow() {
+  async function saveNow(force = false) {
     clearTimeout(saveTimer); saveTimer = null;
     if (!tl) return;
+    if (!force && !auto().enabled) return;
+    auto().dirty.delete("timeline"); auto().render();
     try {
       await fetch(`/api/projects/${project}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ timeline: tl }) })
         .then(r => { if (!r.ok) return r.json().then(j => { throw new Error(j.detail || r.statusText); }); });
@@ -154,13 +159,19 @@ const TL = (() => {
   }
 
   /* Give a video clip a linked copy on an audio track and silence the video's own sound.
-     Picks the first unlocked audio track that's free there, or adds a new one. */
+     Project settings › "Sound goes on": "new" = an audio track of its own (an empty one, or a new
+     A# track), so each video's sound can be mixed separately; "free" = the first audio track
+     that's free at that time. */
   function linkSound(c) {
-    const free = tl.tracks.find(t => t.kind === "audio" && !t.locked && !tl.clips.some(x => x.track === t.id && x.start < end(c) && end(x) > c.start));
-    let at = free;
+    const ok = t => t.kind === "audio" && !t.locked;
+    const at0 = tl.link_audio_track === "free"
+      ? tl.tracks.find(t => ok(t) && !tl.clips.some(x => x.track === t.id && x.start < end(c) && end(x) > c.start))
+      : tl.tracks.find(t => ok(t) && !tl.clips.some(x => x.track === t.id));
+    let at = at0;
     if (!at) {
-      const n = tl.tracks.filter(t => t.kind === "audio").length + 1;
-      at = { id: uid(), kind: "audio", name: `A${n}`, muted: false, locked: false, hidden: false, volume: 1, height: 44 };
+      let n = tl.tracks.filter(t => t.kind === "audio").length + 1;
+      while (tl.tracks.some(t => t.name === `A${n}`)) n++;
+      at = { id: uid(), kind: "audio", name: `A${n}`, muted: false, solo: false, locked: false, hidden: false, volume: 1, pan: 0, height: 44 };
       tl.tracks.push(at);
     }
     c.link = c.link || uid();
@@ -379,7 +390,7 @@ const TL = (() => {
     drawPlayhead();
     syncProgram(false);
     if (reveal) revealTime(tl.playhead);
-    save(1500);
+    save(1500, true);
   }
   /* Step the playhead by one frame (or one second): pauses playback and shows the timeline. */
   function frameStep(dir, second = false) {
@@ -402,7 +413,7 @@ const TL = (() => {
     const px = at * old - scroller.scrollLeft;
     render();
     scroller.scrollLeft = at * tl.zoom - px;
-    save(1500);
+    save(1500, true);
   }
   const zoomStep = dir => setZoom(dir > 0 ? (ZOOMS.find(z => z > tl.zoom) ?? tl.zoom) : ([...ZOOMS].reverse().find(z => z < tl.zoom) ?? tl.zoom));
   function fit(t0 = 0, t1 = total() || 10) {
@@ -416,6 +427,88 @@ const TL = (() => {
     if (x < left + 20) scroller.scrollLeft = Math.max(0, x - 40);
     else if (x > left + w - 30) scroller.scrollLeft = x - w + 60;
   }
+
+  /* ------------------------------------------------------------------ sound: what the mix does at time t
+     Same rules as the render (app/render.py): clip × track volume, pan, the clip's fades, crossfades at
+     transitions (also on linked sound clips on other tracks), mute and solo. */
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const transLen = x => { const a = clip(x.a), b = clip(x.b); return a && b ? Math.max(0, end(a) - b.start) : 0; };
+  function fadesOf(c) {
+    let fin = c.fade_in || 0, fout = c.fade_out || 0;
+    const o = tl.transitions.find(x => x.a === c.id), i = tl.transitions.find(x => x.b === c.id);
+    if (o) fout = Math.max(fout, transLen(o));
+    if (i) fin = Math.max(fin, transLen(i));
+    if (c.link) for (const p of tl.clips) {
+      if (p === c || p.link !== c.link) continue;
+      const po = tl.transitions.find(x => x.a === p.id), pi = tl.transitions.find(x => x.b === p.id);
+      if (po && !o && clip(po.b)?.link) fout = Math.max(fout, transLen(po));
+      if (pi && !i && clip(pi.a)?.link) fin = Math.max(fin, transLen(pi));
+    }
+    return [fin, fout];
+  }
+  function soundGain(c, t) {
+    const tr = c && track(c.track);
+    if (!tr || tr.muted || c.muted || c.kind === "image" || (tr.kind === "video" && c.audio_off)) return 0;
+    if (tl.tracks.some(x => x.solo) && !tr.solo) return 0;
+    const [fin, fout] = fadesOf(c), L = dur(c), x = t - c.start;
+    let g = (c.volume ?? 1) * (tr.volume ?? 1);
+    if (fin > 1e-6 && x < fin) g *= clamp(x / fin, 0, 1);
+    if (fout > 1e-6 && L - x < fout) g *= clamp((L - x) / fout, 0, 1);
+    return g;
+  }
+  const panOf = c => clamp((c.pan || 0) + (track(c.track)?.pan || 0), -1, 1);
+
+  /* Preview through Web Audio so pan, gains above 100 % and the master strip are heard. The context
+     starts on the first Play (browsers need a click first); before that, element volume is used. */
+  const Mix = (() => {
+    let ctx = null, master = null, limiter = null, analyser = null;
+    const routes = new WeakMap();
+    function start() {
+      if (!ctx) {
+        try {
+          ctx = new AudioContext();
+          master = ctx.createGain(); limiter = ctx.createDynamicsCompressor(); analyser = ctx.createAnalyser();
+          analyser.fftSize = 2048;
+          master.connect(limiter); limiter.connect(analyser); analyser.connect(ctx.destination);
+        } catch { ctx = null; }
+      }
+      if (ctx?.state === "suspended") ctx.resume().catch(() => {});
+      applyMaster();
+    }
+    function applyMaster() {
+      if (!ctx || !tl) return;
+      const m = tl.master || {};
+      master.gain.value = m.volume ?? 1;
+      const on = m.limiter !== false;  // a brick-wall-ish limiter at -1 dBFS, like the render's
+      limiter.threshold.value = on ? -1 : 0; limiter.knee.value = 0; limiter.ratio.value = on ? 20 : 1;
+      limiter.attack.value = 0.002; limiter.release.value = 0.08;
+    }
+    function route(el) {
+      if (!ctx) return null;
+      let n = routes.get(el);
+      if (n) return n;
+      try {
+        const src = ctx.createMediaElementSource(el), g = ctx.createGain(), p = ctx.createStereoPanner();
+        src.connect(g); g.connect(p); p.connect(master);
+        n = { g, p }; routes.set(el, n);
+      } catch { return null; }
+      return n;
+    }
+    function out(el, gain, pan) {
+      const n = route(el);
+      if (n) { el.muted = false; el.volume = 1; n.g.gain.value = gain; n.p.pan.value = pan; }
+      else { el.muted = gain <= 0; el.volume = clamp(gain * (tl?.master?.volume ?? 1), 0, 1); }
+    }
+    // Peak level of the mix in dBFS (-Infinity when silent or not started).
+    const buf = new Float32Array(2048);
+    function peak() {
+      if (!analyser || !playing) return -Infinity;
+      analyser.getFloatTimeDomainData(buf);
+      let m = 0; for (const v of buf) m = Math.max(m, Math.abs(v));
+      return m > 0 ? 20 * Math.log10(m) : -Infinity;
+    }
+    return { start, applyMaster, out, peak, get live() { return !!ctx; } };
+  })();
 
   /* ------------------------------------------------------------------ playback (program monitor) */
   function topClipAt(t) { return picAt(t)?.a || null; }
@@ -440,6 +533,7 @@ const TL = (() => {
   function play() {
     if (!tl.clips.length) return toast("Add clips to the timeline first: drag results from the bin.");
     if (tl.playhead >= stopTime() - 1 / fps()) tl.playhead = tl.range_in ?? 0;
+    Mix.start();
     playing = true; clock = { wall: performance.now(), t: tl.playhead };
     Monitor.show("timeline");
     root.classList.add("playing");
@@ -450,7 +544,7 @@ const TL = (() => {
     root?.classList.remove("playing");
     $("#prog-video")?.pause(); $("#prog-video2")?.pause();
     for (const a of audioEls.values()) a.pause();
-    if (tl) save(1000);
+    if (tl) save(1000, true);
     renderBar();
   }
   const toggle = () => (playing ? pause() : play());
@@ -493,9 +587,8 @@ const TL = (() => {
       else if (k === "circleclose") { look.a.clip = `circle(${(1 - p) * 75}% at 50% 50%)`; }
       else look.b.opacity = p;  // dissolve-like types preview as a dissolve; the render is exact
     }
-    const vol = (cl, f) => Math.min(1, cl.volume * track(cl.track).volume * f);
-    showLayer(L1, c, t, live, look.a, c && !c.audio_off && !track(c.track).muted ? vol(c, pic?.b ? 1 - pic.p : 1) : 0, !!pic?.b && pic.type === "circleclose");
-    showLayer(L2, pic?.b || null, t, live, look.b, pic?.b && !pic.b.audio_off && !track(pic.b.track).muted ? vol(pic.b, pic.p) : 0, !(pic?.type === "circleclose"));
+    showLayer(L1, c, t, live, look.a, !!pic?.b && pic.type === "circleclose");
+    showLayer(L2, pic?.b || null, t, live, look.b, !(pic?.type === "circleclose"));
     // Audio tracks (and video clips placed on them for their sound).
     const live_ids = new Set();
     for (const a of tl.clips) {
@@ -505,13 +598,7 @@ const TL = (() => {
       let el = audioEls.get(a.id);
       if (!el) { el = new Audio(); el.preload = "auto"; audioEls.set(a.id, el); }
       if (el.dataset.ref !== a.ref) { el.src = mediaUrl(a.ref); el.dataset.ref = a.ref; }
-      el.muted = tr.muted;
-      // Crossfade on audio transitions.
-      let gain = 1;
-      const out = tl.transitions.find(x => x.a === a.id), inn = tl.transitions.find(x => x.b === a.id);
-      if (out) { const b = clip(out.b); if (b && t >= b.start) gain *= Math.max(0, (end(a) - t) / (end(a) - b.start)); }
-      if (inn) { const p0 = clip(inn.a); if (p0 && t < end(p0)) gain *= Math.max(0, (t - a.start) / (end(p0) - a.start)); }
-      el.volume = Math.min(1, a.volume * tr.volume * gain);
+      Mix.out(el, soundGain(a, t), panOf(a));
       const target = a.trim_in + (t - a.start);
       if (live) { if (Math.abs(el.currentTime - target) > 0.25) el.currentTime = target; if (el.paused) el.play().catch(() => {}); }
       else { el.pause(); el.currentTime = target; }
@@ -519,7 +606,7 @@ const TL = (() => {
     for (const [id, el] of audioEls) if (!live_ids.has(id)) { el.pause(); if (!clip(id)) audioEls.delete(id); }
   }
 
-  function showLayer(L, c, t, live, look, volume, onTop) {
+  function showLayer(L, c, t, live, look, onTop) {
     const { v, i } = L;
     for (const el of [v, i]) { el.style.opacity = look.opacity; el.style.clipPath = look.clip; el.style.transform = look.transform; el.style.zIndex = onTop ? 2 : 1; }
     if (!c) { v.hidden = true; i.hidden = true; v.pause(); return; }
@@ -530,7 +617,7 @@ const TL = (() => {
     }
     i.hidden = true; v.hidden = false;
     const target = c.trim_in + (t - c.start);
-    v.muted = volume <= 0; v.volume = Math.max(0, volume);
+    Mix.out(v, soundGain(c, t), panOf(c));
     if (v.dataset.ref !== c.ref) { v.src = mediaUrl(c.ref); v.dataset.ref = c.ref; v.currentTime = target; }
     if (live) {
       if (Math.abs(v.currentTime - target) > 0.2) v.currentTime = target;
@@ -564,12 +651,13 @@ const TL = (() => {
         return `<div class="tl-trans${t.id === selTrans ? " sel" : ""}${tr.kind === "audio" ? " snd" : ""}" data-trans="${t.id}" style="left:${b.start * tl.zoom}px;width:${d * tl.zoom}px"
           title="${esc2(transLabel(t))} · ${d.toFixed(2)}s — double-click to change"><span>${tr.kind === "audio" ? "◇" : "⧓"}</span></div>`;
       }).join("");
-      return `<div class="tl-row k-${tr.kind}${tr.locked ? " locked" : ""}${tr.muted ? " muted" : ""}${tr.hidden ? " hidden-track" : ""}" style="--h:${tr.height}px">
+      return `<div class="tl-row k-${tr.kind}${tr.locked ? " locked" : ""}${tr.muted || (tl.tracks.some(x => x.solo) && !tr.solo) ? " muted" : ""}${tr.hidden ? " hidden-track" : ""}" style="--h:${tr.height}px">
         <div class="tl-head" data-track="${tr.id}">
           <span class="tl-tname" title="Double-click to rename">${esc2(tr.name)}</span>
           <span class="tl-tbtns">
             ${tr.kind === "video" ? `<button type="button" data-tact="hidden" class="${tr.hidden ? "off" : ""}" title="${tr.hidden ? "Show" : "Hide"} track">👁</button>` : ""}
             <button type="button" data-tact="muted" class="${tr.muted ? "off" : ""}" title="${tr.muted ? "Unmute" : "Mute"} track">${tr.muted ? "🔇" : "🔊"}</button>
+            <button type="button" data-tact="solo" class="tl-solo${tr.solo ? " on" : ""}" title="${tr.solo ? "Unsolo" : "Solo: hear only soloed tracks"}">S</button>
             <button type="button" data-tact="locked" class="${tr.locked ? "on" : ""}" title="${tr.locked ? "Unlock" : "Lock"} track">${tr.locked ? "🔒" : "🔓"}</button>
           </span></div>
         <div class="tl-lane" data-track="${tr.id}">${clips}</div></div>`;
@@ -598,9 +686,16 @@ const TL = (() => {
     const bg = sound
       ? (c.source_duration ? `background-image:url('${thumb}');background-size:${c.source_duration * tl.zoom}px 100%;background-position:${-c.trim_in * tl.zoom}px 0` : "")
       : `background-image:url('${thumb}');background-size:auto 100%`;
-    return `<div class="tl-clip k-${c.kind}${sound ? " snd" : ""}${sel.has(c.id) ? " sel" : ""}${c.link ? " linked" : ""}${c.audio_off ? " silent" : ""}" data-clip="${c.id}" style="left:${c.start * tl.zoom}px;width:${w}px"
-      title="${esc2(c.name)}${c.link ? " · linked (Alt+click selects just this one)" : ""}${c.audio_off ? " · sound on its linked audio clip" : ""}">
-      <div class="tl-strip" style="${bg}"></div>
+    const hasSnd = c.kind !== "image" && (sound || !c.audio_off);
+    const fi = c.fade_in || 0, fo = c.fade_out || 0, vol = c.volume ?? 1;
+    const db = vol <= 0 ? "silent" : `${vol >= 1 ? "+" : ""}${(20 * Math.log10(vol)).toFixed(1)} dB`;
+    const mix = hasSnd ? [Math.abs(vol - 1) > 1e-3 && db, Math.abs(c.pan || 0) > 1e-3 && `pan ${c.pan < 0 ? "L" : "R"}${Math.round(Math.abs(c.pan) * 100)}`,
+      fi > 0 && `fade in ${fi.toFixed(2)}s`, fo > 0 && `fade out ${fo.toFixed(2)}s`, c.muted && "muted"].filter(Boolean).join(" · ") : "";
+    const fades = hasSnd ? `<i class="tl-fade in" style="width:${fi * tl.zoom}px"></i><i class="tl-fade out" style="width:${fo * tl.zoom}px"></i>
+      <b class="tl-fh in" data-fade="in" style="left:${fi * tl.zoom}px" title="Drag: fade in"></b><b class="tl-fh out" data-fade="out" style="right:${fo * tl.zoom}px" title="Drag: fade out"></b>` : "";
+    return `<div class="tl-clip k-${c.kind}${sound ? " snd" : ""}${sel.has(c.id) ? " sel" : ""}${c.link ? " linked" : ""}${c.audio_off ? " silent" : ""}${c.muted ? " cmuted" : ""}" data-clip="${c.id}" style="left:${c.start * tl.zoom}px;width:${w}px"
+      title="${esc2(c.name)}${c.link ? " · linked (Alt+click selects just this one)" : ""}${c.audio_off ? " · sound on its linked audio clip" : ""}${mix ? " · " + esc2(mix) : ""}">
+      <div class="tl-strip" style="${bg}"></div>${fades}
       <span class="tl-cname">${esc2(c.name)}</span><span class="tl-cdur">${dur(c).toFixed(2)}s</span>
       <i class="tl-trim l" data-trim="l"></i><i class="tl-trim r" data-trim="r"></i></div>`;
   }
@@ -657,6 +752,7 @@ const TL = (() => {
     if (marker) return dragMarker(e, marker.dataset.marker);
     const transEl = e.target.closest(".tl-trans");
     if (transEl) { selTrans = transEl.dataset.trans; sel.clear(); render(); return; }
+    if (clipEl && e.target.closest(".tl-fh")) return dragFade(e, clipEl.dataset.clip, e.target.closest(".tl-fh").dataset.fade);
     if (clipEl) return dragClip(e, clipEl.dataset.clip, e.target.dataset.trim || null);
     if (ruler || lane) {
       if (lane && !e.shiftKey && !e.ctrlKey) { sel.clear(); render(); }
@@ -752,6 +848,30 @@ const TL = (() => {
     addEventListener("pointermove", mv); addEventListener("pointerup", up);
   }
 
+  // Drag the little handle at a clip's top corner to set its sound fade-in / fade-out.
+  function dragFade(e, id, which) {
+    const c = clip(id);
+    if (!c || !editable(c)) return toast("That track is locked.");
+    e.stopPropagation();
+    const before = snapshot(), x0 = e.clientX, key = which === "in" ? "fade_in" : "fade_out", other = which === "in" ? "fade_out" : "fade_in";
+    const o = c[key] || 0, el = $(`[data-clip="${id}"]`, root);
+    let moved = false;
+    const mv = ev => {
+      const d = (ev.clientX - x0) / tl.zoom;
+      moved = moved || Math.abs(ev.clientX - x0) > 2;
+      c[key] = q(clamp(which === "in" ? o + d : o - d, 0, Math.max(0, dur(c) - (c[other] || 0))));
+      $(`.tl-fade.${which}`, el).style.width = `${c[key] * tl.zoom}px`;
+      $(`.tl-fh.${which}`, el).style[which === "in" ? "left" : "right"] = `${c[key] * tl.zoom}px`;
+      $(".tl-cdur", el).textContent = `fade ${which} ${c[key].toFixed(2)}s`;
+    };
+    const up = () => {
+      removeEventListener("pointermove", mv); removeEventListener("pointerup", up);
+      if (moved) { undoStack.push(before); if (undoStack.length > UNDO_MAX) undoStack.shift(); redoStack = []; changed(); }
+      else render();
+    };
+    addEventListener("pointermove", mv); addEventListener("pointerup", up);
+  }
+
   function ghost(c) {
     // While trimming, show the whole source as a dotted outline (EDITS-WITH-AI idea).
     if (!c.source_duration) return;
@@ -789,9 +909,9 @@ const TL = (() => {
       isVid && ["Continue from this clip's last frame", () => grabFrame(c, c.trim_out - 1 / fps())],
       isVid && ["Use the frame at the playhead", () => grabAtPlayhead()],
       ["Show in viewer", () => { const it = c.job && state.items.get(c.job); if (it) { select(it.id); Monitor.show("result"); } else Media.toast("The result for this clip isn't in the gallery."); }],
-      ["Volume…", async () => {
-        const v = await WM.ask({ title: "Clip volume", message: "0 = silent, 100 = as recorded, 200 = twice as loud", input: String(Math.round(c.volume * 100)), ok: "Set" });
-        if (v != null && !isNaN(+v)) { checkpoint(); c.volume = Math.max(0, Math.min(2, +v / 100)); changed(); }
+      c.kind !== "image" && ["🔉 Sound… (volume, pan, fades, mute)", () => soundDialog(c)],
+      c.kind !== "image" && [soundTargets(c).every(x => x.muted) ? "Unmute clip sound" : "Mute clip sound", () => {
+        checkpoint(); const m = !soundTargets(c).every(x => x.muted); for (const x of soundTargets(c)) x.muted = m; changed();
       }],
       ["Delete (Del)", () => deleteSelection(false)],
       ["Ripple delete (Shift+Del)", () => deleteSelection(true)],
@@ -841,15 +961,164 @@ const TL = (() => {
       ["Height: small", () => { t.height = t.kind === "video" ? 40 : 32; changed(); }],
       ["Height: medium", () => { t.height = t.kind === "video" ? 56 : 44; changed(); }],
       ["Height: large", () => { t.height = t.kind === "video" ? 96 : 72; changed(); }],
-      ["Track volume…", async () => {
-        const v = await WM.ask({ title: `${t.name} volume`, message: "0–200%", input: String(Math.round(t.volume * 100)), ok: "Set" });
-        if (v != null && !isNaN(+v)) { checkpoint(); t.volume = Math.max(0, Math.min(2, +v / 100)); changed(); }
-      }],
+      ["🎚 Mixer… (volume, pan, solo)", mixer],
       ["＋ Video track", () => addTrack("video")],
       ["＋ Audio track", () => addTrack("audio")],
       ["Delete track", () => removeTrack(id)],
     ]);
   }
+  /* ------------------------------------------------------------------ sound dialog and mixer */
+  const toDb = v => (v <= 1e-4 ? -60 : clamp(20 * Math.log10(v), -60, 6));
+  const fromDb = d => (d <= -59.9 ? 0 : clamp(10 ** (d / 20), 0, 2));
+  const dbText = v => (v <= 1e-4 ? "−∞ dB" : `${v >= 1 ? "+" : "−"}${Math.abs(20 * Math.log10(v)).toFixed(1)} dB`);
+  const panText = p => (Math.abs(p) < 0.005 ? "C" : `${p < 0 ? "L" : "R"}${Math.round(Math.abs(p) * 100)}`);
+  // A silent video clip's sound lives on its linked audio clips: edit those.
+  function soundTargets(c) {
+    if (track(c.track)?.kind === "video" && c.audio_off && c.link) {
+      const p = tl.clips.filter(x => x.link === c.link && x !== c && track(x.track)?.kind === "audio");
+      if (p.length) return p;
+    }
+    return [c];
+  }
+  function soundDialog(c) {
+    const targets = soundTargets(c), s = targets[0], L = dur(s);
+    const form = document.createElement("div");
+    form.className = "wm-form tl-sound";
+    form.innerHTML = `
+      ${targets[0] !== c ? `<p class="hint">This video's sound is on ${esc2(targets.map(x => track(x.track).name).join(", "))}, linked to it: changes go there.</p>` : ""}
+      <div class="field"><label for="sd-vol">Volume <span class="opt" id="sd-vol-t"></span></label>
+        <input id="sd-vol" type="range" min="-60" max="6" step="0.5" value="${toDb(s.volume ?? 1)}"></div>
+      <div class="field"><label for="sd-pan">Pan <span class="opt" id="sd-pan-t"></span></label>
+        <input id="sd-pan" type="range" min="-100" max="100" step="1" value="${Math.round((s.pan || 0) * 100)}"></div>
+      <div class="row2">
+        <div class="field"><label for="sd-fi">Fade in (s)</label><input id="sd-fi" type="number" min="0" max="${L.toFixed(2)}" step="0.05" value="${(s.fade_in || 0).toFixed(2)}"></div>
+        <div class="field"><label for="sd-fo">Fade out (s)</label><input id="sd-fo" type="number" min="0" max="${L.toFixed(2)}" step="0.05" value="${(s.fade_out || 0).toFixed(2)}"></div></div>
+      <label class="check"><input type="checkbox" id="sd-mute"${s.muted ? " checked" : ""}> Mute this clip's sound</label>
+      <p class="hint">Transitions add their own crossfade on top of these fades. Double-click a slider to reset it.</p>`;
+    const vol = form.querySelector("#sd-vol"), pan = form.querySelector("#sd-pan");
+    const show = () => { form.querySelector("#sd-vol-t").textContent = dbText(fromDb(+vol.value)); form.querySelector("#sd-pan-t").textContent = panText(+pan.value / 100); };
+    vol.ondblclick = () => { vol.value = 0; show(); }; pan.ondblclick = () => { pan.value = 0; show(); };
+    form.addEventListener("input", show); show();
+    const foot = document.createElement("div");
+    foot.innerHTML = `<button type="button" class="btn sm" data-a="mixer">🎚 Mixer…</button><span class="wm-foot-gap"></span>
+      <button type="button" class="btn sm" data-a="cancel">Cancel</button><button type="button" class="btn sm primary" data-a="ok">Apply</button>`;
+    const w = WM.open({ id: "clip-sound", title: `Sound · ${c.name}`, content: form, footer: foot, width: 440, height: 430, minWidth: 320, minHeight: 300 });
+    foot.querySelector('[data-a="cancel"]').onclick = () => w.close();
+    foot.querySelector('[data-a="mixer"]').onclick = () => { w.close(); mixer(); };
+    foot.querySelector('[data-a="ok"]').onclick = () => {
+      checkpoint();
+      for (const x of targets) {
+        const Lx = dur(x);
+        x.volume = fromDb(+vol.value); x.pan = clamp(+pan.value / 100, -1, 1);
+        x.fade_in = q(clamp(+form.querySelector("#sd-fi").value || 0, 0, Lx));
+        x.fade_out = q(clamp(+form.querySelector("#sd-fo").value || 0, 0, Lx - x.fade_in));
+        x.muted = form.querySelector("#sd-mute").checked;
+      }
+      w.close(); changed();
+    };
+  }
+
+  // Mixer: a strip per track (mute, solo, pan, volume) and the master (volume, loudness, limiter, meter).
+  let mixWin = null, mixRaf = 0;
+  function mixer() {
+    if (!tl) return;
+    if (mixWin) { mixWin.focus?.(); return; }
+    const box = document.createElement("div");
+    box.className = "tl-mixer";
+    const foot = document.createElement("div");
+    foot.innerHTML = `<span class="hint">Preview plays through this mix; loudness is applied when rendering.</span><span class="wm-foot-gap"></span>
+      <button type="button" class="btn sm" data-a="reset">Reset all</button>`;
+    mixWin = WM.open({ id: "mixer", title: "Mixer", content: box, footer: foot, width: 620, height: 420, minWidth: 340, minHeight: 240, modal: false,
+      onClose: () => { mixWin = null; cancelAnimationFrame(mixRaf); } });
+    let before = null;
+    box.addEventListener("pointerdown", () => { before = snapshot(); });
+    box.addEventListener("keydown", () => { before = before || snapshot(); });
+    const commit = () => { if (before) { undoStack.push(before); if (undoStack.length > UNDO_MAX) undoStack.shift(); redoStack = []; before = null; } save(); };
+    box.addEventListener("input", e => {
+      const f = e.target, id = f.closest("[data-strip]")?.dataset.strip;
+      if (id === "master") {
+        if (f.dataset.k === "vol") tl.master.volume = fromDb(+f.value);
+        if (f.dataset.k === "loud") tl.master.loudness = f.value === "" ? null : +f.value;
+        if (f.dataset.k === "lim") tl.master.limiter = f.checked;
+        Mix.applyMaster();
+      } else if (id) {
+        const t = track(id);
+        if (f.dataset.k === "vol") t.volume = fromDb(+f.value);
+        if (f.dataset.k === "pan") t.pan = clamp(+f.value / 100, -1, 1);
+      }
+      updateReadouts();
+      if (!playing) syncProgram(false);
+    });
+    box.addEventListener("change", () => { commit(); });
+    box.addEventListener("dblclick", e => {
+      const f = e.target.closest("input[type=range]"), id = f?.closest("[data-strip]")?.dataset.strip;
+      if (!f) return;
+      before = snapshot();
+      if (id === "master") { tl.master.volume = 1; Mix.applyMaster(); }
+      else { const t = track(id); if (f.dataset.k === "vol") t.volume = 1; else t.pan = 0; }
+      commit(); refreshMixer(); render();
+    });
+    box.addEventListener("click", e => {
+      const b = e.target.closest("[data-tog]"), id = b?.closest("[data-strip]")?.dataset.strip;
+      if (!b || !id) return;
+      checkpoint(); const t = track(id); t[b.dataset.tog] = !t[b.dataset.tog]; changed();
+    });
+    foot.querySelector('[data-a="reset"]').onclick = () => {
+      checkpoint();
+      for (const t of tl.tracks) Object.assign(t, { volume: 1, pan: 0, muted: false, solo: false });
+      tl.master = { volume: 1, loudness: null, limiter: true };
+      Mix.applyMaster(); changed();
+    };
+    refreshMixer();
+    const meter = () => {
+      const el = mixWin && $(".mx-meter i", box);
+      if (!el) return;
+      const p = Mix.peak(), pct = p === -Infinity ? 0 : clamp((p + 60) / 60, 0, 1) * 100;
+      el.style.width = `${pct}%`;
+      el.classList.toggle("hot", p > -1);
+      $(".mx-peak", box).textContent = p === -Infinity ? (playing ? "—" : "Play to see the level") : `${p.toFixed(1)} dBFS`;
+      mixRaf = requestAnimationFrame(meter);
+    };
+    meter();
+  }
+  function updateReadouts() {
+    const box = mixWin && $(".tl-mixer");
+    if (!box) return;
+    for (const s of $$("[data-strip]", box)) {
+      const id = s.dataset.strip, t = id === "master" ? tl.master : track(id);
+      if (!t) continue;
+      const v = $(".mx-db", s); if (v) v.textContent = dbText(t.volume ?? 1);
+      const p = $(".mx-pan-t", s); if (p) p.textContent = panText(t.pan || 0);
+    }
+  }
+  function refreshMixer() {
+    const box = mixWin && $(".tl-mixer");
+    if (!box || !tl) return;
+    if (!tl.master) tl.master = { volume: 1, loudness: null, limiter: true };
+    const soloing = tl.tracks.some(t => t.solo);
+    const LOUD = [["", "Off"], ["-14", "−14 LUFS (YouTube, Spotify)"], ["-16", "−16 LUFS (podcasts, Apple)"], ["-23", "−23 LUFS (broadcast, EBU R128)"]];
+    box.innerHTML = tl.tracks.map(t => `
+      <div class="mx-strip k-${t.kind}${t.muted || (soloing && !t.solo) ? " quiet" : ""}" data-strip="${t.id}">
+        <span class="mx-name" title="${t.kind === "video" ? "Sound of the video clips on this track" : "Audio track"}">${esc2(t.name)}</span>
+        <button type="button" data-tog="muted" class="mx-b${t.muted ? " on mute" : ""}" title="Mute">M</button>
+        <button type="button" data-tog="solo" class="mx-b${t.solo ? " on solo" : ""}" title="Solo">S</button>
+        <label class="mx-pan" title="Pan (double-click: centre)"><input type="range" data-k="pan" min="-100" max="100" step="1" value="${Math.round((t.pan || 0) * 100)}"><span class="mx-pan-t"></span></label>
+        <label class="mx-vol" title="Volume (double-click: 0 dB)"><input type="range" data-k="vol" min="-60" max="6" step="0.5" value="${toDb(t.volume ?? 1)}"><span class="mx-db"></span></label>
+      </div>`).join("") + `
+      <div class="mx-strip mx-master" data-strip="master">
+        <span class="mx-name">Master</span>
+        <label class="mx-vol" title="Master volume (double-click: 0 dB)"><input type="range" data-k="vol" min="-60" max="6" step="0.5" value="${toDb(tl.master.volume ?? 1)}"><span class="mx-db"></span></label>
+        <label class="mx-loud">Loudness <select data-k="loud">${LOUD.map(([v, l]) => `<option value="${v}"${String(tl.master.loudness ?? "") === v ? " selected" : ""}>${l}</option>`).join("")}</select></label>
+        <label class="check mx-lim"><input type="checkbox" data-k="lim"${tl.master.limiter !== false ? " checked" : ""}> Limiter (peaks under −0.5 dB)</label>
+        <div class="mx-meter" title="Peak level of the preview"><i></i></div><span class="mx-peak"></span>
+      </div>`;
+    updateReadouts();
+  }
+  function setLinkAudio(on, where) {
+    tl.link_audio = !!on; tl.link_audio_track = where === "free" ? "free" : "new";
+    save(); renderBar();
+  }
+
   async function renameTrack(id) {
     const t = track(id);
     const n = await WM.ask({ title: "Rename track", message: "Track name", input: t.name, ok: "Rename" });
@@ -909,7 +1178,7 @@ const TL = (() => {
      imported on this PC (or wherever the same paths exist). */
   async function exportFcpxml() {
     if (!tl.clips.length) return toast("The timeline is empty.");
-    await saveNow();
+    await saveNow(true);
     const r = await fetch(`/api/timeline/fcpxml?project=${encodeURIComponent(project)}`);
     if (!r.ok) { const j = await r.json().catch(() => ({})); return toast(`Export failed: ${j.detail || r.statusText}`); }
     const name = /filename="([^"]+)"/.exec(r.headers.get("Content-Disposition") || "")?.[1] || "timeline.fcpxml";
@@ -921,7 +1190,7 @@ const TL = (() => {
 
   async function renderTimeline(range) {
     if (!tl.clips.length) return toast("The timeline is empty.");
-    await saveNow();
+    await saveNow(true);
     const info = await probe(tl.clips.find(c => c.kind !== "audio")?.ref || "");
     let width = null, height = null;
     if (renderSize !== "original" && info?.width) {
@@ -944,11 +1213,13 @@ const TL = (() => {
       ["← / →", "1 frame"], ["Shift+← / →", "1 second"], ["↑ / ↓", "Previous / next edit point or marker"], ["Ctrl+L", "Loop the In–Out range"]]],
     ["Editing", [["S or Ctrl+B", "Split at the playhead"], ["Ctrl+T", "Add a transition at the nearest cut"],
       ["Double-click a transition", "Change its type or length"], ["Shift (dropping a clip)", "Overlap the clip before as a transition"],
-      ["Alt+click", "Select one clip of a linked video/sound pair"], ["Del / Backspace", "Delete"], ["Shift+Del", "Ripple delete (close the gap)"],
+      ["Alt+click", "Select one clip of a linked video/sound pair"], ["Drag the dot at a clip's top corner", "Fade the sound in / out"],
+      ["Right-click a clip › Sound…", "Volume, pan, fades, mute"], ["Del / Backspace", "Delete"], ["Shift+Del", "Ripple delete (close the gap)"],
       ["Ctrl+C / Ctrl+V", "Copy / paste at the playhead"], ["Ctrl+D", "Duplicate after the selection"], [", / .", "Nudge selection 1 frame"],
       ["Ctrl+A", "Select all"], ["Esc", "Clear the selection"], ["Ctrl+Z", "Undo"], ["Ctrl+Shift+Z / Ctrl+Y", "Redo"], ["Alt (while dragging)", "Don't snap"]]],
     ["Timeline", [["I / O", "Set In / Out"], ["Alt+X", "Clear In and Out"], ["M", "Add a marker"], ["N", "Snapping on / off"],
       ["+ / −", "Zoom in / out"], ["Ctrl+wheel", "Zoom at the pointer"], ["Shift+wheel", "Scroll sideways"], ["F", "Fit the timeline"], ["Shift+F", "Zoom to the selection"],
+      ["Shift+M", "Mixer"], ["S (track header button)", "Solo the track"], ["Ctrl+S", "Save the project (when auto-save is off)"],
       ["G", "Use the frame at the playhead as a first frame"], ["Ctrl+E", "Render"], ["T (on the clock)", "Frames / seconds"]]],
     ["Results bin", [["1 – 5", "Rate the selected result"], ["0", "Clear the rating"], ["Shift+T", "Tags…"], ["Enter", "Add to the timeline"], ["← / →", "Previous / next result"]]],
     ["Layout", [["Alt+1 … Alt+4", "Default, Edit, Review, Bin layouts"], ["Alt+5 … Alt+9", "Your saved layouts"], ["?", "This list"]]],
@@ -963,7 +1234,7 @@ const TL = (() => {
   function onKey(e) {
     if (!tl || !root) return;
     const tgt = e.target;
-    if (tgt.closest?.("input, textarea, select, [contenteditable]") || WM.top()) return;
+    if (tgt.closest?.("input, textarea, select, [contenteditable], .wm-win") || document.querySelector(".wm-backdrop")) return;
     if (tgt.closest?.(".side") && !tgt.closest?.(".steps")) return;  // the side panel keeps its keys
     const k = e.key, ctrl = e.ctrlKey || e.metaKey;
     const inBin = tgt.closest?.("#bin");
@@ -1002,7 +1273,8 @@ const TL = (() => {
       case "End": handled(); return seek(total());
       case "i": case "I": handled(); return setRange("in");
       case "o": case "O": handled(); return setRange("out");
-      case "m": case "M": handled(); return addMarker();
+      case "M": if (e.shiftKey) { handled(); return mixer(); } // fall through
+      case "m": handled(); return addMarker();
       case "n": case "N": handled(); tl.snap = !tl.snap; toast(tl.snap ? "Snapping on" : "Snapping off"); save(); return renderBar();
       case "+": case "=": handled(); return zoomStep(1);
       case "-": case "_": handled(); return zoomStep(-1);
@@ -1041,6 +1313,7 @@ const TL = (() => {
           <button type="button" class="tl-b" data-act="split" title="Split at the playhead (S, Ctrl+B)">✂</button>
           <button type="button" class="tl-b" data-act="trans" title="Add a transition at the nearest cut (Ctrl+T); right-click a transition to change it">⧓</button>
           <button type="button" class="tl-b" data-act="linkaudio" title="Linked audio: a video with sound also puts its sound on an audio track">🔗</button>
+          <button type="button" class="tl-b" data-act="mixer" title="Mixer: volume, pan, solo, master loudness (Shift+M)">🎚</button>
           <button type="button" class="tl-b" data-act="snap" title="Snapping (N); hold Alt while dragging to skip">🧲</button>
           <button type="button" class="tl-b" data-act="marker" title="Add a marker (M)">⚑</button>
           <button type="button" class="tl-b" data-act="in" title="Set In (I)">[</button>
@@ -1084,7 +1357,7 @@ const TL = (() => {
         start: () => seek(0), end: () => seek(total()), prev: () => jumpEdit(-1), next: () => jumpEdit(1), play: toggle,
         loop: () => { loop = !loop; renderBar(); }, split: splitSelection, trans: () => addTransition(),
         linkaudio: () => { tl.link_audio = !tl.link_audio; save(); renderBar(); toast(tl.link_audio ? "Linked audio on: new videos bring their sound onto an audio track." : "Linked audio off: new videos keep their sound inside the clip."); }, marker: addMarker, in: () => setRange("in"), out: () => setRange("out"),
-        snap: () => { tl.snap = !tl.snap; save(); renderBar(); }, grab: grabAtPlayhead, undo, redo,
+        snap: () => { tl.snap = !tl.snap; save(); renderBar(); }, grab: grabAtPlayhead, undo, redo, mixer,
         zoomin: () => zoomStep(1), zoomout: () => zoomStep(-1), fit: () => fit(),
         "add-video": () => addTrack("video"), "add-audio": () => addTrack("audio"),
         keys: showShortcuts, layout: () => Layout.menu(r.left, r.bottom + 4), render: () => renderMenu(r.left, r.bottom + 4),
@@ -1159,16 +1432,19 @@ const TL = (() => {
     tl = timeline && timeline.tracks?.length ? structuredClone(timeline) : blank();
     tl.transitions = tl.transitions || [];
     if (tl.link_audio == null) tl.link_audio = true;
+    if (!tl.link_audio_track) tl.link_audio_track = "new";
+    if (!tl.master) tl.master = { volume: 1, loudness: null, limiter: true };
+    Mix.applyMaster();
     selTrans = null;
     sel.clear(); undoStack = []; redoStack = [];
     for (const el of audioEls.values()) el.pause();
     audioEls.clear();
-    render();
+    render(); refreshMixer();
     if (scroller) scroller.scrollLeft = Math.max(0, tl.playhead * tl.zoom - 100);
   }
 
   return {
-    mount, setProject, add, play, pause, toggle, seek, render, saveNow, showShortcuts, onKey,
+    mount, setProject, add, play, pause, toggle, seek, render, saveNow, showShortcuts, onKey, mixer, setLinkAudio, soundDialog: id => soundDialog(clip(id)),
     get playing() { return playing; }, get model() { return tl; }, setZoom, fit,
     syncProgram: () => syncProgram(false), clipsForJob: job => tl ? tl.clips.filter(c => c.job === job && !(c.link && track(c.track)?.kind === "audio")).length : 0,
   };

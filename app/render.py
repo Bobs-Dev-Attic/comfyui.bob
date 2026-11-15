@@ -63,6 +63,38 @@ def size_of(tl: Timeline) -> tuple[int, int]:
     return info.get("width") or 1280, info.get("height") or 720
 
 
+def sound_fades(tl: Timeline, clips: list[Clip], out_of: dict[str, Any], into: dict[str, Any]) -> dict[str, tuple[float, float]]:
+    """(fade-in, fade-out) seconds per clip: its own fades, plus crossfades at transitions.
+
+    A transition fades the two clips' sound into each other. When linked sound clips sit on
+    other tracks (one audio track per video), they get the same fades so they crossfade too,
+    unless they already have their own transition."""
+    by_id = {c.id: c for c in clips}
+    fades = {c.id: (c.fade_in, c.fade_out) for c in clips}
+
+    def bump(cid: str, fin: float = 0.0, fout: float = 0.0) -> None:
+        a, b = fades.get(cid, (0.0, 0.0))
+        fades[cid] = (max(a, fin), max(b, fout))
+
+    for t in {id(t): t for t in [*out_of.values(), *into.values()]}.values():
+        a, b = by_id.get(t.a), by_id.get(t.b)
+        if not (a and b):
+            continue
+        d = a.end - b.start
+        bump(a.id, fout=d)
+        bump(b.id, fin=d)
+        if a.link and b.link:
+            pa = [x for x in clips if x.link == a.link and x is not a]
+            pb = [x for x in clips if x.link == b.link and x is not b]
+            for x in pa:
+                if x.id not in out_of:
+                    bump(x.id, fout=d)
+            for x in pb:
+                if x.id not in into:
+                    bump(x.id, fin=d)
+    return fades
+
+
 def commands(tl: Timeline, out: str, w0: float | None = None, w1: float | None = None,
              width: int | None = None, height: int | None = None, crf: int = 18) -> tuple[list[list[str]], float, list[str]]:
     """Three ffmpeg runs: picture (out.v.mp4), sound (out.a.wav), then a mux into `out`.
@@ -157,10 +189,12 @@ def commands(tl: Timeline, out: str, w0: float | None = None, w1: float | None =
     filters.append(f"[{cur}]trim=start={w0:.4f}:end={w1:.4f},setpts=PTS-STARTPTS,format=yuv420p[vout]")
 
     # ---------------------------------------------------------------- sound
+    fades_for = sound_fades(tl, clips, out_of, into)
+    soloing = any(t.solo for t in tl.tracks)
     alabels: list[str] = []
     for c in clips:
         tr = tracks[c.track]
-        if tr.muted or c.kind == "image" or (tr.kind == "video" and c.audio_off):
+        if tr.muted or c.muted or c.kind == "image" or (tr.kind == "video" and c.audio_off) or (soloing and not tr.solo):
             continue
         if c.kind == "video":
             try:
@@ -170,34 +204,79 @@ def commands(tl: Timeline, out: str, w0: float | None = None, w1: float | None =
                 continue
         idx = add_input(c, "a")
         L = _dur(c)
+        fin, fout = fades_for.get(c.id, (0.0, 0.0))
         fades = []
-        if c.id in into:  # fade in over the overlap with the clip before
-            a = next(x for x in clips if x.id == into[c.id].a)
-            fades.append(f"afade=t=in:st=0:d={a.end - c.start:.4f}")
-        if c.id in out_of:  # fade out over the overlap with the clip after
-            b = next(x for x in clips if x.id == out_of[c.id].b)
-            d = c.end - b.start
-            fades.append(f"afade=t=out:st={L - d:.4f}:d={d:.4f}")
+        if fin > EPS:
+            fades.append(f"afade=t=in:st=0:d={min(fin, L):.4f}")
+        if fout > EPS:
+            fades.append(f"afade=t=out:st={max(0.0, L - fout):.4f}:d={min(fout, L):.4f}")
+        bal = max(-1.0, min(1.0, c.pan + tr.pan))
+        pan = [f"pan=stereo|c0={min(1.0, 1 - bal):.3f}*c0|c1={min(1.0, 1 + bal):.3f}*c1"] if abs(bal) > 1e-3 else []
         ms = int(round(c.start * 1000))
-        chain = ",".join([f"aformat=sample_rates=48000:channel_layouts=stereo", f"volume={c.volume * tr.volume:.3f}", *fades,
+        chain = ",".join(["aformat=sample_rates=48000:channel_layouts=stereo", f"volume={c.volume * tr.volume:.3f}", *pan, *fades,
                           f"adelay={ms}|{ms}"])
         lab = f"a{len(alabels)}"
         afilters.append(f"[{idx}:a]{chain}[{lab}]")
         alabels.append(f"[{lab}]")
+    master = [f"volume={tl.master.volume:.3f}"] if abs(tl.master.volume - 1) > 1e-3 else []
+    # Loudness needs the finished mix measured first (two-pass loudnorm, a separate step below);
+    # without it the limiter goes straight on the mix.
+    if tl.master.limiter and tl.master.loudness is None:
+        master.append("alimiter=limit=0.95:level=disabled")
     if alabels:
         afilters.append(f"{''.join(alabels)}amix=inputs={len(alabels)}:normalize=0:dropout_transition=0,apad,"
-                       f"atrim=start={w0:.4f}:end={w1:.4f},asetpts=PTS-STARTPTS[aout]")
+                        f"atrim=start={w0:.4f}:end={w1:.4f},asetpts=PTS-STARTPTS{''.join(',' + m for m in master)}[aout]")
     else:
         afilters.append(f"anullsrc=r=48000:cl=stereo,atrim=duration={w1 - w0:.4f}[aout]")
 
     D_out = w1 - w0
     vfile, afile = out + ".v.mp4", out + ".a.wav"
+    raw = out + ".raw.wav" if tl.master.loudness is not None else afile
     vargs += ["-filter_complex", ";".join(filters), "-map", "[vout]", "-an",
               "-c:v", "libx264", "-preset", "veryfast", "-crf", str(int(crf)), "-pix_fmt", "yuv420p", "-t", f"{D_out:.4f}", vfile]
-    aargs += ["-filter_complex", ";".join(afilters), "-map", "[aout]", "-vn", "-c:a", "pcm_s16le", "-t", f"{D_out:.4f}", afile]
+    aargs += ["-filter_complex", ";".join(afilters), "-map", "[aout]", "-vn", "-c:a", "pcm_s16le", "-t", f"{D_out:.4f}", raw]
     mux = [exe, "-nostdin", "-v", "error", "-y", "-i", vfile, "-i", afile, "-map", "0:v", "-map", "1:a",
            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-t", f"{D_out:.4f}", out]
-    return [vargs, aargs, mux], D_out, [vfile, afile]
+    steps: list[Any] = [vargs, aargs]
+    if raw != afile:
+        steps.append(("loudnorm", raw, afile, float(tl.master.loudness), bool(tl.master.limiter)))
+    steps.append(mux)
+    return steps, D_out, [vfile, afile] + ([raw] if raw != afile else [])
+
+
+def loudnorm_two_pass(src: str, dst: str, target: float, limiter: bool) -> None:
+    """Measure the mix's loudness, then normalise it exactly (EBU R128, linear gain)."""
+    exe = media.ffmpeg()
+    spec = f"I={target:g}:TP=-1.5:LRA=11"
+    r = subprocess.run([exe, "-nostdin", "-hide_banner", "-i", src, "-af", f"loudnorm={spec}:print_format=json", "-f", "null", "-"],
+                       capture_output=True, text=True, stdin=subprocess.DEVNULL, creationflags=media.NO_WINDOW, timeout=600)
+    m = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", r.stderr)
+    if not m:
+        raise RuntimeError("Couldn't measure the loudness of the mix")
+    import json
+    v = json.loads(m.group(0))
+    if float(v["input_i"]) < -70:  # silence: nothing to normalise
+        chain = "anull"
+    else:
+        chain = (f"loudnorm={spec}:measured_I={v['input_i']}:measured_TP={v['input_tp']}:measured_LRA={v['input_lra']}:"
+                 f"measured_thresh={v['input_thresh']}:offset={v['target_offset']}:linear=true,aresample=48000")
+    if limiter:
+        chain += ",alimiter=limit=0.95:level=disabled"
+    r = subprocess.run([exe, "-nostdin", "-v", "error", "-y", "-i", src, "-af", chain, "-c:a", "pcm_s16le", dst],
+                       capture_output=True, text=True, stdin=subprocess.DEVNULL, creationflags=media.NO_WINDOW, timeout=600)
+    if r.returncode:
+        raise RuntimeError(r.stderr.strip()[-500:])
+
+
+def run_steps(steps: list[Any], timeout: float = 600) -> None:
+    """Run render steps in order (for tests and tools; the studio runs them with progress)."""
+    for st in steps:
+        if isinstance(st, tuple) and st[0] == "loudnorm":
+            loudnorm_two_pass(*st[1:])
+            continue
+        r = subprocess.run(st, capture_output=True, text=True, stdin=subprocess.DEVNULL, creationflags=media.NO_WINDOW, timeout=timeout)
+        if r.returncode:
+            raise RuntimeError(r.stderr.strip()[-500:])
 
 
 def command(tl: Timeline, out: str, w0: float | None = None, w1: float | None = None,
@@ -247,8 +326,11 @@ async def render(jobs, project_id: str | None, tl: Timeline, *, w0: float | None
     async def run() -> None:
         try:
             await run_step(steps[0], 0.0, 0.80, "Rendering picture")
-            await run_step(steps[1], 0.80, 0.15, "Mixing sound")
-            await run_step(steps[2], 0.95, 0.04, "Finishing")
+            await run_step(steps[1], 0.80, 0.12, "Mixing sound")
+            for st in steps[2:-1]:  # loudness normalisation
+                jobs._publish({"type": "progress", "id": item_id, "value": 0.93, "step": None, "steps": None, "message": "Normalising loudness"})
+                await asyncio.to_thread(loudnorm_two_pass, *st[1:])
+            await run_step(steps[-1], 0.95, 0.04, "Finishing")
             if not target.is_file():
                 raise RuntimeError("ffmpeg didn't write the file")
             rel = target.relative_to(config.ROOT).as_posix()

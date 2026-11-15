@@ -208,15 +208,44 @@ function applySettings(s) {
   }
 }
 
+/* Auto-save (Project settings). Off: changes collect here until Save / Ctrl+S. */
+const Autosave = {
+  enabled: true, delay: 0.7, dirty: new Set(),
+  configure(cfg) {
+    this.enabled = cfg?.autosave !== false;
+    this.delay = Math.max(0.2, +(cfg?.autosave_delay ?? 0.7));
+    this.render();
+  },
+  mark(what) { this.dirty.add(what); this.render(); },
+  render() {
+    const b = $("#st-save");
+    if (!b) return;
+    b.hidden = !this.dirty.size;
+    b.title = `Unsaved: ${[...this.dirty].join(", ")}. Save the project (Ctrl+S)`;
+  },
+  async saveAll() {
+    clearTimeout(saveTimer);
+    const what = [...this.dirty];
+    await saveNow(true);
+    await TL.saveNow(true);
+    await saveNotes(true);
+    this.dirty.clear(); this.render();
+    if (what.length) Media.toast(`Saved ${state.project ? state.project.name : "Experiment"}.`);
+  },
+};
+
 let saveTimer = null;
 function scheduleSave() {
   if (state.loading || !state.shellReady) return;
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveNow, 700);
   renderSteps();
+  if (!Autosave.enabled) return Autosave.mark("settings");
+  saveTimer = setTimeout(saveNow, Autosave.delay * 1000);
 }
-async function saveNow() {
+async function saveNow(force = false) {
   clearTimeout(saveTimer);
+  if (!Autosave.enabled && !force) { Autosave.mark("settings"); return; }
+  Autosave.dirty.delete("settings"); Autosave.render();
   const settings = collectSettings();
   if (!state.project) {
     try { localStorage.setItem(EXPERIMENT_KEY, JSON.stringify({ settings, notes: $("#proj-notes").value })); } catch {}
@@ -246,15 +275,19 @@ function renderProjectCard() {
     card.innerHTML = `<div class="proj-thumb">${p.thumb ? `<img src="/${esc(p.thumb)}" alt="">` : PROJECT_ICON}</div>
       <div><h3>${esc(p.name)}</h3><div class="where">${esc(where(p.path))}</div>
       <div class="saved">Saved automatically · last change ${esc(timeOf(p.modified))} ·
-        <button type="button" class="link" id="btn-history">Earlier versions…</button></div></div>`;
+        <button type="button" class="link" id="btn-history">Earlier versions…</button> ·
+        <button type="button" class="link" id="btn-psettings">⚙ Settings…</button></div></div>`;
     $("#btn-history").onclick = () => historyDialog(p.id);
+    $("#btn-psettings").onclick = projectSettingsDialog;
     $("#notes-where").textContent = "saved with the project";
   } else {
     card.innerHTML = `<div class="proj-thumb">${EXPERIMENT_ICON}</div>
       <div><h3>Experiment</h3><div class="where">Nothing is saved as a project. Your settings stay in this browser.</div>
       <div class="saved"><button type="button" class="link" id="btn-save-as">Save as project…</button> ·
-        <button type="button" class="link" id="btn-history">Earlier versions…</button></div></div>`;
+        <button type="button" class="link" id="btn-history">Earlier versions…</button> ·
+        <button type="button" class="link" id="btn-psettings">⚙ Settings…</button></div></div>`;
     $("#btn-history").onclick = () => historyDialog("experiment");
+    $("#btn-psettings").onclick = projectSettingsDialog;
     $("#btn-save-as").onclick = () => newProjectDialog({ fromCurrent: true });
     $("#notes-where").textContent = "kept in this browser";
   }
@@ -274,6 +307,7 @@ async function renderRecent() {
 }
 
 async function openProject(id, { quiet = false, save = true } = {}) {
+  if (save && !(await leaveProject())) return null;
   try {
     clearTimeout(saveTimer);
     if (save && state.project) await saveNow();
@@ -283,6 +317,7 @@ async function openProject(id, { quiet = false, save = true } = {}) {
     writeUI({ lastProject: p.id });
     applySettings(p.settings && (p.settings.kind || p.settings.prompt) ? p.settings : collectSettings());
     $("#proj-notes").value = p.notes || "";
+    Autosave.configure(p.config);
     Media.setProject(p.id, p.config?.gallery);
     TL.setProject(p.id, p.timeline);
     state.scope = "project"; syncScope();
@@ -295,12 +330,13 @@ async function openProject(id, { quiet = false, save = true } = {}) {
 }
 
 async function loadExperimentMedia() {
-  try { const e = await api("/api/projects/experiment"); Media.setProject("experiment", e.config?.gallery); TL.setProject("experiment", e.timeline); }
+  try { const e = await api("/api/projects/experiment"); Autosave.configure(e.config); Media.setProject("experiment", e.config?.gallery); TL.setProject("experiment", e.timeline); }
   catch { Media.setProject("experiment", null); TL.setProject("experiment", null); }
 }
 
 async function startExperiment() {
-  if (state.project) await saveNow();
+  if (!(await leaveProject())) return;
+  if (state.project) await saveNow(true);
   state.project = null; state.projectChosen = true;
   writeUI({ lastProject: null });
   const ex = loadExperiment();
@@ -309,6 +345,83 @@ async function startExperiment() {
   loadExperimentMedia();
   syncScope();
   renderProjectCard(); renderRecent(); renderGallery(); selectInScope(); renderSteps();
+}
+
+async function saveNotes(force = false) {
+  if (!Autosave.enabled && !force) return Autosave.mark("notes");
+  Autosave.dirty.delete("notes"); Autosave.render();
+  if (!state.project) return saveNow(true);
+  try { await api(`/api/projects/${state.project.id}`, { method: "PUT", body: JSON.stringify({ notes: $("#proj-notes").value }) }); } catch {}
+}
+
+/* Before leaving a project with unsaved changes: "save" | "discard" | null (cancel). */
+function askUnsaved() {
+  if (!Autosave.dirty.size) return Promise.resolve("discard");
+  return new Promise(resolve => {
+    const box = document.createElement("div");
+    box.className = "wm-ask";
+    box.innerHTML = `<p>Save the changes to <b>${esc(state.project ? state.project.name : "Experiment")}</b> first? Unsaved: ${esc([...Autosave.dirty].join(", "))}.</p>`;
+    const foot = document.createElement("div");
+    foot.innerHTML = `<span class="wm-foot-gap"></span><button type="button" class="btn sm" data-a="cancel">Cancel</button>
+      <button type="button" class="btn sm danger" data-a="discard">Don't save</button><button type="button" class="btn sm primary" data-a="save">Save</button>`;
+    let done = false;
+    const w = WM.open({ title: "Unsaved changes", content: box, footer: foot, width: 440, height: 190, minWidth: 320, minHeight: 160,
+      onClose: () => { if (!done) resolve(null); } });
+    foot.addEventListener("click", e => {
+      const a = e.target.closest("[data-a]")?.dataset.a;
+      if (!a) return;
+      done = true; w.close(); resolve(a === "cancel" ? null : a);
+    });
+  });
+}
+async function leaveProject() {
+  const choice = await askUnsaved();
+  if (choice === null) return false;
+  if (choice === "save") await Autosave.saveAll();
+  Autosave.dirty.clear(); Autosave.render();
+  return true;
+}
+
+/* Project settings: auto-save, linked audio, version history. Stored in project.json (config + timeline). */
+async function projectSettingsDialog() {
+  const id = state.project?.id || "experiment";
+  let cfg = {};
+  try { cfg = (await api(`/api/projects/${id}`)).config || {}; } catch {}
+  const tlm = TL.model || {};
+  const delays = [[0.7, "Right away"], [5, "After 5 seconds"], [30, "After 30 seconds"], [120, "After 2 minutes"]];
+  const form = document.createElement("div");
+  form.className = "wm-form";
+  form.innerHTML = `
+    <div class="field toggle-row"><label class="switch"><input type="checkbox" id="ps-auto"${cfg.autosave !== false ? " checked" : ""}><span></span></label>
+      <div><strong>Auto-save</strong> <span class="hint inline">Off: save with Ctrl+S or the Save button; you're asked before leaving with unsaved changes</span></div></div>
+    <div class="field"><label for="ps-delay">Save changes</label><select id="ps-delay">${delays.map(([v, l]) => `<option value="${v}"${Math.abs((cfg.autosave_delay ?? 0.7) - v) < 1e-6 ? " selected" : ""}>${l}</option>`).join("")}</select></div>
+    <div class="field toggle-row"><label class="switch"><input type="checkbox" id="ps-link"${tlm.link_audio !== false ? " checked" : ""}><span></span></label>
+      <div><strong>Linked audio</strong> <span class="hint inline">Adding a video with sound puts its sound on an audio track, linked to the clip</span></div></div>
+    <div class="field"><label for="ps-where">Sound goes on</label><select id="ps-where">
+      <option value="new"${tlm.link_audio_track !== "free" ? " selected" : ""}>A new audio track for each video (A1, A2, A3…)</option>
+      <option value="free"${tlm.link_audio_track === "free" ? " selected" : ""}>The first free audio track</option></select></div>
+    <div class="field"><label>Versions</label><p class="hint">A copy of the project is kept automatically: at most once a minute while it changes, and once every
+      time the app starts (the last 30). <button type="button" class="link" id="ps-history">Earlier versions…</button></p></div>`;
+  const sync = () => { form.querySelector("#ps-delay").disabled = !form.querySelector("#ps-auto").checked; form.querySelector("#ps-where").disabled = !form.querySelector("#ps-link").checked; };
+  form.addEventListener("change", sync); sync();
+  const foot = document.createElement("div");
+  foot.innerHTML = `<span class="wm-foot-gap"></span><button type="button" class="btn sm" data-a="cancel">Cancel</button><button type="button" class="btn sm primary" data-a="ok">Save settings</button>`;
+  const w = WM.open({ id: "project-settings", title: `Project settings · ${state.project ? state.project.name : "Experiment"}`, content: form, footer: foot,
+    width: 560, height: 460, minWidth: 360, minHeight: 320 });
+  form.querySelector("#ps-history").onclick = () => historyDialog(id);
+  foot.querySelector('[data-a="cancel"]').onclick = () => w.close();
+  foot.querySelector('[data-a="ok"]').onclick = async () => {
+    const config = { autosave: form.querySelector("#ps-auto").checked, autosave_delay: +form.querySelector("#ps-delay").value };
+    try {
+      await api(`/api/projects/${id}`, { method: "PUT", body: JSON.stringify({ config }) });
+      const wasOff = !Autosave.enabled;
+      Autosave.configure(config);
+      TL.setLinkAudio(form.querySelector("#ps-link").checked, form.querySelector("#ps-where").value);
+      if (wasOff && config.autosave && Autosave.dirty.size) await Autosave.saveAll();  // turning it on saves what's pending
+      w.close();
+      Media.toast(config.autosave ? "Auto-save is on." : "Auto-save is off: save with Ctrl+S.");
+    } catch (e) { Media.toast(e.message); }
+  };
 }
 
 /* Earlier versions of project.json, kept automatically (one a minute, last 30). */
@@ -491,11 +604,14 @@ async function initShell() {
   let notesTimer = null;
   $("#proj-notes").addEventListener("input", () => {
     clearTimeout(notesTimer);
-    notesTimer = setTimeout(async () => {
-      if (!state.project) return saveNow();
-      try { await api(`/api/projects/${state.project.id}`, { method: "PUT", body: JSON.stringify({ notes: $("#proj-notes").value }) }); } catch {}
-    }, 700);
+    if (!Autosave.enabled) return Autosave.mark("notes");
+    notesTimer = setTimeout(() => saveNotes(), Autosave.delay * 1000);
   });
+  $("#st-save").onclick = () => Autosave.saveAll();
+  addEventListener("keydown", e => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); Autosave.saveAll(); }
+  }, true);
+  addEventListener("beforeunload", e => { if (Autosave.dirty.size) { e.preventDefault(); e.returnValue = ""; } });
   $("#form").addEventListener("input", e => { if (e.target.id !== "proj-notes") scheduleSave(); });
   $("#form").addEventListener("change", e => { if (e.target.id !== "proj-notes") scheduleSave(); });
   $$("#scope-seg button").forEach(b => b.onclick = () => { state.scope = b.dataset.s; syncScope(); renderGallery(); selectInScope(); });
