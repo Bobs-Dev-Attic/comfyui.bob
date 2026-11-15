@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import subprocess
 import uuid
 from contextlib import asynccontextmanager
@@ -30,6 +31,7 @@ REQUIRED_NODES = {
     "h3ref": {"MiniMaxH3ReferenceToVideo", "SamplerCustomAdvanced", "VAEDecodeAudio", "CreateVideo", "SaveVideo"},
     "klein": {"EmptyFlux2LatentImage", "TextGenerate"},
     "music3": {"MiniMaxMusic3TextEncode", "EmptyMiniMaxMusic3LatentAudio", "SaveAudioMP3"},
+    "angles": {"TextEncodeQwenImageEditPlus", "FluxKontextMultiReferenceLatentMethod", "CFGNorm", "ModelSamplingAuraFlow"},
 }
 
 
@@ -122,30 +124,16 @@ class EnhanceReq(BaseModel):
 @app.post("/api/enhance")
 async def enhance(req: EnhanceReq):
     """Enhance / upscale a picture or video: FaceRefine -> DLSS 5 -> SeedVR2 or RelayVSR x2."""
-    params: dict = {}
-    project = req.project
-    if req.item:
-        it = jobs.items.get(req.item)
-        if not it or it.get("status") != "done" or not it.get("files"):
-            raise HTTPException(404, "That result isn't finished or doesn't exist")
-        f = next((x for x in it["files"] if (x.get("content_type") or "").split("/")[0] in ("video", "image")), it["files"][0])
-        ref, params, project = f["path"], it.get("params") or {}, it.get("project")
-    elif req.ref:
-        ref = req.ref
-    else:
-        raise HTTPException(400, "Nothing to enhance")
-    kind = media.kind_of(ref)
-    if kind not in ("image", "video"):
-        raise HTTPException(400, "Enhance works on pictures and videos")
-    if req.options.facerefine and params.get("engine") not in ("h3", "h3ref"):
-        raise HTTPException(400, "FaceRefine re-samples faces with H3, so it needs a video made with H3 or H3 Reference here")
-    greq = GenerateRequest(
-        kind=kind, engine="enhance", prompt=params.get("prompt") or "", seed=req.seed,
-        references=params.get("references") or [], ref_audios=params.get("ref_audios") or [], clean_audio=params.get("clean_audio", True),
-        loras=params.get("loras") or [], source=ref, enhance_opts=req.options, enhance_of=req.item, project=project,
-    )
     try:
-        items = await jobs.generate(greq)
+        if req.item:
+            it = jobs.items.get(req.item)
+            if not it or it.get("status") != "done" or not it.get("files"):
+                raise HTTPException(404, "That result isn't finished or doesn't exist")
+            items = await jobs.enhance_item(it, req.options, seed=req.seed)
+        elif req.ref:
+            items = await jobs.enhance_ref(req.ref, req.options, seed=req.seed, project=req.project)
+        else:
+            raise HTTPException(400, "Nothing to enhance")
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return {"items": items}
@@ -386,6 +374,38 @@ async def projects_folder(req: PathName):
 @app.post("/api/projects/rename")
 async def projects_rename(req: PathName):
     return _project_call(projects.rename, req.path, req.name)
+
+
+class AnglesReq(BaseModel):
+    ref: str = Field(..., max_length=2000)  # the reference picture (a media ref)
+    poses: list[str] = Field(..., min_length=1, max_length=96)  # "<azimuth> <elevation> <distance>"
+    prompt: str = Field("", max_length=4000)  # added after the pose: background, lighting, what to keep
+    seed: int = -1
+    project: str | None = Field(None, max_length=64)
+    enhance_after: dict | None = None  # Enhance chain to run on each result (the page runs it)
+
+
+@app.get("/api/angles/options")
+async def angles_options():
+    return {"azimuths": workflows.ANGLE_AZIMUTHS, "elevations": workflows.ANGLE_ELEVATIONS, "distances": workflows.ANGLE_DISTANCES}
+
+
+@app.post("/api/angles")
+async def angles(req: AnglesReq):
+    """Re-shoot one picture from several camera angles (Qwen Image Edit 2511 + multiple-angles LoRA):
+    one result per pose, all with the same seed so they stay alike."""
+    if media.kind_of(req.ref) != "image":
+        raise HTTPException(400, "Angles needs a picture")
+    seed = req.seed if req.seed >= 0 else random.randint(0, 2**48)
+    items = []
+    try:
+        for pose in req.poses:
+            items += await jobs.generate(GenerateRequest(kind="image", engine="angles", references=[req.ref], pose=pose,
+                                                         prompt=req.prompt, seed=seed, project=req.project,
+                                                         enhance_after=req.enhance_after))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"items": items}
 
 
 class ProjectCopy(BaseModel):

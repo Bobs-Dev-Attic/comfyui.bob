@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 HF_H3 = "https://huggingface.co/Comfy-Org/MiniMax-H3"
 HF_KLEIN = "https://huggingface.co/Comfy-Org"
 HF_MUSIC3 = "https://huggingface.co/Comfy-Org/MiniMax-Music-3"
+HF_QWEN_EDIT = "https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI"
 
 
 @dataclass(frozen=True)
@@ -94,7 +95,27 @@ MUSIC3 = ModelSet(
     ),
 )
 
-ALL_SETS = {s.key: s for s in (H3, H3REF, KLEIN, MUSIC3)}
+# Angles: Qwen Image Edit 2511 re-shoots a picture from another camera angle with fal's
+# multiple-angles LoRA ("<sks> <azimuth> <elevation> <distance>"), in 4 steps with Lightning.
+# lightx2v's "_fp8_e4m3fn_scaled" file keeps per-channel scales ComfyUI doesn't read (it renders
+# noise), so it isn't a candidate: convert it with scripts/convert_lightx2v_fp8.py.
+ANGLES = ModelSet(
+    key="angles",
+    title="Qwen Image Edit 2511 · Angles",
+    source=HF_QWEN_EDIT,
+    slots=(
+        Slot("unet", "diffusion_models", ("qwen_image_edit_2511_fp8_e4m3fn_plain*", "qwen_image_edit_2511_bf16*",
+                                          "qwen_image_edit_2511_fp8mixed*", "qwen_image_edit_2511_fp8_e4m3fn.safetensors"),
+             label="Qwen Image Edit 2511 (bf16, fp8mixed, or converted fp8)"),
+        Slot("clip", "text_encoders", ("qwen_2.5_vl_7b*",), label="Qwen2.5-VL 7B text encoder"),
+        Slot("vae", "vae", ("qwen_image_vae*",), label="Qwen Image VAE"),
+        Slot("angles_lora", "loras", ("qwen-image-edit-2511-multiple-angles*",), label="Multiple-angles LoRA (fal)"),
+        Slot("lightning_lora", "loras", ("qwen-image-edit-2511-lightning-4steps*", "qwen-image-edit-2511-lightning*"),
+             optional=True, label="Lightning 4-step LoRA (else 20 steps)"),
+    ),
+)
+
+ALL_SETS = {s.key: s for s in (H3, H3REF, KLEIN, MUSIC3, ANGLES)}
 
 
 def _match(pattern: str, filename: str) -> bool:

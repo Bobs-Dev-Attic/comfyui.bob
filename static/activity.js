@@ -24,7 +24,7 @@ const Activity = (() => {
     if (it.engine === "timeline") return `Render · ${it.info?.format?.split(" (")[0] || "timeline"}`;
     let name = it.engine;
     try { name = engineName(it.kind, it.engine); } catch {}
-    return `${name} · ${(it.params?.prompt || "").slice(0, 48) || it.kind}`;
+    return `${name} · ${(it.params?.pose || it.params?.prompt || "").slice(0, 48) || it.kind}`;
   };
 
   /* ---------------------------------------------------------------- model */

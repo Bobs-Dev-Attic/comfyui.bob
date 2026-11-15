@@ -519,6 +519,7 @@ const Media = (() => {
     const eng = state.engine[state.kind], video = state.kind === "video";
     const entries = [
       one && ["Open", () => preview(one)],
+      one && one.kind === "image" && typeof Angles !== "undefined" && ["🔄 Angles… (other camera angles)", () => Angles.dialog({ ref: one.ref, url: one.url, name: one.name })],
       pics.length && video && eng === "h3" && ["Use as first frame", () => useItems(pics, "first_frame")],
       pics.length && video && eng === "h3" && ["Use as last frame", () => useItems(pics, "last_frame")],
       pics.length && video && eng === "h3ref" && [`Add as reference${pics.length > 1 ? "s" : ""}`, () => useItems(pics, "reference")],
