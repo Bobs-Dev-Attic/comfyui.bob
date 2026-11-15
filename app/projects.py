@@ -96,9 +96,62 @@ def load_file(p: Path) -> ProjectFile:
         raise ProjectError(f"Can't read {p.name}/project.json: {exc}") from exc
 
 
-def save_file(p: Path, pf: ProjectFile, touch: bool = True) -> None:
+HISTORY_DIR = ".history"
+HISTORY_KEEP = 30          # versions kept per project
+HISTORY_EVERY = 60.0       # seconds between versions (autosave runs much more often)
+
+
+def backup(p: Path) -> Path | None:
+    """Keep the current project.json in <project>/.history before it's overwritten (rate-limited)."""
+    src = p / PROJECT_FILE
+    if not src.is_file():
+        return None
+    hist = p / HISTORY_DIR
+    hist.mkdir(exist_ok=True)
+    versions = sorted(hist.glob("project-*.json"), key=lambda f: f.stat().st_mtime)
+    if versions and time.time() - versions[-1].stat().st_mtime < HISTORY_EVERY:
+        return None
+    dst = hist / f"project-{time.strftime('%Y%m%d-%H%M%S')}.json"
+    shutil.copy2(src, dst)
+    for old in versions[: max(0, len(versions) + 1 - HISTORY_KEEP)]:
+        old.unlink(missing_ok=True)
+    return dst
+
+
+def history(project_id: str) -> list[dict[str, Any]]:
+    p = find(project_id)
+    out = []
+    for f in sorted((p / HISTORY_DIR).glob("project-*.json"), key=lambda f: f.stat().st_mtime, reverse=True):
+        try:
+            pf = pfile.load(f)
+            out.append({"file": f.name, "saved": f.stat().st_mtime, "clips": len(pf.timeline.clips),
+                        "media": len(pf.library.media), "prompt": (pf.settings.prompt or "")[:80]})
+        except (OSError, ValueError, ValidationError):
+            continue
+    return out
+
+
+def restore(project_id: str, name: str) -> dict[str, Any]:
+    """Bring back an earlier version (the current one is kept in the history first)."""
+    p = find(project_id)
+    f = p / HISTORY_DIR / Path(name).name
+    if not f.is_file() or not f.name.startswith("project-"):
+        raise ProjectError("That version doesn't exist")
+    old = pfile.load(f)
+    shutil.copy2(p / PROJECT_FILE, p / HISTORY_DIR / f"project-{time.strftime('%Y%m%d-%H%M%S')}-before-restore.json")
+    old.id = load_file(p).id  # keep the identity (results point to it)
+    save_file(p, old, keep_version=False)  # the current state was just kept above
+    return as_dict(p, old)
+
+
+def save_file(p: Path, pf: ProjectFile, touch: bool = True, keep_version: bool = True) -> None:
     if touch:
         pf.modified = time.time()
+    if keep_version:
+        try:
+            backup(p)
+        except OSError:
+            pass  # a failed backup must never block saving
     pfile.save(p / PROJECT_FILE, pf)
 
 
@@ -236,15 +289,23 @@ def load(project_id: str) -> dict[str, Any]:
 
 def update(project_id: str, *, settings: dict[str, Any] | None = None, notes: str | None = None,
            config_: dict[str, Any] | None = None, timeline: dict[str, Any] | None = None) -> dict[str, Any]:
+    try:
+        return _update(project_id, settings, notes, config_, timeline)
+    except ValidationError as exc:
+        err = exc.errors()[0]
+        raise ProjectError(f"Invalid project data at {'.'.join(map(str, err['loc']))}: {err['msg']}") from exc
+
+
+def _update(project_id, settings, notes, config_, timeline) -> dict[str, Any]:
     def fn(pf: ProjectFile) -> None:
         if timeline is not None:
-            pf.timeline = timeline
+            pf.timeline = pfile.Timeline.model_validate(timeline)
         if settings is not None:
-            pf.settings = settings
+            pf.settings = pfile.StudioSettings.model_validate(settings)
         if notes is not None:
             pf.notes = notes
         if config_ is not None:
-            pf.config = {**pf.config.model_dump(), **config_}
+            pf.config = pfile.ProjectConfig.model_validate({**pf.config.model_dump(), **config_})
     return edit(project_id, fn)
 
 

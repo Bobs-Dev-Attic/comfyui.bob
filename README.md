@@ -52,12 +52,15 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   - Thumbnails are cached in `data/thumbs`.
   - Tag files and save tag filters as virtual folders.
   - Double-click or drag a picture onto a slot to use it.
-- **Project files:** `project.json` stores settings, preferences and the media library. See
+- **Project files:** `project.json` stores settings, preferences, the media library and the timeline, and keeps
+  earlier versions you can restore. See
   [docs/PROJECT_FORMAT.md](docs/PROJECT_FORMAT.md).
 
 - **Results bin and timeline** (bottom right): rate (★1–5) and tag results, then drag them onto a multi-track
   timeline.
   - Trim, split, ripple-delete and snap clips; add markers and an In/Out range.
+  - Add transitions with **Ctrl+T** (24 types).
+  - Videos with sound bring it onto a linked audio track.
   - Play the edit back, render it to MP4, or export FCPXML for DaVinci Resolve.
   - Press **?** for the keyboard shortcuts, and use **▦ Layout** (Alt+1–9) for panel layouts.
 

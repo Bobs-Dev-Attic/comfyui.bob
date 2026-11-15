@@ -5,6 +5,44 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.10.0] - 2026-11-15
+
+### Added
+- **Transitions.** Two clips that overlap on a track blend over the overlap, with each clip using its own frames.
+  - **Making one:** press **Ctrl+T**, click the ⧓ button or use the clip menu to add one at the nearest cut. This
+    pulls the next clip, everything after it and its linked sound left. You can also hold **Shift** when dropping a
+    clip onto the end of another.
+  - **Types:** 24 picture transitions, including cross dissolve, dip to black or white, pixel dissolve, wipes,
+    slides, smooth slides, push, circle open and close, radial, zoom in, pixelate, blur, squeeze and barn door.
+    Sound always crossfades.
+  - **Changing one:** right-click or double-click a transition to change its type or length (in seconds and
+    frames), or delete it with **Del**. Deleting restores the cut.
+  - **Rendering:** each video track is built with ffmpeg `xfade` and the tracks are stacked; clip sound fades
+    out and in to crossfade.
+  - **Preview:** dissolves, dips, wipes, slides and circles play live with two layered players. Other types
+    preview as a dissolve and render exactly.
+  - **FCPXML:** a transition on the storyline exports as a cut in the middle of the overlap plus a Cross Dissolve
+    spanning it; overlaps on other tracks become cuts.
+- **Linked audio.** Adding a video with sound also puts its sound on an audio track as a linked clip, and the
+  video clip itself goes silent.
+  - A free audio track is used, or a new one is added.
+  - The 🔗 button switches this on or off and is saved per project.
+  - Linked clips select, move, trim, split, copy and delete together; **Alt+click** picks just one.
+  - The clip menu has **Unlink**, **Detach sound to an audio track**, and **Link the two selected clips**.
+  - When two linked videos get a transition, their sounds crossfade too.
+- **Earlier versions.** `project.json` is copied into `.history` before it changes (at most once a minute, the
+  last 30). **Earlier versions…** on the Project step lists and restores them, keeping the current state first.
+- `project.json` timeline fields `transitions`, `link_audio`, and `clips[].link` / `audio_off`; see
+  `docs/PROJECT_FORMAT.md`.
+
+### Changed
+- Timeline renders run as three ffmpeg steps (picture, sound, mux). In ffmpeg 8 a single graph mixing video
+  transitions and several sound inputs deadlocked intermittently (6 of 15 test runs); split, 0 of 60 hung.
+- Project updates are validated as they arrive, so bad data gets a readable error instead of a server error.
+
+### Fixed
+- Restoring settings that have no model choice left the form unchanged.
+
 ## [0.9.0] - 2026-11-15
 
 ### Added
@@ -262,6 +300,7 @@ All notable changes to Bob Studio are recorded here. The format follows
 - "Write for me" prompt writer using Ollama or any OpenAI-compatible local server, with a validator and retries.
 - Live step progress over SSE, takes, a gallery with reuse and re-roll, and per-engine model checks.
 
+[0.10.0]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.7.0...v0.8.0

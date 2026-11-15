@@ -11,6 +11,13 @@ Layout of the file:
   - Media is referenced in place (file:/// URLs); nothing is copied. Stills use <video> with a
     duration; muted or hidden tracks export disabled clips; volume becomes <adjust-volume>.
     Markers go on the spine item they fall in.
+  - Transitions: in the studio a transition is an overlap of two clips. FCPXML (and Resolve) want a
+    transition centred on a cut that borrows frames past it, so each overlap becomes a cut at its
+    middle plus a <transition> spanning the old overlap; both clips have exactly the frames that needs.
+    On the primary storyline it is exported as a Cross Dissolve (the type FCPXML importers map
+    reliably); overlaps on other tracks become plain cuts at the middle.
+  - A video clip whose sound moved to a linked audio clip is exported silent (-96 dB), so the sound
+    isn't doubled.
 """
 from __future__ import annotations
 
@@ -21,7 +28,8 @@ from typing import Any
 from urllib.parse import quote
 
 from . import media
-from .projectfile import Clip, Timeline
+from .projectfile import TRANSITIONS, Clip, Timeline
+from .render import transitions_by_clip
 
 VERSION = "1.9"
 
@@ -40,7 +48,19 @@ def build(tl: Timeline, name: str = "Bob Studio") -> bytes:
 
     tracks = {t.id: t for t in tl.tracks}
     order = {t.id: i for i, t in enumerate(tl.tracks)}
-    clips = [c for c in tl.clips if c.track in tracks and c.trim_out > c.trim_in]
+    clips = [c.model_copy() for c in tl.clips if c.track in tracks and c.trim_out > c.trim_in]
+    # Overlaps (transitions) -> a cut in the middle; remember the ones to export as <transition>.
+    out_of, _into = transitions_by_clip(Timeline(**{**tl.model_dump(), "clips": [c.model_dump() for c in clips]}))
+    by_id = {c.id: c for c in clips}
+    cut_transitions: dict[str, tuple[float, float, str]] = {}  # incoming clip id -> (start s, length s, type)
+    for a_id, t in out_of.items():
+        a, b = by_id[a_id], by_id[t.b]
+        d = a.end - b.start
+        mid = b.start + d / 2
+        a.trim_out -= a.end - mid
+        b.trim_in += mid - b.start
+        cut_transitions[b.id] = (mid - d / 2, d, t.type)
+        b.start = mid
     if not clips:
         raise ValueError("The timeline is empty")
     video_tracks = [t for t in tl.tracks if t.kind == "video"]
@@ -118,11 +138,20 @@ def build(tl: Timeline, name: str = "Bob Studio") -> bytes:
             el.set("enabled", "0")
         if tr.hidden and tr.kind == "video":
             el.set("enabled", "0")
-        gain = c.volume * tr.volume
-        if c.kind != "image" and abs(gain - 1) > 1e-3:
+        gain = 0.0 if (c.kind == "video" and c.audio_off) else c.volume * tr.volume
+        if c.kind != "image" and abs(gain - 1) > 1e-3 and (a["audio"] or c.kind == "audio"):
             db = -96.0 if gain <= 0 else 20 * math.log10(gain)
             ET.SubElement(el, "adjust-volume", amount=f"{db:+.1f}dB")
         return el
+
+    effect_id: list[str] = []
+
+    def dissolve() -> str:
+        if not effect_id:  # Final Cut's built-in Cross Dissolve; Resolve maps it to its own
+            effect_id.append(rid())
+            ET.SubElement(res, "effect", id=effect_id[0], name="Cross Dissolve",
+                          uid="FxPlug:4731E73A-8DAC-4113-9A30-AE85B1761265")
+        return effect_id[0]
 
     # Spine: the bottom video track, gaps in between. Each item: (offset_f, end_f, local_start_f, element)
     items: list[tuple[int, int, int, ET.Element]] = []
@@ -133,6 +162,10 @@ def build(tl: Timeline, name: str = "Bob Studio") -> bytes:
         if s > pos:
             g = ET.SubElement(spine, "gap", name="Gap", offset=T(pos), start="0s", duration=T(s - pos))
             items.append((pos, s, 0, g))
+        if c.id in cut_transitions and items and items[-1][1] == s:
+            t0, d, kind = cut_transitions[c.id]
+            ET.SubElement(spine, "transition", name="Cross Dissolve", offset=T(F(t0)), duration=T(max(1, F(d)))).append(
+                ET.Element("filter-video", ref=dissolve(), name="Cross Dissolve"))
         el = clip_el(spine, c, s, None)
         items.append((s, e, 0 if c.kind == "image" else F(c.trim_in), el))
         pos = e

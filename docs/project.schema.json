@@ -86,6 +86,25 @@
           "default": null,
           "description": "the studio result this clip came from",
           "title": "Job"
+        },
+        "link": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "clips sharing a link id move, trim, split and delete together",
+          "title": "Link"
+        },
+        "audio_off": {
+          "default": false,
+          "description": "video clip whose own sound is off because a linked audio clip carries it",
+          "title": "Audio Off",
+          "type": "boolean"
         }
       },
       "required": [
@@ -551,6 +570,19 @@
           "title": "Snap",
           "type": "boolean"
         },
+        "transitions": {
+          "items": {
+            "$ref": "#/$defs/Transition"
+          },
+          "title": "Transitions",
+          "type": "array"
+        },
+        "link_audio": {
+          "default": true,
+          "description": "adding a video with sound also puts its sound on an audio track",
+          "title": "Link Audio",
+          "type": "boolean"
+        },
         "render": {
           "additionalProperties": true,
           "description": "export settings: width, height, crf",
@@ -616,6 +648,42 @@
         "name"
       ],
       "title": "Track",
+      "type": "object"
+    },
+    "Transition": {
+      "description": "Two clips on the same track overlap and blend: `a` plays out while `b` comes in.\nIts length is the overlap (a.end \u2212 b.start); each clip uses its own frames.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "track": {
+          "title": "Track",
+          "type": "string"
+        },
+        "a": {
+          "description": "outgoing clip id",
+          "title": "A",
+          "type": "string"
+        },
+        "b": {
+          "description": "incoming clip id",
+          "title": "B",
+          "type": "string"
+        },
+        "type": {
+          "default": "fade",
+          "description": "one of TRANSITIONS (ffmpeg xfade names)",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "track",
+        "a",
+        "b"
+      ],
+      "title": "Transition",
       "type": "object"
     },
     "VirtualFolder": {
@@ -744,7 +812,7 @@
       "type": "number"
     },
     "app_version": {
-      "default": "0.8.0",
+      "default": "0.10.0",
       "title": "App Version",
       "type": "string"
     },
