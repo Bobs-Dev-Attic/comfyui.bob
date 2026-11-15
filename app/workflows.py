@@ -246,8 +246,11 @@ def build_h3_ref(
 
     noise = g.add("RandomNoise", noise_seed=int(seed))
     sampler = g.add("KSamplerSelect", sampler_name="res_multistep")
-    # The template notes say beta beats simple for reference-heavy prompts.
-    sigmas = g.add("BasicScheduler", model=o(unet), scheduler="beta", steps=n_steps, denoise=1.0)
+    # The template notes say beta beats simple for reference-heavy prompts, which holds for
+    # full sampling. The turbo LoRA is distilled for simple: with beta at 4 steps the video
+    # comes out blown-out and streaked (tested 2026-11-15, same seed and prompt).
+    scheduler = "simple" if use_turbo else "beta"
+    sigmas = g.add("BasicScheduler", model=o(unet), scheduler=scheduler, steps=n_steps, denoise=1.0)
     guider = g.add("BasicGuider", model=o(model), conditioning=o(cond, 0))
     latent = g.add(
         "SamplerCustomAdvanced",
@@ -262,7 +265,7 @@ def build_h3_ref(
         outputs=[save],
         image_inputs=image_inputs,
         info={"width": width, "height": height, "frames": length, "steps": n_steps, "turbo": use_turbo,
-              "references": references, "max_fidelity": max_fidelity, "final_prompt": prompt,
+              "references": references, "max_fidelity": max_fidelity, "scheduler": scheduler, "final_prompt": prompt,
               "seconds": round(length / FPS, 2)},
     )
 
