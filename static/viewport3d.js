@@ -65,8 +65,33 @@ const Viewport3D = (() => {
 
   const VS_MESH = `attribute vec3 p; attribute vec2 uv; uniform mat4 m; varying vec2 v; varying float s;
     void main(){ v = uv; s = clamp(1.0 + p.z * 0.0, 0.0, 1.0); gl_Position = m * vec4(p, 1.0); }`;
+  // The picture, with the clip's Fx lights and vignette applied in picture space, as the render does
+  // (app/render.py fx_filters): relight c·(1+I·g·rgb), glow c+I·g·rgb, shade c·(1−d·g), with a
+  // Gaussian g of radius × the shorter side; vignette cos⁴ of the angle × distance from the centre.
   const FS_MESH = `precision mediump float; varying vec2 v; uniform sampler2D t; uniform float has; uniform float a;
-    void main(){ vec4 c = has > 0.5 ? texture2D(t, v) : vec4(0.32, 0.34, 0.4, 1.0); gl_FragColor = vec4(c.rgb, a); }`;
+    uniform float nl; uniform vec4 lp[4]; uniform vec4 lc[4]; uniform vec2 asp; uniform float vig;
+    void main(){
+      vec4 c = has > 0.5 ? texture2D(t, v) : vec4(0.32, 0.34, 0.4, 1.0);
+      vec3 col = c.rgb;
+      float sh = min(asp.x, asp.y);
+      for (int i = 0; i < 4; i++) {
+        if (float(i) >= nl) break;
+        vec2 d = (v - lp[i].xy) * asp;
+        float s = lp[i].z * sh;
+        float g = exp(-dot(d, d) / (2.0 * s * s));
+        float I = lp[i].w;
+        if (lc[i].w < 0.5) col = min(vec3(1.0), col * (1.0 + I * g * lc[i].rgb));
+        else if (lc[i].w < 1.5) col = min(vec3(1.0), col + I * g * lc[i].rgb);
+        else col = col * (1.0 - min(1.0, I * 0.7) * g);
+      }
+      if (vig > 0.0) {
+        vec2 d = (v - 0.5) * asp;
+        float r = length(d) / length(asp * 0.5);
+        float f = cos(min(1.5707, vig * r));
+        col *= f * f * f * f;
+      }
+      gl_FragColor = vec4(col, a);
+    }`;
   const VS_LINE = `attribute vec3 p; attribute vec4 c; uniform mat4 m; varying vec4 vc; void main(){ vc = c; gl_Position = m * vec4(p, 1.0); }`;
   const FS_LINE = `precision mediump float; varying vec4 vc; void main(){ gl_FragColor = vc; }`;
 
@@ -228,6 +253,15 @@ const Viewport3D = (() => {
       gl.uniform1f(gl.getUniformLocation(P_MESH, "has"), hasTex ? 1 : 0);
       gl.uniform1f(gl.getUniformLocation(P_MESH, "a"), 1);
       gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex); gl.uniform1i(gl.getUniformLocation(P_MESH, "t"), 0);
+      // Fx lights and vignette of the clip under the camera
+      const fx = sc.fx || {}, ls = (fx.lights || []).slice(0, 4);
+      const lpv = new Float32Array(16), lcv = new Float32Array(16);
+      ls.forEach((l, i) => { lpv.set([l.x, l.y, Math.max(0.005, l.radius), l.intensity], i * 4); lcv.set([l.rgb[0], l.rgb[1], l.rgb[2], { relight: 0, glow: 1, shade: 2 }[l.mode] ?? 0], i * 4); });
+      gl.uniform1f(gl.getUniformLocation(P_MESH, "nl"), ls.length);
+      gl.uniform4fv(gl.getUniformLocation(P_MESH, "lp"), lpv);
+      gl.uniform4fv(gl.getUniformLocation(P_MESH, "lc"), lcv);
+      gl.uniform2f(gl.getUniformLocation(P_MESH, "asp"), fx.picW || sc.W, fx.picH || sc.H);
+      gl.uniform1f(gl.getUniformLocation(P_MESH, "vig"), fx.vignette > 1e-3 ? 0.15 + 0.85 * fx.vignette : 0);
       gl.drawElements(gl.TRIANGLES, meshCount, gl.UNSIGNED_SHORT, 0);
       gl.disableVertexAttribArray(au);
       // lines

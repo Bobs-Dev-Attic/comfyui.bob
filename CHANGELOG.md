@@ -5,6 +5,15 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.16.2] - 2026-11-15
+
+### Added
+- **Fx in the depth preview.** The 3D renderer (main viewer and Look through) now draws the clip's Fx lights
+  (relight, glow, shade, with colour, size, strength, flicker, motion and keyframes) and its vignette.
+  - **Same maths as the render**, applied to the picture before the camera, so they sit on the relief.
+  - **Grade:** still applied over the whole view, so the preview can look slightly more saturated than the
+    render.
+
 ## [0.16.1] - 2026-11-15
 
 ### Added
@@ -13,7 +22,7 @@ All notable changes to Bob Studio are recorded here. The format follows
     renderer as the Camera window's Look through: the picture as a relief seen through the camera.
   - **Playback:** it plays along, with the depth video kept in step.
   - **What carries over:** the Video Fx grade is applied.
-  - **What doesn't:** Fx lights, vignette overlays and transitions aren't drawn inside a camera move with depth.
+  - **What doesn't:** transitions aren't drawn inside a camera move with depth (Fx lights and the vignette are, since 0.16.2).
   - **Outside such a move**, the viewer is unchanged.
 
 ## [0.16.0] - 2026-11-15

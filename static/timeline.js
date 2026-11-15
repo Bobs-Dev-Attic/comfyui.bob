@@ -711,6 +711,17 @@ const TL = (() => {
     const flick = lt.flicker > 0 ? 1 - lt.flicker * 0.6 * 0.5 * (1 + Math.sin(T * 13.1) * Math.sin(T * 5.3 + 1)) : 1;
     return { x, y, flick };
   }
+  // A clip's Fx lights and vignette at time t, for the 3D renderer's shader.
+  function fxForGL(c, t) {
+    if (!c || !fxOn(c)) return null;
+    const fx = fxAt(c, srcTime(c, t));
+    const info = probeInfo.get(c.ref) || {};
+    const lights = (fx.lights || []).filter(l => l.intensity > 0).map(l0 => {
+      const lt = { ...LIGHT_DEFAULT, ...l0 }, at = lightAt(lt, c, t), rgb = lt.mode === "shade" ? [1, 1, 1] : rgbOf(lt.color).map(v => v / 255);
+      return { mode: lt.mode, x: at.x, y: at.y, radius: lt.radius, intensity: lt.intensity * at.flick, rgb };
+    });
+    return { lights, vignette: fx.vignette || 0, picW: info.width, picH: info.height };
+  }
   function paintFx(L, c, t) {
     const media = [L.v, L.i];
     const ov = L.fx;
@@ -928,7 +939,7 @@ const TL = (() => {
         </div>`; }).join("") || `<p class="hint">No lights yet.</p>`;
       form.querySelector('[data-a="add-light"]').disabled = c.fx.lights.length >= 4;
     };
-    const live = () => { if (!playing) syncProgram(false); drawFxHandles(); };
+    const live = () => { if (!playing) syncProgram(false); drawFxHandles(); mainDepth.vp?.draw(); };
     form.addEventListener("input", e => {
       const k = e.target.dataset.k, lk = e.target.dataset.lk;
       if (k) {
@@ -1099,7 +1110,8 @@ const TL = (() => {
           const b = canvasClip(), i = b && probeInfo.get(b.ref);
           const pic = picAt(tl.playhead)?.a;
           return { W: i?.width || 1280, H: i?.height || 720, cam: camParamsAt(cc.cam, srcTime(cc, tl.playhead), tl.playhead - cc.start), path: [], keys: [],
-            colorEl: pic ? (pic.kind === "image" ? $("#prog-img") : $("#prog-video")) : null, depth: true, amount: cc.cam.depth.amount };
+            colorEl: pic ? (pic.kind === "image" ? $("#prog-img") : $("#prog-video")) : null, depth: true, amount: cc.cam.depth.amount,
+            fx: fxForGL(pic, tl.playhead) };
         },
         change() {}, playing: () => playing,
       });
@@ -1376,7 +1388,7 @@ const TL = (() => {
         const pic = picAt(tl.playhead)?.a;
         const colorEl = pic ? (pic.kind === "image" ? $("#prog-img") : $("#prog-video")) : null;
         return { W, H, cam: camParamsAt(still, srcTime(c, tl.playhead), tl.playhead - c.start), path, keys, colorEl,
-          depth: !!c.cam.depth, amount: c.cam.depth?.amount ?? 0 };
+          depth: !!c.cam.depth, amount: c.cam.depth?.amount ?? 0, fx: fxForGL(pic, tl.playhead) };
       },
       change(ch) {
         const k = keyed() ? keyAtCam(true) : c.cam;
