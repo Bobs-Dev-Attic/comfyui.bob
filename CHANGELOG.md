@@ -5,6 +5,48 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.7.0] - 2026-11-15
+
+### Added
+- **Project file format `bob.project/2`** (`app/projectfile.py`, documented in `docs/PROJECT_FORMAT.md`, JSON Schema in
+  `docs/project.schema.json`). The file has sections for metadata, `settings` (the studio form), `config`
+  (per-project preferences: gallery view, prompt writer) and `library` (media, tags, virtual folders).
+  - Every save is validated, and unknown settings keys are kept for forward compatibility.
+  - 0.6.0 projects migrate automatically. Their input pictures become the first library items.
+- **Media gallery in the Inputs step.** **🗂 Media** in the top bar or **⤢** opens the same gallery as a
+  resizable window with a navigation pane.
+  - **Sources:** the project's Library, virtual folders, bookmarked folders (with sub-folders and breadcrumbs), the
+    project's results, and Uploads.
+  - **Finding things:** search across names, tags and prompts; filter by kind; filter by tag (all-of); sort; and
+    resize thumbnails.
+  - **Selecting:** click, Ctrl-click, Shift-click, Ctrl+A.
+  - **Using a picture:** double-click, Enter, or drag a picture onto a keyframe or reference slot. H3 Reference adds
+    `<Picture N>`; H3 fills the first frame, then the last.
+  - **Right-click menu:** Open (a preview window), Use as first or last frame, Add as reference, Tags…, Add to or
+    remove from the library, and Copy path.
+  - **Importing:** with Import or by dropping files from the desktop. Pictures, videos and sounds are accepted, and
+    uploads are streamed to disk.
+- **Tags and virtual folders.**
+  - Tag one or many files. Tagging also collects a file into the project's library.
+  - Rename a tag, give it a colour, or delete it everywhere.
+  - A virtual folder is a saved tag filter: all of these tags or any of them, optionally limited to kinds. Make one
+    from the current tag filter, and edit or delete it by right-clicking.
+- **Bookmarks:** app-wide folder shortcuts, like Explorer's Quick access, stored in `data/library.json`.
+  - A folder picker lists common places and drives, or you can paste a path.
+  - Right-click a bookmark to rename or remove it.
+  - Files in bookmarked folders can be used as inputs.
+- **Thumbnail cache** in `data/thumbs` (WebP).
+  - Pictures use Pillow; video frames and audio waveforms use ffmpeg (`BOB_FFMPEG`).
+  - The cache key includes size and modified time, and the URLs are immutable, so browsers keep them.
+  - The window footer shows the cache size and can clear it.
+  - Studio gallery tiles use these thumbnails too, instead of loading each video.
+
+### Changed
+- Media refs may be absolute paths inside a bookmarked folder; uploads, outputs and bookmarks are the only readable
+  places.
+- `/api/upload` accepts videos (up to 2 GB) and sounds (up to 500 MB) as well as pictures, streaming them to disk.
+- Experiment mode stores its settings and media library in `data/experiment/project.json`.
+
 ## [0.6.0] - 2026-11-15
 
 ### Added
@@ -152,6 +194,7 @@ All notable changes to Bob Studio are recorded here. The format follows
 - "Write for me" prompt writer using Ollama or any OpenAI-compatible local server, with a validator and retries.
 - Live step progress over SSE, takes, a gallery with reuse and re-roll, and per-engine model checks.
 
+[0.7.0]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.4.0...v0.5.0

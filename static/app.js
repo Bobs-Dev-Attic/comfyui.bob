@@ -120,6 +120,13 @@ function waveHTML(seed, n = 28) {
   return `<div class="wave">${out}</div>`;
 }
 
+/* Browser URL for a media ref: files inside the app are served directly, files in a
+   bookmarked folder through /api/media/file. */
+function mediaUrl(ref) {
+  if (!ref) return "";
+  return /^(outputs|data\/uploads)\//.test(ref) ? "/" + ref : `/api/media/file?path=${encodeURIComponent(ref)}`;
+}
+
 /* ------------------------------------------------------------------ form */
 function curKey() { return `${state.kind}:${state.engine[state.kind]}`; }
 
@@ -267,10 +274,10 @@ function applyParams(p) {
   $("#turbo").checked = p.turbo !== false;
   $("#enhance").checked = !!p.enhance;
   $("#fidelity").checked = !!p.max_fidelity;
-  if (p.engine === "h3ref") { state.refs = (p.references || []).map(r => ({ ref: r, url: "/" + r })); renderRefs(); }
+  if (p.engine === "h3ref") { state.refs = (p.references || []).map(r => ({ ref: r, url: mediaUrl(r) })); renderRefs(); }
   $("#steps").value = p.steps ?? "";
   for (const role of ["first_frame", "last_frame"]) {
-    if (p[role]) setFrame(role, p[role], "/" + p[role]); else clearFrame(role);
+    if (p[role]) setFrame(role, p[role], mediaUrl(p[role])); else clearFrame(role);
   }
   updateDerived();
 }
@@ -328,7 +335,7 @@ function initDrops() {
     drop.addEventListener("drop", e => {
       e.preventDefault(); drop.classList.remove("over");
       const ref = e.dataTransfer.getData("text/x-bob-ref");
-      if (ref) return setFrame(role, ref, "/" + ref);
+      if (ref) return setFrame(role, ref, e.dataTransfer.getData("text/x-bob-url") || mediaUrl(ref));
       const f = e.dataTransfer.files[0]; if (f) uploadFile(role, f);
     });
   }
@@ -395,7 +402,7 @@ function initRefs() {
   field.addEventListener("drop", e => {
     e.preventDefault(); $("#ref-add")?.classList.remove("over");
     const ref = e.dataTransfer.getData("text/x-bob-ref");
-    if (ref) return addRef(ref, "/" + ref);
+    if (ref) return addRef(ref, e.dataTransfer.getData("text/x-bob-url") || mediaUrl(ref));
     uploadRefs([...e.dataTransfer.files]);
   });
 }
@@ -620,9 +627,10 @@ const isBusy = it => ["submitting", "queued", "running"].includes(it.status);
 function thumbHTML(it) {
   const f = it.files?.[0];
   if (it.status === "done" && f) {
-    if (it.kind === "video") return `<video src="${esc(f.url)}#t=0.6" muted preload="metadata" playsinline loop></video>`;
-    if (it.kind === "image") return `<img src="${esc(f.url)}" alt="" loading="lazy">`;
-    return waveHTML(it.id, 22);
+    // Cached WebP thumbnails (a frame for video, a waveform for sound); the full file loads in the viewer.
+    const th = `/api/media/thumb?path=${encodeURIComponent(f.path)}&w=320&v=${Math.round(it.finished || it.created)}`;
+    const fallback = it.kind === "audio" ? waveHTML(it.id, 22) : `<span class="state">${it.kind === "video" ? "▶" : "🖼"}</span>`;
+    return `<img src="${th}" alt="" loading="lazy" decoding="async" onerror="this.outerHTML=${esc(JSON.stringify(fallback))}">${it.kind === "video" ? `<span class="tile-kind">▶</span>` : ""}`;
   }
   if (isBusy(it)) {
     const pv = state.previews.get(it.id);
@@ -714,7 +722,7 @@ function renderViewer() {
     else if (it.kind === "image") html = `<img class="media" src="${esc(f.url)}" alt="">`;
     else html = `<div class="audio-card">${waveHTML(it.id, 48)}<audio src="${esc(f.url)}" controls autoplay></audio></div>`;
   } else if (isBusy(it)) {
-    const pv = state.previews.get(it.id) || (it.params.first_frame || it.params.references?.[0] ? "/" + (it.params.first_frame || it.params.references[0]) : "");
+    const pv = state.previews.get(it.id) || mediaUrl(it.params.first_frame || it.params.references?.[0]);
     html = `<div class="live">${pv ? `<img id="live-img" src="${pv}" alt="">` : ""}
       <div class="live-overlay"><div class="row"><span id="live-label"></span><span id="live-pct"></span></div>
       <div class="bar" id="live-bar"><i></i></div></div></div>`;
@@ -805,6 +813,7 @@ function connectEvents() {
       if (!isBusy(ev.item)) { state.previews.delete(ev.item.id); state.progress.delete(ev.item.id); }
       if (!prev || prev.status !== ev.item.status) {
         renderGallery(); renderQueue();
+        if (ev.item.status === "done") Media.refreshSource();
         if (ev.item.id === state.selected) renderViewer();
       }
     } else if (ev.type === "progress") {
@@ -887,6 +896,7 @@ function init() {
   initWriter();
   initSysCheck();
   $("#btn-writer-window").onclick = openWriterWindow;
+  $("#btn-media").onclick = () => Media.openWindow();
   $("#prompt").addEventListener("input", () => postContext());
   $("#aspect").innerHTML = Object.keys(ASPECT).map(a => `<option>${a}</option>`).join("");
   renderForm();

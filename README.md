@@ -47,6 +47,14 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   - Projects are folders under `projects/`, and each one keeps its settings, notes and results.
   - Settings save automatically, and the last project reopens on the next visit.
 
+- **Media gallery** (Inputs step, or **🗂 Media**): the project's library, virtual folders, bookmarked folders,
+  results and uploads.
+  - Thumbnails are cached in `data/thumbs`.
+  - Tag files and save tag filters as virtual folders.
+  - Double-click or drag a picture onto a slot to use it.
+- **Project files:** `project.json` stores settings, preferences and the media library. See
+  [docs/PROJECT_FORMAT.md](docs/PROJECT_FORMAT.md).
+
 Other features:
 
 - **Quality presets:** Draft 480p, Standard 576p, Full 768p.
@@ -96,16 +104,19 @@ Other features:
 - `app/comfy.py`: comfy-sdk client, proxy lifecycle, and native ComfyUI calls.
 - `app/jobs.py`: submits jobs, streams progress, downloads outputs to `outputs/`, keeps history in `data/history.json`.
 - `app/main.py`: the HTTP API.
-- `app/projects.py`: project folders, browsing, rename and trash.
+- `app/projects.py`: project folders, browsing, rename, trash, and the media library (tags, virtual folders).
+- `app/projectfile.py`: the `project.json` schema (pydantic), migration, and JSON Schema export.
+- `app/media.py`: media sources, bookmarks, the thumbnail cache, and the folder picker.
 - `static/`: the UI (vanilla JS, no build step).
   - `shell.js`: the side panel steps, projects, settings persistence and the panel splitter.
   - `winman.js`: movable, resizable windows.
-  - `explorer.js`: the project browser. `writer.html`/`writer.js` is the Prompt Writer window;
+  - `explorer.js`: the project browser.
+  - `media.js`: the media gallery. `writer.html`/`writer.js` is the Prompt Writer window;
   `h3prompt.js` mirrors the server's prompt assembly (`tests/h3prompt_parity.py` keeps them identical).
 
 Settings are environment variables, or lines in a local `.env` file (copy `.env.example`): `COMFYUI_URL`, `COMFY_BASE_URL` (proxy),
 `BOB_PORT`, `BOB_HOST`, `BOB_EXTRA_MODEL_PATHS` (your `extra_model_paths.yaml`), `BOB_COMFYUI_DIR` and
-`BOB_COMFYUI_ARGS` (the ComfyUI that `start.bat` starts), and `BOB_AUTO_START_PROXY=0` to skip starting the proxy. Prompt writer defaults:
+`BOB_COMFYUI_ARGS` (the ComfyUI that `start.bat` starts), `BOB_FFMPEG` (thumbnails for video and sound), and `BOB_AUTO_START_PROXY=0` to skip starting the proxy. Prompt writer defaults:
 `BOB_LLM_BACKEND` (`ollama` or `openai`), `OLLAMA_URL`, `BOB_OLLAMA_MODEL`, `BOB_OLLAMA_KEEP_ALIVE` (default `0`),
 `BOB_LLM_URL` (default `http://127.0.0.1:8080`, llama-server's port) and `BOB_LLM_MODEL`. The UI remembers its own choice.
 

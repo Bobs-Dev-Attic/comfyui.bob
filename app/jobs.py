@@ -324,13 +324,13 @@ class JobManager:
 
 
 def media_path(ref: str) -> Path:
-    """Resolve a media ref from the browser to a file inside uploads/ or outputs/ only."""
-    ref = ref.lstrip("/")
-    p = (config.ROOT / ref).resolve()
-    allowed = (config.UPLOAD_DIR.resolve(), config.OUTPUT_DIR.resolve())
-    if not any(a in p.parents for a in allowed) or not p.is_file():
-        raise ValueError(f"Unknown media: {ref}")
-    return p
+    """Resolve a media ref from the browser: uploads, outputs, or a bookmarked folder only."""
+    from . import media
+
+    try:
+        return media.resolve(ref)
+    except media.MediaError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def _short_error(exc: Exception) -> str:

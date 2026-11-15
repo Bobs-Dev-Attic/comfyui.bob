@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, config, llm, modelpaths, models, projects, syscheck, workflows
+from . import __version__, config, llm, media, modelpaths, models, projects, syscheck, workflows
 from .comfy import ComfyService
 from .jobs import GenerateRequest, JobManager, media_path
 
@@ -215,6 +215,7 @@ class NewProject(BaseModel):
 class ProjectPatch(BaseModel):
     settings: dict | None = None
     notes: str | None = Field(None, max_length=20000)
+    config: dict | None = None
 
 
 class PathName(BaseModel):
@@ -225,7 +226,7 @@ class PathName(BaseModel):
 def _project_call(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
-    except projects.ProjectError as exc:
+    except (projects.ProjectError, media.MediaError) as exc:
         raise HTTPException(400, str(exc)) from exc
     except OSError as exc:
         raise HTTPException(400, f"File system error: {exc.strerror or exc}") from exc
@@ -266,7 +267,7 @@ async def projects_get(project_id: str):
 
 @app.put("/api/projects/{project_id}")
 async def projects_update(project_id: str, req: ProjectPatch):
-    return _project_call(projects.update, project_id, settings=req.settings, notes=req.notes)
+    return _project_call(projects.update, project_id, settings=req.settings, notes=req.notes, config_=req.config)
 
 
 @app.post("/api/projects/folder")
@@ -284,26 +285,184 @@ async def projects_delete(req: PathName):
     return _project_call(projects.delete, req.path)
 
 
+# ------------------------------------------------------------------ media library (Inputs gallery)
+
+class Refs(BaseModel):
+    refs: list[str] = Field(default_factory=list, max_length=2000)
+    tags: list[str] = Field(default_factory=list, max_length=50)
+
+
+class TagEdit(BaseModel):
+    refs: list[str] = Field(default_factory=list, max_length=2000)
+    add: list[str] = Field(default_factory=list, max_length=50)
+    remove: list[str] = Field(default_factory=list, max_length=50)
+
+
+class Ids(BaseModel):
+    ids: list[str] = Field(default_factory=list, max_length=2000)
+
+
+class MediaPatch(BaseModel):
+    rating: int | None = Field(None, ge=0, le=5)
+    note: str | None = Field(None, max_length=2000)
+
+
+class TagPatch(BaseModel):
+    name: str
+    new_name: str | None = None
+    color: str | None = None
+
+
+class BookmarkIn(BaseModel):
+    path: str = ""
+    name: str = ""
+
+
+@app.get("/api/projects/{project_id}/library")
+async def library_get(project_id: str):
+    return await asyncio.to_thread(_project_call, projects.library, project_id)
+
+
+@app.post("/api/projects/{project_id}/library/add")
+async def library_add(project_id: str, req: Refs):
+    return await asyncio.to_thread(_project_call, projects.add_media, project_id, req.refs, req.tags)
+
+
+@app.post("/api/projects/{project_id}/library/remove")
+async def library_remove(project_id: str, req: Ids):
+    return _project_call(projects.remove_media, project_id, req.ids)
+
+
+@app.post("/api/projects/{project_id}/library/tags")
+async def library_tags(project_id: str, req: TagEdit):
+    return await asyncio.to_thread(_project_call, projects.tag_media, project_id, req.refs, req.add, req.remove)
+
+
+@app.patch("/api/projects/{project_id}/library/media/{item_id}")
+async def library_media_patch(project_id: str, item_id: str, req: MediaPatch):
+    return _project_call(projects.update_media, project_id, item_id, rating=req.rating, note=req.note)
+
+
+@app.post("/api/projects/{project_id}/library/folders")
+async def library_folder_save(project_id: str, folder: dict):
+    return _project_call(projects.save_folder, project_id, folder)
+
+
+@app.delete("/api/projects/{project_id}/library/folders/{folder_id}")
+async def library_folder_delete(project_id: str, folder_id: str):
+    return _project_call(projects.delete_folder, project_id, folder_id)
+
+
+@app.post("/api/projects/{project_id}/library/tag")
+async def library_tag_patch(project_id: str, req: TagPatch):
+    if req.new_name is not None:
+        return _project_call(projects.rename_tag, project_id, req.name, req.new_name)
+    if req.color is not None:
+        return _project_call(projects.set_tag_color, project_id, req.name, req.color)
+    return _project_call(projects.delete_tag, project_id, req.name)
+
+
+@app.get("/api/media/list")
+async def media_list(source: str, path: str = "", id: str = "", project: str = ""):
+    """source: uploads | results | bookmark (with id)."""
+    if source == "results":
+        return {"files": media.list_results(jobs.list(), project or None), "folders": [], "crumbs": [], "sub": ""}
+    if source == "uploads":
+        return await asyncio.to_thread(_project_call, media.list_folder, config.UPLOAD_DIR, path)
+    if source == "bookmark":
+        base = _project_call(media.bookmark, id)
+        return await asyncio.to_thread(_project_call, media.list_folder, base, path)
+    raise HTTPException(400, "Unknown source")
+
+
+_thumb_slots = asyncio.Semaphore(4)
+
+
+@app.get("/api/media/thumb")
+async def media_thumb(path: str, w: int = 256):
+    async with _thumb_slots:
+        try:
+            f = await asyncio.to_thread(media.thumbnail, path, w)
+        except (media.MediaError, OSError) as exc:
+            raise HTTPException(404, str(exc)) from exc
+    # The URL carries the file's modified time (v=…), so the browser may keep it for good.
+    return FileResponse(f, media_type="image/webp", headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+
+@app.get("/api/media/file")
+async def media_file(path: str):
+    try:
+        f = media.resolve(path)
+    except media.MediaError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return FileResponse(f)
+
+
+@app.get("/api/media/cache")
+async def media_cache():
+    return await asyncio.to_thread(media.cache_size)
+
+
+@app.delete("/api/media/cache")
+async def media_cache_clear():
+    return await asyncio.to_thread(media.clear_cache)
+
+
+@app.get("/api/bookmarks")
+async def bookmarks_list():
+    return {"bookmarks": media.bookmarks()}
+
+
+@app.post("/api/bookmarks")
+async def bookmarks_add(req: BookmarkIn):
+    return _project_call(media.add_bookmark, req.path, req.name)
+
+
+@app.patch("/api/bookmarks/{bid}")
+async def bookmarks_rename(bid: str, req: BookmarkIn):
+    return _project_call(media.update_bookmark, bid, req.name)
+
+
+@app.delete("/api/bookmarks/{bid}")
+async def bookmarks_remove(bid: str):
+    media.remove_bookmark(bid)
+    return {"ok": True}
+
+
+@app.get("/api/fs/dirs")
+async def fs_dirs(path: str = ""):
+    return await asyncio.to_thread(_project_call, media.list_dirs, path)
+
+
 @app.post("/api/free")
 async def free():
     return {"ok": await comfy.free_vram()}
 
 
-ALLOWED_UPLOAD = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+UPLOAD_LIMITS = {"image": 50, "video": 2048, "audio": 500}  # MB per kind
 
 
 @app.post("/api/upload")
 async def upload(file: UploadFile = File(...)):
     ext = Path(file.filename or "").suffix.lower()
-    if ext not in ALLOWED_UPLOAD:
-        raise HTTPException(400, f"Unsupported file type {ext or '(none)'}; use PNG, JPG, WEBP or BMP")
-    data = await file.read()
-    if len(data) > 50 * 1024 * 1024:
-        raise HTTPException(400, "Image is larger than 50 MB")
+    kind = media.kind_of(file.filename or "")
+    if not kind:
+        raise HTTPException(400, f"Unsupported file type {ext or '(none)'}: use a picture, a video (MP4, WEBM, MOV) or a sound file")
+    limit = UPLOAD_LIMITS[kind] * 1024 * 1024
     target = config.UPLOAD_DIR / f"{uuid.uuid4().hex[:12]}{ext}"
-    target.write_bytes(data)
+    size = 0
+    try:  # stream to disk so large clips don't sit in memory
+        with target.open("wb") as out:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > limit:
+                    raise HTTPException(400, f"{file.filename} is larger than {UPLOAD_LIMITS[kind]} MB")
+                out.write(chunk)
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
     rel = target.relative_to(config.ROOT).as_posix()
-    return {"ref": rel, "url": "/" + rel, "name": file.filename}
+    return {"ref": rel, "url": "/" + rel, "name": file.filename, "kind": kind}
 
 
 @app.get("/api/events")
