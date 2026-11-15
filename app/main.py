@@ -82,6 +82,28 @@ async def system_check():
     return await asyncio.to_thread(syscheck.run)
 
 
+@app.get("/api/loras")
+async def loras_list(refresh: bool = False):
+    """Every LoRA ComfyUI can load, with what it's for and its details (app/loras.py)."""
+    from . import loras
+
+    names = (await comfy.installed_models(refresh=refresh)).get("loras", [])
+    rows = await asyncio.to_thread(loras.scan, names, refresh)
+    return {"loras": rows, "families": loras.FAMILIES, "engine_families": {k: sorted(v) for k, v in loras.ENGINE_FAMILIES.items()}}
+
+
+@app.get("/api/loras/preview")
+async def loras_preview(name: str):
+    """The preview picture saved next to a LoRA (name.png, name.preview.png, ...)."""
+    from . import loras
+
+    path = await asyncio.to_thread(loras.find_path, name)
+    pic = path and await asyncio.to_thread(loras.preview_path, path)
+    if not pic:
+        raise HTTPException(404, "No preview for that LoRA")
+    return FileResponse(pic, headers={"Cache-Control": "max-age=3600"})
+
+
 @app.get("/api/capabilities")
 async def capabilities(refresh: bool = False):
     if not await comfy.system_stats():

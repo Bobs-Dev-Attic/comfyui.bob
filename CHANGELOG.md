@@ -5,6 +5,38 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.19.0] - 2026-11-15
+
+### Added
+- **Shots step** (video models, after Inputs). The video is planned shot by shot.
+  - **Each shot:** a length; a framing (wide, medium, close-up, over-the-shoulder, POV, insert…); where; what
+    happens (with `<Picture N>` buttons); a camera move; an optional spoken line, voiced with one of the
+    reference sounds; and its own first and last frame (H3) or the reference pictures it uses (H3 Reference).
+  - **Editing:** add, duplicate, reorder or delete shots, and set a "Look", soundscape and music for the whole
+    video. A live preview shows the prompt.
+  - **Use shots** makes Generate build from this list, with a banner on the Prompt step saying so. Two ways:
+    - **One video · multi-shot:** one generation in H3's multi-shot format, timed from each shot's length. The
+      first shot's first frame and the last shot's last frame are the keyframes. It warns over 15 s or 6 shots.
+    - **One video per shot:** a generation per shot, each with its own inputs. When they're all done they go on
+      the timeline in order.
+- **LoRAs step** (every model, after Shots). Add up to 8 LoRAs with a strength from −4 to 4, reorder them,
+  and click trigger words into the prompt.
+  - **In the graph:** they chain after the model (and H3's turbo LoRA) in every graph: H3, H3 Reference, the
+    reshoot, Klein and Music 3.
+  - **Checks:** they're validated against ComfyUI's list, and RefMod files are refused.
+- **LoRA Explorer** (📂 Browse LoRAs…), a Windows Explorer style browser.
+  - **Browsing:** a folder tree with counts, Back/Forward/Up, an address bar, search across folders, Details
+    (sortable: name, made for, type, rank, size, modified) or Large icons, and a details pane.
+  - **Details pane:** preview picture if one sits next to the file, what model it's for (✓ fits / ⚠ not), base,
+    type, rank, tensors, size, trainer, trigger words (click to copy) and description.
+  - **Filters:** only LoRAs for the selected model (on by default), by model family, and hide RefMods.
+  - **Adding:** set a strength and double-click, press Enter or click Add.
+  - **Keys:** arrows, Backspace, Ctrl+F and F5 work.
+  - **Back end:** `GET /api/loras` reads only the safetensors headers. It classifies each file from its metadata,
+    then its tensor names, then its folder and name; 487 files take 0.65 s, cached in `data/lora_cache.json`.
+    `GET /api/loras/preview` serves the preview pictures.
+- `project.json` settings: `loras`, `shots`. Generation requests: `loras`.
+
 ## [0.18.0] - 2026-11-15
 
 ### Added

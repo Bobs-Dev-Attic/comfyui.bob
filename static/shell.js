@@ -61,13 +61,15 @@ const STEPS = {
   project: { title: "Project", sub: "Start a new project, open a saved one, or just experiment." },
   model: { title: "Model", sub: "Choose what to make and the model that makes it." },
   inputs: { title: "Inputs", sub: "" },
+  shots: { title: "Shots", sub: "Plan the video shot by shot: each with its length, framing, action, camera, line and inputs." },
+  loras: { title: "LoRAs", sub: "Add LoRAs to the model: styles, characters, motions." },
   prompt: { title: "Prompt", sub: "Describe what you want. The Prompt Writer can turn a short idea into a full shot list." },
   settings: { title: "Settings", sub: "Size, length, speed and variations." },
   generate: { title: "Generate", sub: "Check your choices, then make it." },
 };
 const ORDER = Object.keys(STEPS);
 
-function stepApplies(id) { return id !== "inputs" || state.kind === "video"; }
+function stepApplies(id) { return !["inputs", "shots"].includes(id) || state.kind === "video"; }
 function visibleSteps() { return ORDER.filter(stepApplies); }
 function stepDone(id) {
   const eng = state.engine[state.kind];
@@ -75,7 +77,9 @@ function stepDone(id) {
     case "project": return state.projectChosen;
     case "model": return !!state.caps?.engines?.[eng]?.ready;
     case "inputs": return eng === "h3ref" ? state.refs.length > 0 : !!(state.frames.first_frame || state.frames.last_frame);
-    case "prompt": return !!$("#prompt").value.trim();
+    case "prompt": return !!$("#prompt").value.trim() || (typeof Shots !== "undefined" && Shots.on());
+    case "shots": return typeof Shots !== "undefined" && Shots.on();
+    case "loras": return state.loras.length > 0;
     case "settings": return state.settingsVisited;
     default: return false;
   }
@@ -93,7 +97,7 @@ function renderSteps() {
     t.setAttribute("aria-selected", id === state.step);
     t.title = `${i + 1}. ${STEPS[id].title}${stepDone(id) ? " ✓" : ""}`;
   });
-  if (!stepApplies(state.step)) return showStep(state.step === "inputs" ? "prompt" : "project");
+  if (!stepApplies(state.step)) return showStep(["inputs", "shots"].includes(state.step) ? "prompt" : "project");
   const i = vis.indexOf(state.step);
   $("#btn-back").disabled = i <= 0;
   $("#btn-next").hidden = i >= vis.length - 1;
@@ -103,6 +107,8 @@ function renderSteps() {
   const model = MODEL_CARDS.find(m => m.kind === state.kind && m.engine === eng)?.name || eng;
   $("#nav-info").textContent = `${state.project ? state.project.name : "Experiment"} · ${model}`;
   if (state.step === "inputs") renderInputsHead();
+  if (state.step === "shots") Shots.render();
+  if (state.step === "loras") Loras.render();
   if (state.step === "generate") renderSummary();
 }
 
@@ -175,6 +181,8 @@ function collectSettings() {
     turbo: $("#turbo").checked, enhance: $("#enhance").checked, fidelity: $("#fidelity").checked,
     refs: state.refs.map(pickRef), frames: { first_frame: pickRef(state.frames.first_frame), last_frame: pickRef(state.frames.last_frame) },
     audios: state.arefs.map(pickRef), clean_audio: $("#clean-audio").checked,
+    loras: state.loras.map(l => ({ name: l.name, strength: l.strength })),
+    shots: state.shots ? structuredClone(state.shots) : null,
   };
 }
 
@@ -189,6 +197,8 @@ function applySettings(s) {
     state.refs = (s.refs || []).filter(Boolean).map(r => ({ ...r }));
     state.arefs = (s.audios || []).filter(Boolean).map(r => ({ ...r, name: r.ref.split("/").pop() }));
     $("#clean-audio").checked = s.clean_audio !== false;
+    state.loras = (s.loras || []).filter(l => l && l.name).map(l => ({ name: l.name, strength: +l.strength || 1 }));
+    state.shots = s.shots && Array.isArray(s.shots.list) ? structuredClone(s.shots) : null;
     renderForm();
     $("#prompt").value = s.prompt || "";
     $("#lyrics").value = s.lyrics || "";
@@ -206,6 +216,7 @@ function applySettings(s) {
     }
     renderRefs();
     renderArefs();
+    Loras.render(); Shots.render();
     updateDerived();
   } finally {
     state.loading = false;

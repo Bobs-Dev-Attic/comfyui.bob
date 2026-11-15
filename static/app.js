@@ -81,6 +81,8 @@ const state = {
   engine: { video: "h3", image: "h3", audio: "h3" },
   frames: { first_frame: null, last_frame: null },
   refs: [],  // [{ref, url}] for H3 Reference
+  loras: [],  // [{name, strength}] LoRAs on the model (loras.js)
+  shots: null,  // the Shots step (shots.js)
   arefs: [],  // [{ref, url, name}] reference sounds (voices to clone) for H3 Reference
   items: new Map(),
   selected: null,
@@ -172,6 +174,8 @@ function renderForm() {
   $("#tips").innerHTML = TIPS[isRef ? "h3ref" : isH3 ? "h3" : eng] || "";
   renderRefs();
   renderWriter();
+  if (state.step === "loras") Loras.render();
+  Shots.renderBanner?.();
   updateDerived();
   renderMissing();
   renderSteps();
@@ -264,6 +268,7 @@ function collectRequest() {
     ref_audios: eng === "h3ref" && kind === "video" ? state.arefs.map(a => a.ref) : [],
     clean_audio: $("#clean-audio").checked,
     max_fidelity: eng === "h3ref" && $("#fidelity").checked,
+    loras: Loras.forRequest(),
     project: state.project?.id ?? null,
   };
 }
@@ -860,7 +865,7 @@ function connectEvents() {
   es.onmessage = e => {
     const ev = JSON.parse(e.data);
     Activity.onEvent(ev);
-    if (ev.type === "item") TL.onItem?.(ev.item);
+    if (ev.type === "item") { TL.onItem?.(ev.item); Shots.onItem(ev.item); }
     if (ev.type === "item") {
       const prev = state.items.get(ev.item.id);
       state.items.set(ev.item.id, ev.item);
@@ -943,10 +948,13 @@ function init() {
     try { await api("/api/free", { method: "POST" }); } catch {}
     b.disabled = false; b.textContent = "Free VRAM"; pollStatus();
   };
-  $("#form").addEventListener("submit", e => { e.preventDefault(); submit(collectRequest()); });
+  $("#form").addEventListener("submit", e => { e.preventDefault(); if (Shots.on()) Shots.generate(collectRequest()); else submit(collectRequest()); });
   $("#prompt").addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $("#form").requestSubmit(); } });
   initDrops();
   initRefs();
+  Loras.initStep();
+  Shots.init();
+  $("#btn-goto-shots").onclick = () => showStep("shots");
   initArefs();
   initWriter();
   initSysCheck();
