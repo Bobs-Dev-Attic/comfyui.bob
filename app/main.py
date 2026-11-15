@@ -388,6 +388,23 @@ async def projects_rename(req: PathName):
     return _project_call(projects.rename, req.path, req.name)
 
 
+class ProjectCopy(BaseModel):
+    id: str = Field(..., max_length=64)  # the project to copy ("experiment" works too)
+    name: str = Field(..., max_length=200)
+    folder: str | None = Field(None, max_length=2000)  # None = next to the original
+    timeline: bool = True
+    library: bool = True
+    results: bool = True
+
+
+@app.post("/api/projects/copy")
+async def projects_copy(req: ProjectCopy):
+    """Duplicate a project: settings always, the timeline, library and results when asked."""
+    p = _project_call(projects.copy, req.id, req.name, req.folder, timeline=req.timeline, library=req.library)
+    p["results_copied"] = jobs.copy_items(req.id, p["id"]) if req.results else 0
+    return p
+
+
 @app.post("/api/projects/delete")
 async def projects_delete(req: PathName):
     return _project_call(projects.delete, req.path)

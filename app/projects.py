@@ -376,6 +376,34 @@ def rename(rel: str, name: str) -> dict[str, Any]:
     return {"path": rel_of(target), "name": new}
 
 
+def copy(project_id: str, name: str, folder: str | None = None, *, timeline: bool = True,
+         library: bool = True) -> dict[str, Any]:
+    """Duplicate a project (or Experiment) as a new project with its own id.
+
+    Settings, config, notes and the thumbnail always come along; the timeline and the media
+    library when asked. Other files in the project's folder are copied too, its version history
+    isn't (the copy starts its own). Media files themselves aren't duplicated: both projects point
+    at the same uploads and outputs. Results are copied by the caller (jobs.copy_items)."""
+    src = find(project_id)
+    pf = load_file(src)
+    parent = safe(folder) if folder is not None else (src.parent if rel_of(src) else root())
+    if not parent.is_dir() or is_project(parent):
+        raise ProjectError("Pick a folder to save the copy in")
+    target = unique(parent, clean_name(name))  # "Name (2)" when the name is taken: the project is called that too
+    shutil.copytree(src, target, ignore=shutil.ignore_patterns(HISTORY_DIR, PROJECT_FILE, ".*"))
+    now = time.time()
+    data = pf.dump()
+    data.update(id=pfile.new_id(), name=target.name, created=now, modified=now, app_version=pfile.__version__)
+    if not timeline:
+        data["timeline"] = pfile.Timeline().model_dump()
+    if not library:
+        data["library"] = pfile.Library().model_dump()
+    new = ProjectFile.model_validate(data)
+    save_file(target, new, touch=False, keep_version=False)
+    _index[new.id] = target
+    return {**as_dict(target, new), "copied_from": pf.id}
+
+
 def delete(rel: str) -> dict[str, Any]:
     """Move a project or folder into .trash (recoverable by hand)."""
     p = safe(rel)

@@ -46,6 +46,9 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
 - **Projects:** New project, Open existing (an Explorer-style browser), or Experiment (no project).
   - Projects are folders under `projects/`, and each one keeps its settings, notes and results.
   - Settings save automatically, and the last project reopens on the next visit.
+  - **⧉ Duplicate…** (project card, or right-click in the Explorer) copies a project: settings always, and the
+    timeline, media library and results if you choose. Experiment can be copied into a new project the same way.
+    Files aren't duplicated; both projects use the same uploads and results.
 
 - **✨ Enhance** (any finished picture or video: the viewer's button or the results menu): improve it with a chain, in order:
   **FaceRefine** (videos made with H3: tracks the main face and re-renders it with H3 Reference at a low denoise, using the

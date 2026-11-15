@@ -437,3 +437,7 @@ details.writer .field + .field, details.writer .row2 + .field, details.writer .f
 .enh-sum b { color: var(--text); }
 .enh-after-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .enh-after-row select { width: auto; }
+
+/* ---------------------------------------------------------------- Duplicate project */
+.dp-parts { display: grid; gap: 6px; }
+.dp-parts .check { font-size: 13px; line-height: 1.35; }

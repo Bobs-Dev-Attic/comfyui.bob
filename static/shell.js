@@ -199,6 +199,10 @@ function applySettings(s) {
     $("#clean-audio").checked = s.clean_audio !== false;
     state.loras = (s.loras || []).filter(l => l && l.name).map(l => ({ name: l.name, strength: +l.strength || 1 }));
     state.shots = s.shots && Array.isArray(s.shots.list) ? structuredClone(s.shots) : null;
+    // A hand-edited or partial file may lack shot fields; the Shots step expects all of them.
+    if (state.shots) state.shots.list = state.shots.list.filter(x => x && typeof x === "object").map(x => ({
+      id: Math.random().toString(16).slice(2, 10), seconds: 3, framing: "medium shot", setting: "", action: "", camera: "holds a static shot",
+      dialogue: "", voice: "", first_frame: null, last_frame: null, refs: [], ...x }));
     renderForm();
     $("#prompt").value = s.prompt || "";
     $("#lyrics").value = s.lyrics || "";
@@ -299,17 +303,21 @@ function renderProjectCard() {
       <div><h3>${esc(p.name)}</h3><div class="where">${esc(where(p.path))}</div>
       <div class="saved">${Autosave.enabled ? "Saved automatically" : "Auto-save off (Ctrl+S saves)"} · last change ${esc(timeOf(p.modified))} ·
         <button type="button" class="link" id="btn-history">Earlier versions…</button> ·
+        <button type="button" class="link" id="btn-duplicate">⧉ Duplicate…</button> ·
         <button type="button" class="link" id="btn-psettings">⚙ Settings…</button></div></div>`;
     $("#btn-history").onclick = () => historyDialog(p.id);
+    $("#btn-duplicate").onclick = () => duplicateProjectDialog({ id: p.id, name: p.name, path: p.path });
     $("#btn-psettings").onclick = projectSettingsDialog;
     $("#notes-where").textContent = "saved with the project";
   } else {
     card.innerHTML = `<div class="proj-thumb">${EXPERIMENT_ICON}</div>
       <div><h3>Experiment</h3><div class="where">Nothing is saved as a project. Your settings stay in this browser.</div>
       <div class="saved"><button type="button" class="link" id="btn-save-as">Save as project…</button> ·
+        <button type="button" class="link" id="btn-duplicate" title="A new project with Experiment's settings, timeline, library and results">⧉ Copy to a project…</button> ·
         <button type="button" class="link" id="btn-history">Earlier versions…</button> ·
         <button type="button" class="link" id="btn-psettings">⚙ Settings…</button></div></div>`;
     $("#btn-history").onclick = () => historyDialog("experiment");
+    $("#btn-duplicate").onclick = () => duplicateProjectDialog({ id: "experiment", name: "Experiment", path: "" });
     $("#btn-psettings").onclick = projectSettingsDialog;
     $("#btn-save-as").onclick = () => newProjectDialog({ fromCurrent: true });
     $("#notes-where").textContent = "kept in this browser";
@@ -519,6 +527,60 @@ function newProjectDialog({ fromCurrent = false } = {}) {
   foot.querySelector('[data-a="create"]').onclick = create;
   foot.querySelector('[data-a="cancel"]').onclick = () => win.close();
   name.addEventListener("keydown", e => { if (e.key === "Enter") create(); });
+}
+
+/* Duplicate a project (or Experiment). src = {id, name, path}. Settings, prompt, LoRAs, Shots,
+   notes and options always come along; the timeline, media library and results are optional.
+   Media files aren't duplicated: the copy points at the same uploads and outputs. */
+function duplicateProjectDialog(src, { open = true, onDone = null } = {}) {
+  const isExp = src.id === "experiment";
+  let folder = isExp ? (readUI().newProjectFolder ?? "") : (src.path || "").split("/").slice(0, -1).join("/");
+  const form = document.createElement("div");
+  form.className = "wm-form";
+  form.innerHTML = `
+    <div class="field"><label for="dp-name">Name of the copy</label><input id="dp-name" type="text" maxlength="120" value="${esc(`${src.name} copy`)}"></div>
+    <div class="field"><label for="dp-loc">Location</label>
+      <div class="loc"><input id="dp-loc" type="text" readonly><button type="button" class="btn sm" id="dp-browse">Browse…</button></div></div>
+    <div class="field"><label>Copy</label>
+      <div class="dp-parts">
+        <label class="check"><input type="checkbox" checked disabled> Settings: model, prompt, LoRAs, Shots, inputs, notes and options</label>
+        <label class="check"><input type="checkbox" id="dp-timeline" checked> Timeline: clips, effects, camera moves, markers, export settings</label>
+        <label class="check"><input type="checkbox" id="dp-library" checked> Media library: pictures, videos and sounds with their tags, ratings and folders</label>
+        <label class="check"><input type="checkbox" id="dp-results" checked> Results: the generated pictures, videos and sounds in the gallery</label>
+      </div>
+      <p class="hint">Files aren't duplicated: both projects use the same uploads and results, so the copy takes no extra space.
+        Deleting a result in one project keeps the file while the other still uses it.</p></div>
+    ${open ? `<label class="check"><input type="checkbox" id="dp-open" checked> Open the copy</label>` : ""}
+    <p class="err" id="dp-err"></p>`;
+  const foot = document.createElement("div");
+  foot.innerHTML = `<span class="wm-foot-gap"></span><button type="button" class="btn sm" data-a="cancel">Cancel</button>
+    <button type="button" class="btn sm primary" data-a="copy">Duplicate</button>`;
+  const win = WM.open({ id: "dup-project", title: `Duplicate “${src.name}”`, content: form, footer: foot, width: 560, height: 520, minWidth: 380, minHeight: 400 });
+  const loc = form.querySelector("#dp-loc");
+  const showLoc = () => { loc.value = ["Projects", ...folder.split("/").filter(Boolean)].join(" › "); };
+  showLoc();
+  form.querySelector("#dp-browse").onclick = () => Explorer.open({ mode: "folder", startPath: folder, title: "Choose where to save the copy",
+    onPick: path => { folder = path; showLoc(); } });
+  const name = form.querySelector("#dp-name");
+  name.focus(); name.select();
+  const go = async () => {
+    const btn = foot.querySelector('[data-a="copy"]');
+    btn.disabled = true;
+    try {
+      if (state.project?.id === src.id || (isExp && !state.project)) await Autosave.saveAll();  // copy what's on screen
+      const p = await api("/api/projects/copy", { method: "POST", body: JSON.stringify({
+        id: src.id, name: name.value, folder,
+        timeline: form.querySelector("#dp-timeline").checked, library: form.querySelector("#dp-library").checked,
+        results: form.querySelector("#dp-results").checked }) });
+      win.close();
+      Media.toast(`Copied to “${p.name}”${p.results_copied ? ` with ${p.results_copied} result${p.results_copied > 1 ? "s" : ""}` : ""}.`);
+      if (open && form.querySelector("#dp-open")?.checked) await openProject(p.id);
+      onDone?.(p);
+    } catch (e) { form.querySelector("#dp-err").textContent = e.message; btn.disabled = false; }
+  };
+  foot.querySelector('[data-a="copy"]').onclick = go;
+  foot.querySelector('[data-a="cancel"]').onclick = () => win.close();
+  name.addEventListener("keydown", e => { if (e.key === "Enter") go(); });
 }
 
 function resetForm() {

@@ -251,6 +251,21 @@ nothing changed), the last 30. **Earlier versions…** on the Project step lists
 (`GET /api/projects/{id}/history`, `POST /api/projects/{id}/restore`). The state being replaced is kept as a version
 first.
 
+### Duplicating
+
+`POST /api/projects/copy {id, name, folder?, timeline, library, results}` makes a new project folder next to the
+original (or in `folder`). The new folder gets the original's files except `project.json`, `.history/` and other
+dot-files, and a new `project.json`:
+- **Identity:** a new `id`, `name` set to the folder's name (`Name (2)` when the name is taken), and fresh
+  `created` and `modified` times.
+- **Settings, config, notes and thumbnail:** always copied.
+- **Timeline and library:** copied when asked, otherwise empty.
+
+With `results`, each finished result of the original gets a copy of its record in the new project, with a new id
+and `copied_from` set to the original result's id. The copies point at the same output files. Deleting a result
+"with files" keeps any file another result still uses. Experiment (`id: "experiment"`) can be copied too; its
+results are the ones that have no project.
+
 ### Media refs
 
 A `ref` names a file the app is allowed to read:

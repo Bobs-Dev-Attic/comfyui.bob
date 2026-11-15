@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import json
 import logging
 import random
@@ -199,13 +200,31 @@ class JobManager:
         if not item:
             return False
         if delete_files:
+            # A copied project's results share their files: keep any another result still uses.
+            used = {f.get("path") for other in self.items.values() for f in other.get("files", [])}
             for f in item.get("files", []):
                 p = config.ROOT / f["path"]
-                if p.is_file() and config.OUTPUT_DIR in p.resolve().parents:
+                if f["path"] not in used and p.is_file() and config.OUTPUT_DIR in p.resolve().parents:
                     p.unlink()
         self._save()
         self._publish({"type": "deleted", "id": item_id})
         return True
+
+    def copy_items(self, src_project: str, dst_project: str) -> int:
+        """Give a copied project its own copy of the source's finished results (same files)."""
+        n = 0
+        src = None if src_project == "experiment" else src_project  # Experiment's results have no project
+        for item in sorted(list(self.items.values()), key=lambda i: i["created"]):
+            if (item.get("project") or None) != src or item.get("status") != "done":
+                continue
+            new = copy.deepcopy(item)
+            new.update(id=uuid.uuid4().hex[:12], project=dst_project, copied_from=item["id"])
+            self.items[new["id"]] = new
+            self._publish({"type": "item", "item": new})
+            n += 1
+        if n:
+            self._save()
+        return n
 
     async def cancel(self, item_id: str) -> bool:
         handle = self._handles.get(item_id)
