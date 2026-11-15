@@ -5,6 +5,37 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.12.0] - 2026-11-15
+
+### Added
+- **Render options.** The ⬇ Render… button (and **Ctrl+E**) opens a dialog. Your choices are remembered per
+  project.
+  - **File:** a file name, and where to save it: outputs or any bookmarked folder. An existing file gets a
+    number added rather than being overwritten.
+  - **Format:** MP4 H.264, MP4 H.264 on NVIDIA NVENC, MP4 H.265, WebM VP9 + Opus, MOV ProRes 422 HQ, or sound
+    only as WAV or MP3. Only formats your ffmpeg can write are offered.
+  - **Range:** the whole timeline or In–Out.
+  - **Picture:** resolution (same as the first clip, 4K to 480p by short side, 1920×1080, vertical, square or
+    custom), frame rate, quality, and encoding speed.
+  - **Sound:** include it or not; loudness (as in the Mixer, off, −14, −16 or −23 LUFS); bitrate; sample rate;
+    stereo or mono.
+  - **FCPXML** export is also in the dialog.
+- **Activity console** (the top bar's Activity chip, **Log** on a queue item, or **Ctrl+Shift+A**).
+  - **What it shows:** everything the studio is doing and has just done, with a progress bar, status, elapsed
+    time, time left (from the recent progress rate), the estimated finish time, the file, and a timestamped log.
+  - **Logs:** generations log the workflow, inputs, ComfyUI job and queue position, each node as it runs,
+    sampling steps, downloads and errors. Renders log each ffmpeg stage with its speed and time.
+  - **Actions:** Cancel, Show result, Copy log, Clear finished.
+  - **While busy:** the chip shows the running job, its percentage and the time left.
+  - **Storage:** items keep their last 300 log lines (`log` in `data/history.json`) and stream them as `log`
+    events.
+
+### Changed
+- **The results gallery moved to the top section**, left of the viewer. The **🗂 Gallery** button (left of
+  Result) or **Alt+G** shows or hides it. The width is adjustable and both are remembered. The timeline now uses
+  the full width, and layouts include whether the gallery is shown.
+- Opening a project no longer marks it unsaved when auto-save is off. Only real changes do.
+
 ## [0.11.0] - 2026-11-15
 
 ### Added

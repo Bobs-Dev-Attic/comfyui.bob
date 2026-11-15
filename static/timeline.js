@@ -1132,15 +1132,107 @@ const TL = (() => {
       ["Delete marker", () => { checkpoint(); tl.markers = tl.markers.filter(k => k.id !== id); changed(); }],
     ]);
   }
-  function renderMenu(x, y) {
-    const sizes = [["original", "Size of the first clip"], ["1080", "1080p (short side)"], ["720", "720p (short side)"]];
-    menu(x, y, [
-      ["⬇ Render the whole timeline", () => renderTimeline(false)],
-      (tl.range_in != null || tl.range_out != null) && ["⬇ Render the In–Out range", () => renderTimeline(true)],
-      ["⇪ Export FCPXML for DaVinci Resolve…", exportFcpxml],
-      ...sizes.map(([k, l]) => [`${renderSize === k ? "● " : "○ "}${l}`, () => { renderSize = k; writeUI({ renderSize: k }); }]),
-    ].filter(Boolean));
+  /* Render options: file name, where, format, size, frame rate, quality, sound. Remembered per project
+     in timeline.render. */
+  const SIZES = [["original", "Same as the first clip"], ["s2160", "2160p · 4K (short side)"], ["s1440", "1440p (short side)"],
+    ["s1080", "1080p (short side)"], ["s720", "720p (short side)"], ["s480", "480p (short side)"],
+    ["1920x1080", "1920 × 1080 · landscape"], ["1080x1920", "1080 × 1920 · vertical"], ["1080x1080", "1080 × 1080 · square"], ["custom", "Custom…"]];
+  let renderInfo = null;
+  async function renderDialog() {
+    if (!tl.clips.length) return toast("The timeline is empty: drag results onto it first.");
+    if (!renderInfo) { try { renderInfo = await (await fetch("/api/timeline/formats")).json(); } catch { renderInfo = { formats: [{ id: "mp4-h264", label: "MP4 · H.264", video: true }], places: [{ name: "Studio results (outputs)", path: "" }] }; } }
+    const r = { format: "mp4-h264", size: "original", fps: "", quality: "high", speed: "balanced", audio: true, audio_bitrate: 192, sample_rate: 48000,
+      channels: 2, loudness: "mixer", folder: "", filename: "", range: tl.range_in != null || tl.range_out != null ? "inout" : "all", ...(tl.render || {}) };
+    if (r.size === "original" && renderSize !== "original" && !tl.render?.size) r.size = "s" + renderSize;  // the old menu's choice
+    const first = await probe(tl.clips.find(c => c.kind !== "audio")?.ref || "");
+    const projName = (typeof state !== "undefined" && state.project?.name) || "Experiment";
+    const opt = (v, l, cur) => `<option value="${esc2(v)}"${String(cur) === String(v) ? " selected" : ""}>${esc2(l)}</option>`;
+    const hasRange = tl.range_in != null || tl.range_out != null;
+    const masterLoud = tl.master?.loudness;
+    const form = document.createElement("div");
+    form.className = "wm-form rd";
+    form.innerHTML = `
+      <div class="row2">
+        <div class="field"><label for="rd-name">File name</label><input id="rd-name" maxlength="120" placeholder="${esc2(projName)} cut" value="${esc2(r.filename || "")}"></div>
+        <div class="field"><label for="rd-folder">Save to</label><select id="rd-folder">${renderInfo.places.map(p => opt(p.path, p.name + (p.path ? ` — ${p.path}` : ""), r.folder)).join("")}</select></div>
+      </div>
+      <p class="hint" id="rd-where"></p>
+      <div class="row2">
+        <div class="field"><label for="rd-format">Format</label><select id="rd-format">${renderInfo.formats.map(f => opt(f.id, f.label, r.format)).join("")}</select></div>
+        <div class="field"><label for="rd-range">Range</label><select id="rd-range">${opt("all", `Whole timeline · ${total().toFixed(2)} s`, r.range)}${hasRange ? opt("inout", `In–Out · ${((tl.range_out ?? total()) - (tl.range_in ?? 0)).toFixed(2)} s`, r.range) : ""}</select></div>
+      </div>
+      <fieldset class="rd-pic"><legend>Picture</legend>
+        <div class="row2">
+          <div class="field"><label for="rd-size">Resolution <span class="opt" id="rd-dims"></span></label><select id="rd-size">${SIZES.map(([v, l]) => opt(v, l, r.size)).join("")}</select></div>
+          <div class="field"><label for="rd-fps">Frame rate</label><select id="rd-fps">${opt("", `Timeline (${fps()} fps)`, r.fps)}${[23.976, 24, 25, 29.97, 30, 50, 60].map(v => opt(v, `${v} fps`, r.fps)).join("")}</select></div>
+        </div>
+        <div class="row2" id="rd-custom" hidden>
+          <div class="field"><label for="rd-w">Width</label><input id="rd-w" type="number" min="64" max="7680" step="2" value="${r.width || first?.width || 1920}"></div>
+          <div class="field"><label for="rd-h">Height</label><input id="rd-h" type="number" min="64" max="4320" step="2" value="${r.height || first?.height || 1080}"></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label for="rd-quality">Quality</label><select id="rd-quality">${opt("high", "High (bigger file)", r.quality)}${opt("medium", "Medium", r.quality)}${opt("small", "Small file", r.quality)}</select></div>
+          <div class="field"><label for="rd-speed">Encoding speed</label><select id="rd-speed">${opt("fast", "Fast", r.speed)}${opt("balanced", "Balanced", r.speed)}${opt("best", "Best compression (slow)", r.speed)}</select></div>
+        </div>
+      </fieldset>
+      <fieldset class="rd-snd"><legend>Sound</legend>
+        <label class="check" id="rd-audio-row"><input type="checkbox" id="rd-audio"${r.audio !== false ? " checked" : ""}> Include sound</label>
+        <div class="row2">
+          <div class="field"><label for="rd-loud">Loudness</label><select id="rd-loud">${opt("mixer", `As in the Mixer (${masterLoud == null ? "off" : masterLoud + " LUFS"})`, r.loudness)}${opt("off", "Off", r.loudness)}${opt("-14", "−14 LUFS (YouTube, Spotify)", r.loudness)}${opt("-16", "−16 LUFS (podcasts, Apple)", r.loudness)}${opt("-23", "−23 LUFS (broadcast)", r.loudness)}</select></div>
+          <div class="field"><label for="rd-abr">Bitrate</label><select id="rd-abr">${[128, 192, 256, 320].map(v => opt(v, `${v} kbps`, r.audio_bitrate)).join("")}</select></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label for="rd-rate">Sample rate</label><select id="rd-rate">${opt(48000, "48 kHz (video)", r.sample_rate)}${opt(44100, "44.1 kHz (music)", r.sample_rate)}</select></div>
+          <div class="field"><label for="rd-ch">Channels</label><select id="rd-ch">${opt(2, "Stereo", r.channels)}${opt(1, "Mono", r.channels)}</select></div>
+        </div>
+        <p class="hint">Volume, pan, fades, solo and the limiter come from the timeline and the 🎚 Mixer.</p>
+      </fieldset>`;
+    const $f = s => form.querySelector(s);
+    const dims = () => {
+      const s = $f("#rd-size").value;
+      $f("#rd-custom").hidden = s !== "custom";
+      let w = first?.width, h = first?.height;
+      if (s === "custom") { w = +$f("#rd-w").value; h = +$f("#rd-h").value; }
+      else if (/^\d+x\d+$/.test(s)) [w, h] = s.split("x").map(Number);
+      else if (s.startsWith("s") && w && h) { const k = +s.slice(1) / Math.min(w, h); w = Math.round(w * k / 2) * 2; h = Math.round(h * k / 2) * 2; }
+      return s === "original" ? [null, null, w, h] : [w, h, w, h];
+    };
+    const sync = () => {
+      const f = renderInfo.formats.find(x => x.id === $f("#rd-format").value) || {};
+      const [, , w, h] = dims();
+      $f("#rd-dims").textContent = w && h ? `${w} × ${h}` : "";
+      $f(".rd-pic").disabled = f.video === false;
+      $f("#rd-audio").disabled = f.video === false;
+      if (f.video === false) $f("#rd-audio").checked = true;
+      const noSnd = !$f("#rd-audio").checked;
+      for (const id of ["#rd-loud", "#rd-abr", "#rd-rate", "#rd-ch"]) $f(id).disabled = noSnd;
+      $f("#rd-abr").disabled = noSnd || /wav|prores/.test(f.id || "");
+      const place = renderInfo.places.find(p => p.path === $f("#rd-folder").value);
+      const name = ($f("#rd-name").value.trim() || `${projName} cut`).replace(/[<>:"/\\|?*]+/g, "_");
+      $f("#rd-where").textContent = `→ ${place?.path ? place.path : "outputs/<today>"}/${name}${f.ext || ".mp4"} · shows up in the results gallery. A file that exists isn't overwritten: a number is added.`;
+    };
+    form.addEventListener("input", sync); form.addEventListener("change", sync); sync();
+    const foot = document.createElement("div");
+    foot.innerHTML = `<button type="button" class="btn sm" data-a="fcpxml" title="Export the timeline for DaVinci Resolve or Final Cut Pro">⇪ FCPXML…</button><span class="wm-foot-gap"></span>
+      <button type="button" class="btn sm" data-a="cancel">Cancel</button><button type="button" class="btn sm primary" data-a="ok">⬇ Render</button>`;
+    const w = WM.open({ id: "render", title: "Render options", content: form, footer: foot, width: 640, height: 700, minWidth: 340, minHeight: 360 });
+    foot.querySelector('[data-a="cancel"]').onclick = () => w.close();
+    foot.querySelector('[data-a="fcpxml"]').onclick = () => { w.close(); exportFcpxml(); };
+    foot.querySelector('[data-a="ok"]').onclick = async () => {
+      const [W, H] = dims();
+      const o = {
+        filename: $f("#rd-name").value.trim() || `${projName} cut`, folder: $f("#rd-folder").value, format: $f("#rd-format").value,
+        size: $f("#rd-size").value, width: $f("#rd-size").value === "custom" ? W : undefined, height: $f("#rd-size").value === "custom" ? H : undefined,
+        fps: $f("#rd-fps").value, quality: $f("#rd-quality").value, speed: $f("#rd-speed").value, audio: $f("#rd-audio").checked,
+        audio_bitrate: +$f("#rd-abr").value, sample_rate: +$f("#rd-rate").value, channels: +$f("#rd-ch").value, loudness: $f("#rd-loud").value,
+        range: $f("#rd-range").value,
+      };
+      tl.render = { ...o, filename: $f("#rd-name").value.trim() };  // remembered (the default name stays a default)
+      w.close();
+      await renderTimeline(o, W, H);
+    };
   }
+  function renderMenu() { return renderDialog(); }
   function menu(x, y, items) {
     document.querySelector(".ex-menu")?.remove();
     const m = document.createElement("div");
@@ -1178,9 +1270,13 @@ const TL = (() => {
      imported on this PC (or wherever the same paths exist). */
   async function exportFcpxml() {
     if (!tl.clips.length) return toast("The timeline is empty.");
+    const job = Activity.task("Export FCPXML");
+    job.log("Saving the timeline"); job.progress(0.2);
     await saveNow(true);
+    job.log(`Building FCPXML 1.9: ${tl.clips.length} clips, ${tl.tracks.length} tracks, ${tl.transitions.length} transitions`); job.progress(0.5);
     const r = await fetch(`/api/timeline/fcpxml?project=${encodeURIComponent(project)}`);
-    if (!r.ok) { const j = await r.json().catch(() => ({})); return toast(`Export failed: ${j.detail || r.statusText}`); }
+    if (!r.ok) { const j = await r.json().catch(() => ({})); job.fail(j.detail || r.statusText); return toast(`Export failed: ${j.detail || r.statusText}`); }
+    job.done(`Downloaded ${/filename="([^"]+)"/.exec(r.headers.get("Content-Disposition") || "")?.[1] || "timeline.fcpxml"}`);
     const name = /filename="([^"]+)"/.exec(r.headers.get("Content-Disposition") || "")?.[1] || "timeline.fcpxml";
     const url = URL.createObjectURL(await r.blob());
     Object.assign(document.createElement("a"), { href: url, download: name }).click();
@@ -1188,22 +1284,20 @@ const TL = (() => {
     toast(`Saved ${name}. In DaVinci Resolve: File › Import › Timeline…, then pick the file (media is linked from where it is now).`);
   }
 
-  async function renderTimeline(range) {
+  async function renderTimeline(o, width = null, height = null) {
     if (!tl.clips.length) return toast("The timeline is empty.");
     await saveNow(true);
-    const info = await probe(tl.clips.find(c => c.kind !== "audio")?.ref || "");
-    let width = null, height = null;
-    if (renderSize !== "original" && info?.width) {
-      const short = +renderSize, s = short / Math.min(info.width, info.height);
-      width = Math.round(info.width * s / 2) * 2; height = Math.round(info.height * s / 2) * 2;
-    }
+    const range = o.range === "inout";
+    const body = { project, range_in: range ? tl.range_in : null, range_out: range ? tl.range_out : null, width, height,
+      filename: o.filename, folder: o.folder, format: o.format, fps: o.fps ? +o.fps : null, quality: o.quality, speed: o.speed,
+      audio: o.audio, audio_bitrate: o.audio_bitrate, sample_rate: o.sample_rate, channels: o.channels, loudness: o.loudness };
     try {
-      const r = await fetch("/api/timeline/render", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ project, range_in: range ? tl.range_in : null, range_out: range ? tl.range_out : null, width, height }) });
+      const r = await fetch("/api/timeline/render", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const j = await r.json();
-      if (!r.ok) throw new Error(j.detail || r.statusText);
-      state.items.set(j.id, j); renderGallery(); renderQueue(); select(j.id); Monitor.show("result");
-      toast("Rendering… the video appears in the results bin.");
+      if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : (j.detail?.[0]?.msg || r.statusText));
+      state.items.set(j.id, j); Activity.onEvent({ type: "item", item: j }); renderGallery(); renderQueue(); select(j.id); Monitor.show("result");
+      Activity.show(j.id);
+      toast("Rendering… progress and the log are in the Activity console; the file appears in the results gallery.");
     } catch (e) { toast(`Render failed: ${e.message}`); }
   }
 
@@ -1220,9 +1314,9 @@ const TL = (() => {
     ["Timeline", [["I / O", "Set In / Out"], ["Alt+X", "Clear In and Out"], ["M", "Add a marker"], ["N", "Snapping on / off"],
       ["+ / −", "Zoom in / out"], ["Ctrl+wheel", "Zoom at the pointer"], ["Shift+wheel", "Scroll sideways"], ["F", "Fit the timeline"], ["Shift+F", "Zoom to the selection"],
       ["Shift+M", "Mixer"], ["S (track header button)", "Solo the track"], ["Ctrl+S", "Save the project (when auto-save is off)"],
-      ["G", "Use the frame at the playhead as a first frame"], ["Ctrl+E", "Render"], ["T (on the clock)", "Frames / seconds"]]],
+      ["G", "Use the frame at the playhead as a first frame"], ["Ctrl+E", "Render options…"], ["Ctrl+Shift+A", "Activity console (logs, time left)"], ["T (on the clock)", "Frames / seconds"]]],
     ["Results bin", [["1 – 5", "Rate the selected result"], ["0", "Clear the rating"], ["Shift+T", "Tags…"], ["Enter", "Add to the timeline"], ["← / →", "Previous / next result"]]],
-    ["Layout", [["Alt+1 … Alt+4", "Default, Edit, Review, Bin layouts"], ["Alt+5 … Alt+9", "Your saved layouts"], ["?", "This list"]]],
+    ["Layout", [["Alt+G", "Show / hide the results gallery"], ["Alt+1 … Alt+4", "Default, Edit, Review, Bin layouts"], ["Alt+5 … Alt+9", "Your saved layouts"], ["?", "This list"]]],
   ];
   function showShortcuts() {
     const box = document.createElement("div");
@@ -1251,7 +1345,7 @@ const TL = (() => {
     if (ctrl && k.toLowerCase() === "d") { handled(); return duplicate(); }
     if (ctrl && k.toLowerCase() === "a") { handled(); tl.clips.forEach(c => sel.add(c.id)); return render(); }
     if (ctrl && k.toLowerCase() === "l") { handled(); loop = !loop; toast(loop ? "Loop In–Out on" : "Loop off"); return renderBar(); }
-    if (ctrl && k.toLowerCase() === "e") { handled(); return renderTimeline(tl.range_in != null || tl.range_out != null); }
+    if (ctrl && k.toLowerCase() === "e") { handled(); return renderDialog(); }
     if (e.altKey && /^[1-9]$/.test(k)) { handled(); return Layout.applyIndex(+k - 1); }
     if (e.altKey && k.toLowerCase() === "x") { handled(); return setRange("clear"); }
     if (ctrl || e.altKey) return;
@@ -1333,7 +1427,7 @@ const TL = (() => {
         <span class="tl-gap"></span>
         <button type="button" class="tl-b wide" data-act="layout" title="Layouts (Alt+1…9)">▦ Layout</button>
         <button type="button" class="tl-b wide" data-act="keys" title="Keyboard shortcuts (?)">⌨</button>
-        <button type="button" class="tl-b wide primary" data-act="render" title="Render to MP4 (Ctrl+E)">⬇ Render</button>
+        <button type="button" class="tl-b wide primary" data-act="render" title="Render options: file, format, size, sound (Ctrl+E)">⬇ Render…</button>
       </div>
       <div class="tl-scroll" tabindex="0" aria-label="Tracks"><div class="tl-canvas"></div></div>`;
     scroller = $(".tl-scroll", root);
@@ -1360,7 +1454,7 @@ const TL = (() => {
         snap: () => { tl.snap = !tl.snap; save(); renderBar(); }, grab: grabAtPlayhead, undo, redo, mixer,
         zoomin: () => zoomStep(1), zoomout: () => zoomStep(-1), fit: () => fit(),
         "add-video": () => addTrack("video"), "add-audio": () => addTrack("audio"),
-        keys: showShortcuts, layout: () => Layout.menu(r.left, r.bottom + 4), render: () => renderMenu(r.left, r.bottom + 4),
+        keys: showShortcuts, layout: () => Layout.menu(r.left, r.bottom + 4), render: () => renderDialog(),
       })[act]?.();
     });
     $(".tl-zoom", root).addEventListener("input", e => setZoom(Math.exp(+e.target.value)));
@@ -1467,10 +1561,10 @@ const Monitor = {
 /* ------------------------------------------------------------------ layouts */
 const Layout = (() => {
   const PRESETS = [
-    { name: "Default", monitor: 0.55, bin: 340 },
-    { name: "Edit", monitor: 0.42, bin: 280 },
-    { name: "Review", monitor: 0.74, bin: 360 },
-    { name: "Bin", monitor: 0.5, bin: 640 },
+    { name: "Default", monitor: 0.55, bin: 340, gallery: true },
+    { name: "Edit", monitor: 0.42, bin: 280, gallery: true },
+    { name: "Review", monitor: 0.74, bin: 360, gallery: false },
+    { name: "Bin", monitor: 0.62, bin: 640, gallery: true },
   ];
   const read = () => { try { return JSON.parse(localStorage.getItem("bob.ui") || "{}") || {}; } catch { return {}; } };
   const write = p => { try { localStorage.setItem("bob.ui", JSON.stringify({ ...read(), ...p })); } catch {} };
@@ -1479,15 +1573,21 @@ const Layout = (() => {
   function current() {
     const css = getComputedStyle(document.documentElement);
     return { monitor: parseFloat(css.getPropertyValue("--mon-frac")) || 0.55, bin: parseFloat(css.getPropertyValue("--bin-w")) || 340,
-      side: parseFloat(css.getPropertyValue("--side-w")) || 460, zoom: TL.model?.zoom };
+      side: parseFloat(css.getPropertyValue("--side-w")) || 460, zoom: TL.model?.zoom, gallery: !$("#top").classList.contains("no-gallery") };
   }
   function setMonitor(f, persist = true) {
     f = Math.max(0.18, Math.min(0.86, f));
     document.documentElement.style.setProperty("--mon-frac", f);
     if (persist) write({ monitor: f });
   }
+  // The results gallery sits left of the viewer in the top section; the button left of "Result" shows or hides it.
+  function setGallery(on, persist = true) {
+    $("#top").classList.toggle("no-gallery", !on);
+    $("#btn-gallery").setAttribute("aria-pressed", String(!!on));
+    if (persist) write({ gallery: !!on });
+  }
   function setBin(w, persist = true) {
-    const stage = $(".bottom")?.clientWidth || 1000;
+    const stage = $(".top")?.clientWidth || 1000;
     w = Math.round(Math.max(200, Math.min(stage - 320, w)));
     document.documentElement.style.setProperty("--bin-w", w + "px");
     if (persist) write({ binWidth: w });
@@ -1495,6 +1595,7 @@ const Layout = (() => {
   function apply(l) {
     if (!l) return;
     setMonitor(l.monitor); setBin(l.bin);
+    if (l.gallery != null) setGallery(l.gallery);
     if (l.side) setSideWidth(l.side);
     if (l.zoom) TL.setZoom(l.zoom);
     write({ layout: l.name });
@@ -1548,6 +1649,11 @@ const Layout = (() => {
     const ui = read();
     setMonitor(ui.monitor ?? 0.55, false);
     setBin(ui.binWidth ?? 340, false);
+    setGallery(ui.gallery ?? true, false);
+    $("#btn-gallery").addEventListener("click", () => setGallery($("#top").classList.contains("no-gallery")));
+    addEventListener("keydown", e => {
+      if (e.altKey && !e.ctrlKey && e.key.toLowerCase() === "g" && !e.target.closest?.("input, textarea, select")) { e.preventDefault(); setGallery($("#top").classList.contains("no-gallery")); }
+    });
     const stage = $(".stage");
     splitter($("#stage-split"), "y", (e, done) => {
       const r = stage.getBoundingClientRect();
@@ -1559,7 +1665,7 @@ const Layout = (() => {
       if (e.key === "ArrowDown") { e.preventDefault(); setMonitor(f + 0.04); }
     });
     splitter($("#bin-split"), "x", (e, done) => {
-      const r = $(".bottom").getBoundingClientRect();
+      const r = $(".top").getBoundingClientRect();
       setBin(e.clientX - r.left, done);
     }, () => setBin(340));
     $("#bin-split").addEventListener("keydown", e => {
@@ -1568,5 +1674,5 @@ const Layout = (() => {
       if (e.key === "ArrowRight") { e.preventDefault(); setBin(w + 24); }
     });
   }
-  return { init, menu, applyIndex, apply, saveCurrent };
+  return { init, menu, applyIndex, apply, saveCurrent, setGallery };
 })();

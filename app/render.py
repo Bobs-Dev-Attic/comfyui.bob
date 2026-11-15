@@ -34,6 +34,54 @@ from .projectfile import TRANSITIONS, Clip, Timeline
 log = logging.getLogger("bob.render")
 EPS = 1e-4
 
+# Render formats: extension, picture codec args (None = sound only), sound codec args, label.
+# {crf} and {preset} are filled from the quality and speed options.
+FORMATS: dict[str, dict[str, Any]] = {
+    "mp4-h264": {"ext": ".mp4", "label": "MP4 · H.264 (plays everywhere)", "audio": ["-c:a", "aac", "-b:a", "{abr}k"],
+                 "video": ["-c:v", "libx264", "-preset", "{preset}", "-crf", "{crf}", "-pix_fmt", "yuv420p"]},
+    "mp4-h264-nvenc": {"ext": ".mp4", "label": "MP4 · H.264, NVIDIA NVENC (fast)", "audio": ["-c:a", "aac", "-b:a", "{abr}k"], "encoder": "h264_nvenc",
+                       "video": ["-c:v", "h264_nvenc", "-preset", "{nvpreset}", "-rc", "vbr", "-cq", "{crf}", "-b:v", "0", "-pix_fmt", "yuv420p"]},
+    "mp4-h265": {"ext": ".mp4", "label": "MP4 · H.265/HEVC (smaller files)", "audio": ["-c:a", "aac", "-b:a", "{abr}k"], "encoder": "libx265",
+                 "video": ["-c:v", "libx265", "-preset", "{preset}", "-crf", "{crf265}", "-pix_fmt", "yuv420p", "-tag:v", "hvc1"]},
+    "webm-vp9": {"ext": ".webm", "label": "WebM · VP9 + Opus (web)", "audio": ["-c:a", "libopus", "-b:a", "{abr}k"], "encoder": "libvpx-vp9",
+                 "video": ["-c:v", "libvpx-vp9", "-crf", "{crfvp9}", "-b:v", "0", "-row-mt", "1", "-deadline", "good", "-cpu-used", "{vp9speed}", "-pix_fmt", "yuv420p"]},
+    "mov-prores": {"ext": ".mov", "label": "MOV · ProRes 422 HQ (editing, large)", "audio": ["-c:a", "pcm_s16le"], "encoder": "prores_ks",
+                   "video": ["-c:v", "prores_ks", "-profile:v", "3", "-pix_fmt", "yuv422p10le"]},
+    "wav": {"ext": ".wav", "label": "WAV · sound only (lossless)", "audio": ["-c:a", "pcm_s16le"], "video": None},
+    "mp3": {"ext": ".mp3", "label": "MP3 · sound only", "audio": ["-c:a", "libmp3lame", "-b:a", "{abr}k"], "video": None, "encoder": "libmp3lame"},
+}
+QUALITY = {"high": 18, "medium": 23, "small": 28}           # x264 CRF; the others are derived
+SPEED = {"fast": ("veryfast", "p2", 6), "balanced": ("medium", "p5", 4), "best": ("slow", "p7", 2)}
+
+
+def formats() -> list[dict[str, Any]]:
+    """The render formats this ffmpeg can write."""
+    have = _encoders()
+    return [{"id": k, "label": v["label"], "ext": v["ext"], "video": v["video"] is not None}
+            for k, v in FORMATS.items() if not v.get("encoder") or v["encoder"] in have]
+
+
+_ENC: set[str] | None = None
+
+
+def _encoders() -> set[str]:
+    global _ENC
+    if _ENC is None:
+        exe = media.ffmpeg()
+        _ENC = set()
+        if exe:
+            try:
+                r = subprocess.run([exe, "-hide_banner", "-encoders"], capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                                   creationflags=media.NO_WINDOW, timeout=20)
+                _ENC = {ln.split()[1] for ln in r.stdout.splitlines() if len(ln.split()) > 1 and ln.startswith(" ") and ln.split()[0][:1] in "VA"}
+            except (OSError, subprocess.SubprocessError):
+                pass
+    return _ENC
+
+
+def _fill(args: list[str], **kv: Any) -> list[str]:
+    return [a.format(**kv) if "{" in a else a for a in args]
+
 
 def _even(n: float) -> int:
     n = int(round(n))
@@ -96,8 +144,13 @@ def sound_fades(tl: Timeline, clips: list[Clip], out_of: dict[str, Any], into: d
 
 
 def commands(tl: Timeline, out: str, w0: float | None = None, w1: float | None = None,
-             width: int | None = None, height: int | None = None, crf: int = 18) -> tuple[list[list[str]], float, list[str]]:
-    """Three ffmpeg runs: picture (out.v.mp4), sound (out.a.wav), then a mux into `out`.
+             width: int | None = None, height: int | None = None, crf: int = 18,
+             opts: dict[str, Any] | None = None) -> tuple[list[list[str]], float, list[str]]:
+    """Three ffmpeg runs: picture (out.v.<ext>), sound (out.a.wav), then a mux into `out`.
+
+    `opts` (Render options): format (FORMATS key), fps, quality (high|medium|small), speed
+    (fast|balanced|best), audio (bool), audio_bitrate (kbps), sample_rate, channels (1|2),
+    loudness ("mixer" = the master's target, "off", or LUFS as a number).
 
     Picture and sound are rendered separately on purpose: one graph mixing xfade/concat video with
     several audio inputs deadlocked intermittently in ffmpeg 8 (6 of 15 runs); split, 0 of 60.
@@ -114,7 +167,19 @@ def commands(tl: Timeline, out: str, w0: float | None = None, w1: float | None =
         raise ValueError("The timeline (or the In/Out range) is empty")
     if not (width and height):
         width, height = size_of(tl)
-    W, H, fps = _even(width), _even(height), tl.fps
+    o = dict(opts or {})
+    fmt = FORMATS.get(o.get("format") or "mp4-h264", FORMATS["mp4-h264"])
+    want_video = fmt["video"] is not None
+    want_audio = bool(o.get("audio", True)) or not want_video
+    W, H, fps = _even(width), _even(height), float(o.get("fps") or tl.fps)
+    fps = int(fps) if abs(fps - round(fps)) < 1e-6 else fps
+    q = QUALITY.get(o.get("quality") or "", int(crf))
+    preset, nvpreset, vp9speed = SPEED.get(o.get("speed") or "balanced", SPEED["balanced"])
+    kv = {"crf": q, "crf265": q + 4, "crfvp9": q + 13, "preset": preset, "nvpreset": nvpreset, "vp9speed": vp9speed,
+          "abr": int(o.get("audio_bitrate") or 192)}
+    rate, chans = int(o.get("sample_rate") or 48000), int(o.get("channels") or 2)
+    loud_opt = o.get("loudness", "mixer")
+    loudness = tl.master.loudness if loud_opt in (None, "mixer") else (None if loud_opt == "off" else float(loud_opt))
     out_of, into = transitions_by_clip(tl)
 
     head = [exe, "-nostdin", "-v", "error", "-y", "-nostats", "-progress", "pipe:1"]
@@ -221,7 +286,7 @@ def commands(tl: Timeline, out: str, w0: float | None = None, w1: float | None =
     master = [f"volume={tl.master.volume:.3f}"] if abs(tl.master.volume - 1) > 1e-3 else []
     # Loudness needs the finished mix measured first (two-pass loudnorm, a separate step below);
     # without it the limiter goes straight on the mix.
-    if tl.master.limiter and tl.master.loudness is None:
+    if tl.master.limiter and loudness is None:
         master.append("alimiter=limit=0.95:level=disabled")
     if alabels:
         afilters.append(f"{''.join(alabels)}amix=inputs={len(alabels)}:normalize=0:dropout_transition=0,apad,"
@@ -230,18 +295,26 @@ def commands(tl: Timeline, out: str, w0: float | None = None, w1: float | None =
         afilters.append(f"anullsrc=r=48000:cl=stereo,atrim=duration={w1 - w0:.4f}[aout]")
 
     D_out = w1 - w0
-    vfile, afile = out + ".v.mp4", out + ".a.wav"
-    raw = out + ".raw.wav" if tl.master.loudness is not None else afile
-    vargs += ["-filter_complex", ";".join(filters), "-map", "[vout]", "-an",
-              "-c:v", "libx264", "-preset", "veryfast", "-crf", str(int(crf)), "-pix_fmt", "yuv420p", "-t", f"{D_out:.4f}", vfile]
+    vfile, afile = out + ".v" + fmt["ext"] if want_video else "", out + ".a.wav"
+    raw = out + ".raw.wav" if loudness is not None else afile
+    if want_video:
+        vargs += ["-filter_complex", ";".join(filters), "-map", "[vout]", "-an", *_fill(fmt["video"], **kv), "-t", f"{D_out:.4f}", vfile]
     aargs += ["-filter_complex", ";".join(afilters), "-map", "[aout]", "-vn", "-c:a", "pcm_s16le", "-t", f"{D_out:.4f}", raw]
-    mux = [exe, "-nostdin", "-v", "error", "-y", "-i", vfile, "-i", afile, "-map", "0:v", "-map", "1:a",
-           "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-t", f"{D_out:.4f}", out]
-    steps: list[Any] = [vargs, aargs]
-    if raw != afile:
-        steps.append(("loudnorm", raw, afile, float(tl.master.loudness), bool(tl.master.limiter)))
+    fast = ["-movflags", "+faststart"] if fmt["ext"] in (".mp4", ".mov") else []
+    sound = ["-ar", str(rate), "-ac", str(chans), *_fill(fmt["audio"], **kv)]
+    if want_video and want_audio:
+        mux = [exe, "-nostdin", "-v", "error", "-y", "-nostats", "-progress", "pipe:1", "-i", vfile, "-i", afile, "-map", "0:v", "-map", "1:a",
+               "-c:v", "copy", *sound, *fast, "-t", f"{D_out:.4f}", out]
+    elif want_video:
+        mux = [exe, "-nostdin", "-v", "error", "-y", "-nostats", "-progress", "pipe:1", "-i", vfile, "-map", "0:v", "-c:v", "copy", *fast,
+               "-t", f"{D_out:.4f}", out]
+    else:
+        mux = [exe, "-nostdin", "-v", "error", "-y", "-nostats", "-progress", "pipe:1", "-i", afile, "-map", "0:a", *sound, "-t", f"{D_out:.4f}", out]
+    steps: list[Any] = [vargs if want_video else None, aargs if want_audio else None]
+    if want_audio and raw != afile:
+        steps.append(("loudnorm", raw, afile, float(loudness), bool(tl.master.limiter)))
     steps.append(mux)
-    return steps, D_out, [vfile, afile] + ([raw] if raw != afile else [])
+    return steps, D_out, [f for f in (vfile, afile, raw if raw != afile else "") if f]
 
 
 def loudnorm_two_pass(src: str, dst: str, target: float, limiter: bool) -> None:
@@ -271,6 +344,8 @@ def loudnorm_two_pass(src: str, dst: str, target: float, limiter: bool) -> None:
 def run_steps(steps: list[Any], timeout: float = 600) -> None:
     """Run render steps in order (for tests and tools; the studio runs them with progress)."""
     for st in steps:
+        if st is None:
+            continue
         if isinstance(st, tuple) and st[0] == "loudnorm":
             loudnorm_two_pass(*st[1:])
             continue
@@ -286,59 +361,125 @@ def command(tl: Timeline, out: str, w0: float | None = None, w1: float | None = 
     return steps, d
 
 
+def safe_name(s: str) -> str:
+    s = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", (s or "").strip()).strip(" .")
+    return s[:120]
+
+
+def destination(folder: str, filename: str, ext: str, item_id: str, overwrite: bool = False) -> Path:
+    """Where a render goes: outputs/<date> by default, or a folder inside outputs or a bookmarked folder."""
+    if folder:
+        d = Path(folder)
+        d = (d if d.is_absolute() else config.ROOT / folder).resolve()
+        if not any(d == r or r in d.parents for r in media.allowed_roots()):
+            raise ValueError("Renders can go to the studio's outputs or a bookmarked folder (Inputs › Media › bookmark it first)")
+        if not d.is_dir():
+            raise ValueError(f"Folder not found: {folder}")
+    else:
+        d = config.OUTPUT_DIR / datetime.now().strftime("%Y-%m-%d")
+        d.mkdir(parents=True, exist_ok=True)
+    base = safe_name(filename) or f"{item_id}_timeline"
+    target = d / f"{base}{ext}"
+    n = 2
+    while target.exists() and not overwrite:
+        target = d / f"{base} ({n}){ext}"
+        n += 1
+    return target
+
+
 async def render(jobs, project_id: str | None, tl: Timeline, *, w0: float | None = None, w1: float | None = None,
-                 width: int | None = None, height: int | None = None, name: str = "Timeline") -> dict[str, Any]:
+                 width: int | None = None, height: int | None = None, name: str = "Timeline",
+                 opts: dict[str, Any] | None = None) -> dict[str, Any]:
     """Start a render as a studio item; returns the item at once and finishes in the background."""
-    day = datetime.now().strftime("%Y-%m-%d")
-    out_dir = config.OUTPUT_DIR / day
-    out_dir.mkdir(parents=True, exist_ok=True)
+    o = dict(opts or {})
+    fmt_id = o.get("format") or "mp4-h264"
+    if fmt_id not in FORMATS:
+        raise ValueError(f"Unknown format: {fmt_id}")
+    if FORMATS[fmt_id].get("encoder") and FORMATS[fmt_id]["encoder"] not in _encoders():
+        raise ValueError(f"This ffmpeg can't write {FORMATS[fmt_id]['label']}")
+    fmt = FORMATS[fmt_id]
     item_id = uuid.uuid4().hex[:12]
-    target = out_dir / f"{item_id}_timeline.mp4"
-    steps, duration, temps = commands(tl, str(target), w0, w1, width, height, int(tl.render.get("crf", 18)))
+    target = destination(o.get("folder") or "", o.get("filename") or "", fmt["ext"], item_id, bool(o.get("overwrite")))
+    steps, duration, temps = commands(tl, str(target), w0, w1, width, height, int(tl.render.get("crf", 18)), o)
+    kind = "video" if fmt["video"] is not None else "audio"
     item = {
-        "id": item_id, "kind": "video", "engine": "timeline", "project": project_id, "status": "running",
-        "params": {"kind": "video", "engine": "timeline", "prompt": f"{name} · {len(tl.clips)} clips · {duration:.2f}s"},
+        "id": item_id, "kind": kind, "engine": "timeline", "project": project_id, "status": "running",
+        "params": {"kind": kind, "engine": "timeline", "prompt": f"{name} · {len(tl.clips)} clips · {duration:.2f}s"},
         "seed": 0, "created": time.time(), "started": time.time(), "files": [], "progress": 0.0, "error": None,
-        "info": {"seconds": round(duration, 2), "clips": len(tl.clips)},
+        "info": {"seconds": round(duration, 2), "clips": len(tl.clips), "format": fmt["label"], "file": target.as_posix()},
+        "log": [],
     }
     jobs.items[item_id] = item
     jobs._update(item)
+    say = lambda msg, level="info": jobs.log(item, msg, level)  # noqa: E731
+    say(f"Render: {len(tl.clips)} clips, {duration:.2f} s of timeline" + (f" (In {w0:.2f}s – Out {w1:.2f}s)" if (w0 or w1) else ""))
+    say(f"Format {fmt['label']}" + (f", {width}×{height}" if width else ", size of the first clip") +
+        f", {o.get('fps') or tl.fps} fps, quality {o.get('quality') or 'high'}, speed {o.get('speed') or 'balanced'}")
+    if kind == "video":
+        say("Sound: " + ("off" if not o.get("audio", True) else
+                         f"{o.get('sample_rate') or 48000} Hz, {'mono' if int(o.get('channels') or 2) == 1 else 'stereo'}"
+                         f", {o.get('audio_bitrate') or 192} kbps"))
+    say(f"Saving to {target.as_posix()}")
 
     async def run_step(args: list[str], base: float, span: float, label: str) -> None:
+        t0 = time.time()
+        say(f"{label}…")
         proc = await asyncio.to_thread(subprocess.Popen, args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                        stderr=subprocess.PIPE, creationflags=media.NO_WINDOW)
         loop = asyncio.get_running_loop()
+        speed, last_note = "", 0.0
         while True:
             line = await loop.run_in_executor(None, proc.stdout.readline)
             if not line:
                 break
+            sm = re.match(rb"speed=\s*([\d.]+x)", line)
+            if sm:
+                speed = sm.group(1).decode()
             m = re.match(rb"out_time_us=(\d+)", line)
             if m and duration:
-                value = min(0.99, base + span * min(1.0, int(m.group(1)) / 1e6 / duration))
+                done_s = int(m.group(1)) / 1e6
+                value = min(0.99, base + span * min(1.0, done_s / duration))
                 item["progress"] = value
                 jobs._publish({"type": "progress", "id": item_id, "value": value, "step": None, "steps": None,
-                               "message": label})
+                               "message": f"{label}{f' · {speed}' if speed else ''}"})
+                if time.time() - last_note > 5:
+                    last_note = time.time()
+                    say(f"{label}: {min(done_s, duration):.1f} / {duration:.1f} s{f' at {speed}' if speed else ''}")
         err = (await asyncio.to_thread(proc.stderr.read)).decode(errors="replace")
         code = await asyncio.to_thread(proc.wait)
         if code:
             raise RuntimeError(err.strip()[-800:] or f"ffmpeg exited with {code}")
+        say(f"{label}: done in {time.time() - t0:.1f} s")
 
     async def run() -> None:
+        t_start = time.time()
         try:
-            await run_step(steps[0], 0.0, 0.80, "Rendering picture")
-            await run_step(steps[1], 0.80, 0.12, "Mixing sound")
+            vstep, astep = steps[0], steps[1]
+            if vstep:
+                await run_step(vstep, 0.0, 0.80 if astep else 0.95, "Rendering picture")
+            if astep:
+                await run_step(astep, 0.80 if vstep else 0.0, 0.12 if vstep else 0.80, "Mixing sound")
             for st in steps[2:-1]:  # loudness normalisation
                 jobs._publish({"type": "progress", "id": item_id, "value": 0.93, "step": None, "steps": None, "message": "Normalising loudness"})
+                say(f"Normalising loudness to {st[3]:g} LUFS (measure, then apply)…")
                 await asyncio.to_thread(loudnorm_two_pass, *st[1:])
             await run_step(steps[-1], 0.95, 0.04, "Finishing")
             if not target.is_file():
                 raise RuntimeError("ffmpeg didn't write the file")
-            rel = target.relative_to(config.ROOT).as_posix()
-            files = [{"name": target.name, "path": rel, "url": "/" + rel, "content_type": "video/mp4",
+            ctype = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".wav": "audio/wav", ".mp3": "audio/mpeg"}[fmt["ext"]]
+            try:
+                rel = target.relative_to(config.ROOT).as_posix()
+                url = "/" + rel if rel.startswith(config.OUTPUT_DIR.relative_to(config.ROOT).as_posix() + "/") else None
+            except ValueError:
+                rel, url = target.as_posix(), None
+            from urllib.parse import quote
+            files = [{"name": target.name, "path": rel, "url": url or f"/api/media/file?path={quote(rel)}", "content_type": ctype,
                       "size": target.stat().st_size}]
+            say(f"Done in {time.time() - t_start:.1f} s: {target.name}, {target.stat().st_size / 2**20:.1f} MB")
             jobs._update(item, status="done", files=files, progress=1.0, finished=time.time())
         except Exception as exc:  # noqa: BLE001
             log.exception("render %s failed", item_id)
+            say(f"Failed: {str(exc)[:400]}", "error")
             target.unlink(missing_ok=True)
             jobs._update(item, status="failed", error=str(exc)[:1500], finished=time.time())
         finally:

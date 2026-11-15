@@ -87,6 +87,15 @@ class JobManager:
             except asyncio.QueueFull:
                 pass
 
+    def log(self, item: dict[str, Any], msg: str, level: str = "info") -> None:
+        """Add a line to an item's activity log (shown in the Activity console) and stream it."""
+        entry = {"t": time.time(), "msg": str(msg)[:600], "level": level}
+        lines = item.setdefault("log", [])
+        lines.append(entry)
+        if len(lines) > 300:
+            del lines[:-300]
+        self._publish({"type": "log", "id": item["id"], **entry})
+
     def _update(self, item: dict[str, Any], **changes: Any) -> None:
         item.update(changes)
         self._save()
@@ -224,24 +233,41 @@ class JobManager:
 
         client = self.comfy.client
         try:
+            t_start = time.time()
             built = self._build(item, req, files)
             item["info"] = built.info
+            self.log(item, f"Built the {req.engine} workflow: {len(built.graph)} nodes"
+                     + "".join(f", {k} {v}" for k, v in (built.info or {}).items() if isinstance(v, (int, float, str)) and len(str(v)) < 40))
             wf = client.workflows.from_json(built.graph)
             for role, node_id in built.image_inputs.items():
                 ref = req.references[int(role[4:])] if role.startswith("ref_") else getattr(req, role)
+                self.log(item, f"Input {role}: {ref}")
                 wf.set_input(node_id, "image", client.assets.from_file(media_path(ref)))
 
             # No `metadata=`: comfy-api-proxy 0.1.6 rejects the SDK's mapping form.
             job = await client.submit(wf)
             self._handles[item["id"]] = job
+            self.log(item, f"Sent to ComfyUI (job {job.id})")
             self._update(item, status="queued", comfy_job=job.id, started=None)
 
             async def pump_events() -> None:
                 last_preview = 0.0
+                last_node, last_quarter = None, -1
                 async for ev in job.events():
                     if isinstance(ev, Progress):
                         if item["status"] != "running":
+                            self.log(item, "Running on the GPU")
                             self._update(item, status="running", started=time.time())
+                        node = getattr(ev, "current_node", None)
+                        if node and node != last_node:
+                            last_node = node
+                            ctype = (built.graph.get(str(node)) or {}).get("class_type", "")
+                            self.log(item, f"Node {node}{f' · {ctype}' if ctype else ''}")
+                        if ev.steps:
+                            quarter = int(4 * ev.step / ev.steps)
+                            if quarter != last_quarter:
+                                last_quarter = quarter
+                                self.log(item, f"Step {ev.step} of {ev.steps}")
                         # ev.value is the share of graph nodes done (loaders count), so
                         # during sampling report step progress, which is what users expect.
                         value = ev.step / ev.steps if ev.steps else ev.value
@@ -258,8 +284,11 @@ class JobManager:
                                            "src": f"data:{ev.content_type};base64,{b64}"})
                     elif isinstance(ev, StatusChange):
                         if ev.status == "running" and item["status"] != "running":
+                            self.log(item, "Running on the GPU")
                             self._update(item, status="running", started=time.time())
                         elif ev.status in ("queued", "pending"):
+                            if ev.queue_position is not None:
+                                self.log(item, f"Waiting in ComfyUI's queue (position {ev.queue_position})")
                             self._publish({"type": "queue", "id": item["id"], "position": ev.queue_position})
                     elif isinstance(ev, OutputReady):
                         pass  # we download everything once the job is final
@@ -280,7 +309,9 @@ class JobManager:
             finally:
                 events_task.cancel()
 
+            self.log(item, "Downloading the results")
             saved = await self._download(item, done, built.outputs)
+            self.log(item, f"Done in {time.time() - t_start:.1f} s: " + ", ".join(f"{f['name']} ({f['size'] / 2**20:.1f} MB)" for f in saved))
             self._update(item, status="done", files=saved, progress=1.0, finished=time.time())
             if item.get("project"):
                 from . import projects  # the project's thumbnail and "modified" follow its latest result
@@ -293,10 +324,12 @@ class JobManager:
                 projects.touch(item["project"], thumb or None)
         except JobFailed as exc:
             status = "cancelled" if "cancel" in str(exc).lower() else "failed"
+            self.log(item, f"{status.title()}: {_short_error(exc)[:400]}", "error")
             self._update(item, status=status, error=_short_error(exc), finished=time.time())
         except Exception as exc:  # network errors, invalid workflow, etc.
             log.exception("job %s failed", item["id"])
             status = "cancelled" if type(exc).__name__ in ("Cancelled", "CancelledError") else "failed"
+            self.log(item, f"{status.title()}: {_short_error(exc)[:400]}", "error")
             self._update(item, status=status, error=_short_error(exc), finished=time.time())
         finally:
             self._handles.pop(item["id"], None)

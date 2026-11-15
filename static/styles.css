@@ -202,7 +202,7 @@ details.advanced .field + .field, details.advanced .row2 + .field { margin-top: 
 /* ---------------------------------------------------------------- queue */
 .queue { border-top: 1px solid var(--line); padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 8px; }
 .queue:empty { display: none; }
-.q-item { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; font-size: 12px; }
+.q-item { display: grid; grid-template-columns: 1fr auto auto; gap: 4px 10px; align-items: center; font-size: 12px; }
 .q-item .q-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
 .q-item .q-title b { color: var(--text); font-weight: 600; }
 .q-item .bar { grid-column: 1 / -1; }
