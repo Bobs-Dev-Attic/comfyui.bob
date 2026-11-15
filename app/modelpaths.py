@@ -25,7 +25,8 @@ from . import config
 
 log = logging.getLogger("bob.modelpaths")
 
-MODEL_EXTS = {".safetensors", ".sft", ".gguf", ".ckpt", ".pt", ".pth", ".bin"}
+# The extensions core ComfyUI lists (folder_paths.supported_pt_extensions); .gguf needs custom loaders.
+MODEL_EXTS = {".safetensors", ".sft", ".ckpt", ".pt", ".pt2", ".pth", ".bin", ".pkl"}
 # Legacy folder names ComfyUI maps onto the current ones.
 ALIASES = {"unet": "diffusion_models", "clip": "text_encoders"}
 SKIP_KEYS = {"base_path", "is_default", "custom_nodes", "configs"}

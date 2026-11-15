@@ -56,6 +56,11 @@ OLLAMA_KEEP_ALIVE = os.environ.get("BOB_OLLAMA_KEEP_ALIVE", "0")  # "0" unloads 
 # on disk that the running ComfyUI may not be loading. Machine-specific: set it in .env.
 EXTRA_MODEL_PATHS = os.environ.get("BOB_EXTRA_MODEL_PATHS", "")
 
+# Optional: the ComfyUI install start.bat starts when ComfyUI isn't running
+# (a ComfyUI folder or a ComfyUI_windows_portable folder), and extra arguments for it.
+COMFYUI_DIR = os.environ.get("BOB_COMFYUI_DIR", "")
+COMFYUI_ARGS = os.environ.get("BOB_COMFYUI_ARGS", "")
+
 HOST = os.environ.get("BOB_HOST", "127.0.0.1")
 PORT = int(os.environ.get("BOB_PORT", "8700"))
 
