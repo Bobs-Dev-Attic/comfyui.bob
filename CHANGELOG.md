@@ -5,6 +5,18 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.17.0] - 2026-11-15
+
+### Changed
+- **The Prompt Writer lives in the top section.** It's a pane between the gallery and the viewer.
+  - **Opening it:** the **✍ Writer** button next to Gallery, **Alt+W**, or ✍ Prompt Writer on the Prompt step.
+  - **Size:** drag its edge to resize; the width and whether it's open are remembered, and layouts include it.
+  - **Sharing room:** on narrow screens the gallery, writer and viewer share the space, and the viewer keeps at
+    least 300 px.
+  - **Behaviour:** the writer works as before: linked to the studio, with **Use in studio** filling the prompt
+    box. Inside the pane it drops its own title bar and switches to one column when narrow.
+  - **↗ Pop out** opens it in its own window again.
+
 ## [0.16.2] - 2026-11-15
 
 ### Added

@@ -121,7 +121,8 @@ Other features:
 - **Model folders:** set `BOB_EXTRA_MODEL_PATHS` in `.env` to your ComfyUI `extra_model_paths.yaml`. The app then finds
   models on disk that the running ComfyUI isn't loading, and tells you which `--extra-model-paths-config` file to
   restart ComfyUI with.
-- **Prompt Writer window:** click **↗ Writer window** next to the prompt.
+- **Prompt Writer:** click **✍ Writer** next to Gallery (or Alt+W, or ✍ Prompt Writer next to the prompt). It opens as a pane in
+  the top section, between the gallery and the viewer; **↗ Pop out** puts it in its own window.
   - Type your idea on the left; the LLM fills the style, sound and per-shot fields (framing, setting, action, camera,
     spoken line).
   - The H3 prompt on the right rebuilds on every keystroke, colour-coded by who wrote each part: H3 format, you, the
@@ -153,7 +154,7 @@ Other features:
   - `explorer.js`: the project browser.
   - `media.js`: the media gallery.
   - `bin.js`: the Results bin.
-  - `timeline.js`: the timeline, the viewer switch and layouts. `writer.html`/`writer.js` is the Prompt Writer window;
+  - `timeline.js`: the timeline, the viewer switch and layouts. `writer.html`/`writer.js` is the Prompt Writer (the top section's Writer pane, or a window);
   `h3prompt.js` mirrors the server's prompt assembly (`tests/h3prompt_parity.py` keeps them identical).
 
 Settings are environment variables, or lines in a local `.env` file (copy `.env.example`): `COMFYUI_URL`, `COMFY_BASE_URL` (proxy),

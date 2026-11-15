@@ -101,3 +101,9 @@ body.writer { min-height: 100%; }
   .w-controls .w-dur { grid-column: 1 / -1; }
   .f { grid-template-columns: 72px 1fr 28px; }
 }
+
+/* inside the studio's Writer pane */
+body.embedded .topbar { padding: 8px 12px; min-height: 0; }
+body.embedded .topbar .brand { display: none; }
+body.embedded .topbar .status { justify-content: flex-start; width: 100%; }
+body.embedded .w-output { top: 8px; max-height: calc(100vh - 16px); }
