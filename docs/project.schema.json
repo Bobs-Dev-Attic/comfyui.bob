@@ -1555,7 +1555,7 @@
       "type": "number"
     },
     "app_version": {
-      "default": "0.16.1",
+      "default": "0.16.2",
       "title": "App Version",
       "type": "string"
     },
