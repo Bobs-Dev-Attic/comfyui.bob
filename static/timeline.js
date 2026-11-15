@@ -133,7 +133,7 @@ const TL = (() => {
     if (!tl) return;
     const kind = m.kind;
     let tr = opts.track ? track(opts.track) : null;
-    const fits = t => t && !t.locked && (t.kind === "video" ? kind !== "audio" : kind !== "image");
+    const fits = t => t && !t.locked && t.kind !== "camera" && (t.kind === "video" ? kind !== "audio" : kind !== "image");
     if (!fits(tr)) tr = tl.tracks.find(t => fits(t) && t.kind === (kind === "audio" ? "audio" : "video")) || tl.tracks.find(fits);
     if (!tr) return toast(kind === "image" ? "Pictures go on a video track; add one with ＋ Track." : "No unlocked track fits this file.");
     let length = 3, sd = null, info = null;
@@ -151,7 +151,8 @@ const TL = (() => {
     tl.clips.push(c);
     sel.clear(); sel.add(c.id);
     // A video with sound also puts its sound on an audio track (linked), like an editing app.
-    if (kind === "video" && tr.kind === "video" && tl.link_audio && info?.has_audio) {
+    if (opts.noSound) c.audio_off = true;
+    else if (kind === "video" && tr.kind === "video" && tl.link_audio && info?.has_audio) {
       const a = linkSound(c);
       if (a) sel.add(a.id);
     }
@@ -349,6 +350,15 @@ const TL = (() => {
   }
 
   function addTrack(kind) {
+    if (kind === "camera") {
+      const have = tl.tracks.find(t => t.kind === "camera");
+      if (have) { toast("There's already a Camera track: double-click it to add a camera move."); return have; }
+      checkpoint();
+      const t = { id: uid(), kind: "camera", name: "Camera", muted: false, locked: false, hidden: false, volume: 1, height: 36 };
+      tl.tracks.unshift(t);  // the camera looks at everything below it
+      changed();
+      return t;
+    }
     checkpoint();
     const n = tl.tracks.filter(t => t.kind === kind).length + 1;
     const t = { id: uid(), kind, name: `${kind === "video" ? "V" : "A"}${n}`, muted: false, locked: false, hidden: false, volume: 1, height: kind === "video" ? 56 : 44 };
@@ -448,12 +458,19 @@ const TL = (() => {
     }
     return [fin, fout];
   }
+  // The clip's own volume at timeline time t: its volume keyframes (source time) or its volume.
+  function volAt(c, t) {
+    const keys = c.vol_keys;
+    if (!keys?.length) return c.volume ?? 1;
+    const s = (c.kind === "image" ? 0 : c.trim_in) + (t - c.start);
+    return interp([...keys].sort((a, b) => a.t - b.t), s, k => k.v, 1);
+  }
   function soundGain(c, t) {
     const tr = c && track(c.track);
     if (!tr || tr.muted || c.muted || c.kind === "image" || (tr.kind === "video" && c.audio_off)) return 0;
     if (tl.tracks.some(x => x.solo) && !tr.solo) return 0;
     const [fin, fout] = fadesOf(c), L = dur(c), x = t - c.start;
-    let g = (c.volume ?? 1) * (tr.volume ?? 1);
+    let g = volAt(c, t) * (tr.volume ?? 1);
     if (fin > 1e-6 && x < fin) g *= clamp(x / fin, 0, 1);
     if (fout > 1e-6 && L - x < fout) g *= clamp((L - x) / fout, 0, 1);
     return g;
@@ -591,6 +608,8 @@ const TL = (() => {
     }
     showLayer(L1, c, t, live, look.a, !!pic?.b && pic.type === "circleclose");
     showLayer(L2, pic?.b || null, t, live, look.b, !(pic?.type === "circleclose"));
+    applyCamera(t);
+    camEdit?.refresh?.();
     // Audio tracks (and video clips placed on them for their sound).
     const live_ids = new Set();
     for (const a of tl.clips) {
@@ -671,7 +690,7 @@ const TL = (() => {
     if (!el) {
       el = document.createElement("div");
       el.id = `prog-fx${n}`; el.className = "prog-fx"; el.hidden = true;
-      $("#program").appendChild(el);
+      ($("#prog-cam") || $("#program")).appendChild(el);
     }
     return el;
   }
@@ -998,6 +1017,328 @@ const TL = (() => {
     fill(); live();
   }
 
+  /* ------------------------------------------------------------------ Camera track
+     A camera move looks at the finished picture as a flat card in 3D (ideas from Reshoot 4D,
+     AGPL-3.0: ideas only). Same maths as app/camera.py: keep the two in step. */
+  const CAM_PARAMS = ["pan", "tilt", "roll", "zoom", "dolly", "truck", "pedestal", "orbit"];
+  const CAM_DEFAULT = { enabled: true, pan: 0, tilt: 0, roll: 0, zoom: 1, dolly: 0, truck: 0, pedestal: 0, orbit: 0, shake: 0, fill: "black", keys: [],
+    reshoot: { prompt: "", references: [], guides: 3, quality: "draft", seed: -1 } };
+  const camClips = () => { const ids = new Set(tl.tracks.filter(t => t.kind === "camera" && !t.hidden).map(t => t.id)); return tl.clips.filter(c => ids.has(c.track) && c.kind === "camera" && c.cam && c.cam.enabled !== false); };
+  function camParamsAt(move, s, local) {
+    const m = { ...CAM_DEFAULT, ...move };
+    const keys = [...(m.keys || [])].sort((a, b) => a.t - b.t);
+    const p = {};
+    for (const k of CAM_PARAMS) p[k] = keys.length ? interp(keys, s, key => key[k], m[k]) : m[k];
+    const sh = m.shake || 0;
+    if (sh > 0) {
+      const t = local;
+      p.pan += sh * 1.2 * (Math.sin(t * 1.9) + 0.5 * Math.sin(t * 4.3 + 1));
+      p.tilt += sh * 0.9 * (Math.sin(t * 2.3 + 2) + 0.5 * Math.sin(t * 5.1));
+      p.roll += sh * 0.6 * Math.sin(t * 1.3 + 0.5);
+    }
+    return p;
+  }
+  function camCorners(p, W, H) {
+    const D = Math.max(W, H), F = D * p.zoom, rad = Math.PI / 180;
+    const ry = a => [[Math.cos(a), 0, Math.sin(a)], [0, 1, 0], [-Math.sin(a), 0, Math.cos(a)]];
+    const rx = a => [[1, 0, 0], [0, Math.cos(a), -Math.sin(a)], [0, Math.sin(a), Math.cos(a)]];
+    const rz = a => [[Math.cos(a), -Math.sin(a), 0], [Math.sin(a), Math.cos(a), 0], [0, 0, 1]];
+    const mul = (a, b) => a.map((row, i) => [0, 1, 2].map(j => row[0] * b[0][j] + row[1] * b[1][j] + row[2] * b[2][j]));
+    const R = mul(mul(mul(ry(p.orbit * rad), ry(p.pan * rad)), rx(p.tilt * rad)), rz(p.roll * rad));
+    const p0 = [p.truck * W, -p.pedestal * H, -D * (1 - p.dolly)], o = p.orbit * rad;
+    const pos = [Math.cos(o) * p0[0] + Math.sin(o) * p0[2], p0[1], -Math.sin(o) * p0[0] + Math.cos(o) * p0[2]];
+    return [[-W / 2, -H / 2], [W / 2, -H / 2], [-W / 2, H / 2], [W / 2, H / 2]].map(([X, Y]) => {
+      const v = [X - pos[0], Y - pos[1], -pos[2]];
+      const xc = [0, 1, 2].map(i => R[0][i] * v[0] + R[1][i] * v[1] + R[2][i] * v[2]);
+      const z = Math.max(xc[2], D * 0.05);
+      return [F * xc[0] / z + W / 2, F * xc[1] / z + H / 2];
+    });
+  }
+  // CSS matrix3d that maps the rect (rx, ry, rw, rh) onto the quad q = [TL, TR, BL, BR].
+  function quadMatrix(rx, ry, rw, rh, q) {
+    const [[x0, y0], [x1, y1], [x3, y3], [x2, y2]] = q;  // Heckbert order: TL, TR, BR, BL
+    const sx = x0 - x1 + x2 - x3, sy = y0 - y1 + y2 - y3;
+    let a, b, c, d, e, f, g, h;
+    if (Math.abs(sx) < 1e-9 && Math.abs(sy) < 1e-9) { a = x1 - x0; b = x2 - x1; c = x0; d = y1 - y0; e = y2 - y1; f = y0; g = 0; h = 0; }
+    else {
+      const dx1 = x1 - x2, dx2 = x3 - x2, dy1 = y1 - y2, dy2 = y3 - y2, den = dx1 * dy2 - dx2 * dy1;
+      g = (sx * dy2 - dx2 * sy) / den; h = (dx1 * sy - sx * dy1) / den;
+      a = x1 - x0 + g * x1; b = x3 - x0 + h * x3; c = x0; d = y1 - y0 + g * y1; e = y3 - y0 + h * y3; f = y0;
+    }
+    // compose with u = (x - rx)/rw, v = (y - ry)/rh
+    const m = [[a / rw, b / rh, c - a * rx / rw - b * ry / rh], [d / rw, e / rh, f - d * rx / rw - e * ry / rh], [g / rw, h / rh, 1 - g * rx / rw - h * ry / rh]];
+    return `matrix3d(${m[0][0]},${m[1][0]},0,${m[2][0]},${m[0][1]},${m[1][1]},0,${m[2][1]},0,0,1,0,${m[0][2]},${m[1][2]},0,${m[2][2]})`;
+  }
+  function canvasClip() {
+    const vids = new Set(tl.tracks.filter(t => t.kind === "video").map(t => t.id));
+    return [...tl.clips].sort((a, b) => a.start - b.start).find(c => vids.has(c.track) && (c.kind === "video" || c.kind === "image"));
+  }
+  function applyCamera(t) {
+    const el = $("#prog-cam");
+    if (!el) return;
+    const c = camClips().find(x => x.start <= t && end(x) > t);
+    if (!c) { el.style.transform = ""; return; }
+    const base = canvasClip();
+    const r = base ? picRect(base, $("#prog-video")) : (() => { const b = $("#program").getBoundingClientRect(); return { left: 0, top: 0, width: b.width, height: b.height }; })();
+    const local = t - c.start, q = camCorners(camParamsAt(c.cam, c.trim_in + local, local), r.width, r.height).map(([x, y]) => [x + r.left, y + r.top]);
+    el.style.transform = quadMatrix(r.left, r.top, r.width, r.height, q);
+  }
+  function camSummary(c) {
+    const ks = c.cam?.keys?.length || 0;
+    return c.cam?.enabled === false ? "off" : ks ? `${ks} key${ks > 1 ? "s" : ""}` : "static";
+  }
+  async function addCameraMove(at = tl.playhead) {
+    let tr = tl.tracks.find(t => t.kind === "camera");
+    if (!tr) tr = addTrack("camera");
+    if (tr.locked) return toast("The Camera track is locked.");
+    checkpoint();
+    const len = Math.max(1, Math.min(4, (total() || 4) - at)) || 4;
+    const c = { id: uid(), track: tr.id, ref: "", kind: "camera", name: "Camera move", start: q(at), trim_in: 0, trim_out: q(len), source_duration: null,
+      volume: 1, color: "", job: null, link: null, audio_off: true, cam: structuredClone(CAM_DEFAULT) };
+    carve(tr.id, c.start, end(c), new Set());
+    tl.clips.push(c); sel.clear(); sel.add(c.id);
+    changed();
+    cameraDialog(c);
+  }
+
+  const CAM_PRESETS = {
+    "Push in": [{ dolly: 0 }, { dolly: 0.3 }],
+    "Pull out": [{ dolly: 0.3 }, { dolly: 0 }],
+    "Pan right": [{ pan: -12 }, { pan: 12 }],
+    "Pan left": [{ pan: 12 }, { pan: -12 }],
+    "Tilt up": [{ tilt: -8 }, { tilt: 8 }],
+    "Orbit left": [{ orbit: 15, dolly: 0.1 }, { orbit: -15, dolly: 0.1 }],
+    "Orbit right": [{ orbit: -15, dolly: 0.1 }, { orbit: 15, dolly: 0.1 }],
+    "Crane up": [{ pedestal: -0.15, tilt: 4 }, { pedestal: 0.15, tilt: -4 }],
+    "Dutch tilt": [{ roll: 0 }, { roll: 12, dolly: 0.1 }],
+    "Dolly zoom": [{ dolly: 0, zoom: 1 }, { dolly: 0.4, zoom: 0.62 }],
+    "Handheld": null,
+  };
+  let camEdit = null;
+  function cameraDialog(c) {
+    if (!c?.cam) return;
+    camEdit?.win?.close();
+    const before = snapshot();
+    c.cam = { ...structuredClone(CAM_DEFAULT), ...c.cam, reshoot: { ...CAM_DEFAULT.reshoot, ...(c.cam.reshoot || {}) } };
+    if (!(c.start <= tl.playhead && end(c) > tl.playhead)) seek(c.start);
+    Monitor.show("timeline");
+    const SL = [["pan", "Pan", -80, 80, 0.5, "°", "turn left / right"], ["tilt", "Tilt", -60, 60, 0.5, "°", "look down / up"],
+      ["roll", "Roll", -180, 180, 0.5, "°", "rotate the frame"], ["zoom", "Zoom", 0.3, 5, 0.01, "×", "focal length"],
+      ["dolly", "Dolly", -2, 0.9, 0.01, "", "move toward (+) / away (−)"], ["truck", "Truck", -2, 2, 0.01, "", "move right (+) / left (−)"],
+      ["pedestal", "Crane", -2, 2, 0.01, "", "move up (+) / down (−)"], ["orbit", "Orbit", -80, 80, 0.5, "°", "circle the subject"]];
+    const form = document.createElement("div");
+    form.className = "wm-form camd";
+    form.innerHTML = `
+      <div class="fx-top"><label class="check"><input type="checkbox" data-c="enabled"> Camera move on</label>
+        <span class="hint inline">The camera looks at everything below the Camera track as a flat picture in 3D.</span></div>
+      <div class="fx-presets">${Object.keys(CAM_PRESETS).map(n => `<button type="button" class="btn sm" data-cpreset="${esc2(n)}">${esc2(n)}</button>`).join("")}</div>
+      <fieldset><legend>Keyframes</legend>
+        <div class="fx-keys"><button type="button" class="btn sm" data-ck="prev">◀◆</button><div class="fxk-bar" title="Click to move the playhead; drag a ◆ to retime it"></div><button type="button" class="btn sm" data-ck="next">◆▶</button></div>
+        <div class="fx-keybtns"><button type="button" class="btn sm" data-ck="add">◆ Add keyframe</button><button type="button" class="btn sm" data-ck="del">Delete keyframe</button>
+          <label class="fx-ease">Ease to next <select data-ck="ease"><option value="smooth">Smooth</option><option value="linear">Linear</option><option value="hold">Hold</option></select></label>
+          <button type="button" class="btn sm ghost danger" data-ck="clear">Remove all</button></div>
+        <p class="hint camk-hint"></p>
+      </fieldset>
+      <fieldset><legend>Camera</legend><div class="row2">
+        ${SL.map(([k, l, mn, mx, st, u, tip]) => `<div class="field fxs"><label for="cam-${k}" title="${tip}">${l} <span class="opt" data-cout="${k}"></span></label>
+          <input id="cam-${k}" data-cp="${k}" data-u="${u}" type="range" min="${mn}" max="${mx}" step="${st}"></div>`).join("")}
+        <div class="field fxs"><label for="cam-shake">Handheld shake <span class="opt" data-cout="shake"></span></label><input id="cam-shake" data-c="shake" type="range" min="0" max="1" step="0.01"></div>
+        <div class="field"><label for="cam-fill">Where the move uncovers the frame</label><select id="cam-fill" data-c="fill"><option value="black">Black</option><option value="blur">Blurred picture</option></select></div>
+      </div><p class="hint">Double-click a slider to reset it. The render is exact; it has no depth, so for real parallax and new surroundings use the AI reshoot below.</p></fieldset>
+      <fieldset class="cam-ai"><legend>AI reshoot</legend>
+        <p class="hint">Makes guide frames along this move, has FLUX Klein fill in what the camera newly sees (from your words and
+          reference pictures), then MiniMax H3 regenerates the shot. The result goes on a new track above, and this move is turned off.</p>
+        <div class="field"><label for="cam-prompt">Describe the scene and what's around it</label>
+          <textarea id="cam-prompt" rows="3" maxlength="4000" placeholder="A rainy back alley at night: brick walls, fire escapes, neon signs further down, puddles on the ground"></textarea></div>
+        <div class="field"><label>References <span class="opt">drag pictures here from the gallery or Media</span></label>
+          <div class="cam-refs" tabindex="0"></div>
+          <button type="button" class="link" data-ai="inputs">Use the Inputs step's reference pictures</button></div>
+        <div class="row2">
+          <div class="field"><label for="cam-guides">Guide frames</label><select id="cam-guides">${[2, 3, 4, 5, 6].map(n => `<option>${n}</option>`).join("")}</select></div>
+          <div class="field"><label for="cam-quality">Quality</label><select id="cam-quality"><option value="draft">Draft (fast)</option><option value="standard">Standard</option><option value="full">Full</option></select></div>
+        </div>
+        <button type="button" class="btn primary" data-ai="go">🎬 Reshoot with AI</button>
+      </fieldset>`;
+    const keyed = () => !!c.cam.keys?.length;
+    const now = () => camParamsAt({ ...c.cam, shake: 0 }, srcTime(c, tl.playhead), tl.playhead - c.start);
+    const fmt = (k, v) => { const u = SL.find(x => x[0] === k)?.[5] ?? ""; return k === "shake" ? `${Math.round(v * 100)}%` : `${(+v).toFixed(u === "°" ? 1 : 2)}${u}`; };
+    const keyAtCam = (create = false) => {
+      const s = srcTime(c, tl.playhead), keys = c.cam.keys;
+      let k = keys.find(x => Math.abs(x.t - s) < 0.5 / fps());
+      if (!k && create) { const v = now(); k = { t: +s.toFixed(4), ease: "smooth", ...Object.fromEntries(CAM_PARAMS.map(p => [p, +(+v[p]).toFixed(4)])) }; keys.push(k); keys.sort((a, b) => a.t - b.t); }
+      return k;
+    };
+    const renderRefs = () => {
+      const box = form.querySelector(".cam-refs"), refs = c.cam.reshoot.references;
+      box.innerHTML = refs.map((r, i) => `<span class="cam-ref"><img src="/api/media/thumb?path=${encodeURIComponent(r)}&w=96" alt=""><button type="button" data-rx="${i}" title="Remove">×</button></span>`).join("")
+        || `<span class="hint">No reference pictures (optional).</span>`;
+    };
+    const renderKeys = () => {
+      const bar = form.querySelector(".fxk-bar"), s0 = srcTime(c, c.start), L = dur(c), s = srcTime(c, tl.playhead), keys = c.cam.keys;
+      const at = keys.find(x => Math.abs(x.t - s) < 0.5 / fps());
+      bar.innerHTML = keys.map((k, i) => { const p = (k.t - s0) / L; return p < -0.001 || p > 1.001 ? "" : `<b class="fxk${k === at ? " on" : ""}" data-ki="${i}" style="left:${p * 100}%"></b>`; }).join("")
+        + `<i class="fxk-ph" style="left:${clamp((s - s0) / L, 0, 1) * 100}%"></i>`;
+      form.querySelector('[data-ck="del"]').disabled = !at;
+      const es = form.querySelector('[data-ck="ease"]'); es.disabled = !at; es.value = at?.ease || "smooth";
+      form.querySelector('[data-ck="clear"]').disabled = !keys.length;
+      form.querySelector(".camk-hint").textContent = keys.length
+        ? `${keys.length} keyframe${keys.length > 1 ? "s" : ""}: moving a slider sets a keyframe at the playhead${at ? " (you're on one)" : ""}.`
+        : "Add a keyframe at the start, move the playhead, change the camera: that adds another, and the camera travels between them. Or pick a preset.";
+    };
+    const fill = () => {
+      const v = now();
+      for (const inp of form.querySelectorAll("[data-cp]")) { const k = inp.dataset.cp; inp.value = v[k]; form.querySelector(`[data-cout="${k}"]`).textContent = fmt(k, v[k]); }
+      form.querySelector('[data-c="enabled"]').checked = c.cam.enabled !== false;
+      form.querySelector('[data-c="shake"]').value = c.cam.shake; form.querySelector('[data-cout="shake"]').textContent = fmt("shake", c.cam.shake);
+      form.querySelector('[data-c="fill"]').value = c.cam.fill;
+      form.querySelector("#cam-prompt").value = c.cam.reshoot.prompt || "";
+      form.querySelector("#cam-guides").value = c.cam.reshoot.guides || 3;
+      form.querySelector("#cam-quality").value = c.cam.reshoot.quality || "draft";
+      renderKeys(); renderRefs();
+    };
+    const live = () => { if (!playing) syncProgram(false); render(); };
+    form.addEventListener("input", e => {
+      const k = e.target.dataset.cp, ck = e.target.dataset.c;
+      if (k) {
+        const v = +e.target.value;
+        if (keyed()) keyAtCam(true)[k] = v; else c.cam[k] = v;
+        form.querySelector(`[data-cout="${k}"]`).textContent = fmt(k, v);
+        renderKeys();
+      } else if (ck === "enabled") c.cam.enabled = e.target.checked;
+      else if (ck === "shake") { c.cam.shake = +e.target.value; form.querySelector('[data-cout="shake"]').textContent = fmt("shake", c.cam.shake); }
+      else if (ck === "fill") c.cam.fill = e.target.value;
+      else if (e.target.id === "cam-prompt") c.cam.reshoot.prompt = e.target.value;
+      else if (e.target.id === "cam-guides") c.cam.reshoot.guides = +e.target.value;
+      else if (e.target.id === "cam-quality") c.cam.reshoot.quality = e.target.value;
+      if (!playing) syncProgram(false);
+    });
+    form.addEventListener("change", e => {
+      if (e.target.dataset.ck === "ease") { const k = keyAtCam(); if (k) k.ease = e.target.value; live(); }
+      if (["cam-guides", "cam-quality", "cam-fill"].includes(e.target.id)) e.target.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    form.addEventListener("dblclick", e => {
+      const k = e.target.dataset?.cp; if (!k) return;
+      const v = k === "zoom" ? 1 : 0; e.target.value = v; e.target.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    form.addEventListener("click", async e => {
+      const pr = e.target.closest("[data-cpreset]")?.dataset.cpreset;
+      if (pr) {
+        const ps = CAM_PRESETS[pr];
+        if (!ps) { c.cam.shake = 0.5; }
+        else {
+          const s0 = srcTime(c, c.start), s1 = s0 + dur(c);
+          const full = o => ({ ...Object.fromEntries(CAM_PARAMS.map(p => [p, CAM_DEFAULT[p]])), ...o });
+          c.cam.keys = [{ t: +s0.toFixed(4), ease: "smooth", ...full(ps[0]) }, { t: +s1.toFixed(4), ease: "smooth", ...full(ps[1]) }];
+        }
+        fill(); live(); return;
+      }
+      const ck = e.target.closest("[data-ck]")?.dataset.ck;
+      if (ck && ck !== "ease") {
+        const s0 = srcTime(c, c.start), keys = c.cam.keys, s = srcTime(c, tl.playhead), eps = 0.5 / fps();
+        if (ck === "add") keyAtCam(true);
+        if (ck === "del") { const k = keyAtCam(); if (k) keys.splice(keys.indexOf(k), 1); }
+        if (ck === "clear") { if (keys.length) { const v = now(); for (const p of CAM_PARAMS) c.cam[p] = v[p]; } c.cam.keys = []; }
+        if (ck === "prev") { const k = [...keys].reverse().find(x => x.t < s - eps); if (k) seek(c.start + k.t - s0); }
+        if (ck === "next") { const k = keys.find(x => x.t > s + eps); if (k) seek(c.start + k.t - s0); }
+        fill(); live(); return;
+      }
+      const rx = e.target.closest("[data-rx]");
+      if (rx) { c.cam.reshoot.references.splice(+rx.dataset.rx, 1); renderRefs(); return; }
+      const ai = e.target.closest("[data-ai]")?.dataset.ai;
+      if (ai === "inputs") {
+        const add = (typeof state !== "undefined" ? state.refs || [] : []).map(r => r.ref).filter(r => !c.cam.reshoot.references.includes(r));
+        c.cam.reshoot.references = [...c.cam.reshoot.references, ...add].slice(0, 6);
+        renderRefs(); if (!add.length) toast("The Inputs step has no reference pictures (H3 Reference).");
+      }
+      if (ai === "go") reshoot(c, e.target);
+    });
+    const refBox = form.querySelector(".cam-refs");
+    refBox.addEventListener("dragover", e => { if (e.dataTransfer.types.includes("text/x-bob-ref")) { e.preventDefault(); refBox.classList.add("drop"); } });
+    refBox.addEventListener("dragleave", () => refBox.classList.remove("drop"));
+    refBox.addEventListener("drop", e => {
+      e.preventDefault(); refBox.classList.remove("drop");
+      const ref = e.dataTransfer.getData("text/x-bob-ref");
+      const kind = e.dataTransfer.getData("text/x-bob-kind") || (/\.(png|jpe?g|webp|bmp)$/i.test(ref) ? "image" : "");
+      if (!ref || kind !== "image") return toast("References are pictures.");
+      if (c.cam.reshoot.references.length >= 6) return toast("Up to 6 reference pictures.");
+      if (!c.cam.reshoot.references.includes(ref)) c.cam.reshoot.references.push(ref);
+      renderRefs();
+    });
+    form.querySelector(".fxk-bar").addEventListener("pointerdown", e => {
+      const bar = e.currentTarget, r = bar.getBoundingClientRect(), s0 = srcTime(c, c.start), L = dur(c);
+      const toS = x => s0 + clamp((x - r.left) / r.width, 0, 1) * L;
+      const dia = e.target.closest(".fxk");
+      if (!dia) { seek(c.start + toS(e.clientX) - s0); fill(); return; }
+      e.preventDefault();
+      const k = c.cam.keys[+dia.dataset.ki];
+      bar.setPointerCapture(e.pointerId);
+      const mv = ev => { k.t = +(Math.round(toS(ev.clientX) * fps()) / fps()).toFixed(4); c.cam.keys.sort((a, b) => a.t - b.t); seek(c.start + k.t - s0); fill(); };
+      const up = () => { bar.removeEventListener("pointermove", mv); bar.removeEventListener("pointerup", up); render(); };
+      bar.addEventListener("pointermove", mv); bar.addEventListener("pointerup", up);
+    });
+    const foot = document.createElement("div");
+    foot.innerHTML = `<span class="wm-foot-gap"></span><button type="button" class="btn sm primary" data-a="done">Done</button>`;
+    let committed = false;
+    const commit = () => {
+      if (committed) return; committed = true;
+      if (snapshot() !== before) { undoStack.push(before); if (undoStack.length > UNDO_MAX) undoStack.shift(); redoStack = []; }
+      camEdit = null; changed();
+    };
+    const w = WM.open({ id: "camera", title: `Camera · ${c.name}`, content: form, footer: foot, width: 620, height: 760, minWidth: 340, minHeight: 320, modal: false, onClose: commit });
+    foot.querySelector('[data-a="done"]').onclick = () => w.close();
+    let lastPh = null;
+    camEdit = { clipId: c.id, win: w, refresh: () => { if (tl.playhead !== lastPh && !playing) { lastPh = tl.playhead; fill(); } } };
+    fill(); live();
+  }
+
+  /* ---- AI reshoot: start it, then put the result on the timeline when it's done */
+  const pendingReshoots = new Map();  // item id → {clip, start, seconds, project}
+  async function reshoot(c, btn) {
+    if (!c.cam.reshoot.prompt?.trim()) return toast("Describe the scene first: the model uses it to fill in what the camera now sees.");
+    if (!tl.clips.some(x => track(x.track)?.kind === "video")) return toast("There's no picture under the camera move.");
+    btn.disabled = true;
+    const job = Activity.task("Preparing the reshoot (guide frames)");
+    try {
+      await saveNow(true);
+      const r = await fetch("/api/timeline/reshoot", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project, clip: c.id, prompt: c.cam.reshoot.prompt, references: c.cam.reshoot.references,
+          guides: c.cam.reshoot.guides, quality: c.cam.reshoot.quality, seed: c.cam.reshoot.seed ?? -1 }) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : j.detail?.[0]?.msg || r.statusText);
+      job.done("Guide frames ready: the reshoot is running.");
+      for (const it of j.items) {
+        pendingReshoots.set(it.id, { clip: c.id, start: j.start, seconds: j.seconds, project });
+        state.items.set(it.id, it); Activity.onEvent({ type: "item", item: it });
+      }
+      try { localStorage.setItem("bob.reshoots", JSON.stringify([...pendingReshoots])); } catch {}
+      renderGallery(); renderQueue();
+      Activity.show(j.items[0]?.id);
+      toast("Reshooting… the new shot goes on the timeline when it's done.");
+    } catch (e) { job.fail(e); toast(`Reshoot failed: ${e.message}`); }
+    finally { btn.disabled = false; }
+  }
+  async function onItem(it) {
+    if (!pendingReshoots.size) { try { for (const [k, v] of JSON.parse(localStorage.getItem("bob.reshoots") || "[]")) pendingReshoots.set(k, v); } catch {} }
+    const p = pendingReshoots.get(it.id);
+    if (!p || !["done", "failed", "cancelled"].includes(it.status)) return;
+    pendingReshoots.delete(it.id);
+    try { localStorage.setItem("bob.reshoots", JSON.stringify([...pendingReshoots])); } catch {}
+    if (it.status !== "done" || p.project !== project || !tl) return;
+    const f = it.files?.find(x => /^video\//.test(x.content_type || "")) || it.files?.[0];
+    if (!f) return;
+    checkpoint();
+    const n = tl.tracks.filter(t => t.kind === "video").length + 1;
+    const tr = { id: uid(), kind: "video", name: `V${n} Reshoot`, muted: false, locked: false, hidden: false, volume: 1, height: 56 };
+    const camIdx = tl.tracks.findIndex(t => t.kind === "camera");
+    tl.tracks.splice(camIdx + 1, 0, tr);  // just under the Camera track: on top of the picture
+    const cam = clip(p.clip);
+    if (cam?.cam) cam.cam.enabled = false;  // the reshoot already has the move
+    changed();
+    const added = await add({ ref: f.path, kind: "video", name: `Reshoot · ${cam?.name || "camera move"}`, job: it.id }, { track: tr.id, at: p.start, noSound: true });
+    if (added && p.seconds && dur(added) > p.seconds + 1e-3) { added.trim_out = q(added.trim_in + p.seconds); changed(); }
+    toast("The reshoot is on the timeline (its own track); the camera move is now off. Undo (Ctrl+Z) to go back.");
+  }
+
   /* ------------------------------------------------------------------ waveform graphs on audio tracks
      Peak (light) and RMS (solid) levels from /api/media/peaks, scaled by what the mix does to the
      clip (clip × track volume, fades, crossfades), so the graph shows what you'll hear; red where it
@@ -1014,7 +1355,7 @@ const TL = (() => {
   function envGain(c, t) {
     const tr = track(c.track);
     const [fin, fout] = fadesOf(c), L = dur(c), x = t - c.start;
-    let g = (c.volume ?? 1) * (tr?.volume ?? 1);
+    let g = volAt(c, t) * (tr?.volume ?? 1);
     if (fin > 1e-6 && x < fin) g *= clamp(x / fin, 0, 1);
     if (fout > 1e-6 && L - x < fout) g *= clamp((L - x) / fout, 0, 1);
     return g;
@@ -1056,6 +1397,59 @@ const TL = (() => {
       x ? g.lineTo(x, y) : g.moveTo(x, y);
     }
     g.stroke();
+    // Volume keyframes: dots on the line (drag to move, double-click to delete; click the line to add).
+    const s0 = c.kind === "image" ? 0 : c.trim_in;
+    g.fillStyle = "#f5b942"; g.strokeStyle = "#000"; g.lineWidth = dpr;
+    for (const k of c.vol_keys || []) {
+      const x = (k.t - s0) * tl.zoom * scale;
+      if (x < -4 || x > n + 4) continue;
+      const y = cv.height - clamp(k.v * (tr?.volume ?? 1) / 2, 0, 1) * (cv.height - 2) - 1;
+      g.beginPath(); g.arc(x, y, 3.5 * dpr, 0, Math.PI * 2); g.fill(); g.stroke();
+    }
+  }
+  // Volume line hit-testing on an audio clip's graph: a key dot, the line, or nothing.
+  function volHit(c, cv, clientX, clientY) {
+    const r = cv.getBoundingClientRect(), x = clientX - r.left, y = clientY - r.top;
+    const tr = track(c.track), s0 = c.kind === "image" ? 0 : c.trim_in;
+    const yOf = v => r.height - clamp(v * (tr?.volume ?? 1) / 2, 0, 1) * (r.height - 2) - 1;
+    const keys = c.vol_keys || [];
+    const ki = keys.findIndex(k => Math.hypot((k.t - s0) * tl.zoom - x, yOf(k.v) - y) <= 7);
+    if (ki >= 0) return { key: ki };
+    const t = c.start + x / tl.zoom;
+    if (Math.abs(yOf(volAt(c, t)) - y) <= 5) return { line: true, s: s0 + x / tl.zoom };
+    return null;
+  }
+  function dragVolume(e, c, cv, hit) {
+    if (!editable(c)) return toast("That track is locked.");
+    e.preventDefault(); e.stopPropagation();
+    const before = snapshot(), tr = track(c.track), s0 = c.kind === "image" ? 0 : c.trim_in;
+    c.vol_keys = c.vol_keys || [];
+    let k;
+    if (hit.line) {
+      if (!c.vol_keys.length) {  // the first point: pin the current level at both ends so only this part moves
+        c.vol_keys.push({ t: +s0.toFixed(4), v: c.volume ?? 1, ease: "linear" }, { t: +(s0 + dur(c)).toFixed(4), v: c.volume ?? 1, ease: "linear" });
+      }
+      k = { t: +hit.s.toFixed(4), v: +volAt(c, c.start + (hit.s - s0)).toFixed(4), ease: "linear" };
+      c.vol_keys.push(k);
+    } else k = c.vol_keys[hit.key];
+    c.vol_keys.sort((a, b) => a.t - b.t);
+    const r = cv.getBoundingClientRect();
+    const mv = ev => {
+      const s = s0 + clamp((ev.clientX - r.left) / tl.zoom, 0, dur(c));
+      k.t = +(Math.round(s * fps()) / fps()).toFixed(4);
+      k.v = +clamp((r.height - 1 - (ev.clientY - r.top)) / (r.height - 2) * 2 / (tr?.volume || 1), 0, 2).toFixed(4);
+      c.vol_keys.sort((a, b) => a.t - b.t);
+      drawWave(c, cv);
+      const el = cv.closest(".tl-clip"); if (el) $(".tl-cdur", el).textContent = dbText(k.v);
+      if (!playing) syncProgram(false);
+    };
+    const up = () => {
+      removeEventListener("pointermove", mv); removeEventListener("pointerup", up);
+      undoStack.push(before); if (undoStack.length > UNDO_MAX) undoStack.shift(); redoStack = [];
+      changed();
+    };
+    addEventListener("pointermove", mv); addEventListener("pointerup", up);
+    mv(e);
   }
   function drawWaves() {
     if (!root) return;
@@ -1092,9 +1486,9 @@ const TL = (() => {
         <div class="tl-head" data-track="${tr.id}">
           <span class="tl-tname" title="Double-click to rename">${esc2(tr.name)}</span>
           <span class="tl-tbtns">
-            ${tr.kind === "video" ? `<button type="button" data-tact="hidden" class="${tr.hidden ? "off" : ""}" title="${tr.hidden ? "Show" : "Hide"} track">👁</button>` : ""}
-            <button type="button" data-tact="muted" class="${tr.muted ? "off" : ""}" title="${tr.muted ? "Unmute" : "Mute"} track">${tr.muted ? "🔇" : "🔊"}</button>
-            <button type="button" data-tact="solo" class="tl-solo${tr.solo ? " on" : ""}" title="${tr.solo ? "Unsolo" : "Solo: hear only soloed tracks"}">S</button>
+            ${tr.kind !== "audio" ? `<button type="button" data-tact="hidden" class="${tr.hidden ? "off" : ""}" title="${tr.kind === "camera" ? (tr.hidden ? "Turn the camera moves on" : "Turn all camera moves off") : (tr.hidden ? "Show" : "Hide") + " track"}">👁</button>` : ""}
+            ${tr.kind === "camera" ? `<button type="button" data-cam-add title="Add a camera move at the playhead">＋</button>` : `<button type="button" data-tact="muted" class="${tr.muted ? "off" : ""}" title="${tr.muted ? "Unmute" : "Mute"} track">${tr.muted ? "🔇" : "🔊"}</button>
+            <button type="button" data-tact="solo" class="tl-solo${tr.solo ? " on" : ""}" title="${tr.solo ? "Unsolo" : "Solo: hear only soloed tracks"}">S</button>`}
             <button type="button" data-tact="locked" class="${tr.locked ? "on" : ""}" title="${tr.locked ? "Unlock" : "Lock"} track">${tr.locked ? "🔒" : "🔓"}</button>
           </span></div>
         <div class="tl-lane" data-track="${tr.id}">${clips}</div></div>`;
@@ -1106,7 +1500,7 @@ const TL = (() => {
           ${tl.range_in != null ? `<b class="tl-io in" style="left:${tl.range_in * tl.zoom}px" title="In ${tc(tl.range_in)}">I</b>` : ""}
           ${tl.range_out != null ? `<b class="tl-io out" style="left:${tl.range_out * tl.zoom}px" title="Out ${tc(tl.range_out)}">O</b>` : ""}</div></div>
       ${rows}
-      <div class="tl-addrow"><div class="tl-head tl-addhead"><button type="button" class="link" data-act="add-video">＋ Video</button><button type="button" class="link" data-act="add-audio">＋ Audio</button></div><div class="tl-lane tl-dead" style="width:${width}px"></div></div>
+      <div class="tl-addrow"><div class="tl-head tl-addhead"><button type="button" class="link" data-act="add-video">＋ Video</button><button type="button" class="link" data-act="add-audio">＋ Audio</button><button type="button" class="link" data-act="add-camera">＋ Camera</button></div><div class="tl-lane tl-dead" style="width:${width}px"></div></div>
       <div class="tl-playhead" style="left:${headW() + tl.playhead * tl.zoom}px"></div>
       <div class="tl-snap" hidden></div>
       ${tl.range_in != null || tl.range_out != null ? `<div class="tl-dim l" style="left:${headW()}px;width:${(tl.range_in ?? 0) * tl.zoom}px"></div>
@@ -1119,6 +1513,14 @@ const TL = (() => {
 
   function clipHTML(c) {
     const w = Math.max(2, dur(c) * tl.zoom), tr = track(c.track);
+    if (c.kind === "camera") {
+      const s0 = srcTime(c, c.start);
+      const keys = (c.cam?.keys || []).map(k => { const p = (k.t - s0) * tl.zoom; return p < -1 || p > w + 1 ? "" : `<i class="tl-key" style="left:${p}px"></i>`; }).join("");
+      return `<div class="tl-clip k-camera${sel.has(c.id) ? " sel" : ""}${c.cam?.enabled === false ? " cam-off" : ""}" data-clip="${c.id}" style="left:${c.start * tl.zoom}px;width:${w}px"
+        title="${esc2(c.name)} · ${camSummary(c)} — double-click to edit the camera">
+        <div class="tl-strip"></div><span class="tl-cname">🎥 ${esc2(c.name)}</span><span class="tl-cdur">${camSummary(c)}</span>${keys}
+        <i class="tl-trim l" data-trim="l"></i><i class="tl-trim r" data-trim="r"></i></div>`;
+    }
     const thumb = `/api/media/thumb?path=${encodeURIComponent(c.ref)}&w=${c.kind === "audio" || tr.kind === "audio" ? 384 : 160}&v=1`;
     const sound = tr.kind === "audio";
     const bg = sound ? "" : `background-image:url('${thumb}');background-size:auto 100%`;
@@ -1191,6 +1593,11 @@ const TL = (() => {
     const transEl = e.target.closest(".tl-trans");
     if (transEl) { selTrans = transEl.dataset.trans; sel.clear(); render(); return; }
     if (clipEl && e.target.closest(".tl-fh")) return dragFade(e, clipEl.dataset.clip, e.target.closest(".tl-fh").dataset.fade);
+    const wave = e.target.closest(".tl-wave");
+    if (clipEl && wave && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      const c = clip(clipEl.dataset.clip), hit = c && volHit(c, wave, e.clientX, e.clientY);
+      if (hit) { sel.clear(); for (const g of grp(c)) sel.add(g.id); return dragVolume(e, c, wave, hit); }
+    }
     if (clipEl) return dragClip(e, clipEl.dataset.clip, e.target.dataset.trim || null);
     if (ruler || lane) {
       if (lane && !e.shiftKey && !e.ctrlKey) { sel.clear(); render(); }
@@ -1261,7 +1668,7 @@ const TL = (() => {
         if (!moving.some(m => m !== c && track(m.track).kind === track(c.track).kind)) {
           const lane = document.elementFromPoint(ev.clientX, ev.clientY)?.closest(".tl-lane[data-track]");
           const tr = lane && track(lane.dataset.track);
-          const ok = tr && !tr.locked && (tr.kind === "video" ? c.kind !== "audio" : c.kind !== "image");
+          const ok = tr && !tr.locked && (c.kind === "camera" ? tr.kind === "camera" : tr.kind !== "camera" && (tr.kind === "video" ? c.kind !== "audio" : c.kind !== "image"));
           if (ok && tr.id !== c.track) { c.track = tr.id; render(); }
         }
         for (const m of moving) { const el = $(`[data-clip="${m.id}"]`, root); if (el) el.style.left = `${m.start * tl.zoom}px`; }
@@ -1347,13 +1754,16 @@ const TL = (() => {
       sel.size === 2 && !c.link && ["Link the two selected clips", () => linkPair([...sel].map(clip))],
       isVid && ["Continue from this clip's last frame", () => grabFrame(c, c.trim_out - 1 / fps())],
       isVid && ["Use the frame at the playhead", () => grabAtPlayhead()],
-      ["Show in viewer", () => { const it = c.job && state.items.get(c.job); if (it) { select(it.id); Monitor.show("result"); } else Media.toast("The result for this clip isn't in the gallery."); }],
+      c.kind !== "camera" && ["Show in viewer", () => { const it = c.job && state.items.get(c.job); if (it) { select(it.id); Monitor.show("result"); } else Media.toast("The result for this clip isn't in the gallery."); }],
+      c.kind === "camera" && ["🎥 Camera… (move, keyframes, AI reshoot)", () => cameraDialog(c)],
+      c.kind === "camera" && [c.cam?.enabled === false ? "Turn this camera move on" : "Turn this camera move off", () => { checkpoint(); c.cam.enabled = c.cam.enabled === false; changed(); }],
       fxTargets(c) && ["✨ Video Fx… (light, grade, vignette) (Shift+E)", () => fxDialog(c)],
       fxTargets(c) && fxClipboard && ["Paste Fx", () => { checkpoint(); for (const x of [...sel].map(clip).filter(fxTargets)) x.fx = structuredClone(fxClipboard); changed(); }],
       fxTargets(c) && c.fx && ["Copy Fx", () => { fxClipboard = structuredClone(c.fx); toast("Effects copied."); }],
       fxTargets(c) && c.fx && [c.fx.enabled === false ? "Turn Fx on" : "Turn Fx off", () => { checkpoint(); c.fx.enabled = c.fx.enabled === false; changed(); }],
-      c.kind !== "image" && ["🔉 Sound… (volume, pan, fades, mute)", () => soundDialog(c)],
-      c.kind !== "image" && [soundTargets(c).every(x => x.muted) ? "Unmute clip sound" : "Mute clip sound", () => {
+      c.kind !== "image" && c.kind !== "camera" && ["🔉 Sound… (volume, pan, fades, mute)", () => soundDialog(c)],
+      c.vol_keys?.length && ["Remove volume keyframes", () => { checkpoint(); c.vol_keys = []; changed(); }],
+      c.kind !== "image" && c.kind !== "camera" && [soundTargets(c).every(x => x.muted) ? "Unmute clip sound" : "Mute clip sound", () => {
         checkpoint(); const m = !soundTargets(c).every(x => x.muted); for (const x of soundTargets(c)) x.muted = m; changed();
       }],
       ["Delete (Del)", () => deleteSelection(false)],
@@ -1437,11 +1847,14 @@ const TL = (() => {
         <div class="field"><label for="sd-fi">Fade in (s)</label><input id="sd-fi" type="number" min="0" max="${L.toFixed(2)}" step="0.05" value="${(s.fade_in || 0).toFixed(2)}"></div>
         <div class="field"><label for="sd-fo">Fade out (s)</label><input id="sd-fo" type="number" min="0" max="${L.toFixed(2)}" step="0.05" value="${(s.fade_out || 0).toFixed(2)}"></div></div>
       <label class="check"><input type="checkbox" id="sd-mute"${s.muted ? " checked" : ""}> Mute this clip's sound</label>
+      ${s.vol_keys?.length ? `<p class="hint">Volume keyframes: ${s.vol_keys.length} (they set the volume over the clip, so the slider above is ignored).
+        <button type="button" class="link" id="sd-clear-keys">Remove them</button></p>` : `<p class="hint">Tip: click the yellow volume line on the clip to add volume keyframes and drag them.</p>`}
       <p class="hint">Transitions add their own crossfade on top of these fades. Double-click a slider to reset it.</p>`;
     const vol = form.querySelector("#sd-vol"), pan = form.querySelector("#sd-pan");
     const show = () => { form.querySelector("#sd-vol-t").textContent = dbText(fromDb(+vol.value)); form.querySelector("#sd-pan-t").textContent = panText(+pan.value / 100); };
     vol.ondblclick = () => { vol.value = 0; show(); }; pan.ondblclick = () => { pan.value = 0; show(); };
     form.addEventListener("input", show); show();
+    form.querySelector("#sd-clear-keys")?.addEventListener("click", () => { checkpoint(); for (const x of targets) x.vol_keys = []; w.close(); changed(); });
     const foot = document.createElement("div");
     foot.innerHTML = `<button type="button" class="btn sm" data-a="mixer">🎚 Mixer…</button><span class="wm-foot-gap"></span>
       <button type="button" class="btn sm" data-a="cancel">Cancel</button><button type="button" class="btn sm primary" data-a="ok">Apply</button>`;
@@ -1540,7 +1953,7 @@ const TL = (() => {
     if (!tl.master) tl.master = { volume: 1, loudness: null, limiter: true };
     const soloing = tl.tracks.some(t => t.solo);
     const LOUD = [["", "Off"], ["-14", "−14 LUFS (YouTube, Spotify)"], ["-16", "−16 LUFS (podcasts, Apple)"], ["-23", "−23 LUFS (broadcast, EBU R128)"]];
-    box.innerHTML = tl.tracks.map(t => `
+    box.innerHTML = tl.tracks.filter(t => t.kind !== "camera").map(t => `
       <div class="mx-strip k-${t.kind}${t.muted || (soloing && !t.solo) ? " quiet" : ""}" data-strip="${t.id}">
         <span class="mx-name" title="${t.kind === "video" ? "Sound of the video clips on this track" : "Audio track"}">${esc2(t.name)}</span>
         <button type="button" data-tog="muted" class="mx-b${t.muted ? " on mute" : ""}" title="Mute">M</button>
@@ -1760,7 +2173,9 @@ const TL = (() => {
       ["Double-click a transition", "Change its type or length"], ["Shift (dropping a clip)", "Overlap the clip before as a transition"],
       ["Alt+click", "Select one clip of a linked video/sound pair"], ["Drag the dot at a clip's top corner", "Fade the sound in / out"],
       ["Right-click a clip › Sound…", "Volume, pan, fades, mute"], ["Shift+E", "Video Fx for the selected clip"],
-      ["◆ in the Video Fx window", "Keyframes: settings change over the clip"], ["Del / Backspace", "Delete"], ["Shift+Del", "Ripple delete (close the gap)"],
+      ["◆ in the Video Fx window", "Keyframes: settings change over the clip"],
+      ["Click the yellow line on an audio clip", "Add a volume keyframe (drag it; double-click to delete)"],
+      ["Shift+C", "Camera move (adds a Camera track if needed)"], ["Double-click the Camera track", "Add a camera move there"], ["Del / Backspace", "Delete"], ["Shift+Del", "Ripple delete (close the gap)"],
       ["Ctrl+C / Ctrl+V", "Copy / paste at the playhead"], ["Ctrl+D", "Duplicate after the selection"], [", / .", "Nudge selection 1 frame"],
       ["Ctrl+A", "Select all"], ["Esc", "Clear the selection"], ["Ctrl+Z", "Undo"], ["Ctrl+Shift+Z / Ctrl+Y", "Redo"], ["Alt (while dragging)", "Don't snap"]]],
     ["Timeline", [["I / O", "Set In / Out"], ["Alt+X", "Clear In and Out"], ["M", "Add a marker"], ["N", "Snapping on / off"],
@@ -1819,6 +2234,7 @@ const TL = (() => {
       case "End": handled(); return seek(total());
       case "i": case "I": handled(); return setRange("in");
       case "o": case "O": handled(); return setRange("out");
+      case "C": if (e.shiftKey) { handled(); const c = [...sel].map(clip).find(x => x?.kind === "camera"); return c ? cameraDialog(c) : addCameraMove(); } return;
       case "E": if (e.shiftKey) { handled(); const c = [...sel].map(clip).find(fxTargets) || topClipAt(tl.playhead); return c ? fxDialog(c) : toast("Select a picture clip first."); } return;
       case "M": if (e.shiftKey) { handled(); return mixer(); } // fall through
       case "m": handled(); return addMarker();
@@ -1861,6 +2277,7 @@ const TL = (() => {
           <button type="button" class="tl-b" data-act="trans" title="Add a transition at the nearest cut (Ctrl+T); right-click a transition to change it">⧓</button>
           <button type="button" class="tl-b" data-act="linkaudio" title="Linked audio: a video with sound also puts its sound on an audio track">🔗</button>
           <button type="button" class="tl-b" data-act="fx" title="Video Fx for the selected clip: lights, grade, vignette (Shift+E)">✨</button>
+          <button type="button" class="tl-b" data-act="camera" title="Camera move: pan, tilt, roll, dolly, orbit, zoom; AI reshoot (Shift+C)">🎥</button>
           <button type="button" class="tl-b" data-act="mixer" title="Mixer: volume, pan, solo, master loudness (Shift+M)">🎚</button>
           <button type="button" class="tl-b" data-act="snap" title="Snapping (N); hold Alt while dragging to skip">🧲</button>
           <button type="button" class="tl-b" data-act="marker" title="Add a marker (M)">⚑</button>
@@ -1888,6 +2305,7 @@ const TL = (() => {
 
     root.addEventListener("click", e => {
       const act = e.target.closest("[data-act]")?.dataset.act;
+      if (e.target.closest("[data-cam-add]")) return addCameraMove();
       const tact = e.target.closest("[data-tact]");
       if (tact) {
         const t = track(tact.closest("[data-track]").dataset.track), key = tact.dataset.tact;
@@ -1908,7 +2326,8 @@ const TL = (() => {
         snap: () => { tl.snap = !tl.snap; save(); renderBar(); }, grab: grabAtPlayhead, undo, redo, mixer,
         fx: () => { const c = [...sel].map(clip).find(fxTargets) || topClipAt(tl.playhead); return c ? fxDialog(c) : toast("Select a picture clip first."); },
         zoomin: () => zoomStep(1), zoomout: () => zoomStep(-1), fit: () => fit(),
-        "add-video": () => addTrack("video"), "add-audio": () => addTrack("audio"),
+        "add-video": () => addTrack("video"), "add-audio": () => addTrack("audio"), "add-camera": () => addCameraMove(),
+        camera: () => { const c = [...sel].map(clip).find(x => x?.kind === "camera"); return c ? cameraDialog(c) : addCameraMove(); },
         keys: showShortcuts, layout: () => Layout.menu(r.left, r.bottom + 4), render: () => renderDialog(),
       })[act]?.();
     });
@@ -1933,6 +2352,14 @@ const TL = (() => {
       const mk = e.target.closest(".tl-marker"); if (mk) return markerMenu(e.clientX, e.clientY, mk.dataset.marker);
       const tr = e.target.closest(".tl-trans"); if (tr) { const t = tl.transitions.find(x => x.id === tr.dataset.trans); if (t) return transitionDialog(t); }
       const c = e.target.closest(".tl-clip");
+      const wv = e.target.closest(".tl-wave");
+      if (c && wv) {
+        const cl = clip(c.dataset.clip), hit = volHit(cl, wv, e.clientX, e.clientY);
+        if (hit?.key != null) { checkpoint(); cl.vol_keys.splice(hit.key, 1); changed(); return; }
+      }
+      if (c && clip(c.dataset.clip)?.kind === "camera") return cameraDialog(clip(c.dataset.clip));
+      const lane = e.target.closest(".tl-lane[data-track]");
+      if (!c && lane && track(lane.dataset.track)?.kind === "camera") return addCameraMove(q(timeAt(e.clientX)));
       if (c) { const cl = clip(c.dataset.clip); seek(cl.start); Monitor.show("timeline"); }
     });
     root.addEventListener("contextmenu", e => {
@@ -1995,6 +2422,7 @@ const TL = (() => {
 
   return {
     mount, setProject, add, play, pause, toggle, seek, render, saveNow, showShortcuts, onKey, mixer, setLinkAudio, soundDialog: id => soundDialog(clip(id)),
+    cameraDialog: id => cameraDialog(clip(id)), addCameraMove, onItem,
     fxDialog: id => fxDialog(clip(id)),
     get playing() { return playing; }, get model() { return tl; }, setZoom, fit,
     syncProgram: () => syncProgram(false), clipsForJob: job => tl ? tl.clips.filter(c => c.job === job && !(c.link && track(c.track)?.kind === "audio")).length : 0,

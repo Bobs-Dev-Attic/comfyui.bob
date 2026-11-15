@@ -487,6 +487,59 @@ async def timeline_render(req: RenderReq):
         raise HTTPException(400, str(exc)) from exc
 
 
+class ReshootReq(BaseModel):
+    project: str = "experiment"
+    clip: str = Field(..., max_length=64)
+    prompt: str = Field("", max_length=4000)
+    references: list[str] = Field(default_factory=list, max_length=6)
+    guides: int = Field(3, ge=2, le=6)
+    quality: Literal["draft", "standard", "full"] = "draft"
+    seed: int = -1
+    turbo: bool = True
+
+
+@app.post("/api/timeline/reshoot")
+async def timeline_reshoot(req: ReshootReq):
+    """AI reshoot of a camera move: guide frames along the move, Klein fills what the move
+    uncovers, H3 regenerates the shot (app/camera.py, workflows.build_reshoot)."""
+    from . import camera
+
+    p = _project_call(projects.find, req.project)
+    pf = _project_call(projects.load_file, p)
+    c = next((x for x in pf.timeline.clips if x.id == req.clip and x.kind == "camera" and x.cam), None)
+    if not c:
+        raise HTTPException(404, "That camera move isn't in the saved timeline")
+    prompt = req.prompt.strip()
+    if not prompt:
+        raise HTTPException(400, "Describe the scene: the model uses it to fill in what the camera now sees")
+    for ref in req.references:
+        try:
+            media_path(ref)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+    try:
+        prep = await asyncio.to_thread(camera.prepare_reshoot, pf.timeline, c, req.quality, req.guides)
+    except (ValueError, RuntimeError, media.MediaError, subprocess.SubprocessError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    move = camera.describe(c.cam, prep["seconds"], c.trim_in)
+    greq = GenerateRequest(
+        kind="video", engine="reshoot", seconds=prep["seconds"], quality=req.quality, seed=req.seed, turbo=req.turbo,
+        prompt=f"{prompt}\n\n{move} Keep the same people, action, lighting and place as in the guide pictures.",
+        fill_prompt=("Fill only the empty black areas with a seamless, natural continuation of this scene, matching its "
+                     f"perspective, lighting and style: {prompt} Keep everything else exactly as it is."),
+        references=req.references, guides=prep["guides"], guide_masks=prep["masks"], guide_frames=prep["frames"],
+        project=None if req.project == "experiment" else req.project, camera_clip=c.id,
+    )
+    try:
+        items = await jobs.generate(greq)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    for it in items:
+        jobs.log(it, f"Reshoot of a {prep['seconds']:.2f} s camera move at {prep['width']}×{prep['height']}: {move}")
+        jobs.log(it, f"{len(prep['guides'])} guide frames at frames {', '.join(map(str, prep['frames']))}; Klein fills the uncovered areas, then H3 makes the video")
+    return {"items": items, "clip": c.id, "start": c.start, "seconds": prep["seconds"]}
+
+
 @app.get("/api/timeline/formats")
 async def timeline_formats():
     """Render formats this ffmpeg can write, and places a render can be saved to."""

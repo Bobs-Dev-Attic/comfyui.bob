@@ -48,7 +48,8 @@ def build(tl: Timeline, name: str = "Bob Studio") -> bytes:
 
     tracks = {t.id: t for t in tl.tracks}
     order = {t.id: i for i, t in enumerate(tl.tracks)}
-    clips = [c.model_copy() for c in tl.clips if c.track in tracks and c.trim_out > c.trim_in]
+    clips = [c.model_copy() for c in tl.clips if c.track in tracks and tracks[c.track].kind != "camera"
+             and c.kind != "camera" and c.trim_out > c.trim_in]  # camera moves don't export
     # Overlaps (transitions) -> a cut in the middle; remember the ones to export as <transition>.
     out_of, _into = transitions_by_clip(Timeline(**{**tl.model_dump(), "clips": [c.model_dump() for c in clips]}))
     by_id = {c.id: c for c in clips}

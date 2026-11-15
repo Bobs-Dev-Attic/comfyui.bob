@@ -1,5 +1,239 @@
 {
   "$defs": {
+    "CamKey": {
+      "description": "A camera keyframe at source time `t` (the clip's own time, so trims keep it in place).\nA missing value carries the move's own setting.",
+      "properties": {
+        "t": {
+          "minimum": 0,
+          "title": "T",
+          "type": "number"
+        },
+        "ease": {
+          "default": "smooth",
+          "enum": [
+            "smooth",
+            "linear",
+            "hold"
+          ],
+          "title": "Ease",
+          "type": "string"
+        },
+        "pan": {
+          "anyOf": [
+            {
+              "maximum": 80,
+              "minimum": -80,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pan"
+        },
+        "tilt": {
+          "anyOf": [
+            {
+              "maximum": 60,
+              "minimum": -60,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tilt"
+        },
+        "roll": {
+          "anyOf": [
+            {
+              "maximum": 180,
+              "minimum": -180,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Roll"
+        },
+        "zoom": {
+          "anyOf": [
+            {
+              "maximum": 5,
+              "minimum": 0.3,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Zoom"
+        },
+        "dolly": {
+          "anyOf": [
+            {
+              "maximum": 0.9,
+              "minimum": -2,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dolly"
+        },
+        "truck": {
+          "anyOf": [
+            {
+              "maximum": 2,
+              "minimum": -2,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Truck"
+        },
+        "pedestal": {
+          "anyOf": [
+            {
+              "maximum": 2,
+              "minimum": -2,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pedestal"
+        },
+        "orbit": {
+          "anyOf": [
+            {
+              "maximum": 80,
+              "minimum": -80,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Orbit"
+        }
+      },
+      "required": [
+        "t"
+      ],
+      "title": "CamKey",
+      "type": "object"
+    },
+    "CameraMove": {
+      "description": "A virtual camera move over the picture below it (Camera track). Angles in degrees;\nzoom \u00d7; dolly toward the picture (0.5 = half way); truck / pedestal in picture widths/heights.",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "pan": {
+          "default": 0,
+          "maximum": 80,
+          "minimum": -80,
+          "title": "Pan",
+          "type": "number"
+        },
+        "tilt": {
+          "default": 0,
+          "maximum": 60,
+          "minimum": -60,
+          "title": "Tilt",
+          "type": "number"
+        },
+        "roll": {
+          "default": 0,
+          "maximum": 180,
+          "minimum": -180,
+          "title": "Roll",
+          "type": "number"
+        },
+        "zoom": {
+          "default": 1,
+          "maximum": 5,
+          "minimum": 0.3,
+          "title": "Zoom",
+          "type": "number"
+        },
+        "dolly": {
+          "default": 0,
+          "maximum": 0.9,
+          "minimum": -2,
+          "title": "Dolly",
+          "type": "number"
+        },
+        "truck": {
+          "default": 0,
+          "maximum": 2,
+          "minimum": -2,
+          "title": "Truck",
+          "type": "number"
+        },
+        "pedestal": {
+          "default": 0,
+          "maximum": 2,
+          "minimum": -2,
+          "title": "Pedestal",
+          "type": "number"
+        },
+        "orbit": {
+          "default": 0,
+          "maximum": 80,
+          "minimum": -80,
+          "title": "Orbit",
+          "type": "number"
+        },
+        "shake": {
+          "default": 0,
+          "description": "handheld shake",
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Shake",
+          "type": "number"
+        },
+        "fill": {
+          "default": "black",
+          "description": "what shows where the move uncovers the frame",
+          "enum": [
+            "black",
+            "blur"
+          ],
+          "title": "Fill",
+          "type": "string"
+        },
+        "keys": {
+          "items": {
+            "$ref": "#/$defs/CamKey"
+          },
+          "maxItems": 200,
+          "title": "Keys",
+          "type": "array"
+        },
+        "reshoot": {
+          "$ref": "#/$defs/Reshoot"
+        }
+      },
+      "title": "CameraMove",
+      "type": "object"
+    },
     "Clip": {
       "description": "A piece of a media file placed on a track. Times are seconds.",
       "properties": {
@@ -19,7 +253,8 @@
           "enum": [
             "image",
             "video",
-            "audio"
+            "audio",
+            "camera"
           ],
           "title": "Kind",
           "type": "string"
@@ -145,6 +380,27 @@
           ],
           "default": null,
           "description": "picture effects: grading, lights, vignette, blur, grain"
+        },
+        "vol_keys": {
+          "description": "volume keyframes (replace `volume`)",
+          "items": {
+            "$ref": "#/$defs/VolKey"
+          },
+          "maxItems": 500,
+          "title": "Vol Keys",
+          "type": "array"
+        },
+        "cam": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CameraMove"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "camera clips only: the move"
         }
       },
       "required": [
@@ -480,7 +736,8 @@
           "enum": [
             "image",
             "video",
-            "audio"
+            "audio",
+            "camera"
           ],
           "title": "Kind",
           "type": "string"
@@ -584,6 +841,45 @@
       "title": "ProjectConfig",
       "type": "object"
     },
+    "Reshoot": {
+      "description": "Settings of the AI reshoot of a camera move (see app/camera.py).",
+      "properties": {
+        "prompt": {
+          "default": "",
+          "maxLength": 4000,
+          "title": "Prompt",
+          "type": "string"
+        },
+        "references": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 6,
+          "title": "References",
+          "type": "array"
+        },
+        "guides": {
+          "default": 3,
+          "description": "guide frames, the first and last included",
+          "maximum": 6,
+          "minimum": 2,
+          "title": "Guides",
+          "type": "integer"
+        },
+        "quality": {
+          "default": "draft",
+          "title": "Quality",
+          "type": "string"
+        },
+        "seed": {
+          "default": -1,
+          "title": "Seed",
+          "type": "integer"
+        }
+      },
+      "title": "Reshoot",
+      "type": "object"
+    },
     "StudioSettings": {
       "additionalProperties": true,
       "description": "The studio form, saved as you work. Unknown keys are kept so newer versions can add fields.",
@@ -599,7 +895,8 @@
               "enum": [
                 "image",
                 "video",
-                "audio"
+                "audio",
+                "camera"
               ],
               "type": "string"
             },
@@ -848,7 +1145,8 @@
         "kind": {
           "enum": [
             "video",
-            "audio"
+            "audio",
+            "camera"
           ],
           "title": "Kind",
           "type": "string"
@@ -1083,7 +1381,8 @@
             "enum": [
               "image",
               "video",
-              "audio"
+              "audio",
+              "camera"
             ],
             "type": "string"
           },
@@ -1099,6 +1398,38 @@
         "name"
       ],
       "title": "VirtualFolder",
+      "type": "object"
+    },
+    "VolKey": {
+      "description": "A volume keyframe: the clip's volume (0\u20132, \u00d7) at source time `t` (seconds into the file).\nWith any, they replace the clip's `volume`; between keys it eases with the earlier key's `ease`.",
+      "properties": {
+        "t": {
+          "minimum": 0,
+          "title": "T",
+          "type": "number"
+        },
+        "v": {
+          "default": 1.0,
+          "maximum": 2,
+          "minimum": 0,
+          "title": "V",
+          "type": "number"
+        },
+        "ease": {
+          "default": "linear",
+          "enum": [
+            "smooth",
+            "linear",
+            "hold"
+          ],
+          "title": "Ease",
+          "type": "string"
+        }
+      },
+      "required": [
+        "t"
+      ],
+      "title": "VolKey",
       "type": "object"
     },
     "WriterConfig": {
@@ -1176,7 +1507,7 @@
       "type": "number"
     },
     "app_version": {
-      "default": "0.14.0",
+      "default": "0.15.0",
       "title": "App Version",
       "type": "string"
     },

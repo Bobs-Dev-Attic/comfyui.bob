@@ -26,7 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from . import __version__
 
 SCHEMA = "bob.project/2"
-Kind = Literal["image", "video", "audio"]
+Kind = Literal["image", "video", "audio", "camera"]
 
 
 def new_id() -> str:
@@ -150,7 +150,7 @@ class Library(BaseModel):
 class Track(BaseModel):
     """A lane on the timeline. Upper video tracks cover lower ones."""
     id: str = Field(default_factory=new_id)
-    kind: Literal["video", "audio"]
+    kind: Literal["video", "audio", "camera"]
     name: str
     muted: bool = False
     locked: bool = False
@@ -212,6 +212,56 @@ class VideoFx(BaseModel):
                               description="keyframes; with any, the animatable settings come from them")
 
 
+class VolKey(BaseModel):
+    """A volume keyframe: the clip's volume (0–2, ×) at source time `t` (seconds into the file).
+    With any, they replace the clip's `volume`; between keys it eases with the earlier key's `ease`."""
+    t: float = Field(..., ge=0)
+    v: float = Field(1.0, ge=0, le=2)
+    ease: Literal["smooth", "linear", "hold"] = "linear"
+
+
+class CamKey(BaseModel):
+    """A camera keyframe at source time `t` (the clip's own time, so trims keep it in place).
+    A missing value carries the move's own setting."""
+    t: float = Field(..., ge=0)
+    ease: Literal["smooth", "linear", "hold"] = "smooth"
+    pan: float | None = Field(None, ge=-80, le=80)
+    tilt: float | None = Field(None, ge=-60, le=60)
+    roll: float | None = Field(None, ge=-180, le=180)
+    zoom: float | None = Field(None, ge=0.3, le=5)
+    dolly: float | None = Field(None, ge=-2, le=0.9)
+    truck: float | None = Field(None, ge=-2, le=2)
+    pedestal: float | None = Field(None, ge=-2, le=2)
+    orbit: float | None = Field(None, ge=-80, le=80)
+
+
+class Reshoot(BaseModel):
+    """Settings of the AI reshoot of a camera move (see app/camera.py)."""
+    prompt: str = Field("", max_length=4000)
+    references: list[str] = Field(default_factory=list, max_length=6)
+    guides: int = Field(3, ge=2, le=6, description="guide frames, the first and last included")
+    quality: str = "draft"
+    seed: int = -1
+
+
+class CameraMove(BaseModel):
+    """A virtual camera move over the picture below it (Camera track). Angles in degrees;
+    zoom ×; dolly toward the picture (0.5 = half way); truck / pedestal in picture widths/heights."""
+    enabled: bool = True
+    pan: float = Field(0, ge=-80, le=80)
+    tilt: float = Field(0, ge=-60, le=60)
+    roll: float = Field(0, ge=-180, le=180)
+    zoom: float = Field(1, ge=0.3, le=5)
+    dolly: float = Field(0, ge=-2, le=0.9)
+    truck: float = Field(0, ge=-2, le=2)
+    pedestal: float = Field(0, ge=-2, le=2)
+    orbit: float = Field(0, ge=-80, le=80)
+    shake: float = Field(0, ge=0, le=1, description="handheld shake")
+    fill: Literal["black", "blur"] = Field("black", description="what shows where the move uncovers the frame")
+    keys: list[CamKey] = Field(default_factory=list, max_length=200)
+    reshoot: Reshoot = Field(default_factory=Reshoot)
+
+
 class Clip(BaseModel):
     """A piece of a media file placed on a track. Times are seconds."""
     id: str = Field(default_factory=new_id)
@@ -233,6 +283,8 @@ class Clip(BaseModel):
     fade_in: float = Field(0, ge=0, description="seconds of sound fade-in at the clip's start")
     fade_out: float = Field(0, ge=0, description="seconds of sound fade-out at the clip's end")
     fx: VideoFx | None = Field(None, description="picture effects: grading, lights, vignette, blur, grain")
+    vol_keys: list[VolKey] = Field(default_factory=list, max_length=500, description="volume keyframes (replace `volume`)")
+    cam: CameraMove | None = Field(None, description="camera clips only: the move")
 
     @property
     def end(self) -> float:

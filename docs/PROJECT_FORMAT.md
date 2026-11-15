@@ -118,6 +118,10 @@ Saved as you work (or with Ctrl+S when auto-save is off). Times are seconds on t
     "volume": 1, "color": "",       // volume 0–2 (× the source; 0.5 ≈ −6 dB)
     "pan": 0, "muted": false,       // the clip's own sound: pan −1…1, mute
     "fade_in": 0, "fade_out": 0.5,  // seconds of sound fade at the start / end (transitions add their crossfade)
+    "vol_keys": [                   // volume keyframes (they replace "volume"); t = source time
+      { "t": 0.0, "v": 0.0, "ease": "linear" }, { "t": 1.5, "v": 1.0, "ease": "linear" }
+    ],
+    "cam": null,                    // camera clips only (kind "camera" on the Camera track), see below
     "fx": {                         // Video Fx (null = none); pictures on video tracks only
       "enabled": true,
       "exposure": 0, "contrast": 1, "saturation": 1,   // stops, ×, ×
@@ -167,6 +171,33 @@ Saved as you work (or with Ctrl+S when auto-save is off). Times are seconds on t
   }
 }
 ```
+
+### Camera track
+
+A track with `"kind": "camera"` (one, at the top) holds camera clips (`"kind": "camera"`, `"ref": ""`). Each has a
+`cam` move that applies to the finished picture under it, as if it were a flat card in 3D:
+
+```jsonc
+"cam": {
+  "enabled": true,
+  "pan": 0, "tilt": 0, "roll": 0,   // degrees: turn, look up/down, rotate
+  "zoom": 1,                        // focal length ×
+  "dolly": 0,                       // toward the picture (0.5 = half way), negative = back
+  "truck": 0, "pedestal": 0,        // sideways / up, in picture widths / heights
+  "orbit": 0,                       // degrees around the picture's centre
+  "shake": 0,                       // handheld, 0–1
+  "fill": "black",                  // black | blur: what shows where the move uncovers the frame
+  "keys": [{ "t": 0, "ease": "smooth", "pan": -12, "tilt": 0, "roll": 0, "zoom": 1, "dolly": 0, "truck": 0, "pedestal": 0, "orbit": 0 }],
+  "reshoot": { "prompt": "", "references": [], "guides": 3, "quality": "draft", "seed": -1 }
+}
+```
+
+Rendering projects the card's corners through the camera each frame and maps the picture onto them with ffmpeg
+`perspective` (sampled every 3 frames; long moves put the graph in a file). **AI reshoot**
+(`POST /api/timeline/reshoot`) renders the picture under the move, warps it to the camera at evenly spaced guide
+frames, masks what the move uncovers, has FLUX Klein fill those areas (the frame and reference pictures as
+references), then MiniMax H3 makes the shot from the filled guides (first and last frames, guides between).
+Guide frames are kept in `data/uploads/reshoot/`.
 
 A transition's length is the overlap (`a.end − b.start`), and each clip uses its own frames, so no spare footage
 is needed.
@@ -233,6 +264,7 @@ one.
 
 | From | What happens |
 |---|---|
+| `bob.project/2` from 0.14 | No change needed: `vol_keys` is empty and `cam` is `null`. |
 | `bob.project/2` from 0.13 | No change needed: `fx.keys` is empty. |
 | `bob.project/2` from 0.11–0.12 | No change needed: `clips[].fx` is `null` (no effects). |
 | `bob.project/2` from 0.10 | No change needed: mixing fields default to neutral (volume 1, pan 0, no fades, no solo), `master` has no loudness target and the limiter on, `link_audio_track` is `"new"`, and auto-save is on. |

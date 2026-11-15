@@ -5,6 +5,42 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.15.0] - 2026-11-15
+
+### Added
+- **Audio volume keyframes.** Click the yellow volume line on an audio clip to add a point, drag points up/down
+  and sideways, and double-click a point to delete it. The first point also pins the clip's level at both ends.
+  - **Easing:** linear between points.
+  - **Trims:** points are in the clip's source time, so they stay put.
+  - **Where it shows:** the preview, the waveform graph and the render (an ffmpeg `volume` expression) all
+    follow them.
+  - **Removing them:** Sound… and the clip menu can remove them.
+  - `project.json`: `clips[].vol_keys`.
+- **Camera track** (🎥 in the toolbar, **Shift+C**, ＋ Camera, or double-click the track). Camera moves apply to
+  everything below the track, treated as a flat picture in 3D.
+  - **Moves:** pan, tilt, roll, zoom, dolly, truck, crane (pedestal) and orbit, with keyframes (smooth, linear
+    or hold) and handheld shake.
+  - **Presets:** push in, pull out, pan, tilt up, orbit, crane up, dutch tilt, dolly zoom and handheld.
+  - **Fill:** areas the move uncovers can be black or a blurred picture.
+  - **Preview:** the viewer previews the move in 3D (CSS `matrix3d`). The render projects the corners every 3
+    frames into ffmpeg `perspective`.
+  - **Turning moves off:** per move, or for all of them with the track's 👁.
+  - **FCPXML:** camera moves aren't exported.
+- **AI reshoot** of a camera move (in the Camera window).
+  - **How it works:** describe the scene and optionally add reference pictures. The studio makes 2–6 guide
+    frames along the move with masks of what it uncovers. FLUX Klein fills those areas from your words, the frame
+    and the references. MiniMax H3 then generates the shot from the filled guides (first and last frames, with
+    guides between).
+  - **Result:** the new shot lands on its own track under the Camera track, without its own sound, and the move
+    turns off so it isn't applied twice.
+  - **Progress:** follow it in the Activity console.
+  - **Background:** the idea comes from Reshoot 4D (AGPL-3.0, no code used). That project uses 4D Gaussian
+    splats, ReDirector and LTX 2.3; this uses only models already installed here.
+
+### Changed
+- Very long filter graphs (long camera paths) are passed to ffmpeg in a file. Windows command lines stop at
+  32k characters.
+
 ## [0.14.0] - 2026-11-15
 
 ### Added
