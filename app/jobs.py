@@ -22,12 +22,27 @@ from .comfy import ComfyService
 log = logging.getLogger("bob.jobs")
 
 Kind = Literal["video", "image", "audio"]
-Engine = Literal["h3", "h3ref", "klein", "music3", "reshoot"]
+Engine = Literal["h3", "h3ref", "klein", "music3", "reshoot", "enhance"]
 
 
 class LoraUse(BaseModel):
     name: str = Field(..., max_length=500)  # as ComfyUI lists it (models/loras)
     strength: float = Field(1.0, ge=-4, le=4)
+
+
+class EnhanceOpts(BaseModel):
+    """The enhance chain (workflows.build_enhance): FaceRefine -> DLSS 5 -> an upscaler."""
+    facerefine: bool = False
+    face_strength: float = Field(0.4, ge=0.05, le=1.0)
+    face_steps: int = Field(20, ge=4, le=50)
+    dlss: bool = False
+    dlss_mode: Literal["1x", "1.5x", "1.724x", "2x", "3x"] = "1x"
+    dlss_style: Literal["Default", "Natural", "Cinematic"] = "Default"
+    dlss_intensity: float = Field(1.0, ge=0, le=2)
+    upscaler: Literal["none", "seedvr2", "relayvsr"] = "none"
+    seedvr2_model: str | None = Field(None, max_length=200)
+    seedvr2_res: int = Field(1080, ge=256, le=4320)
+    relay_detail: float = Field(0.45, ge=0, le=1)
 
 
 class GenerateRequest(BaseModel):
@@ -45,6 +60,10 @@ class GenerateRequest(BaseModel):
     references: list[str] = Field(default_factory=list, max_length=9)  # H3 reference-to-video pictures
     ref_audios: list[str] = Field(default_factory=list, max_length=3)  # H3 reference sounds: voices to clone (<Audio N>)
     loras: list[LoraUse] = Field(default_factory=list, max_length=8)  # LoRAs on the model, in order
+    source: str | None = Field(None, max_length=2000)  # enhance: the picture or video to improve (a media ref)
+    enhance_opts: EnhanceOpts | None = None  # engine "enhance": the chain
+    enhance_of: str | None = Field(None, max_length=64)  # enhance: the studio item it came from
+    enhance_after: dict[str, Any] | None = None  # set by the page: enhance this result when it's done (Settings)
     clean_audio: bool = True  # clean them and keep the best 6-10 s of speech (H3RefAudioPrep, when installed)
     max_fidelity: bool = False  # reference pictures at 2048px instead of the output's size
     enhance: bool = False  # Klein prompt upsampler
@@ -100,6 +119,42 @@ class JobManager:
                 q.put_nowait(event)
             except asyncio.QueueFull:
                 pass
+
+    async def _enhance_check(self, req: GenerateRequest, installed: dict[str, list[str]]) -> None:
+        """The enhance steps need their custom nodes and models; say which is missing."""
+        e = req.enhance_opts
+        need = []
+        if e.facerefine:
+            need += ["H3FaceTrackCrop", "H3FaceStitch", "H3PerFrameDenoise", "H3InjectVideoLatent", "MiniMaxH3NativeAudioLock"]
+        if e.dlss:
+            need += ["DLSS5EnhanceImages", "DLSS5Settings"]
+        if e.upscaler == "seedvr2":
+            need += ["SeedVR2VideoUpscaler", "SeedVR2LoadDiTModel", "SeedVR2LoadVAEModel"]
+            have = await self.seedvr2_files()
+            if "ema_vae_fp16.safetensors" not in have:
+                raise ValueError("SeedVR2's VAE (ema_vae_fp16.safetensors) isn't in models/SEEDVR2")
+            if not e.seedvr2_model:
+                e.seedvr2_model = next((m for m in have if m.startswith("seedvr2_ema_3b") and "fp8" in m), None) or                     next((m for m in have if m.startswith("seedvr2_ema_")), None)
+            if not e.seedvr2_model or e.seedvr2_model not in have:
+                # the loader would download a missing model (gigabytes) instead of failing
+                raise ValueError(f"SeedVR2 model {e.seedvr2_model or '(none)'} isn't installed in models/SEEDVR2; "
+                                 f"installed: {', '.join(m for m in have if m.startswith('seedvr2_ema_')) or 'none'}")
+        if e.upscaler == "relayvsr":
+            need += ["RelayVSRConditioning", "VSRDecode"]
+            if not any("relayvsr" in n.lower() for n in installed.get("diffusion_models", [])) or \
+               not any("relayvsr" in n.lower() for n in installed.get("vae", [])):
+                raise ValueError("RelayVSR needs relayvsr_x2_*.safetensors (diffusion_models) and relayvsr_flash_vae_x2_*.safetensors (vae)")
+        missing = [n for n in need if not self.has_node(n)]
+        if missing:
+            raise ValueError(f"ComfyUI is missing these nodes: {', '.join(missing)}")
+
+    async def seedvr2_files(self) -> list[str]:
+        """SeedVR2 model files on disk (ComfyUI's models/SEEDVR2 folders)."""
+        try:
+            r = await self.comfy.http.get(f"{config.COMFYUI_URL}/models/seedvr2", timeout=10.0)
+            return [n for n in r.json() if not n.endswith((".json", ".download", ".tmp", ".part"))] if r.status_code == 200 else []
+        except Exception:  # noqa: BLE001
+            return []
 
     _nodes: set[str] | None = None
 
@@ -165,7 +220,10 @@ class JobManager:
 
     async def generate(self, req: GenerateRequest) -> list[dict[str, Any]]:
         installed = await self.comfy.installed_models()
-        sets = [models.ALL_SETS["h3"], models.ALL_SETS["klein"]] if req.engine == "reshoot" else [models.ALL_SETS[req.engine]]
+        if req.engine == "enhance":
+            sets = [models.ALL_SETS["h3ref"]] if req.enhance_opts and req.enhance_opts.facerefine else []
+        else:
+            sets = [models.ALL_SETS["h3"], models.ALL_SETS["klein"]] if req.engine == "reshoot" else [models.ALL_SETS[req.engine]]
         files: dict[str, Any] = {}
         for mset in sets:
             resolved = models.resolve(mset, installed)
@@ -173,7 +231,13 @@ class JobManager:
                 names = ", ".join(m["want"] for m in resolved["missing"])
                 raise ValueError(f"{mset.title} is missing model files: {names}")
             files[mset.key] = resolved["files"]
-        resolved = {"files": files if req.engine == "reshoot" else files[sets[0].key]}
+        if req.engine == "enhance":
+            await self._enhance_check(req, installed)
+            files["relay"] = {"unet": next((n for n in installed.get("diffusion_models", []) if "relayvsr" in n.lower()), ""),
+                              "vae": next((n for n in installed.get("vae", []) if "relayvsr" in n.lower()), "")}
+            resolved = {"files": files}
+        else:
+            resolved = {"files": files if req.engine == "reshoot" else files[sets[0].key]}
         self._validate(req)
         if req.loras:
             from . import loras as lora_mod
@@ -231,6 +295,16 @@ class JobManager:
                 raise ValueError("A reshoot needs at least two guide frames, each with a mask")
             for ref in (*req.guides, *req.guide_masks):
                 media_path(ref)
+        if req.engine == "enhance":
+            if not req.source or not req.enhance_opts:
+                raise ValueError("Nothing to enhance")
+            kind = media.kind_of(req.source)
+            if kind not in ("image", "video") or kind != req.kind:
+                raise ValueError("Enhance works on pictures and videos")
+            if kind == "image" and (req.enhance_opts.facerefine or req.enhance_opts.upscaler == "relayvsr"):
+                raise ValueError("FaceRefine and RelayVSR are for videos; pictures can use DLSS 5 and SeedVR2")
+            media_path(req.source)
+            return
         if not req.prompt.strip():
             raise ValueError("Prompt is empty")
         if req.aspect not in workflows.ASPECTS:
@@ -263,6 +337,28 @@ class JobManager:
                 turbo=req.turbo, steps=req.steps, first_frame=bool(req.first_frame) and req.kind == "video",
                 last_frame=bool(req.last_frame) and req.kind == "video", prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras],
             )
+        if req.engine == "enhance":
+            kind = media.kind_of(req.source or "")
+            has_audio, src = False, {}
+            try:
+                src = media.probe(req.source)
+                has_audio = kind == "video" and bool(src.get("has_audio"))
+            except (media.MediaError, OSError, ValueError):
+                pass
+            built = workflows.build_enhance(
+                video=kind == "video", has_audio=has_audio, opts=req.enhance_opts.model_dump(), seed=seed, prompt=req.prompt,
+                h3=files.get("h3ref"), references=len(req.references), audios=len(req.ref_audios),
+                clean_audio=req.clean_audio and self.has_node("H3RefAudioPrep"), relay=files.get("relay"),
+                loras=[(lu.name, lu.strength) for lu in req.loras], prefix=prefix,
+            )
+            # Sizes for the gallery and the time estimates (static/enhance.js estimate()).
+            sw, sh = src.get("width"), src.get("height")
+            if sw and sh:
+                ow, oh = enhanced_size(req.enhance_opts, sw, sh, kind == "video")
+                built.info.update(src_width=sw, src_height=sh, width=ow, height=oh)
+            if kind == "video" and src.get("duration") and src.get("fps"):
+                built.info["frames"] = max(1, round(src["duration"] * src["fps"]))
+            return built
         if req.engine == "reshoot":
             with Image.open(media_path(req.guides[0])) as im:
                 w, h = im.size
@@ -305,7 +401,9 @@ class JobManager:
             wf = client.workflows.from_json(built.graph)
             for role, node_id in built.image_inputs.items():
                 field = "image"
-                if role.startswith("aref_"):
+                if role == "source":
+                    ref, field = req.source, ("file" if media.kind_of(req.source or "") == "video" else "image")
+                elif role.startswith("aref_"):
                     ref, field = req.ref_audios[int(role[5:])], "audio"
                 elif role.startswith("ref_"):
                     ref = req.references[int(role[4:])]
@@ -428,6 +526,18 @@ class JobManager:
                 "size": target.stat().st_size,
             })
         return saved
+
+
+def enhanced_size(o: EnhanceOpts, w: int, h: int, video: bool) -> tuple[int, int]:
+    """The picture size an enhance chain ends at (DLSS 5 scale, then SeedVR2's short side or RelayVSR x2)."""
+    k = {"1x": 1, "1.5x": 1.5, "1.724x": 1.724, "2x": 2, "3x": 3}.get(o.dlss_mode, 1) if o.dlss else 1
+    fw, fh = w * k, h * k
+    if o.upscaler == "seedvr2":
+        s = o.seedvr2_res / min(fw, fh)
+        fw, fh = fw * s, fh * s
+    elif o.upscaler == "relayvsr" and video:
+        fw, fh = fw * 2, fh * 2
+    return round(fw / 2) * 2, round(fh / 2) * 2
 
 
 def media_path(ref: str) -> Path:

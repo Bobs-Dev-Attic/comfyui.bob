@@ -211,6 +211,12 @@
 
           <!-- 5 · Settings -->
           <section class="step" data-step="settings" role="tabpanel">
+            <div class="field enh-after" id="f-enhance-after">
+              <label>After generating</label>
+              <div class="enh-after-row"><select id="enhance-after"><option value="">Nothing more</option><option value="on">Enhance each result</option></select>
+                <button type="button" class="btn sm" id="btn-enhance-after" title="What Enhance does">✨ Enhance settings…</button></div>
+              <p class="hint" id="enhance-after-hint"></p>
+            </div>
     <div class="row2">
               <div class="field" id="f-aspect">
                 <label for="aspect">Aspect</label>
@@ -379,6 +385,7 @@
   <script src="/static/h3prompt.js"></script>
   <script src="/static/loras.js"></script>
   <script src="/static/shots.js"></script>
+  <script src="/static/enhance.js"></script>
   <script src="/static/app.js"></script>
   <script src="/static/shell.js"></script>
 </body>

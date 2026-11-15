@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import __version__, config, llm, media, modelpaths, models, projects, render, syscheck, workflows
 from .comfy import ComfyService
-from .jobs import GenerateRequest, JobManager, media_path
+from .jobs import EnhanceOpts, GenerateRequest, JobManager, media_path
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -80,6 +80,75 @@ async def status():
 @app.get("/api/syscheck")
 async def system_check():
     return await asyncio.to_thread(syscheck.run)
+
+
+@app.get("/api/enhance/caps")
+async def enhance_caps():
+    """Which enhance steps this ComfyUI can run, and the SeedVR2 models it has."""
+    import json as _json
+    import urllib.request as _ur
+
+    def options(node: str, field: str) -> list[str]:
+        try:
+            with _ur.urlopen(f"{config.COMFYUI_URL}/object_info/{node}", timeout=20) as r:
+                spec = _json.loads(r.read())[node]["input"]["required"][field]
+            return spec[0] if isinstance(spec[0], list) else (spec[1] or {}).get("options", [])
+        except (OSError, ValueError, KeyError, IndexError, TypeError):
+            return []
+
+    installed = await comfy.installed_models()
+    has = lambda *n: all(jobs.has_node(x) for x in n)  # noqa: E731
+    # Only models that are on disk: the SeedVR2 loader lists every model it knows and downloads a missing
+    # one when it runs (3–16 GB), which must never happen behind your back.
+    dits = [m for m in await asyncio.to_thread(options, "SeedVR2LoadDiTModel", "model") if m in await jobs.seedvr2_files()]
+    return {
+        "facerefine": has("H3FaceTrackCrop", "H3FaceStitch", "H3PerFrameDenoise", "H3InjectVideoLatent", "MiniMaxH3NativeAudioLock"),
+        "dlss": has("DLSS5EnhanceImages", "DLSS5Settings"),
+        "seedvr2": has("SeedVR2VideoUpscaler", "SeedVR2LoadDiTModel", "SeedVR2LoadVAEModel") and bool(dits),
+        "seedvr2_models": dits,
+        "relayvsr": has("RelayVSRConditioning", "VSRDecode") and any("relayvsr" in n.lower() for n in installed.get("diffusion_models", []))
+                    and any("relayvsr" in n.lower() for n in installed.get("vae", [])),
+    }
+
+
+class EnhanceReq(BaseModel):
+    item: str | None = Field(None, max_length=64)  # a studio result
+    ref: str | None = Field(None, max_length=2000)  # or any media file (no FaceRefine context then)
+    options: EnhanceOpts
+    seed: int = -1
+    project: str | None = Field(None, max_length=64)
+
+
+@app.post("/api/enhance")
+async def enhance(req: EnhanceReq):
+    """Enhance / upscale a picture or video: FaceRefine -> DLSS 5 -> SeedVR2 or RelayVSR x2."""
+    params: dict = {}
+    project = req.project
+    if req.item:
+        it = jobs.items.get(req.item)
+        if not it or it.get("status") != "done" or not it.get("files"):
+            raise HTTPException(404, "That result isn't finished or doesn't exist")
+        f = next((x for x in it["files"] if (x.get("content_type") or "").split("/")[0] in ("video", "image")), it["files"][0])
+        ref, params, project = f["path"], it.get("params") or {}, it.get("project")
+    elif req.ref:
+        ref = req.ref
+    else:
+        raise HTTPException(400, "Nothing to enhance")
+    kind = media.kind_of(ref)
+    if kind not in ("image", "video"):
+        raise HTTPException(400, "Enhance works on pictures and videos")
+    if req.options.facerefine and params.get("engine") not in ("h3", "h3ref"):
+        raise HTTPException(400, "FaceRefine re-samples faces with H3, so it needs a video made with H3 or H3 Reference here")
+    greq = GenerateRequest(
+        kind=kind, engine="enhance", prompt=params.get("prompt") or "", seed=req.seed,
+        references=params.get("references") or [], ref_audios=params.get("ref_audios") or [], clean_audio=params.get("clean_audio", True),
+        loras=params.get("loras") or [], source=ref, enhance_opts=req.options, enhance_of=req.item, project=project,
+    )
+    try:
+        items = await jobs.generate(greq)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"items": items}
 
 
 @app.get("/api/loras")

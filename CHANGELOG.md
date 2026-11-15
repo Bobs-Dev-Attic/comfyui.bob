@@ -5,6 +5,49 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.20.0] - 2026-11-15
+
+### Added
+- **✨ Enhance** for finished pictures and videos (the viewer's button, or the results menu). The steps run in
+  this order, each one optional:
+  1. **FaceRefine** (videos made with H3 or H3 Reference), with the ComfyUI-H3-FaceRefine nodes.
+     - **How:** it tracks the main face into a steady 768 px crop, injects it into an H3 audio+video latent next to
+       the original sound, and re-samples it with H3 Reference. It uses the video's own prompt, reference
+       pictures and sounds, and LoRAs, at a low denoise (strength 0.4, 20 steps by default), with more where faces
+       are small. The refined face is then stitched back.
+     - **Origin:** the same chain as the "mmh3-r2v-dlss5-relayvsr" workflow on this machine.
+  2. **DLSS 5** (ComfyUI-DLSS5-Enhancer): NVIDIA neural rendering, from 1x (look only) to 1.5x, 1.72x, 2x or 3x
+     upscaling. Styles: Default, Natural, Cinematic. Intensity is adjustable.
+  3. **An upscaler:**
+     - **SeedVR2** (pictures and videos): to a 720p, 1080p, 1440p or 2160p short side, with any installed 3B/7B
+       model (default 3B fp8). Tiled VAE, LAB colour correction, and 33-frame batches with overlap for video.
+     - **RelayVSR ×2** (video): Wan-based super-resolution in one step, detail 0.45 by default.
+  - **The window:** shows the output size before you run it, and greys out any step this ComfyUI lacks
+    (`GET /api/enhance/caps`). It remembers your last choices.
+  - **Results:** each enhance is a studio result of its own (engine "enhance") with a log in Activity, and keeps
+    the sound.
+- **Settings › After generating:** "Enhance each result" runs the chosen chain automatically when a picture or
+  video finishes. Enhanced results aren't enhanced again.
+- **Enhance time estimates:**
+  - **The model:** each step's cost per frame and megapixel was measured on this studio's runs, plus model
+    loading. The total is scaled by how long recent enhance runs of the same chain really took here, so it
+    settles to the machine. On the test runs it predicted 182 s against an actual 181 s (FaceRefine → DLSS 5 →
+    RelayVSR on a 5 s 480p video), and 30 s against 26 s (DLSS 5 2x → SeedVR2 on a picture).
+  - **Where it shows:**
+    - The Enhance window shows how long the run takes.
+    - Settings › After generating shows how much it adds per result at the current size and length.
+    - In Activity, a running enhance counts down from its expected total. Each step restarts the progress bar,
+      so the rate alone misread it.
+    - A generation set to enhance afterwards shows "Then enhance ~X more" and when everything is done; the
+      top-bar chip shows "+ enhance ~X".
+  - **Data:** enhance results record their source size, frame count and output size (`info.src_width`,
+    `src_height`, `frames`, `width`, `height`).
+- `POST /api/enhance`. Generation requests: `enhance_opts`, `source`, `enhance_of`, `enhance_after`.
+
+### Fixed
+- SeedVR2 only offers, and only accepts, models that are installed in `models/SEEDVR2`. Its loader would
+  otherwise download a missing model (several GB) on the first run without asking.
+
 ## [0.19.0] - 2026-11-15
 
 ### Added

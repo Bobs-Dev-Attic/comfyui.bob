@@ -53,8 +53,16 @@ const Activity = (() => {
     e.samples.push({ t, v });
     while (e.samples.length > 2 && t - e.samples[0].t > 45) e.samples.shift();
   }
-  // Seconds left, from the progress rate over the last ~45 s (or since it started).
+  const enh = (fn, it) => { try { return typeof Enhance !== "undefined" ? Enhance[fn](it) : null; } catch { return null; } };
+  // An enhance run's whole time from its steps and sizes: each step restarts the progress bar.
+  const expected = e => e.item ? enh("expected", e.item) : null;
+  // What Settings › After generating will add once this generation is done.
+  const afterOf = e => e.item && e.status !== "done" ? enh("afterTime", e.item) : null;
+  // Seconds left, from the progress rate over the last ~45 s (or since it started). Enhance
+  // runs use their expected time less the time so far, until that runs out.
   function eta(e) {
+    const exp = e.status === "running" ? expected(e) : null;
+    if (exp != null && e.started) { const left = exp - (now() - e.started); if (left > 3) return left; }
     if (e.status !== "running" || !(e.progress > 0.01)) return null;
     const s = e.samples;
     let rate = null;
@@ -116,8 +124,8 @@ const Activity = (() => {
     if (!busy.length) { chip.innerHTML = `<i></i>Activity`; chip.title = "Activity: what the studio is doing, with logs (Ctrl+Shift+A)"; return; }
     const run = busy.find(e => e.status === "running") || busy[0];
     const pct = typeof run.progress === "number" ? `${Math.round(run.progress * 100)}%` : run.status;
-    const left = eta(run);
-    chip.innerHTML = `<i></i>${busy.length > 1 ? `${busy.length} jobs · ` : ""}${esc(run.title.split(" · ")[0])} ${pct}${left != null ? ` · ~${fmtDur(left)} left` : ""} · Details`;
+    const left = eta(run), after = afterOf(run);
+    chip.innerHTML = `<i></i>${busy.length > 1 ? `${busy.length} jobs · ` : ""}${esc(run.title.split(" · ")[0])} ${pct}${left != null ? ` · ~${fmtDur(left)} left` : ""}${after != null ? ` + enhance ~${fmtDur(after)}` : ""} · Details`;
     chip.title = "Open the activity console: log, progress and time estimates (Ctrl+Shift+A)";
   }
 
@@ -188,7 +196,7 @@ const Activity = (() => {
     const e = entries.get(selected);
     if (!e) { det.innerHTML = ""; return; }
     const elapsed = (e.finished || now()) - (e.status === "queued" ? (e.created || e.started) : e.started || e.created || now());
-    const left = eta(e);
+    const left = eta(e), after = afterOf(e), exp = expected(e);
     const pct = e.status === "done" ? 100 : typeof e.progress === "number" ? Math.round(e.progress * 100) : null;
     const head = `
       <div class="act-head">
@@ -203,6 +211,8 @@ const Activity = (() => {
         <div><dt>Time left</dt><dd>${BUSY.includes(e.status) ? (left != null ? `~${fmtDur(left)}` : "estimating…") : "—"}</dd></div>
         <div><dt>${e.finished ? "Finished" : "Done by"}</dt><dd>${e.finished ? clock(e.finished) : left != null ? `~${clock(now() + left)}` : "—"}</dd></div>
         <div><dt>Started</dt><dd>${e.started ? clock(e.started) : "—"}</dd></div>
+        ${exp != null ? `<div><dt>${e.finished ? "Expected" : "Takes about"}</dt><dd>~${fmtDur(exp)} on the GPU</dd></div>` : ""}
+        ${after != null ? `<div><dt>Then enhance</dt><dd>~${fmtDur(after)} more${left != null ? `, all done ~${clock(now() + left + after)}` : ""}</dd></div>` : ""}
         ${e.item?.info?.file ? `<div class="wide"><dt>File</dt><dd>${esc(e.item.info.file)}</dd></div>` : ""}
       </dl>`;
     const logEl = det.querySelector(".act-log");
