@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bob Studio</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23ff7a45'/><path d='M11 9l12 7-12 7z' fill='white'/></svg>">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo"></span>Bob Studio <small>MiniMax H3 · local</small></div>
+    <div class="status" id="status">
+      <span class="chip" id="st-comfy"><i></i>ComfyUI</span>
+      <span class="chip" id="st-proxy"><i></i>API v2</span>
+      <span class="chip muted" id="st-gpu">GPU</span>
+      <span class="chip muted" id="st-queue">Queue 0</span>
+      <button class="btn ghost sm" id="btn-free" title="Unload models from VRAM (useful when switching between H3 and FLUX)">Free VRAM</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- ============================================================ CREATE -->
+    <section class="panel create" aria-label="Create">
+      <nav class="tabs" role="tablist">
+        <button role="tab" data-kind="video" class="active">Video</button>
+        <button role="tab" data-kind="image">Image</button>
+        <button role="tab" data-kind="audio">Audio</button>
+      </nav>
+
+      <form id="form" autocomplete="off">
+        <div class="field" id="f-engine">
+          <label>Engine</label>
+          <div class="seg" id="engine-seg"></div>
+          <p class="hint" id="engine-note"></p>
+        </div>
+
+        <div class="field" id="f-frames">
+          <label>Keyframes <span class="opt">optional</span></label>
+          <div class="frames">
+            <div class="drop" data-role="first_frame" tabindex="0">
+              <span class="drop-label">First frame</span>
+              <img alt="">
+              <button type="button" class="x" title="Remove">×</button>
+            </div>
+            <div class="drop" data-role="last_frame" tabindex="0">
+              <span class="drop-label">Last frame</span>
+              <img alt="">
+              <button type="button" class="x" title="Remove">×</button>
+            </div>
+          </div>
+          <p class="hint">Drop or click to upload, or use “→ First frame” on any image in the gallery. The video follows the keyframe's aspect ratio.</p>
+          <input type="file" id="file-input" accept="image/png,image/jpeg,image/webp,image/bmp" hidden>
+        </div>
+
+        <div class="field" id="f-refs" hidden>
+          <label>Reference pictures <span class="opt">1–9 · people, objects, places, style</span></label>
+          <div class="refs" id="refs"></div>
+          <p class="hint">In the prompt, call them <code>&lt;Picture 1&gt;</code>, <code>&lt;Picture 2&gt;</code>… in this order. Click a tag on a picture to insert it.</p>
+          <input type="file" id="ref-input" accept="image/png,image/jpeg,image/webp,image/bmp" multiple hidden>
+        </div>
+
+        <div class="field">
+          <div class="label-row">
+            <label for="prompt" id="prompt-label">Prompt</label>
+            <span class="label-actions">
+              <button type="button" class="link" id="btn-write" title="Turn your idea into an H3 shot list with a local LLM">✨ Write for me</button>
+              <button type="button" class="link" id="btn-template">Insert template</button>
+              <button type="button" class="link" id="btn-tips">Tips</button>
+            </span>
+          </div>
+          <textarea id="prompt" rows="9" placeholder="Describe the shots, camera moves, and the sound…"></textarea>
+          <div class="tips" id="tips" hidden></div>
+          <div class="writer-status" id="writer-status" hidden></div>
+          <details class="writer" id="f-writer">
+            <summary>Prompt writer <span class="opt" id="writer-summary"></span></summary>
+            <div class="row2">
+              <div class="field">
+                <label for="llm-backend">LLM</label>
+                <select id="llm-backend"></select>
+              </div>
+              <div class="field">
+                <label for="llm-model">Model</label>
+                <select id="llm-model"></select>
+              </div>
+            </div>
+            <div class="field">
+              <label for="llm-url">Server URL</label>
+              <div class="inline-row">
+                <input type="url" id="llm-url" spellcheck="false">
+                <button type="button" class="btn ghost sm" id="btn-llm-connect">Connect</button>
+              </div>
+              <p class="hint" id="llm-hint"></p>
+            </div>
+            <div class="row2">
+              <div class="field">
+                <label for="llm-shots">Shots</label>
+                <select id="llm-shots">
+                  <option value="">Auto</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option>
+                </select>
+              </div>
+              <div class="field toggle-row">
+                <label class="switch"><input type="checkbox" id="llm-dialogue"><span></span></label>
+                <div><strong>Spoken lines</strong></div>
+              </div>
+            </div>
+          </details>
+        </div>
+
+        <div class="field" id="f-lyrics" hidden>
+          <label for="lyrics">Lyrics <span class="opt">use [Verse] [Chorus] [Bridge] tags · [Instrumental] for none</span></label>
+          <textarea id="lyrics" rows="6" placeholder="[Verse]&#10;…"></textarea>
+        </div>
+
+        <div class="row2">
+          <div class="field" id="f-aspect">
+            <label for="aspect">Aspect</label>
+            <select id="aspect"></select>
+          </div>
+          <div class="field" id="f-quality">
+            <label for="quality">Quality</label>
+            <select id="quality"></select>
+          </div>
+        </div>
+        <p class="hint dims" id="dims"></p>
+
+        <div class="field" id="f-seconds">
+          <div class="label-row">
+            <label for="seconds">Duration</label>
+            <span class="val" id="seconds-val"></span>
+          </div>
+          <input type="range" id="seconds" min="2" max="15" step="0.5" value="5">
+        </div>
+
+        <div class="field toggle-row" id="f-turbo">
+          <label class="switch"><input type="checkbox" id="turbo" checked><span></span></label>
+          <div><strong>Turbo</strong> <span class="hint inline" id="turbo-note">8 steps with the turbo LoRA (≈3× faster)</span></div>
+        </div>
+
+        <div class="field toggle-row" id="f-fidelity" hidden>
+          <label class="switch"><input type="checkbox" id="fidelity"><span></span></label>
+          <div><strong>Max reference detail</strong> <span class="hint inline">2048px references: truer faces, several times slower</span></div>
+        </div>
+
+        <div class="field toggle-row" id="f-enhance" hidden>
+          <label class="switch"><input type="checkbox" id="enhance"><span></span></label>
+          <div><strong>Enhance prompt</strong> <span class="hint inline">Qwen3.5 upsampler expands short prompts</span></div>
+        </div>
+
+        <details class="advanced">
+          <summary>Advanced</summary>
+          <div class="row2">
+            <div class="field">
+              <label for="seed">Seed</label>
+              <div class="seed">
+                <input type="number" id="seed" value="-1" min="-1">
+                <button type="button" class="btn ghost sm" id="btn-dice" title="Random every run">🎲</button>
+              </div>
+              <p class="hint">-1 = random each run</p>
+            </div>
+            <div class="field">
+              <label for="steps">Steps</label>
+              <input type="number" id="steps" min="1" max="100" placeholder="auto">
+              <p class="hint" id="steps-hint">auto</p>
+            </div>
+          </div>
+          <div class="field">
+            <label for="batch">Takes</label>
+            <div class="seg" id="batch-seg">
+              <button type="button" data-v="1" class="active">1</button>
+              <button type="button" data-v="2">2</button>
+              <button type="button" data-v="3">3</button>
+              <button type="button" data-v="4">4</button>
+            </div>
+            <p class="hint">Each take uses the next seed, so you can pick the best one.</p>
+          </div>
+        </details>
+
+        <div class="missing" id="missing" hidden></div>
+        <button type="submit" class="btn primary big" id="btn-generate">Generate</button>
+        <p class="error" id="form-error" role="alert"></p>
+      </form>
+
+      <div class="queue" id="queue"></div>
+    </section>
+
+    <!-- ============================================================ STAGE -->
+    <section class="panel stage" aria-label="Preview">
+      <div class="viewer" id="viewer">
+        <div class="empty" id="viewer-empty">
+          <div class="empty-art"></div>
+          <h2>Make something</h2>
+          <p>Write a prompt on the left. Your results show up here and in the gallery below.</p>
+        </div>
+      </div>
+      <div class="meta" id="meta" hidden></div>
+
+      <div class="gallery-head">
+        <h3>Gallery</h3>
+        <div class="seg sm" id="filter-seg">
+          <button data-f="all" class="active">All</button>
+          <button data-f="video">Video</button>
+          <button data-f="image">Image</button>
+          <button data-f="audio">Audio</button>
+        </div>
+      </div>
+      <div class="gallery" id="gallery"></div>
+    </section>
+  </main>
+
+  <template id="tile-tpl">
+    <button class="tile">
+      <div class="thumb"></div>
+      <div class="tile-foot"><span class="badge"></span><span class="t-prompt"></span></div>
+      <div class="bar"><i></i></div>
+    </button>
+  </template>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
