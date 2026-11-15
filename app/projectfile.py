@@ -244,6 +244,14 @@ class Reshoot(BaseModel):
     seed: int = -1
 
 
+class CamDepth(BaseModel):
+    """Depth of the picture under a camera move (Depth Anything 3; near = bright)."""
+    ref: str = Field(..., description="data/uploads/depth/<id>/depth.mp4")
+    t0: float = Field(0, ge=0, description="timeline time of the depth video's first frame")
+    sig: str = Field("", description="what was under the move when it was analysed (the page compares it)")
+    amount: float = Field(0.25, ge=0, le=1, description="how far the picture stands out in depth (× its width)")
+
+
 class CameraMove(BaseModel):
     """A virtual camera move over the picture below it (Camera track). Angles in degrees;
     zoom ×; dolly toward the picture (0.5 = half way); truck / pedestal in picture widths/heights."""
@@ -260,6 +268,7 @@ class CameraMove(BaseModel):
     fill: Literal["black", "blur"] = Field("black", description="what shows where the move uncovers the frame")
     keys: list[CamKey] = Field(default_factory=list, max_length=200)
     reshoot: Reshoot = Field(default_factory=Reshoot)
+    depth: CamDepth | None = Field(None, description="depth for parallax (Analyse depth in the Camera window)")
 
 
 class Clip(BaseModel):

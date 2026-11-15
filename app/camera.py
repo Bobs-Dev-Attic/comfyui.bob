@@ -101,15 +101,62 @@ def active(tl: Any) -> bool:
     return bool(clips_of(tl))
 
 
-def _tree(segs: list[tuple[int, int, float, float]]) -> str:
-    """Balanced if-tree over frame segments [(n0, n1, v0, v1)], linear inside each, on `in`."""
+def _tree(segs: list[tuple[float, float, float, float]], var: str = "in", digits: int = 2) -> str:
+    """Balanced if-tree over segments [(a0, a1, v0, v1)] of `var`, linear inside each."""
     if len(segs) == 1:
-        n0, n1, v0, v1 = segs[0]
-        if abs(v1 - v0) < 1e-4 or n1 <= n0:
-            return f"{v0:.2f}"
-        return f"({v0:.2f}+({v1 - v0:.3f})*(in-{n0})/{n1 - n0})"
+        a0, a1, v0, v1 = segs[0]
+        if abs(v1 - v0) < 1e-4 or a1 <= a0:
+            return f"{v0:.{digits}f}"
+        return f"({v0:.{digits}f}+({v1 - v0:.4f})*({var}-{a0:g})/{a1 - a0:g})"
     mid = len(segs) // 2
-    return f"if(lt(in,{segs[mid][0]}),{_tree(segs[:mid])},{_tree(segs[mid:])})"
+    return f"if(lt({var},{segs[mid][0]:g}),{_tree(segs[:mid], var, digits)},{_tree(segs[mid:], var, digits)})"
+
+
+def position(p: dict[str, float], W: float, H: float) -> tuple[float, float, float]:
+    """Camera position (card at z = 0, the resting camera at z = -D)."""
+    D = max(W, H)
+    pos0 = (p["truck"] * W, -p["pedestal"] * H, -D * (1 - p["dolly"]))
+    o = math.radians(p["orbit"])
+    return (math.cos(o) * pos0[0] + math.sin(o) * pos0[2], pos0[1], -math.sin(o) * pos0[0] + math.cos(o) * pos0[2])
+
+
+def depth_clips(tl: Any) -> list[Any]:
+    return [c for c in clips_of(tl) if c.cam.depth and c.cam.depth.amount > 1e-3]
+
+
+def parallax_maps(c: Any, W: int, H: int, fps: float, src: str, tag: str, const_t: float | None = None) -> tuple[list[str], str, str]:
+    """Displacement maps (x, y) for ffmpeg `displace` from a depth stream [src] (frames at
+    timeline time T): plane + parallax. A point standing h pixels out of the card (from its depth)
+    shifts by −P·h/D when the camera has moved P sideways/up, and away from the centre by
+    (x − W/2)·dz·h/D² when it has moved dz toward the card. Rotations need no parallax (the
+    perspective warp is exact for them). With const_t, the maps are for that one moment."""
+    D = float(max(W, H))
+    A = float(c.cam.depth.amount)
+    hw, hh = max(2, W // 2), max(2, H // 2)
+
+    def at(n_time: float) -> tuple[float, float, float]:
+        local = n_time - c.start
+        px, py, pz = position(params_at(c.cam, c.trim_in + local, local), W, H)
+        return px, py, pz + D
+
+    if const_t is not None:
+        PX, PY, DZ = (f"{v:.3f}" for v in at(const_t))
+    else:
+        a, b = c.start, c.end
+        times = [a + i * 3 / fps for i in range(int((b - a) * fps / 3) + 1)] + [b]
+        vals = [at(t) for t in times]
+        segs = [[(times[i], times[i + 1], vals[i][k], vals[i + 1][k]) for i in range(len(times) - 1)] or [(a, b, vals[0][k], vals[0][k])]
+                for k in range(3)]
+        PX, PY, DZ = (f"({_tree(s, 'T', 3)})" for s in segs)
+    h = f"{A:.4f}*(lum(X,Y)/255-0.5)*{W}"
+    xm = f"st(0,{h});clip(128+{PX}*ld(0)/{D:.1f}-(2*X-{W / 2:.1f})*{DZ}*ld(0)/{D * D:.1f},1,255)"
+    ym = f"st(0,{h});clip(128+{PY}*ld(0)/{D:.1f}-(2*Y-{H / 2:.1f})*{DZ}*ld(0)/{D * D:.1f},1,255)"
+    out = [
+        f"[{src}]scale={hw}:{hh},format=gray,split[{tag}a][{tag}b]",
+        f"[{tag}a]geq=lum='{xm}',scale={W}:{H},format=gbrap[{tag}x]",
+        f"[{tag}b]geq=lum='{ym}',scale={W}:{H},format=gbrap[{tag}y]",
+    ]
+    return out, f"{tag}x", f"{tag}y"
 
 
 def perspective_filter(tl: Any, W: int, H: int, fps: float, step: int = 3) -> str:
@@ -154,6 +201,41 @@ def perspective_filter(tl: Any, W: int, H: int, fps: float, step: int = 3) -> st
     opts = ":".join(f"{names[k]}='{_tree(segs[k])}'" for k in range(8))
     return (f"format=yuva420p,pad={Wp}:{Hp}:{pad}:{pad}:color=black@0,"
             f"perspective={opts}:sense=destination:eval=frame,crop={W}:{H}:{pad}:{pad}")
+
+
+def graph(tl: Any, W: int, H: int, fps: float, cur: str, add_input: Any, total: float) -> tuple[list[str], str]:
+    """The camera part of the render graph, from the finished picture [cur] to the returned label.
+    add_input(path, offset) adds a video input starting at timeline time `offset`; returns its index."""
+    out: list[str] = []
+    dcs = depth_clips(tl)
+    if dcs:  # parallax first, on the flat picture
+        mx, my = "cam_bx", "cam_by"
+        out.append(f"color=c=0x808080:s={W}x{H}:r={fps}:d={total:.4f},format=gbrap,split[{mx}0][{my}0]")
+        mx, my = f"{mx}0", f"{my}0"
+        for i, c in enumerate(dcs):
+            from . import media
+            idx = add_input(str(media.resolve(c.cam.depth.ref)), c.cam.depth.t0)
+            out.append(f"[{idx}:v]fps={fps},setpts=PTS-STARTPTS+{c.cam.depth.t0:.4f}/TB[cam_d{i}]")
+            pieces, xl, yl = parallax_maps(c, W, H, fps, f"cam_d{i}", f"cam_p{i}")
+            out.extend(pieces)
+            en = f"enable='between(t,{c.start:.4f},{c.end:.4f})'"
+            out.append(f"[{mx}][{xl}]overlay={en}:eof_action=pass:format=gbrp[cam_bx{i + 1}]")
+            out.append(f"[{my}][{yl}]overlay={en}:eof_action=pass:format=gbrp[cam_by{i + 1}]")
+            mx, my = f"cam_bx{i + 1}", f"cam_by{i + 1}"
+        out.append(f"[{mx}]format=gbrap[cam_mx]")
+        out.append(f"[{my}]format=gbrap[cam_my]")
+        out.append(f"[{cur}]format=gbrap[cam_src]")
+        out.append("[cam_src][cam_mx][cam_my]displace=edge=smear,format=yuva420p[cam_par]")
+        cur = "cam_par"
+    warp = perspective_filter(tl, W, H, fps)
+    if fill_of(tl) == "blur":
+        out.append(f"[{cur}]split[cam_b][cam_f]")
+        out.append(f"[cam_b]gblur=sigma={max(8, H // 22)},scale=iw*1.12:ih*1.12,crop={W}:{H},format=yuva420p[cam_bg]")
+        out.append(f"[cam_f]{warp}[cam_w]")
+        out.append("[cam_bg][cam_w]overlay=format=auto[cam]")
+    else:
+        out.append(f"[{cur}]{warp}[cam]")
+    return out, "cam"
 
 
 def fill_of(tl: Any) -> str:
@@ -240,8 +322,20 @@ def prepare_reshoot(tl: Any, clip: Any, quality: str, guides: int) -> dict[str, 
         rgba = folder / f"w{i}.png"
         g = folder / f"guide{i}.png"
         m = folder / f"mask{i}.png"
+        if clip.cam.depth and clip.cam.depth.amount > 1e-3:  # parallax from depth, like the render
+            dpath = str(media.resolve(clip.cam.depth.ref))
+            dt = max(0.0, clip.start + local - clip.cam.depth.t0)
+            # Pick the depth frame inside the graph: seeking both inputs crashes ffmpeg 8's displace.
+            pieces, xl, yl = parallax_maps(clip, W, H, fps, "dsel", "g", const_t=clip.start + local)
+            fc = ";".join([f"[1:v]trim=start={dt:.4f},setpts=PTS-STARTPTS[dsel]"] + pieces + [
+                "[0:v]setpts=PTS-STARTPTS,format=gbrap[src]", f"[{xl}]format=gbrap[mx]", f"[{yl}]format=gbrap[my]",
+                f"[src][mx][my]displace=edge=smear,{warp},format=rgba[o]"])
+            first = [exe, "-nostdin", "-v", "error", "-y", "-ss", f"{local:.4f}", "-i", str(flat), "-i", dpath,
+                     "-filter_complex", fc, "-map", "[o]", "-frames:v", "1", "-update", "1", str(rgba)]
+        else:
+            first = [exe, "-nostdin", "-v", "error", "-y", "-ss", f"{local:.4f}", "-i", str(flat), "-frames:v", "1", "-vf", f"{warp},format=rgba", str(rgba)]
         for cmd in (
-            [exe, "-nostdin", "-v", "error", "-y", "-ss", f"{local:.4f}", "-i", str(flat), "-frames:v", "1", "-vf", f"{warp},format=rgba", str(rgba)],
+            first,
             [exe, "-nostdin", "-v", "error", "-y", "-i", str(rgba), "-filter_complex",
              f"color=black:s={W}x{H}[bg];[0]format=rgba[f];[bg][f]overlay=format=auto,format=rgb24", "-frames:v", "1", str(g)],
             [exe, "-nostdin", "-v", "error", "-y", "-i", str(rgba), "-vf", "alphaextract,negate,format=gray", "-frames:v", "1", str(m)],

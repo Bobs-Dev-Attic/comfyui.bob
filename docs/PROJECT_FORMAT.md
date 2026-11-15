@@ -188,9 +188,21 @@ A track with `"kind": "camera"` (one, at the top) holds camera clips (`"kind": "
   "shake": 0,                       // handheld, 0–1
   "fill": "black",                  // black | blur: what shows where the move uncovers the frame
   "keys": [{ "t": 0, "ease": "smooth", "pan": -12, "tilt": 0, "roll": 0, "zoom": 1, "dolly": 0, "truck": 0, "pedestal": 0, "orbit": 0 }],
-  "reshoot": { "prompt": "", "references": [], "guides": 3, "quality": "draft", "seed": -1 }
+  "reshoot": { "prompt": "", "references": [], "guides": 3, "quality": "draft", "seed": -1 },
+  "depth": {                        // optional: Analyse depth (Depth Anything 3)
+    "ref": "data/uploads/depth/<id>/depth.mp4",  // near = bright, 12 fps, smoothed over time
+    "t0": 2.5,                      // timeline time of its first frame
+    "sig": "k3x9a",                 // what was under the move (the page warns when it changed)
+    "amount": 0.25                  // relief depth × the picture's width
+  }
 }
 ```
+
+With `depth`, the render adds parallax first: from the depth and the camera's travel it builds displacement maps
+(plane + parallax: a point standing h out of the card moves by −P·h/D for sideways travel P and away from the centre
+by (x − W/2)·dz·h/D² for travel dz toward it) and `displace`s the picture, then the perspective warp does the
+rotations. Big moves with a strong relief stretch at depth edges; the AI reshoot handles those.
+`POST /api/timeline/depth {project, clip, sig}` runs the analysis (`app/depth.py`).
 
 Rendering projects the card's corners through the camera each frame and maps the picture onto them with ffmpeg
 `perspective` (sampled every 3 frames; long moves put the graph in a file). **AI reshoot**
