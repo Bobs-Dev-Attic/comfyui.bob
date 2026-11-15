@@ -279,6 +279,7 @@ async function openProject(id, { quiet = false } = {}) {
     applySettings(p.settings && p.settings.kind ? p.settings : collectSettings());
     $("#proj-notes").value = p.notes || "";
     Media.setProject(p.id, p.config?.gallery);
+    TL.setProject(p.id, p.timeline);
     state.scope = "project"; syncScope();
     renderProjectCard(); renderRecent(); renderGallery(); selectInScope(); renderSteps();
     return p;
@@ -289,8 +290,8 @@ async function openProject(id, { quiet = false } = {}) {
 }
 
 async function loadExperimentMedia() {
-  try { const e = await api("/api/projects/experiment"); Media.setProject("experiment", e.config?.gallery); }
-  catch { Media.setProject("experiment", null); }
+  try { const e = await api("/api/projects/experiment"); Media.setProject("experiment", e.config?.gallery); TL.setProject("experiment", e.timeline); }
+  catch { Media.setProject("experiment", null); TL.setProject("experiment", null); }
 }
 
 async function startExperiment() {

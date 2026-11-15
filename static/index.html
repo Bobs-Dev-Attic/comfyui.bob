@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/static/styles.css">
   <link rel="stylesheet" href="/static/shell.css">
   <link rel="stylesheet" href="/static/media.css">
+  <link rel="stylesheet" href="/static/timeline.css">
 </head>
 <body>
   <header class="topbar">
@@ -245,45 +246,66 @@
 
     <div class="splitter" id="splitter" role="separator" aria-orientation="vertical" aria-label="Resize the side panel (double-click to reset)" tabindex="0"></div>
 
-    <!-- ============================================================ STAGE -->
-    <section class="panel stage" aria-label="Preview">
-      <div class="viewer" id="viewer">
-        <div class="empty" id="viewer-empty">
-          <div class="empty-art"></div>
-          <h2>Make something</h2>
-          <p>Write a prompt on the left. Your results show up here and in the gallery below.</p>
+    <!-- ============================================================ STAGE: monitor above, bin + timeline below -->
+    <section class="panel stage" aria-label="Preview and edit">
+      <div class="monitor" id="monitor">
+        <div class="mon-head">
+          <div class="seg sm" id="mon-seg" role="tablist" aria-label="Viewer shows">
+            <button type="button" data-m="result" class="active" title="The selected result">Result</button>
+            <button type="button" data-m="timeline" title="Timeline playback">Timeline</button>
+          </div>
         </div>
+        <div class="viewer" id="viewer">
+          <div class="empty" id="viewer-empty">
+            <div class="empty-art"></div>
+            <h2>Make something</h2>
+            <p>Results show up in the bin below. Drag them onto the timeline to cut them together.</p>
+          </div>
+        </div>
+        <div class="viewer program" id="program" hidden>
+          <video id="prog-video" playsinline preload="auto" hidden></video>
+          <img id="prog-img" alt="" hidden>
+          <div class="prog-hud"><span id="prog-name"></span><span id="prog-tc">00:00:00</span></div>
+        </div>
+        <div class="meta" id="meta" hidden></div>
       </div>
-      <div class="meta" id="meta" hidden></div>
 
-      <div class="gallery-head">
-        <h3>Gallery</h3>
-        <div class="seg sm scope" id="scope-seg" title="Show results from this project or everything">
-          <button type="button" data-s="project" class="active">This project</button>
-          <button type="button" data-s="all">All</button>
+      <div class="hsplit" id="stage-split" role="separator" aria-orientation="horizontal" aria-label="Resize viewer and timeline (double-click to reset)" tabindex="0"></div>
+
+      <div class="bottom" id="bottom">
+        <div class="bin" id="bin" aria-label="Results">
+          <div class="bin-head">
+            <h3>Results <small id="bin-count"></small></h3>
+            <div class="seg sm scope" id="scope-seg" title="Show results from this project or everything">
+              <button type="button" data-s="project" class="active">This project</button>
+              <button type="button" data-s="all">All</button>
+            </div>
+          </div>
+          <div class="bin-filters">
+            <div class="seg sm" id="filter-seg">
+              <button data-f="all" class="active" title="All kinds">All</button>
+              <button data-f="video" title="Videos">▶</button>
+              <button data-f="image" title="Pictures">🖼</button>
+              <button data-f="audio" title="Sound">♪</button>
+            </div>
+            <select id="bin-rating" aria-label="Minimum rating"><option value="0">★ Any</option><option value="1">★ 1+</option><option value="2">★★ 2+</option><option value="3">★★★ 3+</option><option value="4">★★★★ 4+</option><option value="5">★★★★★</option></select>
+            <select id="bin-tag" aria-label="Tag"><option value="">All tags</option></select>
+            <select id="bin-sort" aria-label="Sort"><option value="new">Newest</option><option value="old">Oldest</option><option value="rating">Best rated</option></select>
+            <input type="search" id="bin-q" placeholder="Search" aria-label="Search results">
+          </div>
+          <div class="gallery" id="gallery"></div>
         </div>
-        <div class="seg sm" id="filter-seg">
-          <button data-f="all" class="active">All</button>
-          <button data-f="video">Video</button>
-          <button data-f="image">Image</button>
-          <button data-f="audio">Audio</button>
-        </div>
+        <div class="vsplit" id="bin-split" role="separator" aria-orientation="vertical" aria-label="Resize results and timeline (double-click to reset)" tabindex="0"></div>
+        <div class="timeline" id="timeline" aria-label="Timeline"></div>
       </div>
-      <div class="gallery" id="gallery"></div>
     </section>
   </main>
-
-  <template id="tile-tpl">
-    <button class="tile">
-      <div class="thumb"></div>
-      <div class="tile-foot"><span class="badge"></span><span class="t-prompt"></span></div>
-      <div class="bar"><i></i></div>
-    </button>
-  </template>
 
   <script src="/static/winman.js"></script>
   <script src="/static/explorer.js"></script>
   <script src="/static/media.js"></script>
+  <script src="/static/timeline.js"></script>
+  <script src="/static/bin.js"></script>
   <script src="/static/app.js"></script>
   <script src="/static/shell.js"></script>
 </body>

@@ -235,8 +235,10 @@ def load(project_id: str) -> dict[str, Any]:
 
 
 def update(project_id: str, *, settings: dict[str, Any] | None = None, notes: str | None = None,
-           config_: dict[str, Any] | None = None) -> dict[str, Any]:
+           config_: dict[str, Any] | None = None, timeline: dict[str, Any] | None = None) -> dict[str, Any]:
     def fn(pf: ProjectFile) -> None:
+        if timeline is not None:
+            pf.timeline = timeline
         if settings is not None:
             pf.settings = settings
         if notes is not None:
@@ -422,6 +424,31 @@ def update_media(project_id: str, item_id: str, *, rating: int | None = None, no
         raise ProjectError("Item not found")
     edit(project_id, fn)
     return library(project_id)
+
+
+def rate_media(project_id: str, refs: list[str], rating: int) -> dict[str, Any]:
+    """Set the 0–5 star rating of files; files not in the library yet are added."""
+    if not 0 <= rating <= 5:
+        raise ProjectError("Ratings go from 0 to 5")
+    errors: list[str] = []
+
+    def fn(pf: ProjectFile) -> None:
+        have = {m.ref: m for m in pf.library.media}
+        for ref in refs:
+            m = have.get(ref)
+            if m is None:
+                if not rating:
+                    continue
+                try:
+                    m = _new_item(ref)
+                except (media.MediaError, ProjectError) as exc:
+                    errors.append(str(exc))
+                    continue
+                pf.library.media.append(m)
+                have[m.ref] = m
+            m.rating = rating
+    edit(project_id, fn)
+    return {**library(project_id), "errors": errors}
 
 
 def save_folder(project_id: str, folder: dict[str, Any]) -> dict[str, Any]:

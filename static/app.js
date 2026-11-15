@@ -640,47 +640,9 @@ function thumbHTML(it) {
   return `<span class="state failed">${it.status === "cancelled" ? "Cancelled" : "Failed"}</span>`;
 }
 
-function renderGallery() {
-  const g = $("#gallery");
-  const list = itemsSorted().filter(it => inScope(it) && (state.filter === "all" || it.kind === state.filter));
-  g.innerHTML = "";
-  if (!list.length) { g.innerHTML = `<p class="gallery-empty">Nothing here yet.</p>`; return; }
-  const tpl = $("#tile-tpl");
-  let lastDay = "";
-  for (const it of list) {
-    const day = new Date(it.created * 1000).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-    if (day !== lastDay) { const d = document.createElement("div"); d.className = "day"; d.textContent = day; g.appendChild(d); lastDay = day; }
-    const t = tpl.content.firstElementChild.cloneNode(true);
-    t.dataset.id = it.id;
-    t.classList.toggle("selected", it.id === state.selected);
-    t.classList.toggle("busy", isBusy(it));
-    $(".thumb", t).innerHTML = thumbHTML(it);
-    const b = $(".badge", t); b.textContent = it.kind; b.classList.add(it.kind);
-    $(".t-prompt", t).textContent = it.params?.prompt?.replace(/\s+/g, " ").slice(0, 120) || "";
-    t.title = it.params?.prompt || "";
-    const p = state.progress.get(it.id);
-    $(".bar i", t).style.width = `${Math.round((p?.value ?? it.progress ?? 0) * 100)}%`;
-    t.onclick = () => select(it.id);
-    if (it.kind === "image" && it.status === "done" && it.files[0]) {
-      t.draggable = true;
-      t.addEventListener("dragstart", e => e.dataTransfer.setData("text/x-bob-ref", it.files[0].path));
-    }
-    const v = $("video", t);
-    if (v) { t.onmouseenter = () => v.play().catch(() => {}); t.onmouseleave = () => { v.pause(); }; }
-    g.appendChild(t);
-  }
-}
+function renderGallery() { Bin.render(); }
 
-function patchTile(id) {
-  const it = state.items.get(id);
-  const t = $(`.tile[data-id="${id}"]`);
-  if (!it || !t) return renderGallery();
-  t.classList.toggle("busy", isBusy(it));
-  const p = state.progress.get(id);
-  $(".bar i", t).style.width = `${Math.round((p?.value ?? 0) * 100)}%`;
-  const pv = state.previews.get(id);
-  if (pv && isBusy(it)) { const img = $(".thumb img", t); if (img) img.src = pv; else $(".thumb", t).innerHTML = `<img src="${pv}" alt="">`; }
-}
+function patchTile(id) { Bin.patch(id); }
 
 /* ------------------------------------------------------------------ queue */
 function renderQueue() {
@@ -705,6 +667,7 @@ async function cancel(id) { try { await api(`/api/items/${id}/cancel`, { method:
 function select(id) {
   state.selected = id;
   $$(".tile").forEach(t => t.classList.toggle("selected", t.dataset.id === id));
+  Monitor.show("result");
   renderViewer();
 }
 
@@ -718,9 +681,11 @@ function renderViewer() {
   const f = it.files?.[0];
   let html = "";
   if (it.status === "done" && f) {
-    if (it.kind === "video") html = `<video class="media" src="${esc(f.url)}" controls autoplay loop playsinline></video>`;
+    // No autoplay: the viewer often changes on its own (a project opens, a result finishes),
+    // and sound must never start without the user pressing play.
+    if (it.kind === "video") html = `<video class="media" src="${esc(f.url)}" controls playsinline preload="metadata"></video>`;
     else if (it.kind === "image") html = `<img class="media" src="${esc(f.url)}" alt="">`;
-    else html = `<div class="audio-card">${waveHTML(it.id, 48)}<audio src="${esc(f.url)}" controls autoplay></audio></div>`;
+    else html = `<div class="audio-card">${waveHTML(it.id, 48)}<audio src="${esc(f.url)}" controls preload="metadata"></audio></div>`;
   } else if (isBusy(it)) {
     const pv = state.previews.get(it.id) || mediaUrl(it.params.first_frame || it.params.references?.[0]);
     html = `<div class="live">${pv ? `<img id="live-img" src="${pv}" alt="">` : ""}
@@ -745,19 +710,27 @@ function renderViewer() {
     it.finished && it.created ? `took ${fmtDur(it.finished - it.created)}` : null,
   ].filter(Boolean);
   const canFrame = it.kind === "image" && it.status === "done" && f;
+  const bm = Bin.meta(it);
+  const rateRow = it.status === "done" && f ? `<div class="meta-rate">
+      <span class="b-stars big">${[1, 2, 3, 4, 5].map(i => `<button type="button" class="b-star${i <= bm.rating ? " on" : ""}" data-r="${i}" title="${i} star${i > 1 ? "s" : ""} (key ${i})">★</button>`).join("")}</span>
+      <span class="meta-tags">${bm.tags.map(t => `<i class="mg-tag on" style="--c:${Media.tagColor(t)}">${esc(t)}</i>`).join("")}</span>
+      <button type="button" class="link" data-a="tags">🏷 ${bm.tags.length ? "Edit tags" : "Add tags"}</button></div>` : "";
   meta.innerHTML = `
+    ${rateRow}
     <div class="facts">${facts.map(x => `<span>${esc(x)}</span>`).join("")}</div>
     <div class="prompt-text">${esc(it.params.prompt)}${it.params.lyrics && it.engine === "music3" ? "\n\n" + esc(it.params.lyrics) : ""}</div>
     <div class="actions">
       ${isBusy(it) ? `<button class="btn danger" data-a="cancel">Cancel</button>` : ""}
+      ${it.status === "done" && f ? `<button class="btn primary-soft" data-a="timeline" title="Add to the end of the timeline (Enter)">＋ Timeline</button>` : ""}
       <button class="btn" data-a="reuse">Reuse settings</button>
-      <button class="btn" data-a="reroll">Re-roll</button>
+      ${it.engine !== "timeline" ? `<button class="btn" data-a="reroll">Re-roll</button>` : ""}
       ${canFrame ? `<button class="btn" data-a="first">→ First frame</button><button class="btn" data-a="last">→ Last frame</button><button class="btn" data-a="ref">→ Reference</button>` : ""}
       ${f ? `<a class="btn" href="${esc(f.url)}" download="${esc(f.name)}">Download</a>` : ""}
       <button class="btn ghost danger" data-a="delete">Delete</button>
     </div>`;
-  meta.hidden = false;
+  meta.hidden = Monitor.mode === "timeline";
   $$("[data-a]", meta).forEach(b => b.onclick = () => action(b.dataset.a, it));
+  $$("[data-r]", meta).forEach(b => b.onclick = () => Bin.rate(it, +b.dataset.r));
 }
 
 function updateLive(id) {
@@ -782,6 +755,8 @@ function updateLive(id) {
 
 async function action(a, it) {
   if (a === "cancel") return cancel(it.id);
+  if (a === "timeline") return Bin.toTimeline(it);
+  if (a === "tags") return Bin.tags(it);
   if (a === "reuse") { applyParams(it.params); $("#seed").value = it.seed; scheduleSave(); showStep("prompt"); return; }
   if (a === "reroll") return submit({ ...it.params, seed: -1, batch: 1 });
   if (a === "ref") {
@@ -895,6 +870,10 @@ function init() {
   initRefs();
   initWriter();
   initSysCheck();
+  TL.mount($("#timeline"));
+  Bin.init();
+  Layout.init();
+  $$("#mon-seg button").forEach(b => b.onclick = () => Monitor.show(b.dataset.m));
   $("#btn-writer-window").onclick = openWriterWindow;
   $("#btn-media").onclick = () => Media.openWindow();
   $("#prompt").addEventListener("input", () => postContext());

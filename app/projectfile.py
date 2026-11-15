@@ -143,6 +143,61 @@ class Library(BaseModel):
     virtual_folders: list[VirtualFolder] = Field(default_factory=list)
 
 
+# --------------------------------------------------------------------------- timeline
+
+class Track(BaseModel):
+    """A lane on the timeline. Upper video tracks cover lower ones."""
+    id: str = Field(default_factory=new_id)
+    kind: Literal["video", "audio"]
+    name: str
+    muted: bool = False
+    locked: bool = False
+    hidden: bool = Field(False, description="video tracks only: leave out of the picture")
+    volume: float = Field(1.0, ge=0, le=2)
+    height: int = Field(56, ge=28, le=200)
+
+
+class Clip(BaseModel):
+    """A piece of a media file placed on a track. Times are seconds."""
+    id: str = Field(default_factory=new_id)
+    track: str
+    ref: str
+    kind: Kind
+    name: str = ""
+    start: float = Field(0, ge=0, description="where the clip begins on the timeline")
+    trim_in: float = Field(0, ge=0, description="first second of the source used")
+    trim_out: float = Field(..., gt=0, description="last second of the source used (exclusive)")
+    source_duration: float | None = Field(None, description="length of the source file; None for stills")
+    volume: float = Field(1.0, ge=0, le=2)
+    color: str = ""
+    job: str | None = Field(None, description="the studio result this clip came from")
+
+    @property
+    def end(self) -> float:
+        return self.start + self.trim_out - self.trim_in
+
+
+class Marker(BaseModel):
+    id: str = Field(default_factory=new_id)
+    t: float = Field(..., ge=0)
+    label: str = ""
+    color: str = ""
+
+
+class Timeline(BaseModel):
+    """The project's edit: tracks, clips, markers and view state. Saved as you work."""
+    fps: int = Field(24, ge=1, le=120)
+    tracks: list[Track] = Field(default_factory=lambda: [Track(kind="video", name="V1"), Track(kind="audio", name="A1")])
+    clips: list[Clip] = Field(default_factory=list)
+    markers: list[Marker] = Field(default_factory=list)
+    playhead: float = Field(0, ge=0)
+    zoom: float = Field(60, ge=2, le=1200, description="pixels per second")
+    range_in: float | None = Field(None, ge=0)
+    range_out: float | None = Field(None, ge=0)
+    snap: bool = True
+    render: dict[str, Any] = Field(default_factory=dict, description="export settings: width, height, crf")
+
+
 # --------------------------------------------------------------------------- file
 
 class ProjectFile(BaseModel):
@@ -158,6 +213,7 @@ class ProjectFile(BaseModel):
     settings: StudioSettings = Field(default_factory=StudioSettings)
     config: ProjectConfig = Field(default_factory=ProjectConfig)
     library: Library = Field(default_factory=Library)
+    timeline: Timeline = Field(default_factory=Timeline)
 
     def dump(self) -> dict[str, Any]:
         return self.model_dump(by_alias=True, mode="json")

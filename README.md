@@ -55,6 +55,12 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
 - **Project files:** `project.json` stores settings, preferences and the media library. See
   [docs/PROJECT_FORMAT.md](docs/PROJECT_FORMAT.md).
 
+- **Results bin and timeline** (bottom right): rate (★1–5) and tag results, then drag them onto a multi-track
+  timeline.
+  - Trim, split, ripple-delete and snap clips; add markers and an In/Out range.
+  - Play the edit back and render it to MP4.
+  - Press **?** for the keyboard shortcuts, and use **▦ Layout** (Alt+1–9) for panel layouts.
+
 Other features:
 
 - **Quality presets:** Draft 480p, Standard 576p, Full 768p.
@@ -106,12 +112,15 @@ Other features:
 - `app/main.py`: the HTTP API.
 - `app/projects.py`: project folders, browsing, rename, trash, and the media library (tags, virtual folders).
 - `app/projectfile.py`: the `project.json` schema (pydantic), migration, and JSON Schema export.
-- `app/media.py`: media sources, bookmarks, the thumbnail cache, and the folder picker.
+- `app/media.py`: media sources, bookmarks, the thumbnail cache, the folder picker, probing and frame grabs.
+- `app/render.py`: renders a timeline to MP4 with ffmpeg.
 - `static/`: the UI (vanilla JS, no build step).
   - `shell.js`: the side panel steps, projects, settings persistence and the panel splitter.
   - `winman.js`: movable, resizable windows.
   - `explorer.js`: the project browser.
-  - `media.js`: the media gallery. `writer.html`/`writer.js` is the Prompt Writer window;
+  - `media.js`: the media gallery.
+  - `bin.js`: the Results bin.
+  - `timeline.js`: the timeline, the viewer switch and layouts. `writer.html`/`writer.js` is the Prompt Writer window;
   `h3prompt.js` mirrors the server's prompt assembly (`tests/h3prompt_parity.py` keeps them identical).
 
 Settings are environment variables, or lines in a local `.env` file (copy `.env.example`): `COMFYUI_URL`, `COMFY_BASE_URL` (proxy),
@@ -139,5 +148,7 @@ Every change ships through a pull request: bump `__version__` in `app/__init__.p
   [freefield](https://github.com/neuregex/freefield) (MIT).
 - The prompt writer's "LLM fills short fields, code assembles the prompt, validator retries" design comes from
   [EDITS-WITH-AI](https://github.com/xentome/EDITS-WITH-AI) (Apache-2.0). No code was copied; the prompts are original.
+- The timeline draws on ideas from EDITS-WITH-AI (Apache-2.0), [Imagination Studio](https://github.com/drowzeys/Imagination-Studio-by-keys-Wasserman)
+  (Apache-2.0) and the Sonder Editor's documentation. No code was copied from any of them.
 - The gallery and takes ideas come from
   [ComfyUI-Sonder-Editor](https://github.com/SonderSaid/ComfyUI-Sonder-Editor). It is GPL-3.0, so no code was copied from it.

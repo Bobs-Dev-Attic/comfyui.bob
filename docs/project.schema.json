@@ -1,5 +1,102 @@
 {
   "$defs": {
+    "Clip": {
+      "description": "A piece of a media file placed on a track. Times are seconds.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "track": {
+          "title": "Track",
+          "type": "string"
+        },
+        "ref": {
+          "title": "Ref",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "image",
+            "video",
+            "audio"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "default": "",
+          "title": "Name",
+          "type": "string"
+        },
+        "start": {
+          "default": 0,
+          "description": "where the clip begins on the timeline",
+          "minimum": 0,
+          "title": "Start",
+          "type": "number"
+        },
+        "trim_in": {
+          "default": 0,
+          "description": "first second of the source used",
+          "minimum": 0,
+          "title": "Trim In",
+          "type": "number"
+        },
+        "trim_out": {
+          "description": "last second of the source used (exclusive)",
+          "exclusiveMinimum": 0,
+          "title": "Trim Out",
+          "type": "number"
+        },
+        "source_duration": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "length of the source file; None for stills",
+          "title": "Source Duration"
+        },
+        "volume": {
+          "default": 1.0,
+          "maximum": 2,
+          "minimum": 0,
+          "title": "Volume",
+          "type": "number"
+        },
+        "color": {
+          "default": "",
+          "title": "Color",
+          "type": "string"
+        },
+        "job": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "the studio result this clip came from",
+          "title": "Job"
+        }
+      },
+      "required": [
+        "track",
+        "ref",
+        "kind",
+        "trim_out"
+      ],
+      "title": "Clip",
+      "type": "object"
+    },
     "Frames": {
       "properties": {
         "first_frame": {
@@ -100,6 +197,34 @@
         }
       },
       "title": "Library",
+      "type": "object"
+    },
+    "Marker": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "t": {
+          "minimum": 0,
+          "title": "T",
+          "type": "number"
+        },
+        "label": {
+          "default": "",
+          "title": "Label",
+          "type": "string"
+        },
+        "color": {
+          "default": "",
+          "title": "Color",
+          "type": "string"
+        }
+      },
+      "required": [
+        "t"
+      ],
+      "title": "Marker",
       "type": "object"
     },
     "MediaItem": {
@@ -350,6 +475,149 @@
       "title": "TagDef",
       "type": "object"
     },
+    "Timeline": {
+      "description": "The project's edit: tracks, clips, markers and view state. Saved as you work.",
+      "properties": {
+        "fps": {
+          "default": 24,
+          "maximum": 120,
+          "minimum": 1,
+          "title": "Fps",
+          "type": "integer"
+        },
+        "tracks": {
+          "items": {
+            "$ref": "#/$defs/Track"
+          },
+          "title": "Tracks",
+          "type": "array"
+        },
+        "clips": {
+          "items": {
+            "$ref": "#/$defs/Clip"
+          },
+          "title": "Clips",
+          "type": "array"
+        },
+        "markers": {
+          "items": {
+            "$ref": "#/$defs/Marker"
+          },
+          "title": "Markers",
+          "type": "array"
+        },
+        "playhead": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Playhead",
+          "type": "number"
+        },
+        "zoom": {
+          "default": 60,
+          "description": "pixels per second",
+          "maximum": 1200,
+          "minimum": 2,
+          "title": "Zoom",
+          "type": "number"
+        },
+        "range_in": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Range In"
+        },
+        "range_out": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Range Out"
+        },
+        "snap": {
+          "default": true,
+          "title": "Snap",
+          "type": "boolean"
+        },
+        "render": {
+          "additionalProperties": true,
+          "description": "export settings: width, height, crf",
+          "title": "Render",
+          "type": "object"
+        }
+      },
+      "title": "Timeline",
+      "type": "object"
+    },
+    "Track": {
+      "description": "A lane on the timeline. Upper video tracks cover lower ones.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "video",
+            "audio"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "muted": {
+          "default": false,
+          "title": "Muted",
+          "type": "boolean"
+        },
+        "locked": {
+          "default": false,
+          "title": "Locked",
+          "type": "boolean"
+        },
+        "hidden": {
+          "default": false,
+          "description": "video tracks only: leave out of the picture",
+          "title": "Hidden",
+          "type": "boolean"
+        },
+        "volume": {
+          "default": 1.0,
+          "maximum": 2,
+          "minimum": 0,
+          "title": "Volume",
+          "type": "number"
+        },
+        "height": {
+          "default": 56,
+          "maximum": 200,
+          "minimum": 28,
+          "title": "Height",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "title": "Track",
+      "type": "object"
+    },
     "VirtualFolder": {
       "description": "A saved view of the library: every item whose tags match. Items aren't moved or copied.",
       "properties": {
@@ -476,7 +744,7 @@
       "type": "number"
     },
     "app_version": {
-      "default": "0.7.0",
+      "default": "0.8.0",
       "title": "App Version",
       "type": "string"
     },
@@ -505,6 +773,9 @@
     },
     "library": {
       "$ref": "#/$defs/Library"
+    },
+    "timeline": {
+      "$ref": "#/$defs/Timeline"
     }
   },
   "required": [

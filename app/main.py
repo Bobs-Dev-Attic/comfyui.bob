@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, config, llm, media, modelpaths, models, projects, syscheck, workflows
+from . import __version__, config, llm, media, modelpaths, models, projects, render, syscheck, workflows
 from .comfy import ComfyService
 from .jobs import GenerateRequest, JobManager, media_path
 
@@ -216,6 +216,7 @@ class ProjectPatch(BaseModel):
     settings: dict | None = None
     notes: str | None = Field(None, max_length=20000)
     config: dict | None = None
+    timeline: dict | None = None
 
 
 class PathName(BaseModel):
@@ -267,7 +268,8 @@ async def projects_get(project_id: str):
 
 @app.put("/api/projects/{project_id}")
 async def projects_update(project_id: str, req: ProjectPatch):
-    return _project_call(projects.update, project_id, settings=req.settings, notes=req.notes, config_=req.config)
+    return _project_call(projects.update, project_id, settings=req.settings, notes=req.notes, config_=req.config,
+                         timeline=req.timeline)
 
 
 @app.post("/api/projects/folder")
@@ -296,6 +298,24 @@ class TagEdit(BaseModel):
     refs: list[str] = Field(default_factory=list, max_length=2000)
     add: list[str] = Field(default_factory=list, max_length=50)
     remove: list[str] = Field(default_factory=list, max_length=50)
+
+
+class Rate(BaseModel):
+    refs: list[str] = Field(default_factory=list, max_length=2000)
+    rating: int = Field(..., ge=0, le=5)
+
+
+class FrameReq(BaseModel):
+    path: str
+    t: float = Field(0, ge=0)
+
+
+class RenderReq(BaseModel):
+    project: str = "experiment"
+    range_in: float | None = Field(None, ge=0)
+    range_out: float | None = Field(None, ge=0)
+    width: int | None = Field(None, ge=64, le=7680)
+    height: int | None = Field(None, ge=64, le=4320)
 
 
 class Ids(BaseModel):
@@ -336,6 +356,11 @@ async def library_remove(project_id: str, req: Ids):
 @app.post("/api/projects/{project_id}/library/tags")
 async def library_tags(project_id: str, req: TagEdit):
     return await asyncio.to_thread(_project_call, projects.tag_media, project_id, req.refs, req.add, req.remove)
+
+
+@app.post("/api/projects/{project_id}/library/rate")
+async def library_rate(project_id: str, req: Rate):
+    return await asyncio.to_thread(_project_call, projects.rate_media, project_id, req.refs, req.rating)
 
 
 @app.patch("/api/projects/{project_id}/library/media/{item_id}")
@@ -396,6 +421,29 @@ async def media_file(path: str):
     except media.MediaError as exc:
         raise HTTPException(404, str(exc)) from exc
     return FileResponse(f)
+
+
+@app.get("/api/media/probe")
+async def media_probe(path: str):
+    return await asyncio.to_thread(_project_call, media.probe, path)
+
+
+@app.post("/api/media/frame")
+async def media_frame(req: FrameReq):
+    return await asyncio.to_thread(_project_call, media.grab_frame, req.path, req.t)
+
+
+@app.post("/api/timeline/render")
+async def timeline_render(req: RenderReq):
+    """Render the saved timeline of a project to an MP4; it shows up as a studio result."""
+    p = _project_call(projects.find, req.project)
+    pf = _project_call(projects.load_file, p)
+    try:
+        return await render.render(jobs, None if req.project == "experiment" else req.project, pf.timeline,
+                                   w0=req.range_in, w1=req.range_out, width=req.width, height=req.height,
+                                   name=pf.name)
+    except (ValueError, media.MediaError) as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.get("/api/media/cache")
