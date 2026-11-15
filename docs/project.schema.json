@@ -184,6 +184,58 @@
       "title": "Frames",
       "type": "object"
     },
+    "FxKey": {
+      "description": "A keyframe: the animatable Fx settings at one moment. `t` is in the clip's source time\n(seconds into the file), so keys stay on the same picture when the clip is trimmed or split.\nBetween two keys values ease with the earlier key's `ease`; before the first and after the\nlast they hold.",
+      "properties": {
+        "t": {
+          "minimum": 0,
+          "title": "T",
+          "type": "number"
+        },
+        "ease": {
+          "default": "smooth",
+          "enum": [
+            "smooth",
+            "linear",
+            "hold"
+          ],
+          "title": "Ease",
+          "type": "string"
+        },
+        "values": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "any of exposure, contrast, saturation, temperature, tint, vignette, blur",
+          "title": "Values",
+          "type": "object"
+        },
+        "lights": {
+          "description": "per light, any of x, y, radius, intensity, flicker, color",
+          "items": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "type": "object"
+          },
+          "maxItems": 4,
+          "title": "Lights",
+          "type": "array"
+        }
+      },
+      "required": [
+        "t"
+      ],
+      "title": "FxKey",
+      "type": "object"
+    },
     "GalleryConfig": {
       "description": "How the Inputs media gallery looks for this project.",
       "properties": {
@@ -984,6 +1036,15 @@
           "maxItems": 4,
           "title": "Lights",
           "type": "array"
+        },
+        "keys": {
+          "description": "keyframes; with any, the animatable settings come from them",
+          "items": {
+            "$ref": "#/$defs/FxKey"
+          },
+          "maxItems": 200,
+          "title": "Keys",
+          "type": "array"
         }
       },
       "title": "VideoFx",
@@ -1115,7 +1176,7 @@
       "type": "number"
     },
     "app_version": {
-      "default": "0.13.0",
+      "default": "0.14.0",
       "title": "App Version",
       "type": "string"
     },

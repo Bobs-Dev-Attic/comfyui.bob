@@ -178,6 +178,22 @@ class Light(BaseModel):
     flicker: float = Field(0, ge=0, le=1, description="0 = steady, 1 = strong flicker (fire, a failing bulb)")
 
 
+FX_ANIM = ("exposure", "contrast", "saturation", "temperature", "tint", "vignette", "blur")
+LIGHT_ANIM = ("x", "y", "radius", "intensity", "flicker", "color")
+
+
+class FxKey(BaseModel):
+    """A keyframe: the animatable Fx settings at one moment. `t` is in the clip's source time
+    (seconds into the file), so keys stay on the same picture when the clip is trimmed or split.
+    Between two keys values ease with the earlier key's `ease`; before the first and after the
+    last they hold."""
+    t: float = Field(..., ge=0)
+    ease: Literal["smooth", "linear", "hold"] = "smooth"
+    values: dict[str, float] = Field(default_factory=dict, description=f"any of {', '.join(FX_ANIM)}")
+    lights: list[dict[str, float | str]] = Field(default_factory=list, max_length=4,
+                                                 description=f"per light, any of {', '.join(LIGHT_ANIM)}")
+
+
 class VideoFx(BaseModel):
     """Picture effects of one clip, applied before it's placed on the canvas."""
     enabled: bool = True
@@ -192,6 +208,8 @@ class VideoFx(BaseModel):
     sharpen: float = Field(0, ge=0, le=2)
     grain: float = Field(0, ge=0, le=1)
     lights: list[Light] = Field(default_factory=list, max_length=4)
+    keys: list[FxKey] = Field(default_factory=list, max_length=200,
+                              description="keyframes; with any, the animatable settings come from them")
 
 
 class Clip(BaseModel):

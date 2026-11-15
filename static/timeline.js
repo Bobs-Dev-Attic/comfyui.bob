@@ -635,6 +635,37 @@ const TL = (() => {
   const FX_DEFAULT = { enabled: true, exposure: 0, contrast: 1, saturation: 1, temperature: 0, tint: 0, look: "none", vignette: 0, blur: 0, sharpen: 0, grain: 0, lights: [] };
   const LIGHT_DEFAULT = { mode: "relight", x: 0.5, y: 0.35, x2: null, y2: null, radius: 0.35, intensity: 1, color: "#ffd890", flicker: 0 };
   const fxOn = c => !!(c?.fx && c.fx.enabled !== false);
+  const FX_ANIM = ["exposure", "contrast", "saturation", "temperature", "tint", "vignette", "blur"];
+  const LIGHT_ANIM = ["x", "y", "radius", "intensity", "flicker", "color"];
+  // Keyframes are in source time (seconds into the file), like the render, so they stay put when trimming.
+  const srcTime = (c, t) => (c.kind === "image" ? 0 : c.trim_in) + (t - c.start);
+  const toHex = rgb => "#" + rgb.map(v => Math.round(clamp(v, 0, 255)).toString(16).padStart(2, "0")).join("");
+  function ease(u, e) { return e === "hold" ? 0 : e === "linear" ? u : u * u * (3 - 2 * u); }
+  function interp(keys, s, get, base) {
+    const pts = keys.map(k => [k.t, get(k) ?? base, k.ease || "smooth"]);
+    if (!pts.length) return base;
+    if (s <= pts[0][0]) return pts[0][1];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [t0, v0, e] = pts[i], [t1, v1] = pts[i + 1];
+      if (s < t1) {
+        const u = ease((s - t0) / Math.max(1e-9, t1 - t0), e);
+        return typeof v0 === "string" ? toHex(rgbOf(v0).map((a, j) => a + (rgbOf(v1)[j] - a) * u)) : v0 + (v1 - v0) * u;
+      }
+    }
+    return pts[pts.length - 1][1];
+  }
+  // The clip's effective effects at source time s (keyframes applied).
+  function fxAt(c, s) {
+    const fx = { ...FX_DEFAULT, ...c.fx, lights: (c.fx?.lights || []).map(l => ({ ...LIGHT_DEFAULT, ...l })) };
+    const keys = [...(c.fx?.keys || [])].sort((a, b) => a.t - b.t);
+    if (!keys.length) return fx;
+    for (const k of FX_ANIM) fx[k] = interp(keys, s, key => key.values?.[k], fx[k]);
+    fx.lights.forEach((lt, i) => {
+      for (const k of LIGHT_ANIM) lt[k] = interp(keys, s, key => key.lights?.[i]?.[k], lt[k]);
+      lt.x2 = null; lt.y2 = null;  // with keyframes, the keys move the light
+    });
+    return fx;
+  }
   function fxLayer(n) {
     let el = document.getElementById(`prog-fx${n}`);
     if (!el) {
@@ -665,7 +696,7 @@ const TL = (() => {
     const media = [L.v, L.i];
     const ov = L.fx;
     if (!c || !fxOn(c)) { for (const m of media) m.style.filter = ""; ov.hidden = true; return; }
-    const fx = { ...FX_DEFAULT, ...c.fx };
+    const fx = fxAt(c, srcTime(c, t));
     const el = c.kind === "image" ? L.i : L.v;
     const r = picRect(c, el);
     const px = r.height / 1080;
@@ -717,15 +748,17 @@ const TL = (() => {
     const r = picRect(c, c.kind === "image" ? $("#prog-img") : $("#prog-video"));
     Object.assign(hl.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` });
     const visible = c.start <= tl.playhead && end(c) > tl.playhead;
-    const lights = c.fx?.lights || [];
+    const lights = fxAt(c, srcTime(c, tl.playhead)).lights;
+    const keyed = !!c.fx?.keys?.length;
+    fxEdit.refresh?.();
     const html = (visible ? "" : `<span class="fxh-note">Move the playhead into “${esc2(c.name)}” to see it</span>`) + lights.map((lt0, i) => {
       const lt = { ...LIGHT_DEFAULT, ...lt0 };
-      const moving = lt.x2 != null;
+      const moving = !keyed && lt.x2 != null;
       const now = lightAt(lt, c, tl.playhead);
       const col = lt.mode === "shade" ? "#222" : lt.color;
       return `${moving ? `<svg class="fxh-path"><line x1="${lt.x * 100}%" y1="${lt.y * 100}%" x2="${lt.x2 * 100}%" y2="${lt.y2 * 100}%"/></svg>
           <b class="fxh end" data-li="${i}" data-pt="end" style="left:${lt.x2 * 100}%;top:${lt.y2 * 100}%" title="Light ${i + 1}: where it ends up"></b>` : ""}
-        <b class="fxh" data-li="${i}" data-pt="start" style="left:${lt.x * 100}%;top:${lt.y * 100}%;--c:${col}" title="Light ${i + 1} (${lt.mode}): drag to place${moving ? "; it starts here" : ""}"><span>${i + 1}</span></b>
+        <b class="fxh" data-li="${i}" data-pt="start" style="left:${lt.x * 100}%;top:${lt.y * 100}%;--c:${col}" title="Light ${i + 1} (${lt.mode}): drag to place${moving ? "; it starts here" : keyed ? " (sets a keyframe at the playhead)" : ""}"><span>${i + 1}</span></b>
         ${moving ? `<i class="fxh-now" style="left:${now.x * 100}%;top:${now.y * 100}%"></i>` : ""}`;
     }).join("");
     if (hl.dataset.html !== html) { hl.innerHTML = html; hl.dataset.html = html; }
@@ -736,16 +769,32 @@ const TL = (() => {
     const c = fxEdit && clip(fxEdit.clipId);
     if (!h || !c) return;
     e.preventDefault(); e.stopPropagation();
-    const lt = c.fx.lights[+h.dataset.li], hl = e.currentTarget, kx = h.dataset.pt === "end" ? "x2" : "x", ky = h.dataset.pt === "end" ? "y2" : "y";
+    const li = +h.dataset.li, lt = c.fx.lights[li], hl = e.currentTarget, kx = h.dataset.pt === "end" ? "x2" : "x", ky = h.dataset.pt === "end" ? "y2" : "y";
     h.setPointerCapture(e.pointerId);
     const mv = ev => {
       const r = hl.getBoundingClientRect();
-      lt[kx] = +clamp((ev.clientX - r.left) / r.width, -0.5, 1.5).toFixed(4);
-      lt[ky] = +clamp((ev.clientY - r.top) / r.height, -0.5, 1.5).toFixed(4);
+      const x = +clamp((ev.clientX - r.left) / r.width, -0.5, 1.5).toFixed(4), y = +clamp((ev.clientY - r.top) / r.height, -0.5, 1.5).toFixed(4);
+      if (c.fx.keys?.length) { const k = keyAt(c, true); k.lights[li].x = x; k.lights[li].y = y; }
+      else { lt[kx] = x; lt[ky] = y; }
       syncProgram(false); fxEdit.onChange?.();
     };
     const up = () => { h.removeEventListener("pointermove", mv); h.removeEventListener("pointerup", up); };
     h.addEventListener("pointermove", mv); h.addEventListener("pointerup", up);
+  }
+
+  /* ---- keyframes: a key holds every animatable setting at one moment */
+  function snapKey(c, s) {
+    const v = fxAt(c, s);
+    return { t: +s.toFixed(4), ease: "smooth", values: Object.fromEntries(FX_ANIM.map(k => [k, +(+v[k]).toFixed(4)])),
+      lights: v.lights.map(lt => Object.fromEntries(LIGHT_ANIM.map(k => [k, k === "color" ? lt.color : +(+lt[k]).toFixed(4)]))) };
+  }
+  // The key at the playhead (within half a frame), made from the current values when `create`.
+  function keyAt(c, create = false) {
+    const s = srcTime(c, tl.playhead), keys = c.fx.keys || (c.fx.keys = []);
+    let k = keys.find(x => Math.abs(x.t - s) < 0.5 / fps());
+    if (!k && create) { k = snapKey(c, s); keys.push(k); keys.sort((a, b) => a.t - b.t); }
+    if (k) while (k.lights.length < c.fx.lights.length) k.lights.push({});
+    return k;
   }
 
   /* ---- the Video Fx window */
@@ -775,6 +824,20 @@ const TL = (() => {
       <input id="fx-${k}" data-k="${k}" type="range" min="${min}" max="${max}" step="${step}" data-fmt="${fmt || ""}"></div>`;
     form.innerHTML = `
       <div class="fx-top"><label class="check"><input type="checkbox" data-k="enabled"> Effects on <span class="hint inline">(off: compare with the original)</span></label></div>
+      <fieldset class="fx-keyset"><legend>Keyframes</legend>
+        <div class="fx-keys">
+          <button type="button" class="btn sm" data-ka="prev" title="Previous keyframe">◀◆</button>
+          <div class="fxk-bar" title="Click to move the playhead; drag a ◆ to move that keyframe"></div>
+          <button type="button" class="btn sm" data-ka="next" title="Next keyframe">◆▶</button>
+        </div>
+        <div class="fx-keybtns">
+          <button type="button" class="btn sm" data-ka="add">◆ Add keyframe</button>
+          <button type="button" class="btn sm" data-ka="del">Delete keyframe</button>
+          <label class="fx-ease">Ease to next <select data-ka="ease"><option value="smooth">Smooth</option><option value="linear">Linear</option><option value="hold">Hold</option></select></label>
+          <button type="button" class="btn sm ghost danger" data-ka="clear">Remove all</button>
+        </div>
+        <p class="hint fxk-hint"></p>
+      </fieldset>
       <div class="fx-presets">${Object.keys(FX_PRESETS).map(n => `<button type="button" class="btn sm" data-preset="${esc2(n)}">${esc2(n)}</button>`).join("")}</div>
       <fieldset><legend>Grade</legend><div class="row2">
         ${sl("exposure", "Exposure", -3, 3, 0.05, "ev")}${sl("contrast", "Contrast", 0.2, 3, 0.01, "x")}
@@ -792,20 +855,48 @@ const TL = (() => {
         ${sl("vignette", "Vignette", 0, 1, 0.01, "pct")}${sl("blur", "Blur", 0, 20, 0.1, "px")}
         ${sl("sharpen", "Sharpen", 0, 2, 0.01, "x")}${sl("grain", "Film grain", 0, 1, 0.01, "pct")}
       </div><p class="hint">Grain and sharpening show in the render only; the preview of everything else is close, the render is exact.</p></fieldset>`;
+    let fxEdit_refresh = () => {};
     const fmtv = (v, f) => f === "ev" ? `${v > 0 ? "+" : ""}${(+v).toFixed(2)} stops` : f === "x" ? `${(+v).toFixed(2)}×` : f === "pct" ? `${Math.round(v * 100)}%`
       : f === "px" ? `${(+v).toFixed(1)} px` : f === "temp" ? (+v === 0 ? "neutral" : `${+v > 0 ? "warmer" : "cooler"} ${Math.abs(v)}`)
       : f === "tint" ? (+v === 0 ? "neutral" : `${+v > 0 ? "magenta" : "green"} ${Math.abs(v)}`) : String(v);
+    const now = () => fxAt(c, srcTime(c, tl.playhead));
+    const keyed = () => !!c.fx.keys?.length;
     const fill = () => {
+      const v = now();
       for (const inp of form.querySelectorAll("[data-k]")) {
-        const k = inp.dataset.k;
-        if (inp.type === "checkbox") inp.checked = c.fx[k] !== false; else inp.value = c.fx[k];
-        const o = form.querySelector(`[data-out="${k}"]`); if (o) o.textContent = fmtv(c.fx[k], inp.dataset.fmt);
+        const k = inp.dataset.k, val = FX_ANIM.includes(k) ? v[k] : c.fx[k];
+        if (inp.type === "checkbox") inp.checked = val !== false; else inp.value = val;
+        const o = form.querySelector(`[data-out="${k}"]`); if (o) o.textContent = fmtv(+(+val).toFixed(2) || val, inp.dataset.fmt);
       }
-      renderLights();
+      renderLights(); renderKeys();
+    };
+    // The keyframe bar: the clip's length in source time, a ◆ per key and the playhead.
+    const renderKeys = () => {
+      const bar = form.querySelector(".fxk-bar"), s0 = srcTime(c, c.start), L = dur(c), s = srcTime(c, tl.playhead);
+      const keys = c.fx.keys || [], at = keys.find(x => Math.abs(x.t - s) < 0.5 / fps());
+      bar.innerHTML = keys.map((k, i) => { const p = (k.t - s0) / L; return p < -0.001 || p > 1.001 ? "" :
+        `<b class="fxk${k === at ? " on" : ""}" data-ki="${i}" style="left:${p * 100}%" title="Keyframe at ${tc(c.start + k.t - s0)} · ${k.ease || "smooth"}"></b>`; }).join("")
+        + `<i class="fxk-ph" style="left:${clamp((s - s0) / L, 0, 1) * 100}%"></i>`;
+      form.querySelector('[data-ka="del"]').disabled = !at;
+      const easeSel = form.querySelector('[data-ka="ease"]');
+      easeSel.disabled = !at; easeSel.value = at?.ease || "smooth";
+      form.querySelector('[data-ka="clear"]').disabled = !keys.length;
+      form.querySelector(".fxk-hint").textContent = keys.length
+        ? `${keys.length} keyframe${keys.length > 1 ? "s" : ""}. Changing a setting (or dragging a light) sets a keyframe at the playhead${at ? " — you're on one" : ""}. Grain, sharpen, look and light kinds stay the same over the clip.`
+        : "Add a keyframe to make the settings change over the clip: set one at the start, move the playhead, change things (that adds another).";
+    };
+    let lastPh = null, lastFill = 0;
+    fxEdit_refresh = () => {
+      if (tl.playhead === lastPh) return;
+      if (playing && performance.now() - lastFill < 250) return;  // keep playback smooth
+      lastPh = tl.playhead; lastFill = performance.now();
+      if (form.contains(document.activeElement) && document.activeElement.matches("input[type=range]") && document.activeElement.matches(":active")) return;
+      fill();
     };
     const renderLights = () => {
       const box = form.querySelector(".fx-lights");
-      box.innerHTML = c.fx.lights.map((lt, i) => `
+      const vl = now().lights;
+      box.innerHTML = c.fx.lights.map((lt0, i) => { const lt = { ...lt0, ...vl[i], mode: lt0.mode }; return `
         <div class="fx-light" data-li="${i}">
           <span class="fx-ln" style="--c:${lt.mode === "shade" ? "#222" : lt.color}">${i + 1}</span>
           <select data-lk="mode" aria-label="Light ${i + 1} kind"><option value="relight"${lt.mode === "relight" ? " selected" : ""}>Relight</option><option value="glow"${lt.mode === "glow" ? " selected" : ""}>Glow</option><option value="shade"${lt.mode === "shade" ? " selected" : ""}>Shade</option></select>
@@ -813,32 +904,71 @@ const TL = (() => {
           <label>Strength <input type="range" data-lk="intensity" min="0" max="4" step="0.05" value="${lt.intensity}"></label>
           <label>Size <input type="range" data-lk="radius" min="0.03" max="1.5" step="0.01" value="${lt.radius}"></label>
           <label>Flicker <input type="range" data-lk="flicker" min="0" max="1" step="0.01" value="${lt.flicker}"></label>
-          <label class="check"><input type="checkbox" data-lk="moves"${lt.x2 != null ? " checked" : ""}> Moves</label>
+          <label class="check" title="${keyed() ? "With keyframes, move the light with keys instead" : "Travel from ● to ○ over the clip"}"><input type="checkbox" data-lk="moves"${lt0.x2 != null && !keyed() ? " checked" : ""}${keyed() ? " disabled" : ""}> Moves</label>
           <button type="button" class="btn sm ghost danger" data-a="del-light" title="Remove this light">✕</button>
-        </div>`).join("") || `<p class="hint">No lights yet.</p>`;
+        </div>`; }).join("") || `<p class="hint">No lights yet.</p>`;
       form.querySelector('[data-a="add-light"]').disabled = c.fx.lights.length >= 4;
     };
     const live = () => { if (!playing) syncProgram(false); drawFxHandles(); };
     form.addEventListener("input", e => {
       const k = e.target.dataset.k, lk = e.target.dataset.lk;
       if (k) {
-        c.fx[k] = e.target.type === "checkbox" ? e.target.checked : e.target.type === "range" ? +e.target.value : e.target.value;
-        const o = form.querySelector(`[data-out="${k}"]`); if (o) o.textContent = fmtv(c.fx[k], e.target.dataset.fmt);
+        const val = e.target.type === "checkbox" ? e.target.checked : e.target.type === "range" ? +e.target.value : e.target.value;
+        if (keyed() && FX_ANIM.includes(k)) { keyAt(c, true).values[k] = val; renderKeys(); }
+        else c.fx[k] = val;
+        const o = form.querySelector(`[data-out="${k}"]`); if (o) o.textContent = fmtv(val, e.target.dataset.fmt);
       } else if (lk) {
-        const lt = c.fx.lights[+e.target.closest("[data-li]").dataset.li];
+        const li = +e.target.closest("[data-li]").dataset.li, lt = c.fx.lights[li];
+        const val = e.target.type === "range" ? +e.target.value : e.target.value;
         if (lk === "moves") { if (e.target.checked) { lt.x2 = clamp(lt.x + 0.4, -0.5, 1.5); lt.y2 = lt.y; } else { lt.x2 = null; lt.y2 = null; } }
-        else lt[lk] = e.target.type === "range" ? +e.target.value : e.target.value;
+        else if (keyed() && LIGHT_ANIM.includes(lk)) { keyAt(c, true).lights[li][lk] = val; renderKeys(); }
+        else lt[lk] = val;
         if (lk === "mode" || lk === "color") renderLights();
       }
       live();
     });
     form.addEventListener("change", e => { if (e.target.dataset.k === "look") { c.fx.look = e.target.value; live(); } });
+    // keyframe buttons and the bar
+    form.addEventListener("click", e => {
+      const ka = e.target.closest("[data-ka]")?.dataset.ka;
+      if (!ka || ka === "ease") return;
+      const s0 = srcTime(c, c.start), keys = (c.fx.keys ||= []);
+      const toKey = k => seek(c.start + (k.t - s0));
+      const s = srcTime(c, tl.playhead), eps = 0.5 / fps();
+      if (ka === "add") { keyAt(c, true); }
+      if (ka === "del") { const k = keyAt(c); if (k) keys.splice(keys.indexOf(k), 1); }
+      if (ka === "clear") { if (keys.length) { const v = now(); for (const k2 of FX_ANIM) c.fx[k2] = v[k2]; c.fx.lights.forEach((lt, i) => Object.assign(lt, Object.fromEntries(LIGHT_ANIM.map(k2 => [k2, v.lights[i][k2]])))); } c.fx.keys = []; }
+      if (ka === "prev") { const k = [...keys].reverse().find(x => x.t < s - eps); if (k) toKey(k); }
+      if (ka === "next") { const k = keys.find(x => x.t > s + eps); if (k) toKey(k); }
+      lastPh = null; fill(); live();
+    });
+    form.addEventListener("change", e => {
+      if (e.target.dataset.ka === "ease") { const k = keyAt(c); if (k) { k.ease = e.target.value; live(); } }
+    });
+    form.querySelector(".fxk-bar").addEventListener("pointerdown", e => {
+      const bar = e.currentTarget, r = bar.getBoundingClientRect(), s0 = srcTime(c, c.start), L = dur(c);
+      const toS = x => s0 + clamp((x - r.left) / r.width, 0, 1) * L;
+      const dia = e.target.closest(".fxk");
+      if (!dia) { seek(c.start + (toS(e.clientX) - s0)); lastPh = null; fill(); return; }
+      e.preventDefault();
+      const k = c.fx.keys[+dia.dataset.ki];
+      seek(c.start + (k.t - s0));
+      bar.setPointerCapture(e.pointerId);
+      const mv = ev => { k.t = +(Math.round(toS(ev.clientX) * fps()) / fps()).toFixed(4); c.fx.keys.sort((a, b) => a.t - b.t); seek(c.start + (k.t - s0)); lastPh = null; fill(); };
+      const up = () => { bar.removeEventListener("pointermove", mv); bar.removeEventListener("pointerup", up); };
+      bar.addEventListener("pointermove", mv); bar.addEventListener("pointerup", up);
+    });
     form.addEventListener("click", e => {
       const p = e.target.closest("[data-preset]");
-      if (p) { c.fx = { ...structuredClone(FX_DEFAULT), ...structuredClone(FX_PRESETS[p.dataset.preset]) }; c.fx.lights = c.fx.lights.map(l => ({ ...LIGHT_DEFAULT, ...l })); fill(); live(); return; }
+      if (p) { c.fx = { ...structuredClone(FX_DEFAULT), ...structuredClone(FX_PRESETS[p.dataset.preset]), keys: [] }; c.fx.lights = c.fx.lights.map(l => ({ ...LIGHT_DEFAULT, ...l })); fill(); live(); return; }
       const a = e.target.closest("[data-a]")?.dataset.a;
       if (a === "add-light" && c.fx.lights.length < 4) { c.fx.lights.push({ ...LIGHT_DEFAULT, x: [0.3, 0.7, 0.5, 0.2][c.fx.lights.length] }); renderLights(); live(); }
-      if (a === "del-light") { c.fx.lights.splice(+e.target.closest("[data-li]").dataset.li, 1); renderLights(); live(); }
+      if (a === "del-light") {
+        const li = +e.target.closest("[data-li]").dataset.li;
+        c.fx.lights.splice(li, 1);
+        for (const k of c.fx.keys || []) k.lights.splice(li, 1);  // keys hold lights by position
+        renderLights(); live();
+      }
     });
     const foot = document.createElement("div");
     foot.innerHTML = `<button type="button" class="btn sm" data-f="copy">Copy</button><button type="button" class="btn sm" data-f="paste"${fxClipboard ? "" : " disabled"}>Paste</button>
@@ -847,12 +977,12 @@ const TL = (() => {
     let committed = false;
     const commit = () => {
       if (committed) return; committed = true;
-      if (c.fx && !Object.keys(FX_DEFAULT).some(k => k !== "enabled" && JSON.stringify(c.fx[k]) !== JSON.stringify(FX_DEFAULT[k]))) c.fx = null;  // nothing set
+      if (c.fx && !c.fx.keys?.length && !Object.keys(FX_DEFAULT).some(k => k !== "enabled" && JSON.stringify(c.fx[k]) !== JSON.stringify(FX_DEFAULT[k]))) c.fx = null;  // nothing set
       if (snapshot() !== before) { undoStack.push(before); if (undoStack.length > UNDO_MAX) undoStack.shift(); redoStack = []; }
       fxEdit = null; drawFxHandles(); changed();
     };
     const w = WM.open({ id: "fx", title: `Video Fx · ${c.name}`, content: form, footer: foot, width: 600, height: 720, minWidth: 340, minHeight: 320, modal: false, onClose: commit });
-    fxEdit = { clipId: c.id, win: w, onChange: null };
+    fxEdit = { clipId: c.id, win: w, onChange: null, refresh: () => fxEdit_refresh() };
     foot.addEventListener("click", e => {
       const f = e.target.closest("[data-f]")?.dataset.f;
       if (f === "copy") { fxClipboard = structuredClone(c.fx); foot.querySelector('[data-f="paste"]').disabled = false; toast("Effects copied: paste them in another clip's Video Fx window, or right-click › Paste Fx."); }
@@ -862,10 +992,74 @@ const TL = (() => {
         for (const x of others) x.fx = structuredClone(c.fx);
         toast(others.length ? `Applied to ${others.length} more clip${others.length > 1 ? "s" : ""}.` : "Select other picture clips first (Ctrl+click).");
       }
-      if (f === "reset") { c.fx = structuredClone(FX_DEFAULT); fill(); live(); }
+      if (f === "reset") { c.fx = { ...structuredClone(FX_DEFAULT), keys: [] }; fill(); live(); }
       if (f === "done") w.close();
     });
     fill(); live();
+  }
+
+  /* ------------------------------------------------------------------ waveform graphs on audio tracks
+     Peak (light) and RMS (solid) levels from /api/media/peaks, scaled by what the mix does to the
+     clip (clip × track volume, fades, crossfades), so the graph shows what you'll hear; red where it
+     would go over full scale. The yellow line is the volume envelope (middle = 100 %, top = 200 %). */
+  const peaksCache = new Map();
+  function peaksOf(ref) {
+    if (!peaksCache.has(ref)) {
+      peaksCache.set(ref, fetch(`/api/media/peaks?path=${encodeURIComponent(ref)}`).then(r => r.ok ? r.json() : null).catch(() => null)
+        .then(j => { peaksCache.set(ref, j || { rate: 1, peak: [], rms: [] }); render(); return j; }));
+    }
+    const v = peaksCache.get(ref);
+    return v instanceof Promise ? null : v;
+  }
+  function envGain(c, t) {
+    const tr = track(c.track);
+    const [fin, fout] = fadesOf(c), L = dur(c), x = t - c.start;
+    let g = (c.volume ?? 1) * (tr?.volume ?? 1);
+    if (fin > 1e-6 && x < fin) g *= clamp(x / fin, 0, 1);
+    if (fout > 1e-6 && L - x < fout) g *= clamp((L - x) / fout, 0, 1);
+    return g;
+  }
+  let waveColor = null;
+  function drawWave(c, cv) {
+    if (!cv || !tl) return;
+    const pk = peaksOf(c.ref);
+    const dpr = Math.min(2, devicePixelRatio || 1);
+    const W = Math.max(1, Math.round(dur(c) * tl.zoom)), H = Math.max(8, cv.parentElement.clientHeight || 30);
+    const scale = Math.min(dpr, 16000 / W);  // canvases have a size limit; very long clips draw coarser
+    cv.width = Math.max(1, Math.round(W * scale)); cv.height = Math.round(H * dpr);
+    const g = cv.getContext("2d");
+    g.clearRect(0, 0, cv.width, cv.height);
+    if (!pk) return;
+    waveColor = waveColor || getComputedStyle(root).getPropertyValue("--audio").trim() || "#3ccfc0";
+    const tr = track(c.track), quiet = c.muted || tr?.muted || (tl.tracks.some(x => x.solo) && !tr?.solo);
+    const mid = cv.height / 2, amp = cv.height / 2 - 1, n = cv.width, rate = pk.rate || 100;
+    const levels = (arr, s0, s1) => { let m = 0, a = Math.floor(s0 * rate), b = Math.max(a + 1, Math.ceil(s1 * rate)); for (let i = a; i < b && i < arr.length; i++) if (arr[i] > m) m = arr[i]; return m / 255; };
+    const col = quiet ? "rgba(160,160,170," : null;
+    for (const [arr, alpha] of [[pk.peak, 0.45], [pk.rms, 0.95]]) {
+      g.fillStyle = col ? col + alpha * 0.6 + ")" : waveColor;
+      g.globalAlpha = col ? 1 : alpha;
+      for (let x = 0; x < n; x++) {
+        const t0 = x / scale / tl.zoom, t1 = (x + 1) / scale / tl.zoom;
+        const v = levels(arr, c.trim_in + t0, c.trim_in + t1) * envGain(c, c.start + t0);
+        if (v <= 0.002) continue;
+        const h = Math.min(1, v) * amp;
+        g.fillRect(x, mid - h, 1, h * 2);
+        if (v >= 1 && arr === pk.peak) { g.save(); g.globalAlpha = 1; g.fillStyle = "#ff4d5a"; g.fillRect(x, 0, 1, 2 * dpr); g.fillRect(x, cv.height - 2 * dpr, 1, 2 * dpr); g.restore(); }
+      }
+    }
+    g.globalAlpha = 1;
+    // Volume envelope: middle = 100 %, top = 200 %.
+    g.strokeStyle = "rgba(245,185,66,.9)"; g.lineWidth = Math.max(1, dpr);
+    g.beginPath();
+    for (let x = 0; x <= n; x += Math.max(1, Math.round(2 * dpr))) {
+      const y = cv.height - clamp(envGain(c, c.start + x / scale / tl.zoom) / 2, 0, 1) * (cv.height - 2) - 1;
+      x ? g.lineTo(x, y) : g.moveTo(x, y);
+    }
+    g.stroke();
+  }
+  function drawWaves() {
+    if (!root) return;
+    for (const cv of $$(".tl-wave", root)) { const c = clip(cv.dataset.wave); if (c) drawWave(c, cv); }
   }
 
   /* ------------------------------------------------------------------ render */
@@ -918,6 +1112,7 @@ const TL = (() => {
       ${tl.range_in != null || tl.range_out != null ? `<div class="tl-dim l" style="left:${headW()}px;width:${(tl.range_in ?? 0) * tl.zoom}px"></div>
         <div class="tl-dim r" style="left:${headW() + (tl.range_out ?? total()) * tl.zoom}px;right:0"></div>` : ""}`;
     $(".tl-canvas", root).style.width = `${headW() + width}px`;
+    drawWaves();
     renderBar();
     if (Monitor.mode === "timeline") syncProgram(false);
   }
@@ -926,9 +1121,7 @@ const TL = (() => {
     const w = Math.max(2, dur(c) * tl.zoom), tr = track(c.track);
     const thumb = `/api/media/thumb?path=${encodeURIComponent(c.ref)}&w=${c.kind === "audio" || tr.kind === "audio" ? 384 : 160}&v=1`;
     const sound = tr.kind === "audio";
-    const bg = sound
-      ? (c.source_duration ? `background-image:url('${thumb}');background-size:${c.source_duration * tl.zoom}px 100%;background-position:${-c.trim_in * tl.zoom}px 0` : "")
-      : `background-image:url('${thumb}');background-size:auto 100%`;
+    const bg = sound ? "" : `background-image:url('${thumb}');background-size:auto 100%`;
     const hasSnd = c.kind !== "image" && (sound || !c.audio_off);
     const fi = c.fade_in || 0, fo = c.fade_out || 0, vol = c.volume ?? 1;
     const db = vol <= 0 ? "silent" : `${vol >= 1 ? "+" : ""}${(20 * Math.log10(vol)).toFixed(1)} dB`;
@@ -938,7 +1131,9 @@ const TL = (() => {
       <b class="tl-fh in" data-fade="in" style="left:${fi * tl.zoom}px" title="Drag: fade in"></b><b class="tl-fh out" data-fade="out" style="right:${fo * tl.zoom}px" title="Drag: fade out"></b>` : "";
     return `<div class="tl-clip k-${c.kind}${sound ? " snd" : ""}${sel.has(c.id) ? " sel" : ""}${c.link ? " linked" : ""}${c.audio_off ? " silent" : ""}${c.muted ? " cmuted" : ""}${fxOn(c) ? " has-fx" : ""}" data-clip="${c.id}" style="left:${c.start * tl.zoom}px;width:${w}px"
       title="${esc2(c.name)}${c.link ? " · linked (Alt+click selects just this one)" : ""}${c.audio_off ? " · sound on its linked audio clip" : ""}${mix ? " · " + esc2(mix) : ""}">
-      <div class="tl-strip" style="${bg}"></div>${fades}
+      <div class="tl-strip" style="${bg}">${sound && c.kind !== "image" ? `<canvas class="tl-wave" data-wave="${c.id}"></canvas>` : ""}</div>${fades}${fxOn(c) && c.fx.keys?.length ? c.fx.keys.map(k => {
+        const p = (k.t - srcTime(c, c.start)) * tl.zoom;
+        return p < -1 || p > w + 1 ? "" : `<i class="tl-key" style="left:${p}px" title="Fx keyframe"></i>`; }).join("") : ""}
       <span class="tl-cname">${esc2(c.name)}</span><span class="tl-cdur">${dur(c).toFixed(2)}s</span>
       <i class="tl-trim l" data-trim="l"></i><i class="tl-trim r" data-trim="r"></i></div>`;
   }
@@ -1106,6 +1301,7 @@ const TL = (() => {
       $(`.tl-fade.${which}`, el).style.width = `${c[key] * tl.zoom}px`;
       $(`.tl-fh.${which}`, el).style[which === "in" ? "left" : "right"] = `${c[key] * tl.zoom}px`;
       $(".tl-cdur", el).textContent = `fade ${which} ${c[key].toFixed(2)}s`;
+      drawWave(c, $(".tl-wave", el));
     };
     const up = () => {
       removeEventListener("pointermove", mv); removeEventListener("pointerup", up);
@@ -1563,7 +1759,8 @@ const TL = (() => {
     ["Editing", [["S or Ctrl+B", "Split at the playhead"], ["Ctrl+T", "Add a transition at the nearest cut"],
       ["Double-click a transition", "Change its type or length"], ["Shift (dropping a clip)", "Overlap the clip before as a transition"],
       ["Alt+click", "Select one clip of a linked video/sound pair"], ["Drag the dot at a clip's top corner", "Fade the sound in / out"],
-      ["Right-click a clip › Sound…", "Volume, pan, fades, mute"], ["Shift+E", "Video Fx for the selected clip"], ["Del / Backspace", "Delete"], ["Shift+Del", "Ripple delete (close the gap)"],
+      ["Right-click a clip › Sound…", "Volume, pan, fades, mute"], ["Shift+E", "Video Fx for the selected clip"],
+      ["◆ in the Video Fx window", "Keyframes: settings change over the clip"], ["Del / Backspace", "Delete"], ["Shift+Del", "Ripple delete (close the gap)"],
       ["Ctrl+C / Ctrl+V", "Copy / paste at the playhead"], ["Ctrl+D", "Duplicate after the selection"], [", / .", "Nudge selection 1 frame"],
       ["Ctrl+A", "Select all"], ["Esc", "Clear the selection"], ["Ctrl+Z", "Undo"], ["Ctrl+Shift+Z / Ctrl+Y", "Redo"], ["Alt (while dragging)", "Don't snap"]]],
     ["Timeline", [["I / O", "Set In / Out"], ["Alt+X", "Clear In and Out"], ["M", "Add a marker"], ["N", "Snapping on / off"],

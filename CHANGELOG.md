@@ -5,6 +5,35 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.14.0] - 2026-11-15
+
+### Added
+- **Keyframes for Video Fx.** Exposure, contrast, saturation, temperature, tint, vignette, blur and every light's
+  position, size, strength, flicker and colour can change over a clip.
+  - **The keyframe bar** in the Video Fx window shows a ◆ per key and the playhead. Click to move the playhead,
+    drag a ◆ to retime it, and use ◀◆ / ◆▶ to jump between keys.
+  - **Buttons:** Add keyframe, Delete keyframe, Remove all, and ease to the next key (Smooth, Linear or Hold).
+  - **Editing:** once a clip has keys, changing any setting or dragging a light on the viewer sets a key at the
+    playhead. The window shows the values at the playhead.
+  - **Where keys live:** in the clip's source time, so they stay on the same picture when you trim or split.
+    Clips show their keys as small ◆ marks.
+  - **Preview and render:** the live preview animates too. The render uses frame expressions and per-frame
+    commands.
+  - `project.json`: `clips[].fx.keys`.
+- **Waveform graphs on audio tracks.** Audio clips are drawn from measured peak and RMS levels instead of a
+  stretched picture.
+  - **What it shows:** what you'll hear. The graph is scaled by clip × track volume, fades and crossfades, with
+    red marks where it would clip.
+  - **Volume line:** yellow; the middle is 100 % and the top is 200 %.
+  - **Muted or un-soloed clips** draw grey.
+  - **Live redraw** while you drag a fade.
+  - New `GET /api/media/peaks`, cached in `data/thumbs`.
+
+### Fixed
+- **Exposure above +1 stop** made the render fail: ffmpeg's colour mixer allows a gain of at most 2. Large
+  gains are now split over several mixers.
+- **Out-only renders:** a render with an Out point but no In point failed before starting (0.12.0).
+
 ## [0.13.0] - 2026-11-15
 
 ### Added

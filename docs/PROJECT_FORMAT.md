@@ -130,6 +130,12 @@ Saved as you work (or with Ctrl+S when auto-save is off). Times are seconds on t
         "x2": 0.8, "y2": 0.3,       // optional: where it travels to by the clip's end
         "radius": 0.35,             // × the picture's shorter side
         "intensity": 1, "color": "#ffd890", "flicker": 0
+      }],
+      "keys": [{                    // keyframes (optional): the animatable settings at moments of the clip
+        "t": 0.25,                  // source time: seconds into the file (stays put when trimming/splitting)
+        "ease": "smooth",           // to the next key: smooth | linear | hold
+        "values": { "exposure": 1.5, "contrast": 1, "saturation": 1, "temperature": 0, "tint": 0, "vignette": 0, "blur": 0 },
+        "lights": [{ "x": 0.2, "y": 0.3, "radius": 0.35, "intensity": 1, "flicker": 0, "color": "#ffd890" }]
       }]
     },
     "job": "b20789d2c88a",         // the studio result it came from
@@ -183,6 +189,9 @@ formats this ffmpeg can write and the places a render can be saved:
   `colortemperature`), lights as soft masks drawn with `geq` at quarter size and blended in RGB
   (relight `A·(1+I·B)`, glow `A+I·B`, shade `A·(1−d·B)`, the ratio idea from AInVFX Paint a Plate, Apache-2.0),
   then `vignette`, `gblur`, `unsharp` and `noise`. FCPXML doesn't carry them.
+  With keyframes, contrast, saturation, the vignette and lights become frame expressions of time, and exposure,
+  tint, temperature and blur are sent as per-frame `sendcmd` commands. Before the first key and after the last,
+  values hold.
 - **Linked sound:** a video whose sound moved to a linked clip is exported at −96 dB, so the sound isn't doubled.
   Muted clips are too. Pan, fades and the master aren't exported; set them in Resolve's mixer.
 
@@ -206,6 +215,12 @@ A `ref` names a file the app is allowed to read:
 Anything else is refused. Bookmarks are app-wide, like Explorer's Quick access, and
 are stored in `data/library.json`. Tags and virtual folders belong to a project.
 
+### Waveforms
+
+`GET /api/media/peaks?path=<ref>` returns `{rate, seconds, peak[], rms[]}`: per bucket (100 a second, 25 for files
+over 10 minutes) the peak and RMS level, 0–255. It's cached in `data/thumbs/` as `*.peaks.json`, and audio clips
+on the timeline are drawn from it.
+
 ### Thumbnails
 
 Thumbnails are made on first view and cached in `data/thumbs/` as WebP: pictures
@@ -218,6 +233,7 @@ one.
 
 | From | What happens |
 |---|---|
+| `bob.project/2` from 0.13 | No change needed: `fx.keys` is empty. |
 | `bob.project/2` from 0.11–0.12 | No change needed: `clips[].fx` is `null` (no effects). |
 | `bob.project/2` from 0.10 | No change needed: mixing fields default to neutral (volume 1, pan 0, no fades, no solo), `master` has no loudness target and the limiter on, `link_audio_track` is `"new"`, and auto-save is on. |
 | `bob.project/2` from 0.8–0.9 | No change needed: `transitions` (empty) and `link_audio: true` are added on load. |
