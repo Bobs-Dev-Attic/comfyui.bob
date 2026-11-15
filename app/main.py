@@ -446,6 +446,24 @@ async def timeline_render(req: RenderReq):
         raise HTTPException(400, str(exc)) from exc
 
 
+@app.get("/api/timeline/fcpxml")
+async def timeline_fcpxml(project: str = "experiment"):
+    """The project's timeline as FCPXML 1.9 (DaVinci Resolve: File > Import > Timeline)."""
+    from fastapi.responses import Response
+
+    from . import fcpxml
+
+    p = _project_call(projects.find, project)
+    pf = _project_call(projects.load_file, p)
+    try:
+        data = await asyncio.to_thread(fcpxml.build, pf.timeline, pf.name)
+    except (ValueError, media.MediaError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    safe = "".join(ch if ch.isalnum() or ch in " -_." else "_" for ch in pf.name).strip() or "timeline"
+    return Response(data, media_type="application/xml",
+                    headers={"Content-Disposition": f'attachment; filename="{safe}.fcpxml"'})
+
+
 @app.get("/api/media/cache")
 async def media_cache():
     return await asyncio.to_thread(media.cache_size)
