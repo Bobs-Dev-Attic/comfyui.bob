@@ -174,6 +174,7 @@ function collectSettings() {
     seed: $("#seed").value, steps: $("#steps").value, batch: state.batch,
     turbo: $("#turbo").checked, enhance: $("#enhance").checked, fidelity: $("#fidelity").checked,
     refs: state.refs.map(pickRef), frames: { first_frame: pickRef(state.frames.first_frame), last_frame: pickRef(state.frames.last_frame) },
+    audios: state.arefs.map(pickRef), clean_audio: $("#clean-audio").checked,
   };
 }
 
@@ -186,6 +187,8 @@ function applySettings(s) {
     state.batch = s.batch || 1;
     $$("#batch-seg button").forEach(b => b.classList.toggle("active", +b.dataset.v === state.batch));
     state.refs = (s.refs || []).filter(Boolean).map(r => ({ ...r }));
+    state.arefs = (s.audios || []).filter(Boolean).map(r => ({ ...r, name: r.ref.split("/").pop() }));
+    $("#clean-audio").checked = s.clean_audio !== false;
     renderForm();
     $("#prompt").value = s.prompt || "";
     $("#lyrics").value = s.lyrics || "";
@@ -202,6 +205,7 @@ function applySettings(s) {
       if (f) setFrame(role, f.ref, f.url); else clearFrame(role);
     }
     renderRefs();
+    renderArefs();
     updateDerived();
   } finally {
     state.loading = false;

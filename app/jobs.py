@@ -16,7 +16,7 @@ from typing import Any, Literal
 from PIL import Image
 from pydantic import BaseModel, Field
 
-from . import config, models, workflows
+from . import config, media, models, workflows
 from .comfy import ComfyService
 
 log = logging.getLogger("bob.jobs")
@@ -38,6 +38,8 @@ class GenerateRequest(BaseModel):
     first_frame: str | None = None  # media ref: "data/uploads/<file>" or "outputs/<date>/<file>"
     last_frame: str | None = None
     references: list[str] = Field(default_factory=list, max_length=9)  # H3 reference-to-video pictures
+    ref_audios: list[str] = Field(default_factory=list, max_length=3)  # H3 reference sounds: voices to clone (<Audio N>)
+    clean_audio: bool = True  # clean them and keep the best 6-10 s of speech (H3RefAudioPrep, when installed)
     max_fidelity: bool = False  # reference pictures at 2048px instead of the output's size
     enhance: bool = False  # Klein prompt upsampler
     lyrics: str = Field("", max_length=20000)  # Music 3
@@ -92,6 +94,19 @@ class JobManager:
                 q.put_nowait(event)
             except asyncio.QueueFull:
                 pass
+
+    _nodes: set[str] | None = None
+
+    def has_node(self, name: str) -> bool:
+        """Whether ComfyUI has a node type (custom nodes differ between installs); cached."""
+        if JobManager._nodes is None:
+            try:
+                import urllib.request
+                with urllib.request.urlopen(f"{config.COMFYUI_URL}/object_info/{name}", timeout=20) as r:
+                    return name in json.loads(r.read())
+            except (OSError, ValueError):
+                return False
+        return name in JobManager._nodes
 
     def log(self, item: dict[str, Any], msg: str, level: str = "info") -> None:
         """Add a line to an item's activity log (shown in the Activity console) and stream it."""
@@ -185,8 +200,8 @@ class JobManager:
         if req.engine == "h3ref":
             if req.kind != "video":
                 raise ValueError("H3 Reference only makes video")
-            if not req.references:
-                raise ValueError("Add at least one reference picture")
+            if not req.references and not req.ref_audios:
+                raise ValueError("Add at least one reference picture or reference sound")
         if req.engine == "klein" and req.kind != "image":
             raise ValueError("FLUX 3 Klein only makes images")
         if req.engine == "music3" and req.kind != "audio":
@@ -202,7 +217,12 @@ class JobManager:
             raise ValueError("Prompt is empty")
         if req.aspect not in workflows.ASPECTS:
             raise ValueError(f"Unknown aspect ratio {req.aspect}")
-        for ref in (req.first_frame, req.last_frame, *req.references):
+        if req.ref_audios and req.engine != "h3ref":
+            raise ValueError("Reference sounds (voice cloning) need the H3 Reference model")
+        for ref in req.ref_audios:
+            if media.kind_of(ref) not in ("audio", "video"):
+                raise ValueError(f"A reference sound must be a sound or video file: {ref}")
+        for ref in (req.first_frame, req.last_frame, *req.references, *req.ref_audios):
             if ref:
                 media_path(ref)  # raises if invalid
 
@@ -239,7 +259,8 @@ class JobManager:
             return workflows.build_h3_ref(
                 files, prompt=req.prompt, width=w, height=h, seconds=req.seconds, seed=seed,
                 references=len(req.references), turbo=req.turbo, steps=req.steps,
-                max_fidelity=req.max_fidelity, prefix=prefix,
+                max_fidelity=req.max_fidelity, audios=len(req.ref_audios),
+                clean_audio=req.clean_audio and self.has_node("H3RefAudioPrep"), prefix=prefix,
             )
         if req.engine == "klein":
             mp = workflows.KLEIN_QUALITY.get(req.quality, 1.0)
@@ -265,7 +286,10 @@ class JobManager:
                      + "".join(f", {k} {v}" for k, v in (built.info or {}).items() if isinstance(v, (int, float, str)) and len(str(v)) < 40))
             wf = client.workflows.from_json(built.graph)
             for role, node_id in built.image_inputs.items():
-                if role.startswith("ref_"):
+                field = "image"
+                if role.startswith("aref_"):
+                    ref, field = req.ref_audios[int(role[5:])], "audio"
+                elif role.startswith("ref_"):
                     ref = req.references[int(role[4:])]
                 elif role.startswith("guide_"):
                     ref = req.guides[int(role[6:])]
@@ -274,7 +298,7 @@ class JobManager:
                 else:
                     ref = getattr(req, role)
                 self.log(item, f"Input {role}: {ref}")
-                wf.set_input(node_id, "image", client.assets.from_file(media_path(ref)))
+                wf.set_input(node_id, field, client.assets.from_file(media_path(ref)))
 
             # No `metadata=`: comfy-api-proxy 0.1.6 rejects the SDK's mapping form.
             job = await client.submit(wf)

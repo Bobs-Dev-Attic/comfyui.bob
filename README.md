@@ -36,7 +36,7 @@ port 8189 by itself if nothing is listening there.
 | Tab | Engine | Output |
 |---|---|---|
 | Video | MiniMax H3: text-to-video, or image-to-video with optional first and last keyframes | MP4 with native stereo audio |
-| Video | H3 Reference: 1–9 reference pictures (people, objects, places, style) tagged `<Picture N>` in the prompt. Needs the separate `minimax_h3_ref2va` model (about 19.5 GB) | MP4 with native stereo audio |
+| Video | H3 Reference: 1–9 reference pictures (people, objects, places, style) tagged `<Picture N>` in the prompt, and up to 3 reference sounds tagged `<Audio N>` to clone a voice (Inputs › Reference sound). Needs the separate `minimax_h3_ref2va` model (about 19.5 GB) | MP4 with native stereo audio |
 | Image | H3 still (one frame on H3's 768p canvas) or FLUX 3 Klein (with optional prompt upsampler) | PNG |
 | Audio | H3 sound (generates sound jointly with a tiny video and keeps only the audio) or MiniMax Music 3 | MP3 |
 

@@ -1045,6 +1045,20 @@
           "title": "Refs",
           "type": "array"
         },
+        "audios": {
+          "description": "H3 Reference sounds (voices to clone), in <Audio N> order",
+          "items": {
+            "$ref": "#/$defs/PictureRef"
+          },
+          "title": "Audios",
+          "type": "array"
+        },
+        "clean_audio": {
+          "default": true,
+          "description": "clean reference sounds and keep their best 6\u201310 s of speech",
+          "title": "Clean Audio",
+          "type": "boolean"
+        },
         "frames": {
           "$ref": "#/$defs/Frames"
         }
@@ -1555,7 +1569,7 @@
       "type": "number"
     },
     "app_version": {
-      "default": "0.17.0",
+      "default": "0.18.0",
       "title": "App Version",
       "type": "string"
     },

@@ -5,6 +5,22 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.18.0] - 2026-11-15
+
+### Added
+- **Reference sound for voice cloning** (Inputs step, with **H3 Reference** video).
+  - **Adding a voice:** upload or drag in up to 3 recordings, either sound files or videos whose soundtrack has
+    the voice. Each one gets a player and an **Audio N** tag that inserts `<Audio N>` into the prompt.
+  - **Prompting:** say who speaks with which voice, e.g. "…says 'See you tomorrow' in the voice of
+    `<Audio 1>`". Without tags, a lead sentence names the voice references.
+  - **Clean-up:** **Clean it up and keep the best 6–10 s of speech** (on by default) runs each recording through
+    the `H3RefAudioPrep` node: voice-focused noise removal and the densest pause-free window of speech. It's
+    skipped when that node isn't installed.
+  - **On H3 (not Reference):** the section offers a one-click switch to H3 Reference.
+  - **Without pictures:** H3 Reference now also runs with sounds only.
+  - **Consent:** a note asks you to clone only voices you have permission to use.
+  - `project.json` settings: `audios`, `clean_audio`. Generation requests: `ref_audios`, `clean_audio`.
+
 ## [0.17.0] - 2026-11-15
 
 ### Changed
