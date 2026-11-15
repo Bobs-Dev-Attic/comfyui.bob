@@ -1,5 +1,41 @@
 {
   "$defs": {
+    "CamDepth": {
+      "description": "Depth of the picture under a camera move (Depth Anything 3; near = bright).",
+      "properties": {
+        "ref": {
+          "description": "data/uploads/depth/<id>/depth.mp4",
+          "title": "Ref",
+          "type": "string"
+        },
+        "t0": {
+          "default": 0,
+          "description": "timeline time of the depth video's first frame",
+          "minimum": 0,
+          "title": "T0",
+          "type": "number"
+        },
+        "sig": {
+          "default": "",
+          "description": "what was under the move when it was analysed (the page compares it)",
+          "title": "Sig",
+          "type": "string"
+        },
+        "amount": {
+          "default": 0.25,
+          "description": "how far the picture stands out in depth (\u00d7 its width)",
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Amount",
+          "type": "number"
+        }
+      },
+      "required": [
+        "ref"
+      ],
+      "title": "CamDepth",
+      "type": "object"
+    },
     "CamKey": {
       "description": "A camera keyframe at source time `t` (the clip's own time, so trims keep it in place).\nA missing value carries the move's own setting.",
       "properties": {
@@ -229,6 +265,18 @@
         },
         "reshoot": {
           "$ref": "#/$defs/Reshoot"
+        },
+        "depth": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CamDepth"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "depth for parallax (Analyse depth in the Camera window)"
         }
       },
       "title": "CameraMove",
@@ -1507,7 +1555,7 @@
       "type": "number"
     },
     "app_version": {
-      "default": "0.15.0",
+      "default": "0.16.0",
       "title": "App Version",
       "type": "string"
     },

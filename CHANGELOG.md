@@ -5,6 +5,33 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.16.0] - 2026-11-15
+
+### Added
+- **3D view in the Camera window** (WebGL, Blender style).
+  - **The scene:** the picture is a card in the middle of a floor grid. The shot camera is an object with its
+    frustum and the outline of what it sees on the picture. Its path and keyframes are drawn when the move is
+    keyframed.
+  - **Moving the camera:** drag it with **✥ Move** (Shift: toward or away from you), **⟳ Rotate** (Shift: roll)
+    or **◎ Orbit** (up/down: crane). The wheel over the camera zooms it.
+  - **Moving the view:** drag empty space to orbit, right-drag or Shift-drag to pan, and use the wheel to zoom.
+  - **Keys:** G, R and O pick the tool, C toggles look-through, and F frames the scene.
+  - **Look through** shows the shot from the camera itself.
+  - **Keyframes:** with keyframes, every change sets one at the playhead.
+- **Depth and parallax.** **🧊 Analyse depth** runs Depth Anything 3 (base) in ComfyUI on the picture under the
+  move. It took 10 s for a 2.3 s move in testing; the model downloads on first use, about 256 MB.
+  - **3D view:** the card becomes a relief, with a strength slider.
+  - **Render:** parallax is added before the perspective warp. Near things shift and grow against the
+    background as the camera travels.
+  - **Out of date:** a warning shows when the picture under the move has changed since the analysis.
+  - **AI reshoot:** guide frames get the parallax too.
+  - `project.json`: `cam.depth`.
+  - New `app/depth.py` and `POST /api/timeline/depth`. Depth items don't show in the results gallery.
+
+### Fixed
+- **Crash in guide frames.** ffmpeg 8's `displace` crashed (access violation) when both of its inputs were
+  seeked. Guide frames now pick the depth frame inside the filter graph.
+
 ## [0.15.0] - 2026-11-15
 
 ### Added

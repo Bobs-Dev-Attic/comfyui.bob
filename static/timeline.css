@@ -274,3 +274,15 @@ kbd { font: 11px ui-monospace, Consolas, monospace; padding: 1px 5px; border-rad
 .camd fieldset { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px 12px; display: grid; gap: 10px; margin: 0; min-width: 0; }
 .camd legend { font-size: 12px; font-weight: 700; padding: 0 6px; color: var(--muted); }
 .camd textarea { resize: vertical; }
+
+/* the Camera window's 3D view */
+.cam3d { display: grid; gap: 6px; }
+.cam3d-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.cam3d-gap { flex: 1; }
+.cam3d-depth { display: inline-flex; gap: 6px; align-items: center; }
+.cam3d-depth input[type="range"] { width: 110px; padding: 0; border: 0; background: none; }
+.cam3d-depth .warn { color: var(--warn); }
+.cam3d-amt { font: 11px ui-monospace, Consolas, monospace; color: var(--muted); min-width: 34px; }
+.cam3d-canvas { width: 100%; height: clamp(220px, 42vh, 420px); border-radius: 10px; border: 1px solid var(--line); background: #121318; display: block; outline: none; touch-action: none; }
+.cam3d-canvas:focus-visible { border-color: var(--accent); }
+.cam3d-modes button.active, .cam3d-bar .btn.active { background: color-mix(in srgb, var(--accent) 22%, transparent); border-color: var(--accent); color: var(--text); }

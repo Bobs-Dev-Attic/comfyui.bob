@@ -36,7 +36,7 @@ const Bin = (() => {
 
   function visible() {
     const q = f.q.trim().toLowerCase();
-    let list = itemsSorted().filter(it => inScope(it) && (state.filter === "all" || it.kind === state.filter));
+    let list = itemsSorted().filter(it => it.engine !== "depth" && inScope(it) && (state.filter === "all" || it.kind === state.filter));
     list = list.filter(it => {
       const m = meta(it);
       if (f.rating && m.rating < f.rating) return false;

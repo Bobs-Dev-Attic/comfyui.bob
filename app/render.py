@@ -471,15 +471,12 @@ def commands(tl: Timeline, out: str, w0: float | None = None, w1: float | None =
         burn = (f",drawtext={ff}timecode='{tc}':rate={r}:fontsize={size}:fontcolor=white:box=1:boxcolor=black@0.55:"
                 f"boxborderw={size // 3}:x=(w-tw)/2:y=h-th-{size}")
     if camera.active(tl) and not o.get("no_camera"):  # the virtual camera looks at the finished picture
-        warp = camera.perspective_filter(tl, W, H, fps)
-        if camera.fill_of(tl) == "blur":
-            filters.append(f"[{cur}]split[cam_b][cam_f]")
-            filters.append(f"[cam_b]gblur=sigma={max(8, H // 22)},scale=iw*1.12:ih*1.12,crop={W}:{H},format=yuva420p[cam_bg]")
-            filters.append(f"[cam_f]{warp}[cam_w]")
-            filters.append("[cam_bg][cam_w]overlay=format=auto[cam]")
-        else:
-            filters.append(f"[{cur}]{warp}[cam]")
-        cur = "cam"
+        def add_path(path: str, offset: float) -> int:
+            vargs.extend(["-an", "-i", path])
+            count["v"] += 1
+            return count["v"] - 1
+        pieces_cam, cur = camera.graph(tl, W, H, fps, cur, add_path, D)
+        filters.extend(pieces_cam)
     filters.append(f"[{cur}]trim=start={w0:.4f}:end={w1:.4f},setpts=PTS-STARTPTS,format=yuv420p{burn}[vout]")
 
     # ---------------------------------------------------------------- sound

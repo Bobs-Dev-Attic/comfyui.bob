@@ -487,6 +487,28 @@ async def timeline_render(req: RenderReq):
         raise HTTPException(400, str(exc)) from exc
 
 
+class DepthReq(BaseModel):
+    project: str = "experiment"
+    clip: str = Field(..., max_length=64)
+    sig: str = Field("", max_length=200)
+
+
+@app.post("/api/timeline/depth")
+async def timeline_depth(req: DepthReq):
+    """Analyse the depth of the picture under a camera move (Depth Anything 3, app/depth.py)."""
+    from . import depth
+
+    p = _project_call(projects.find, req.project)
+    pf = _project_call(projects.load_file, p)
+    c = next((x for x in pf.timeline.clips if x.id == req.clip and x.kind == "camera" and x.cam), None)
+    if not c:
+        raise HTTPException(404, "That camera move isn't in the saved timeline")
+    try:
+        return await depth.analyze(jobs, None if req.project == "experiment" else req.project, pf.timeline, c, req.sig)
+    except (ValueError, media.MediaError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 class ReshootReq(BaseModel):
     project: str = "experiment"
     clip: str = Field(..., max_length=64)

@@ -1130,7 +1130,23 @@ const TL = (() => {
     form.className = "wm-form camd";
     form.innerHTML = `
       <div class="fx-top"><label class="check"><input type="checkbox" data-c="enabled"> Camera move on</label>
-        <span class="hint inline">The camera looks at everything below the Camera track as a flat picture in 3D.</span></div>
+        <span class="hint inline">The camera looks at everything below the Camera track as a picture in 3D.</span></div>
+      <div class="cam3d">
+        <div class="cam3d-bar">
+          <span class="seg sm cam3d-modes" role="group" aria-label="Camera tool">
+            <button type="button" data-vm="move" title="Drag the camera to move it; Shift: toward / away from you (G)">✥ Move</button>
+            <button type="button" data-vm="rotate" title="Drag the camera to turn it; Shift: roll (R)">⟳ Rotate</button>
+            <button type="button" data-vm="orbit" title="Drag the camera around the picture; up/down: crane (O)">◎ Orbit</button>
+          </span>
+          <button type="button" class="btn sm" data-v="look" title="See the shot through the camera, with depth (C)">🎥 Look through</button>
+          <button type="button" class="btn sm" data-v="reset" title="Frame the scene (F)">⤢</button>
+          <span class="cam3d-gap"></span>
+          <span class="cam3d-depth"></span>
+        </div>
+        <canvas class="cam3d-canvas" aria-label="3D view: the picture and the camera"></canvas>
+        <p class="hint cam3d-hint">Drag the orange camera to move it, empty space to look around (right-drag or Shift to pan, wheel to zoom;
+          wheel over the camera changes its zoom). With keyframes, every change sets one at the playhead.</p>
+      </div>
       <div class="fx-presets">${Object.keys(CAM_PRESETS).map(n => `<button type="button" class="btn sm" data-cpreset="${esc2(n)}">${esc2(n)}</button>`).join("")}</div>
       <fieldset><legend>Keyframes</legend>
         <div class="fx-keys"><button type="button" class="btn sm" data-ck="prev">◀◆</button><div class="fxk-bar" title="Click to move the playhead; drag a ◆ to retime it"></div><button type="button" class="btn sm" data-ck="next">◆▶</button></div>
@@ -1284,11 +1300,105 @@ const TL = (() => {
       if (snapshot() !== before) { undoStack.push(before); if (undoStack.length > UNDO_MAX) undoStack.shift(); redoStack = []; }
       camEdit = null; changed();
     };
-    const w = WM.open({ id: "camera", title: `Camera · ${c.name}`, content: form, footer: foot, width: 620, height: 760, minWidth: 340, minHeight: 320, modal: false, onClose: commit });
+    const w = WM.open({ id: "camera", title: `Camera · ${c.name}`, content: form, footer: foot, width: 780, height: 900, minWidth: 340, minHeight: 320, modal: false,
+      onClose: () => { vp?.destroy(); dv.removeAttribute("src"); dv.load(); commit(); } });
     foot.querySelector('[data-a="done"]').onclick = () => w.close();
+
+    /* ---- the 3D view */
+    const LIM = { pan: [-80, 80], tilt: [-60, 60], roll: [-180, 180], zoom: [0.3, 5], dolly: [-2, 0.9], truck: [-2, 2], pedestal: [-2, 2], orbit: [-80, 80] };
+    const dv = document.createElement("video");  // the depth video, for the relief
+    dv.muted = true; dv.preload = "auto"; dv.playsInline = true;
+    const sceneSize = () => { const b = canvasClip(), i = b && probeInfo.get(b.ref); if (b && !i) probe(b.ref).then(() => vp?.draw()); return [i?.width || 1280, i?.height || 720]; };
+    const host = {
+      scene() {
+        if (!clip(c.id)) return null;
+        const [W, H] = sceneSize(), still = { ...c.cam, shake: 0 };
+        const at = l => Viewport3D.pose(camParamsAt(still, c.trim_in + l, l), W, H).pos;
+        const n = 40, path = c.cam.keys.length ? Array.from({ length: n + 1 }, (_, i) => at(dur(c) * i / n)) : [];
+        const keys = c.cam.keys.map(k => at(k.t - c.trim_in));
+        const pic = picAt(tl.playhead)?.a;
+        const colorEl = pic ? (pic.kind === "image" ? $("#prog-img") : $("#prog-video")) : null;
+        return { W, H, cam: camParamsAt(still, srcTime(c, tl.playhead), tl.playhead - c.start), path, keys, colorEl,
+          depth: !!c.cam.depth, amount: c.cam.depth?.amount ?? 0 };
+      },
+      change(ch) {
+        const k = keyed() ? keyAtCam(true) : c.cam;
+        for (const [p, v] of Object.entries(ch)) if (LIM[p]) k[p] = +clamp(v, LIM[p][0], LIM[p][1]).toFixed(4);
+        for (const inp of form.querySelectorAll("[data-cp]")) { const p = inp.dataset.cp, v = now()[p]; inp.value = v; form.querySelector(`[data-cout="${p}"]`).textContent = fmt(p, v); }
+        renderKeys();
+        if (!playing) syncProgram(false);
+        vp?.draw();
+      },
+      commit() { render(); },
+      playing: () => playing,
+      modeChanged: m => form.querySelectorAll("[data-vm]").forEach(b => b.classList.toggle("active", b.dataset.vm === m)),
+      lookChanged: on => form.querySelector('[data-v="look"]').classList.toggle("active", on),
+    };
+    const vp = Viewport3D.create(form.querySelector(".cam3d-canvas"), host);
+    host.modeChanged("move");
+    form.querySelector(".cam3d-bar").addEventListener("click", e => {
+      const m = e.target.closest("[data-vm]")?.dataset.vm; if (m) return vp?.setMode(m);
+      const v = e.target.closest("[data-v]")?.dataset.v;
+      if (v === "look") vp?.setLook(!vp.look);
+      if (v === "reset") vp?.reset();
+      if (e.target.closest("[data-depth]")) analyseDepth(c, e.target.closest("[data-depth]"));
+    });
+    form.querySelector(".cam3d-bar").addEventListener("input", e => {
+      if (e.target.dataset.damount == null || !c.cam.depth) return;
+      c.cam.depth.amount = +e.target.value;
+      form.querySelector(".cam3d-amt").textContent = `${Math.round(c.cam.depth.amount * 100)}%`;
+      vp?.draw();
+    });
+    const seekDepth = () => {
+      const d = c.cam.depth;
+      if (!d) return;
+      const t = Math.max(0, tl.playhead - d.t0);
+      if (dv.readyState >= 1 && Math.abs(dv.currentTime - t) > 0.04) dv.currentTime = Math.min(t, (dv.duration || t + 1) - 0.01);
+    };
+    dv.addEventListener("seeked", () => vp?.readDepth(dv));
+    dv.addEventListener("loadeddata", () => { seekDepth(); vp?.readDepth(dv); });
+    const renderDepth = () => {
+      const box = form.querySelector(".cam3d-depth"), d = c.cam.depth;
+      const stale = d && d.sig !== pictureSig(c);
+      box.innerHTML = d
+        ? `<span class="hint inline${stale ? " warn" : ""}" title="${stale ? "The picture under the move changed since its depth was analysed" : "Depth Anything 3"}">${stale ? "⚠ Depth is out of date" : "Depth"}</span>
+           <input type="range" data-damount min="0" max="1" step="0.01" value="${d.amount}" title="How far the picture stands out in depth (parallax)"><span class="cam3d-amt">${Math.round(d.amount * 100)}%</span>
+           <button type="button" class="btn sm" data-depth title="Analyse the depth again">↻</button>`
+        : `<button type="button" class="btn sm" data-depth title="Depth Anything 3 estimates how far everything is, for the 3D view and parallax in the render">🧊 Analyse depth</button>`;
+      if (d && !dv.src.endsWith(encodeURIComponent(d.ref)) && dv.dataset.ref !== d.ref) { dv.dataset.ref = d.ref; dv.src = mediaUrl(d.ref); }
+      if (!d) vp?.clearDepth();
+    };
     let lastPh = null;
-    camEdit = { clipId: c.id, win: w, refresh: () => { if (tl.playhead !== lastPh && !playing) { lastPh = tl.playhead; fill(); } } };
-    fill(); live();
+    camEdit = { clipId: c.id, win: w, renderDepth,
+      refresh: () => { if (tl.playhead !== lastPh) { lastPh = tl.playhead; if (!playing) fill(); seekDepth(); } vp?.draw(); } };
+    fill(); renderDepth(); live();
+  }
+
+  /* ---- depth analysis (Depth Anything 3 in ComfyUI, app/depth.py) */
+  // What's under a camera move, so a depth analysis can tell when it's out of date.
+  function pictureSig(c) {
+    const vids = new Set(tl.tracks.filter(t => t.kind === "video" && !t.hidden).map(t => t.id));
+    const parts = tl.clips.filter(x => vids.has(x.track) && x.start < end(c) && end(x) > c.start)
+      .map(x => `${x.track}|${x.ref}|${x.start.toFixed(3)}|${x.trim_in.toFixed(3)}|${x.trim_out.toFixed(3)}|${JSON.stringify(x.fx || null)}`).sort();
+    parts.push(`${c.start.toFixed(3)}|${end(c).toFixed(3)}`);
+    let h = 5381; for (const ch of parts.join("#")) h = ((h * 33) ^ ch.charCodeAt(0)) >>> 0;
+    return h.toString(36);
+  }
+  const pendingDepth = new Map();  // item id → {clip, project}
+  async function analyseDepth(c, btn) {
+    if (!tl.clips.some(x => track(x.track)?.kind === "video" && x.start < end(c) && end(x) > c.start)) return toast("There's no picture under this camera move.");
+    btn.disabled = true;
+    try {
+      await saveNow(true);
+      const r = await fetch("/api/timeline/depth", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project, clip: c.id, sig: pictureSig(c) }) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : j.detail?.[0]?.msg || r.statusText);
+      pendingDepth.set(j.id, { clip: c.id, project });
+      Activity.onEvent({ type: "item", item: j }); Activity.show(j.id);
+      toast("Analysing depth with Depth Anything 3… the 3D view updates when it's done.");
+    } catch (e) { toast(`Depth analysis failed: ${e.message}`); }
+    finally { btn.disabled = false; }
   }
 
   /* ---- AI reshoot: start it, then put the result on the timeline when it's done */
@@ -1318,6 +1428,18 @@ const TL = (() => {
     finally { btn.disabled = false; }
   }
   async function onItem(it) {
+    if (it.engine === "depth" && ["done", "failed"].includes(it.status)) {
+      const pd = pendingDepth.get(it.id);
+      pendingDepth.delete(it.id);
+      const cam = clip(it.params?.camera_clip);
+      if (it.status !== "done" || !cam?.cam || (pd && pd.project !== project) || !it.files?.[0]) return;
+      checkpoint();
+      cam.cam.depth = { ref: it.files[0].path, t0: it.params.start ?? cam.start, sig: it.params.sig || "", amount: cam.cam.depth?.amount ?? 0.25 };
+      changed();
+      if (camEdit?.clipId === cam.id) camEdit.renderDepth?.();
+      toast("Depth is ready: the 3D view shows the relief, and the render adds parallax.");
+      return;
+    }
     if (!pendingReshoots.size) { try { for (const [k, v] of JSON.parse(localStorage.getItem("bob.reshoots") || "[]")) pendingReshoots.set(k, v); } catch {} }
     const p = pendingReshoots.get(it.id);
     if (!p || !["done", "failed", "cancelled"].includes(it.status)) return;
