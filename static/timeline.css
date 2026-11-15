@@ -37,7 +37,9 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
 .bin-filters select, .bin-filters input { width: auto; padding: 3px 6px; font-size: 12px; border-radius: 7px; background: var(--panel-2); border: 1px solid var(--line); }
 .bin-filters input { flex: 1; min-width: 70px; }
 .bin-filters .seg button { padding: 3px 8px; }
-.bin .gallery { flex: 1; min-height: 0; overflow: auto; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 8px; align-content: start; padding: 2px; }
+.bin .gallery { flex: 1; min-height: 0; overflow: auto; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 8px; align-content: start; padding: 2px;
+  grid-auto-rows: max-content; }  /* rows take the tile's full height instead of squeezing it to fit */
+.b-tile > * { flex-shrink: 0; }   /* keep the 16:10 thumbnail; never shrink it to make room */
 .b-tile { outline: none; }
 .b-tile:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
 .b-tile .thumb { aspect-ratio: 16/10; }
