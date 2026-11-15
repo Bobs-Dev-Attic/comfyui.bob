@@ -5,6 +5,14 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.5.1] - 2026-11-15
+
+### Fixed
+- H3 Reference with **Turbo** produced blown-out, streaked video. The reference graph used the `beta` scheduler, which
+  the template recommends for full sampling, but the 4-step turbo LoRA is distilled for `simple`. Turbo runs now use
+  `simple`; 20-step runs keep `beta`. Both were checked with the same seed and prompt on the real ref2va model. The
+  scheduler is recorded in each job's info.
+
 ## [0.5.0] - 2026-11-15
 
 ### Added
@@ -92,6 +100,7 @@ All notable changes to Bob Studio are recorded here. The format follows
 - "Write for me" prompt writer using Ollama or any OpenAI-compatible local server, with a validator and retries.
 - Live step progress over SSE, takes, a gallery with reuse and re-roll, and per-engine model checks.
 
+[0.5.1]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.2.0...v0.3.0
