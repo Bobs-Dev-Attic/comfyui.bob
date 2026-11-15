@@ -222,6 +222,14 @@ const TL = (() => {
     if (reveal) revealTime(tl.playhead);
     save(1500);
   }
+  /* Step the playhead by one frame (or one second): pauses playback and shows the timeline. */
+  function frameStep(dir, second = false) {
+    if (!tl) return;
+    if (playing) pause();
+    Monitor.show("timeline");
+    seek(tl.playhead + dir * (second ? 1 : 1 / fps()));
+  }
+
   function jumpEdit(dir) {
     const pts = editPoints(), t = tl.playhead, e = 1 / fps() / 2;
     const next = dir > 0 ? pts.find(p => p > t + e) : [...pts].reverse().find(p => p < t - e);
@@ -730,7 +738,9 @@ const TL = (() => {
         <span class="tl-grp">
           <button type="button" class="tl-b" data-act="start" title="Start (Home)">⏮</button>
           <button type="button" class="tl-b" data-act="prev" title="Previous edit (↑)">⇤</button>
+          <button type="button" class="tl-b" data-act="frame-back" title="Back 1 frame (←); hold to repeat, Shift = 1 second">◀︎|</button>
           <button type="button" class="tl-b tl-play" data-act="play">▶</button>
+          <button type="button" class="tl-b" data-act="frame-fwd" title="Forward 1 frame (→); hold to repeat, Shift = 1 second">|▶︎</button>
           <button type="button" class="tl-b" data-act="next" title="Next edit (↓)">⇥</button>
           <button type="button" class="tl-b" data-act="end" title="End (End)">⏭</button>
           <button type="button" class="tl-b" data-act="loop" title="Loop the In–Out range (Ctrl+L)">🔁</button>
@@ -771,6 +781,11 @@ const TL = (() => {
       }
       if (e.target.closest(".tl-tc, .tl-time")) { showSeconds = !showSeconds; return render(); }
       if (!act) return;
+      if (act === "frame-back" || act === "frame-fwd") {
+        // Mouse presses are handled on pointerdown (with hold-to-repeat); this is for Enter/Space.
+        if (e.detail === 0) frameStep(act === "frame-fwd" ? 1 : -1, e.shiftKey);
+        return;
+      }
       const r = e.target.closest("[data-act]").getBoundingClientRect();
       ({
         start: () => seek(0), end: () => seek(total()), prev: () => jumpEdit(-1), next: () => jumpEdit(1), play: toggle,
@@ -782,6 +797,19 @@ const TL = (() => {
       })[act]?.();
     });
     $(".tl-zoom", root).addEventListener("input", e => setZoom(Math.exp(+e.target.value)));
+    // Frame-step buttons: one step on press, then repeat while held (like a jog button).
+    $$(".tl-bar [data-act='frame-back'], .tl-bar [data-act='frame-fwd']", root).forEach(btn => {
+      let delay = 0, rep = 0;
+      const stop = () => { clearTimeout(delay); clearInterval(rep); };
+      btn.addEventListener("pointerdown", e => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        const dir = btn.dataset.act === "frame-fwd" ? 1 : -1, big = e.shiftKey;
+        frameStep(dir, big);
+        delay = setTimeout(() => { rep = setInterval(() => frameStep(dir, big), big ? 250 : 70); }, 380);
+      });
+      ["pointerup", "pointerleave", "pointercancel", "blur"].forEach(ev => btn.addEventListener(ev, stop));
+    });
     root.addEventListener("pointerdown", onPointerDown);
     root.addEventListener("dblclick", e => {
       const head = e.target.closest(".tl-head[data-track] .tl-tname");
