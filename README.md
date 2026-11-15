@@ -40,6 +40,13 @@ port 8189 by itself if nothing is listening there.
 | Image | H3 still (one frame on H3's 768p canvas) or FLUX 3 Klein (with optional prompt upsampler) | PNG |
 | Audio | H3 sound (generates sound jointly with a tiny video and keeps only the audio) or MiniMax Music 3 | MP3 |
 
+The side panel walks through a generation in steps: **1 Project → 2 Model → 3 Inputs → 4 Prompt → 5 Settings →
+6 Generate**. Drag its edge to make it wider or narrower.
+
+- **Projects:** New project, Open existing (an Explorer-style browser), or Experiment (no project).
+  - Projects are folders under `projects/`, and each one keeps its settings, notes and results.
+  - Settings save automatically, and the last project reopens on the next visit.
+
 Other features:
 
 - **Quality presets:** Draft 480p, Standard 576p, Full 768p.
@@ -89,7 +96,11 @@ Other features:
 - `app/comfy.py`: comfy-sdk client, proxy lifecycle, and native ComfyUI calls.
 - `app/jobs.py`: submits jobs, streams progress, downloads outputs to `outputs/`, keeps history in `data/history.json`.
 - `app/main.py`: the HTTP API.
-- `static/`: the UI (vanilla JS, no build step). `writer.html`/`writer.js` is the Prompt Writer window;
+- `app/projects.py`: project folders, browsing, rename and trash.
+- `static/`: the UI (vanilla JS, no build step).
+  - `shell.js`: the side panel steps, projects, settings persistence and the panel splitter.
+  - `winman.js`: movable, resizable windows.
+  - `explorer.js`: the project browser. `writer.html`/`writer.js` is the Prompt Writer window;
   `h3prompt.js` mirrors the server's prompt assembly (`tests/h3prompt_parity.py` keeps them identical).
 
 Settings are environment variables, or lines in a local `.env` file (copy `.env.example`): `COMFYUI_URL`, `COMFY_BASE_URL` (proxy),
