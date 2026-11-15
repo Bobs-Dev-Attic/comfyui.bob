@@ -248,6 +248,9 @@ class WriteRequest:
     url: str | None = None  # server URL; None = backend default
     model: str | None = None
     seed: int | None = None
+    # Fields the user wrote or locked; the LLM keeps them and writes the rest to fit.
+    # {"style": "...", "soundscape": "...", "music": "...", "shots": [{"action": "..."}, {}, ...]}
+    locked: dict[str, Any] = field(default_factory=dict)
 
 
 def auto_shots(seconds: float) -> int:
@@ -360,7 +363,47 @@ def _user_message(req: WriteRequest, n: int, frames: int) -> str:
                   "instead of describing their looks. Use every tag at least once. Use only these tags."]
     if not req.dialogue:
         lines += ["Nobody speaks: dialogue is \"\" in every shot."]
+    fixed = locked_items(req.locked)
+    if fixed:
+        lines += ["", "FIXED FIELDS. The user wrote these: copy each one exactly into its field, and write every "
+                  "other field so the whole clip fits them:"]
+        lines += [f"- {label}: {value}" for _key, label, value in fixed]
     return "\n".join(lines)
+
+
+FIELD_LABELS = {"style": "style", "soundscape": "soundscape", "music": "music"}
+SHOT_FIELDS = ("framing", "setting", "action", "camera", "dialogue")
+
+
+def locked_items(locked: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """[(key, label, value)] for every locked field; keys look like "style" or "shots.2.action"."""
+    out = []
+    for k in FIELD_LABELS:
+        v = locked.get(k)
+        if isinstance(v, str):
+            out.append((k, k, v))
+    for i, shot in enumerate(locked.get("shots") or [], 1):
+        for f in SHOT_FIELDS:
+            v = (shot or {}).get(f)
+            if isinstance(v, str):
+                out.append((f"shots.{i}.{f}", f"Shot {i} {f}", v))
+    return out
+
+
+def apply_locks(data: dict[str, Any], locked: dict[str, Any], n: int) -> dict[str, Any]:
+    """Put the user's locked values back over whatever the model wrote."""
+    for k in FIELD_LABELS:
+        if isinstance(locked.get(k), str):
+            data[k] = locked[k]
+    if "shots" in data or locked.get("shots"):
+        shots = list(data.get("shots") or [])
+        shots += [{} for _ in range(n - len(shots))]
+        for i, shot in enumerate((locked.get("shots") or [])[:n]):
+            for f in SHOT_FIELDS:
+                if isinstance((shot or {}).get(f), str):
+                    shots[i] = {**shots[i], f: shot[f]}
+        data["shots"] = shots[:n]
+    return data
 
 
 # --------------------------------------------------------------------------- validation + assembly
@@ -370,9 +413,17 @@ def _words(s: str) -> int:
 
 
 def validate(data: dict[str, Any], req: WriteRequest, n: int, frames: int) -> list[str]:
+    """Problems with the fields the model wrote. Locked fields are the user's and are never sent back."""
     problems: list[str] = []
+    locked = {k for k, _l, _v in locked_items(req.locked)}
+
+    def key_of(name: str) -> str:
+        m = re.match(r"Shot (\d+) (\w+)", name)
+        return f"shots.{m.group(1)}.{m.group(2)}" if m else name
 
     def check(name: str, text: str, limit_key: str | None = None) -> None:
+        if key_of(name) in locked:
+            return
         if not text or not text.strip():
             problems.append(f"{name} is empty.")
             return
@@ -399,6 +450,8 @@ def validate(data: dict[str, Any], req: WriteRequest, n: int, frames: int) -> li
         times = shot_times(frames, len(shots)) + [frames / workflows.FPS]
         for i, s in enumerate(shots):
             line = (s.get("dialogue") or "").strip()
+            if f"shots.{i + 1}.dialogue" in locked:
+                continue
             budget = dialogue_budget(times[i + 1] - times[i])
             if _words(line) > budget:
                 problems.append(f"Shot {i + 1} dialogue has {_words(line)} words; at most {budget} fit.")
@@ -492,7 +545,7 @@ async def write_prompt(req: WriteRequest, attempts: int = 3) -> dict[str, Any]:
         raise LLMError("Write a short idea in the prompt box first")
     llm = make_backend(req.backend, req.url)
     model = await llm.pick(req.model, config.OLLAMA_MODEL if llm.name == "ollama" else config.LLM_MODEL)
-    n = 1 if req.mode in ("still", "sound") else (req.shots or auto_shots(req.seconds))
+    n = 1 if req.mode in ("still", "sound") else (req.shots or len(req.locked.get("shots") or []) or auto_shots(req.seconds))
     frames = workflows.h3_length(req.seconds)
 
     user: dict[str, Any] = {"role": "user", "content": _user_message(req, n, frames)}
@@ -512,6 +565,7 @@ async def write_prompt(req: WriteRequest, attempts: int = 3) -> dict[str, Any]:
             problems = ["The reply was cut off or was not valid JSON; keep every field short."]
             data = None
         else:
+            data = apply_locks(data, req.locked, n)
             problems = validate(data, req, n, frames)
         if data is not None and (best is None or len(problems) < len(best[1])):
             best = (data, problems)
@@ -530,6 +584,9 @@ async def write_prompt(req: WriteRequest, attempts: int = 3) -> dict[str, Any]:
     return {
         "prompt": assemble(data, req, n, frames),
         "fields": data,
+        "mode": req.mode,
+        "frames": frames,
+        "times": shot_times(frames, n) if req.mode not in ("still", "sound") else [0.0],
         "backend": llm.name,
         "model": model,
         "vision": bool(req.images and can_see is not False and not getattr(llm, "text_only", False)),

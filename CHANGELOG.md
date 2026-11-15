@@ -5,6 +5,29 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.5.0] - 2026-11-15
+
+### Added
+- **Prompt Writer window** (`/writer`, opened with **↗ Writer window** next to the prompt). It works like the
+  EDITS-WITH-AI editor:
+  - **Your idea:** type it on the left. With **Auto** on, the local LLM rewrites the prompt a moment after you stop
+    typing.
+  - **Fields:** style, sound and music, plus one card per shot (framing, setting and light, action, camera, and an
+    optional spoken line), each with a 🔒 lock.
+  - **Locks:** typing into a field locks it, so the LLM keeps it word for word and writes the rest around it. Click
+    🔒 to let the LLM rewrite it.
+  - **Live H3 prompt:** the right side rebuilds on every keystroke, with no LLM call, and is colour-coded by who
+    wrote each part: H3 format, you, the LLM, or missing. Click any part to jump to its field.
+  - **Live checks:** negations, filler, word limits, spoken-line length, and unused or invalid `<Picture N>` tags.
+  - **Sync with the studio:** the window follows the studio's engine, duration, aspect, keyframes and reference
+    pictures, and keeps duration in sync both ways. Clicking a picture inserts its tag. **Use in studio** puts the
+    prompt in the studio's prompt box, with Undo.
+  - **Draft:** the draft is kept in the browser between sessions.
+- `/api/prompt/write` accepts `locked` fields. The LLM is told to keep them, they are put back over its answer, and
+  the validator never sends them back for a retry.
+- `static/h3prompt.js` mirrors the server's prompt assembly; `tests/h3prompt_parity.py` checks that both build the
+  identical prompt.
+
 ## [0.4.0] - 2026-11-15
 
 ### Added
@@ -69,6 +92,7 @@ All notable changes to Bob Studio are recorded here. The format follows
 - "Write for me" prompt writer using Ollama or any OpenAI-compatible local server, with a validator and retries.
 - Live step progress over SSE, takes, a gallery with reuse and re-roll, and per-engine model checks.
 
+[0.5.0]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.1.0...v0.2.0
