@@ -66,6 +66,16 @@ class Graph:
         return [nid, slot]
 
 
+def chain_loras(g: "Graph", model: str, loras: list[tuple[str, float]] | None) -> str:
+    """LoraLoaderModelOnly per chosen LoRA (name as ComfyUI lists it, strength), after the
+    model and any turbo LoRA. Returns the last node id."""
+    for name, strength in loras or []:
+        if abs(float(strength)) < 1e-6:
+            continue
+        model = g.add("LoraLoaderModelOnly", model=[model, 0], lora_name=name, strength_model=float(strength))
+    return model
+
+
 @dataclass
 class Built:
     graph: dict[str, Any]
@@ -110,6 +120,7 @@ def build_h3(
     first_frame: bool = False,
     last_frame: bool = False,
     prefix: str = "bob/h3",
+    loras: list[tuple[str, float]] | None = None,
 ) -> Built:
     g = Graph()
     o = Graph.out
@@ -124,6 +135,7 @@ def build_h3(
     else:
         default_steps = 20
     n_steps = int(steps or default_steps)
+    model = chain_loras(g, model, loras)
 
     clip = g.add("CLIPLoader", clip_name=files["clip"], type="minimax", device="default")
     vae = g.add("VAELoader", vae_name=files["vae"])
@@ -215,6 +227,7 @@ def build_h3_ref(
     audios: int = 0,
     clean_audio: bool = True,
     prefix: str = "bob/h3ref",
+    loras: list[tuple[str, float]] | None = None,
 ) -> Built:
     """Reference-to-video (template ``video_minimax_h3_r2v``): 0-9 reference pictures and
     0-3 reference sounds (voices to clone), at least one of either.
@@ -240,6 +253,7 @@ def build_h3_ref(
     else:
         default_steps = 20
     n_steps = int(steps or default_steps)
+    model = chain_loras(g, model, loras)
 
     clip = g.add("CLIPLoader", clip_name=files["clip"], type="minimax", device="default")
     vae = g.add("VAELoader", vae_name=files["vae"])
@@ -325,6 +339,7 @@ def build_klein(
     enhance: bool = False,
     aspect_label: str = "1:1",
     prefix: str = "bob/klein",
+    loras: list[tuple[str, float]] | None = None,
 ) -> Built:
     g = Graph()
     o = Graph.out
@@ -351,7 +366,7 @@ def build_klein(
     empty = g.add("EmptyFlux2LatentImage", width=width, height=height, batch_size=1)
     sampled = g.add(
         "KSampler",
-        model=o(unet), seed=int(seed), steps=int(steps), cfg=1.0, sampler_name="euler", scheduler="simple",
+        model=o(chain_loras(g, unet, loras)), seed=int(seed), steps=int(steps), cfg=1.0, sampler_name="euler", scheduler="simple",
         positive=o(pos), negative=o(neg), latent_image=o(empty), denoise=1.0,
     )
     decoded = g.add("VAEDecode", samples=o(sampled), vae=o(vae))
@@ -378,6 +393,7 @@ def build_reshoot(
     steps: int | None = None,
     klein_steps: int = 12,
     prefix: str = "bob/reshoot",
+    loras: list[tuple[str, float]] | None = None,
 ) -> Built:
     """Regenerate a shot along a new camera move.
 
@@ -428,6 +444,7 @@ def build_reshoot(
     else:
         default_steps = 20
     n_steps = int(steps or default_steps)
+    model = chain_loras(g, model, loras)
     clip = g.add("CLIPLoader", clip_name=h3["clip"], type="minimax", device="default")
     vae = g.add("VAELoader", vae_name=h3["vae"])
     length = h3_length(seconds)
@@ -468,6 +485,7 @@ def build_music3(
     steps: int = 30,
     cfg: float = 1.7,
     prefix: str = "bob/music3",
+    loras: list[tuple[str, float]] | None = None,
 ) -> Built:
     g = Graph()
     o = Graph.out
@@ -483,7 +501,7 @@ def build_music3(
     empty = g.add("EmptyMiniMaxMusic3LatentAudio", seconds=o(enc, 1), batch_size=1)
     sampled = g.add(
         "KSampler",
-        model=o(unet), seed=int(seed), steps=int(steps), cfg=cfg, sampler_name="euler", scheduler="simple",
+        model=o(chain_loras(g, unet, loras)), seed=int(seed), steps=int(steps), cfg=cfg, sampler_name="euler", scheduler="simple",
         positive=o(enc, 0), negative=o(neg), latent_image=o(empty), denoise=1.0,
     )
     audio = g.add("VAEDecodeAudio", samples=o(sampled), vae=o(vae))

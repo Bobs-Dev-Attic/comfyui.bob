@@ -25,6 +25,11 @@ Kind = Literal["video", "image", "audio"]
 Engine = Literal["h3", "h3ref", "klein", "music3", "reshoot"]
 
 
+class LoraUse(BaseModel):
+    name: str = Field(..., max_length=500)  # as ComfyUI lists it (models/loras)
+    strength: float = Field(1.0, ge=-4, le=4)
+
+
 class GenerateRequest(BaseModel):
     kind: Kind
     engine: Engine = "h3"
@@ -39,6 +44,7 @@ class GenerateRequest(BaseModel):
     last_frame: str | None = None
     references: list[str] = Field(default_factory=list, max_length=9)  # H3 reference-to-video pictures
     ref_audios: list[str] = Field(default_factory=list, max_length=3)  # H3 reference sounds: voices to clone (<Audio N>)
+    loras: list[LoraUse] = Field(default_factory=list, max_length=8)  # LoRAs on the model, in order
     clean_audio: bool = True  # clean them and keep the best 6-10 s of speech (H3RefAudioPrep, when installed)
     max_fidelity: bool = False  # reference pictures at 2048px instead of the output's size
     enhance: bool = False  # Klein prompt upsampler
@@ -169,6 +175,18 @@ class JobManager:
             files[mset.key] = resolved["files"]
         resolved = {"files": files if req.engine == "reshoot" else files[sets[0].key]}
         self._validate(req)
+        if req.loras:
+            from . import loras as lora_mod
+            known = {n.replace("\\", "/"): n for n in installed.get("loras", [])}
+            for lu in req.loras:
+                n = known.get(lu.name.replace("\\", "/"))
+                if not n:
+                    raise ValueError(f"LoRA not found in ComfyUI: {lu.name}")
+                lu.name = n
+            info = {r["name"]: r for r in lora_mod.scan([lu.name for lu in req.loras])}
+            for lu in req.loras:
+                if info.get(lu.name, {}).get("kind") == "refmod":
+                    raise ValueError(f"{lu.name} is a RefMod reference, not a LoRA: it needs the RefMod nodes")
 
         base_seed = req.seed if req.seed >= 0 else random.randint(0, 2**48)
         created = []
@@ -243,7 +261,7 @@ class JobManager:
             return workflows.build_h3(
                 files, output=req.kind, prompt=req.prompt, width=w, height=h, seconds=req.seconds, seed=seed,
                 turbo=req.turbo, steps=req.steps, first_frame=bool(req.first_frame) and req.kind == "video",
-                last_frame=bool(req.last_frame) and req.kind == "video", prefix=prefix,
+                last_frame=bool(req.last_frame) and req.kind == "video", prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras],
             )
         if req.engine == "reshoot":
             with Image.open(media_path(req.guides[0])) as im:
@@ -251,7 +269,7 @@ class JobManager:
             return workflows.build_reshoot(
                 files["h3"], files["klein"], prompt=req.prompt, fill_prompt=req.fill_prompt, width=w, height=h,
                 seconds=req.seconds, seed=seed, turbo=req.turbo, guide_frames=req.guide_frames,
-                references=len(req.references), steps=req.steps, prefix=prefix,
+                references=len(req.references), steps=req.steps, prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras],
             )
         if req.engine == "h3ref":
             mp = workflows.H3_QUALITY.get(req.quality, workflows.H3_QUALITY["draft"])
@@ -260,18 +278,18 @@ class JobManager:
                 files, prompt=req.prompt, width=w, height=h, seconds=req.seconds, seed=seed,
                 references=len(req.references), turbo=req.turbo, steps=req.steps,
                 max_fidelity=req.max_fidelity, audios=len(req.ref_audios),
-                clean_audio=req.clean_audio and self.has_node("H3RefAudioPrep"), prefix=prefix,
+                clean_audio=req.clean_audio and self.has_node("H3RefAudioPrep"), prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras],
             )
         if req.engine == "klein":
             mp = workflows.KLEIN_QUALITY.get(req.quality, 1.0)
             w, h = workflows.dims_for(aspect, mp, multiple=16)
             return workflows.build_klein(
                 files, prompt=req.prompt, width=w, height=h, seed=seed, steps=req.steps or 16,
-                enhance=req.enhance, aspect_label=req.aspect, prefix=prefix,
+                enhance=req.enhance, aspect_label=req.aspect, prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras],
             )
         return workflows.build_music3(
             files, caption=req.prompt, lyrics=req.lyrics or "[Instrumental]", seconds=req.seconds, seed=seed,
-            steps=req.steps or 30, prefix=prefix,
+            steps=req.steps or 30, prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras],
         )
 
     async def _run(self, item: dict[str, Any], req: GenerateRequest, files: dict[str, str | None]) -> None:

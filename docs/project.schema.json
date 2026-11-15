@@ -1059,6 +1059,29 @@
           "title": "Clean Audio",
           "type": "boolean"
         },
+        "loras": {
+          "description": "LoRAs on the model, in order: {name (as ComfyUI lists it), strength}",
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Loras",
+          "type": "array"
+        },
+        "shots": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "the Shots step: {on, mode: multi|each, style, soundscape, music, list: [shot]}",
+          "title": "Shots"
+        },
         "frames": {
           "$ref": "#/$defs/Frames"
         }
@@ -1569,7 +1592,7 @@
       "type": "number"
     },
     "app_version": {
-      "default": "0.18.0",
+      "default": "0.19.0",
       "title": "App Version",
       "type": "string"
     },

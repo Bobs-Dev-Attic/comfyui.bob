@@ -37,6 +37,8 @@
         <button type="button" class="step-tab" role="tab" data-step="project"><span class="ico">📁<span class="n"><span>1</span></span></span>Project</button>
         <button type="button" class="step-tab" role="tab" data-step="model"><span class="ico">🎞️<span class="n"><span>2</span></span></span>Model</button>
         <button type="button" class="step-tab" role="tab" data-step="inputs"><span class="ico">🖼️<span class="n"><span>3</span></span></span>Inputs</button>
+        <button type="button" class="step-tab" role="tab" data-step="shots"><span class="ico">🎬<span class="n"><span>4</span></span></span>Shots</button>
+        <button type="button" class="step-tab" role="tab" data-step="loras"><span class="ico">🧩<span class="n"><span>5</span></span></span>LoRAs</button>
         <button type="button" class="step-tab" role="tab" data-step="prompt"><span class="ico">✍️<span class="n"><span>4</span></span></span>Prompt</button>
         <button type="button" class="step-tab" role="tab" data-step="settings"><span class="ico">⚙️<span class="n"><span>5</span></span></span>Settings</button>
         <button type="button" class="step-tab" role="tab" data-step="generate"><span class="ico">▶️<span class="n"><span>6</span></span></span>Generate</button>
@@ -114,8 +116,44 @@
             </div>
           </section>
 
+          <!-- Shots (video) -->
+          <section class="step" data-step="shots" role="tabpanel" hidden>
+            <div class="shots-head">
+              <div class="field toggle-row"><label class="switch"><input type="checkbox" id="shots-on"><span></span></label><div><strong>Use shots</strong>
+                <span class="hint inline">build the video from this shot list instead of the Prompt step</span></div></div>
+              <div class="seg sm" id="shots-mode" role="group" aria-label="How shots become video">
+                <button type="button" data-m="multi" title="One generation, H3's multi-shot prompt ([Shot 1] … [Shot 2] …)">One video · multi-shot</button>
+                <button type="button" data-m="each" title="One generation per shot; the results go on the timeline in order">One video per shot</button>
+              </div>
+              <span class="shots-total" id="shots-total"></span>
+            </div>
+            <div class="field"><label for="shots-style">Look <span class="opt">style, light, lens: for every shot</span></label>
+              <input id="shots-style" placeholder="Cinematic live-action, warm tungsten palette, 35mm lens, shallow depth of field"></div>
+            <div class="shot-list" id="shot-list"></div>
+            <button type="button" class="shot-add" id="btn-shot-add">＋ Add shot</button>
+            <div class="row2">
+              <div class="field"><label for="shots-sound">Soundscape</label><input id="shots-sound" placeholder="Rain on metal, distant traffic, footsteps in puddles"></div>
+              <div class="field"><label for="shots-music">Music</label><input id="shots-music" placeholder="N/A"></div>
+            </div>
+            <p class="hint" id="shots-hint"></p>
+            <details class="shots-preview"><summary>Prompt preview</summary><pre id="shots-prompt"></pre></details>
+            <datalist id="shot-cams"><option value="holds a static shot"><option value="slowly pushes in"><option value="slowly pulls back"><option value="pans left"><option value="pans right"><option value="tilts up"><option value="tilts down"><option value="tracks alongside the subject"><option value="follows the subject from behind"><option value="orbits around the subject"><option value="cranes up"><option value="is handheld and close"><option value="racks focus"></datalist>
+          </section>
+
+          <!-- LoRAs -->
+          <section class="step" data-step="loras" role="tabpanel" hidden>
+            <div class="field">
+              <div class="label-row"><label>LoRAs on <span id="lora-model"></span></label>
+                <span class="label-actions"><button type="button" class="btn sm" id="btn-lora-browse">📂 Browse LoRAs…</button></span></div>
+              <div class="lora-list" id="lora-list"></div>
+              <p class="hint">LoRAs steer the model toward a style, a character or a motion. Strength 1 is full, 0.5 half, negative pushes away;
+                they apply in order. Click a trigger word to put it in the prompt. H3's turbo LoRA is the Turbo switch in Settings.</p>
+            </div>
+          </section>
+
           <!-- 4 · Prompt -->
           <section class="step" data-step="prompt" role="tabpanel">
+            <p class="shots-banner" id="prompt-shots-banner" hidden>🎬 Shots are on: Generate builds the video from the <button type="button" class="link" id="btn-goto-shots">Shots step</button>, not this prompt.</p>
     <div class="field">
               <div class="label-row">
                 <label for="prompt" id="prompt-label">Prompt</label>
@@ -338,6 +376,9 @@
   <script src="/static/timeline.js"></script>
   <script src="/static/bin.js"></script>
   <script src="/static/activity.js"></script>
+  <script src="/static/h3prompt.js"></script>
+  <script src="/static/loras.js"></script>
+  <script src="/static/shots.js"></script>
   <script src="/static/app.js"></script>
   <script src="/static/shell.js"></script>
 </body>

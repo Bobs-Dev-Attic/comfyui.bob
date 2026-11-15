@@ -47,6 +47,15 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   - Projects are folders under `projects/`, and each one keeps its settings, notes and results.
   - Settings save automatically, and the last project reopens on the next visit.
 
+- **Shots** (video, after Inputs): plan the video shot by shot: each shot has a length, framing, where, what happens, a camera
+  move, a spoken line with a voice from the reference sounds, and its own first/last frame (H3) or reference pictures (H3
+  Reference). Turn on **Use shots** and pick **One video · multi-shot** (one generation in H3's `[Shot 1] … [Shot 2] At
+  00:03.000, …` format) or **One video per shot** (a generation per shot, laid out on the timeline in order).
+- **LoRAs** (every model): add LoRAs with a strength, reorder them, and click trigger words into the prompt. **📂 Browse
+  LoRAs…** opens a Windows Explorer style browser over every LoRA ComfyUI can load: folder tree, address bar, search,
+  details or large icons, and a details pane (what model it's for, base, rank, size, trigger words, description, preview
+  picture if there is one next to the file). It shows only LoRAs that fit the selected model unless you untick that, and
+  hides RefMod reference files (they need the RefMod nodes).
 - **Media gallery** (Inputs step, or **🗂 Media**): the project's library, virtual folders, bookmarked folders,
   results and uploads.
   - Thumbnails are cached in `data/thumbs`.
