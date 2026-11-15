@@ -47,6 +47,13 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   - Projects are folders under `projects/`, and each one keeps its settings, notes and results.
   - Settings save automatically, and the last project reopens on the next visit.
 
+- **✨ Enhance** (any finished picture or video: the viewer's button or the results menu): improve it with a chain, in order:
+  **FaceRefine** (videos made with H3: tracks the main face and re-renders it with H3 Reference at a low denoise, using the
+  video's own prompt, references and LoRAs, then stitches it back), **DLSS 5** (NVIDIA neural rendering, 1x look or 1.5–3x
+  upscale), then **SeedVR2** (restore and upscale to 720p–2160p, 3B or 7B) or **RelayVSR ×2** (fast 2x video
+  super-resolution). Settings › **After generating** can run it on every new result. Needs the ComfyUI-H3-FaceRefine,
+  ComfyUI-DLSS5-Enhancer and SeedVR2 custom nodes, and the RelayVSR model files; missing ones are greyed out. The window,
+  the After generating setting and the Activity console estimate how long it takes, learning from your own runs.
 - **Shots** (video, after Inputs): plan the video shot by shot: each shot has a length, framing, where, what happens, a camera
   move, a spoken line with a voice from the reference sounds, and its own first/last frame (H3) or reference pictures (H3
   Reference). Turn on **Use shots** and pick **One video · multi-shot** (one generation in H3's `[Shot 1] … [Shot 2] At

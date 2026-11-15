@@ -114,7 +114,7 @@ async function api(path, opts = {}) {
   return res.json();
 }
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const engineName = (kind, eng) => (ENGINES[kind].find(e => e.key === eng) || {}).label || eng;
+const engineName = (kind, eng) => eng === "enhance" ? "Enhanced" : (ENGINES[kind]?.find(e => e.key === eng) || {}).label || eng;
 function fmtDur(s) { if (s == null) return ""; s = Math.round(s); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`; }
 function waveHTML(seed, n = 28) {
   let x = 0; for (const c of seed) x = (x * 31 + c.charCodeAt(0)) >>> 0;
@@ -205,6 +205,7 @@ function updateDerived() {
   }
   $("#dims").textContent = dims;
   $("#dims").hidden = !dims;
+  if (typeof Enhance !== "undefined") Enhance.renderAfter();
   const turbo = $("#turbo").checked;
   const refLora = state.caps?.engines?.h3ref?.files?.turbo_lora || "";
   const refTurboSteps = /8step/i.test(refLora) ? 8 : 4;
@@ -269,6 +270,7 @@ function collectRequest() {
     clean_audio: $("#clean-audio").checked,
     max_fidelity: eng === "h3ref" && $("#fidelity").checked,
     loras: Loras.forRequest(),
+    enhance_after: (kind === "video" || kind === "image") ? Enhance.after() : null,
     project: state.project?.id ?? null,
   };
 }
@@ -806,6 +808,7 @@ function renderViewer() {
       ${it.status === "done" && f ? `<button class="btn primary-soft" data-a="timeline" title="Add to the end of the timeline (Enter)">＋ Timeline</button>` : ""}
       <button class="btn" data-a="reuse">Reuse settings</button>
       ${it.engine !== "timeline" ? `<button class="btn" data-a="reroll">Re-roll</button>` : ""}
+      ${it.status === "done" && f && (it.kind === "video" || it.kind === "image") ? `<button class="btn" data-a="enhance" title="FaceRefine, DLSS 5, SeedVR2 or RelayVSR">✨ Enhance…</button>` : ""}
       ${canFrame ? `<button class="btn" data-a="first">→ First frame</button><button class="btn" data-a="last">→ Last frame</button><button class="btn" data-a="ref">→ Reference</button>` : ""}
       ${f ? `<a class="btn" href="${esc(f.url)}" download="${esc(f.name)}">Download</a>` : ""}
       <button class="btn ghost danger" data-a="delete">Delete</button>
@@ -841,6 +844,7 @@ async function action(a, it) {
   if (a === "tags") return Bin.tags(it);
   if (a === "reuse") { applyParams(it.params); $("#seed").value = it.seed; scheduleSave(); showStep("prompt"); return; }
   if (a === "reroll") return submit({ ...it.params, seed: -1, batch: 1 });
+  if (a === "enhance") return Enhance.dialog(it);
   if (a === "ref") {
     state.kind = "video"; state.engine.video = "h3ref";
     addRef(it.files[0].path, it.files[0].url); renderForm();
@@ -865,7 +869,7 @@ function connectEvents() {
   es.onmessage = e => {
     const ev = JSON.parse(e.data);
     Activity.onEvent(ev);
-    if (ev.type === "item") { TL.onItem?.(ev.item); Shots.onItem(ev.item); }
+    if (ev.type === "item") { TL.onItem?.(ev.item); Shots.onItem(ev.item); Enhance.onItem(ev.item); }
     if (ev.type === "item") {
       const prev = state.items.get(ev.item.id);
       state.items.set(ev.item.id, ev.item);
@@ -954,6 +958,7 @@ function init() {
   initRefs();
   Loras.initStep();
   Shots.init();
+  Enhance.initSettings();
   $("#btn-goto-shots").onclick = () => showStep("shots");
   initArefs();
   initWriter();

@@ -422,3 +422,18 @@ details.writer .field + .field, details.writer .row2 + .field, details.writer .f
   background: color-mix(in srgb, var(--accent) 10%, transparent); font-size: 13px; }
 @media (max-width: 640px) { .shot-frames { grid-template-columns: 1fr 1fr; } .shot-frames .hint { grid-column: 1 / -1; } }
 .lx-title { margin: -4px 0 0; color: var(--muted); font-size: 12px; }
+
+/* ---------------------------------------------------------------- Enhance */
+.enh { display: grid; gap: 10px; padding: 14px 16px; }
+.enh-step { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: grid; gap: 8px; background: var(--panel-2); }
+.enh-step.off { opacity: .55; }
+.enh-step > label.check { font-weight: 600; }
+.enh-step .hint { margin: 0; }
+.enh-opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px 12px; }
+.enh-opts .field { margin: 0; gap: 3px; }
+.enh-opts label { font-size: 12px; color: var(--muted); }
+.enh-up { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.enh-sum { font-size: 12.5px; color: var(--muted); }
+.enh-sum b { color: var(--text); }
+.enh-after-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.enh-after-row select { width: auto; }

@@ -137,6 +137,7 @@ const Bin = (() => {
       done && img && ["Use as last frame", () => action("last", it)],
       done && img && ["Use as reference", () => action("ref", it)],
       done && vid && ["Continue from the last frame", () => continueFrom(it)],
+      done && (vid || img) && ["✨ Enhance… (FaceRefine, DLSS 5, upscale)", () => Enhance.dialog(it)],
       ["Reuse settings", () => action("reuse", it)],
       it.engine !== "timeline" && ["Re-roll", () => action("reroll", it)],
       done && ["Download", () => { const a = document.createElement("a"); a.href = it.files[0].url; a.download = it.files[0].name; a.click(); }],

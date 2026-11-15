@@ -473,6 +473,147 @@ def build_reshoot(
                        "seconds": round(length / FPS, 2)})
 
 
+# ------------------------------------------------------------------- Enhance / upscale
+
+DLSS_MODES = {"1x": "1x (DLAA / native)", "1.5x": "1.5x (Quality)", "1.724x": "1.724x (Balanced)", "2x": "2x (Performance)",
+              "3x": "3x (Ultra Performance)"}
+
+
+def build_enhance(
+    *,
+    video: bool,
+    has_audio: bool,
+    opts: dict[str, Any],
+    seed: int,
+    prompt: str = "",
+    h3: dict[str, str | None] | None = None,
+    references: int = 0,
+    audios: int = 0,
+    clean_audio: bool = True,
+    relay: dict[str, str] | None = None,
+    loras: list[tuple[str, float]] | None = None,
+    prefix: str = "bob/enhance",
+) -> Built:
+    """Improve a finished picture or video, in this order (each step optional):
+
+    1. FaceRefine (video): ComfyUI-H3-FaceRefine. Faces are tracked and cropped to a steady
+       768 px canvas, the crops are encoded into an H3 audio+video latent next to the original
+       sound (audio lock), and H3 Reference re-samples them at a low denoise with the source's
+       own prompt, reference pictures/sounds and LoRAs, more where faces are small; the refined
+       faces are stitched back.
+    2. DLSS 5 (ComfyUI-DLSS5-Enhancer): NVIDIA neural rendering per frame, in playback order,
+       at 1x (look only) or upscaling 1.5-3x.
+    3. An upscaler: SeedVR2 (diffusion restoration to a target short side, 3B or 7B) or RelayVSR
+       x2 (a Wan-based video super-resolution model, one step).
+    """
+    g = Graph()
+    o = Graph.out
+    image_inputs: dict[str, str] = {}
+    src = g.add("LoadVideo" if video else "LoadImage", **({"file": ""} if video else {"image": ""}))
+    image_inputs["source"] = src
+    if video:
+        comps = g.add("GetVideoComponents", video=o(src))
+        images, audio, fps = o(comps, 0), o(comps, 1), o(comps, 2)
+    else:
+        images, audio, fps = o(src, 0), None, None
+    steps_done = []
+
+    if opts.get("facerefine") and video and h3:
+        unet = g.add("UNETLoader", unet_name=h3["unet"], weight_dtype="default")
+        model = chain_loras(g, unet, loras)
+        clip = g.add("CLIPLoader", clip_name=h3["clip"], type="minimax", device="default")
+        vae = g.add("VAELoader", vae_name=h3["vae"])
+        avae = g.add("VAELoader", vae_name=h3["audio_vae"])
+        track = g.add("H3FaceTrackCrop", images=images, detector=opts.get("face_detector") or "bbox\\face_yolov8m.pt", confidence=0.35,
+                      crop_factor=3.0, canvas_width=768, canvas_height=768, canvas_mode="auto_capped_768", smooth_window=21,
+                      size_smooth_window=51, smooth_method="gaussian", size_mode="per_frame", identity_track=True, identity_threshold=0.28,
+                      select="largest_face", fallback_detector="face_yolov8m.pt", fallback_head_frac=0.5, select_index=0,
+                      identity_model="insightface", cut_detection="none", cut_threshold=3.0, absent_shots="off", X=0, Y=0, frame_index=0)
+        lead = []
+        if references and "<Picture" not in prompt:
+            lead.append(h3_reference_lead(references))
+        if audios and "<Audio" not in prompt:
+            lead.append(h3_audio_lead(audios))
+        text = (" ".join(lead) + "\n\n" + prompt) if lead else prompt
+        cond_inputs: dict[str, Any] = dict(clip=o(clip), vae=o(vae), audio_vae=o(avae), prompt=text or "A person.", width=o(track, 4),
+                                           height=o(track, 5), length=o(track, 6), ref_image_size="match")
+        for i in range(references):
+            load = g.add("LoadImage", image="")
+            image_inputs[f"ref_{i}"] = load
+            cond_inputs[f"ref_images.ref_image_{i}"] = o(load)
+        for i in range(audios):
+            load = g.add("LoadAudio", audio="")
+            image_inputs[f"aref_{i}"] = load
+            a = o(load)
+            if clean_audio:
+                a = o(g.add("H3RefAudioPrep", audio=a, clean="voice_focus", crop_mode="best_window", target_seconds=8.0, max_seconds=10.0,
+                            max_pause_seconds=0.8, fade_ms=25, normalize_peak_db=-3.0, snap_to_latent_grid=True))
+            cond_inputs[f"ref_audios.ref_audio_{i}"] = a
+        cond = g.add("MiniMaxH3ReferenceToVideo", **cond_inputs)
+        lat = o(g.add("H3InjectVideoLatent", av_latent=o(cond, 1), images=o(track, 0), vae=o(vae)), 0)
+        mdl = o(model)
+        if has_audio:
+            lock = g.add("MiniMaxH3NativeAudioLock", model=mdl, av_latent=lat, audio_vae=o(avae), audio=audio)
+            mdl, lat = o(lock, 0), o(lock, 1)
+        pfd = g.add("H3PerFrameDenoise", model=mdl, av_latent=lat, transform=o(track, 1), denoise_multiplier_small_face=1.0,
+                    denoise_multiplier_large_face=0.35, scale_mode="absolute_px", face_px_small=30.0, face_px_large=120.0, gamma=1.0,
+                    smooth_frames=9)
+        sigmas = g.add("BasicScheduler", model=o(pfd, 2), scheduler="simple", steps=int(opts.get("face_steps", 20)),
+                       denoise=float(opts.get("face_strength", 0.4)))
+        guider = g.add("BasicGuider", model=o(pfd, 2), conditioning=o(cond, 0))
+        sampled = g.add("SamplerCustomAdvanced", noise=o(g.add("RandomNoise", noise_seed=int(seed))), guider=o(guider),
+                        sampler=o(g.add("KSamplerSelect", sampler_name="res_multistep")), sigmas=o(sigmas), latent_image=o(pfd, 0))
+        faces = g.add("VAEDecode", samples=o(sampled), vae=o(vae))
+        images = o(g.add("H3FaceStitch", base_images=images, refined_crops=o(faces), transform=o(track, 1), paste_region="face_only",
+                         mask_dilation=24, feather=24, colour_match=1.0, blend=1.0, undetected_frames="fade_out", feather_scales_with_crop=False))
+        steps_done.append("facerefine")
+
+    if opts.get("dlss"):
+        settings = g.add("DLSS5Settings", upscaling_mode=DLSS_MODES.get(opts.get("dlss_mode") or "1x", DLSS_MODES["1x"]), nr_preset="Default",
+                         nr_style=opts.get("dlss_style") or "Default", nr_intensity=float(opts.get("dlss_intensity", 1.0)),
+                         local_tone_strength=1.0, local_structure_strength=1.5, skin_structure_strength=2.0, automatic_mask=True,
+                         dlss_model_preset="M", motion="auto" if video else "none", scene_change_threshold=0.24, warmup_frames=0, runtime_dir="")
+        images = o(g.add("DLSS5EnhanceImages", images=images, settings=o(settings), verify_neural_rendering=True))
+        steps_done.append("dlss")
+
+    up = opts.get("upscaler") or "none"
+    if up == "seedvr2":
+        dit = g.add("SeedVR2LoadDiTModel", model=opts.get("seedvr2_model") or "seedvr2_ema_3b_fp8_e4m3fn.safetensors", device="cuda:0",
+                    blocks_to_swap=0, swap_io_components=False, offload_device="cpu", cache_model=False, attention_mode="sdpa")
+        svae = g.add("SeedVR2LoadVAEModel", model="ema_vae_fp16.safetensors", device="cuda:0", encode_tiled=True, encode_tile_size=1024,
+                     encode_tile_overlap=128, decode_tiled=True, decode_tile_size=768, decode_tile_overlap=128, tile_debug="false",
+                     offload_device="cpu", cache_model=False)
+        images = o(g.add("SeedVR2VideoUpscaler", image=images, dit=o(dit), vae=o(svae), seed=int(seed) % 4294967295,
+                         resolution=int(opts.get("seedvr2_res", 1080)), max_resolution=0, batch_size=33 if video else 1,
+                         uniform_batch_size=bool(video), color_correction="lab", temporal_overlap=3 if video else 0, prepend_frames=0,
+                         input_noise_scale=0.0, latent_noise_scale=0.0, offload_device="cpu", enable_debug=False))
+        steps_done.append("seedvr2")
+    elif up == "relayvsr" and video and relay:
+        m = g.add("UNETLoader", unet_name=relay["unet"], weight_dtype="default")
+        m = g.add("ModelAttentionBackend", model=o(m), attention="comfy kitchen attention")
+        cond = g.add("RelayVSRConditioning", model=o(m), images=images)
+        sampled = g.add("SamplerCustomAdvanced", noise=o(g.add("RandomNoise", noise_seed=int(seed))),
+                        guider=o(g.add("BasicGuider", model=o(m), conditioning=o(cond, 0))),
+                        sampler=o(g.add("KSamplerSelect", sampler_name="euler")),
+                        sigmas=o(g.add("BasicScheduler", model=o(m), scheduler="simple", steps=1, denoise=1.0)), latent_image=o(cond, 1))
+        rvae = g.add("VAELoader", vae_name=relay["vae"])
+        images = o(g.add("VSRDecode", vae=o(rvae), samples=o(sampled), images=images, detail=float(opts.get("relay_detail", 0.45))))
+        steps_done.append("relayvsr")
+    if not steps_done:
+        raise ValueError("Pick at least one step: FaceRefine, DLSS 5 or an upscaler")
+
+    if video:
+        vid_inputs: dict[str, Any] = dict(images=images, fps=fps)
+        if has_audio:
+            vid_inputs["audio"] = audio
+        save = g.add("SaveVideo", video=o(g.add("CreateVideo", **vid_inputs)), filename_prefix=prefix, format="auto", codec="auto")
+    else:
+        save = g.add("SaveImage", images=images, filename_prefix=prefix)
+    return Built(graph=g.nodes, outputs=[save], image_inputs=image_inputs,
+                 info={"steps": " → ".join({"facerefine": "FaceRefine", "dlss": "DLSS 5", "seedvr2": "SeedVR2", "relayvsr": "RelayVSR x2"}[s]
+                                          for s in steps_done), "video": video})
+
+
 # ------------------------------------------------------------------- Music 3
 
 def build_music3(
