@@ -5,6 +5,51 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.8.0] - 2026-11-15
+
+### Added
+- **Split right side.** The viewer is on top. Below it, the **Results bin** and the **timeline** sit side by side.
+  - Drag the dividers to resize both splits; double-click a divider to reset it, or use the arrow keys on it. The
+    sizes are remembered.
+  - The viewer switches between **Result** (the selected result) and **Timeline** (playback of the edit).
+- **Ratings and tags on results.**
+  - ★1–5 on every bin tile and in the viewer: click a star, or press 1–5, or 0 to clear.
+  - Tags with Shift+T or 🏷.
+  - Both are stored in the project's media library, so they also show in the Inputs gallery.
+  - The bin filters by kind, minimum stars, tag and search, and sorts by newest, oldest or best rated.
+  - A tile shows ⧉ when its result is on the timeline, and hovering a video tile plays it, muted.
+- **Multi-track timeline** (`static/timeline.js`), saved in `project.json → timeline`.
+  - **Tracks:** video and audio tracks. Upper video covers lower. Each track has hide, mute and lock buttons,
+    rename, height, volume, and add or delete.
+  - **Clips:** drag them in from the bin or the media gallery, double-click a result, or press Enter. Move them,
+    including onto another track of the same kind, and trim either edge; trimming is capped at the source length
+    and shows a dotted ghost of the whole source.
+  - **Overwrite editing:** dropping onto clips trims or splits what's underneath.
+  - **Snapping** to clip edges, the playhead, markers and In/Out, with a guide line. N toggles it; hold Alt while
+    dragging to skip it.
+  - **Edit operations:** split at the playhead, ripple delete, copy and paste, duplicate, nudge.
+  - **Markers, In/Out and loop:** markers can be renamed and dragged; the area outside In/Out is dimmed, and the
+    In–Out range can loop.
+  - **Navigation:** frame-accurate timecode, which can switch to seconds. Zoom with the slider, +/−, Ctrl+wheel at
+    the pointer, or fit to the timeline or the selection.
+  - **Undo and redo** (200 steps).
+  - **Playback:** the uppermost visible clip is the picture, and audio-track clips play alongside.
+  - **Continue a shot:** "Continue from the last frame", and **G** uses the frame at the playhead as the next
+    generation's first frame.
+  - **Render** to MP4 with ffmpeg: the whole timeline or the In–Out range, at the first clip's size or 1080p or
+    720p. Live progress, and the result lands in the bin.
+  - **Keyboard shortcuts** in the DaVinci/Sonder style; **?** lists them all.
+- **Layouts:** Default, Edit, Review and Bin presets (Alt+1–4), plus up to five saved layouts (Alt+5–9). A layout
+  covers the panel sizes, the side width and the zoom.
+- API: `/api/media/probe`, `/api/media/frame`, `/api/timeline/render`, and `/api/projects/{id}/library/rate`.
+
+### Changed
+- The gallery is replaced by the Results bin.
+- Gallery tiles and the viewer no longer autoplay. Sound starts only when you press play.
+
+### Fixed
+- A result could start looping with sound by itself when a project opened or the viewer changed.
+
 ## [0.7.0] - 2026-11-15
 
 ### Added
@@ -194,6 +239,7 @@ All notable changes to Bob Studio are recorded here. The format follows
 - "Write for me" prompt writer using Ollama or any OpenAI-compatible local server, with a validator and retries.
 - Live step progress over SSE, takes, a gallery with reuse and re-roll, and per-engine model checks.
 
+[0.8.0]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.5.0...v0.5.1

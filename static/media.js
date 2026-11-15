@@ -50,9 +50,11 @@ const Media = (() => {
   async function loadBookmarks() {
     try { st.bookmarks = (await call("/api/bookmarks")).bookmarks; } catch { st.bookmarks = []; }
   }
-  function applyLib(lib) {
-    st.lib = { media: lib.media, tags: lib.tags, virtual_folders: lib.virtual_folders };
+  function applyLib(lib, project = pid()) {
+    if (project === pid()) st.lib = { media: lib.media, tags: lib.tags, virtual_folders: lib.virtual_folders };
     if (lib.errors?.length) toast(lib.errors.join("\n"));
+    // The results bin shows tags and ratings from the same library.
+    window.dispatchEvent(new CustomEvent("bob:library", { detail: { project, lib } }));
   }
 
   async function loadSource() {
@@ -307,7 +309,7 @@ const Media = (() => {
     const box = document.createElement("div");
     box.className = "mg-preview";
     const mediaEl = m.kind === "image" ? `<img src="${esc(m.url)}" alt="">`
-      : m.kind === "video" ? `<video src="${esc(m.url)}" controls autoplay loop playsinline></video>`
+      : m.kind === "video" ? `<video src="${esc(m.url)}" controls autoplay playsinline></video>`
       : `<div class="mg-audio">${m.thumb ? `<img src="${esc(m.thumb.replace(/&w=\d+/, "&w=640"))}" alt="">` : ""}<audio src="${esc(m.url)}" controls autoplay></audio></div>`;
     box.innerHTML = `<div class="mg-pv-media">${mediaEl}</div>
       <div class="mg-pv-info"><b>${esc(m.name)}</b><span>${esc(m.ref)}</span>
@@ -346,7 +348,7 @@ const Media = (() => {
     return wrap;
   }
 
-  function tagsDialog(items) {
+  function tagsDialog(items, project = pid()) {
     const refs = items.map(m => m.ref);
     const counts = new Map();
     for (const m of items) for (const t of m.tags) counts.set(t, (counts.get(t) || 0) + 1);
@@ -373,7 +375,7 @@ const Media = (() => {
     foot.querySelector('[data-a="cancel"]').onclick = () => w.close();
     foot.querySelector('[data-a="save"]').onclick = async () => {
       try {
-        applyLib(await post(`/api/projects/${pid()}/library/tags`, { refs, add: adder.value(), remove: [...removed] }));
+        applyLib(await post(`/api/projects/${project}/library/tags`, { refs, add: adder.value(), remove: [...removed] }), project);
         w.close(); renderAll();
       } catch (e) { toast(e.message); }
     };
@@ -697,5 +699,5 @@ const Media = (() => {
   /* Results finishing or new uploads: refresh views that show them. */
   function refreshSource() { if (["results", "uploads"].includes(st.view.source) || st.view.source.startsWith("bm:")) loadSource(); }
 
-  return { mount, openWindow, setProject, refreshSource, addToLibrary, toast };
+  return { mount, openWindow, setProject, refreshSource, addToLibrary, toast, tagsDialog, tagColor };
 })();

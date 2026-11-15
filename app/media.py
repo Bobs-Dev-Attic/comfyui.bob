@@ -250,7 +250,7 @@ def thumbnail(ref: str, width: int = 256) -> Path:
         if not exe:
             raise MediaError("ffmpeg isn't installed, so there's no thumbnail for this file")
         if kind == "video":
-            cmd = [exe, "-v", "error", "-y", "-ss", "0.5", "-i", str(src), "-frames:v", "1",
+            cmd = [exe, "-nostdin", "-v", "error", "-y", "-ss", "0.5", "-i", str(src), "-frames:v", "1",
                    "-vf", f"scale={width}:-2", "-c:v", "libwebp", "-quality", "80", str(tmp)]
             r = subprocess.run(cmd, capture_output=True, timeout=60, creationflags=NO_WINDOW)
             if r.returncode or not tmp.is_file():  # very short clips: take the first frame
@@ -258,7 +258,7 @@ def thumbnail(ref: str, width: int = 256) -> Path:
                 r = subprocess.run(cmd, capture_output=True, timeout=60, creationflags=NO_WINDOW)
         else:  # audio: a waveform picture
             h = max(48, width // 2)
-            cmd = [exe, "-v", "error", "-y", "-i", str(src), "-filter_complex",
+            cmd = [exe, "-nostdin", "-v", "error", "-y", "-i", str(src), "-filter_complex",
                    f"aformat=channel_layouts=mono,showwavespic=s={width}x{h}:colors=#3ccfc0",
                    "-frames:v", "1", "-c:v", "libwebp", str(tmp)]
             r = subprocess.run(cmd, capture_output=True, timeout=60, creationflags=NO_WINDOW)
@@ -278,6 +278,76 @@ def clear_cache() -> dict[str, Any]:
     if THUMB_DIR.exists():
         shutil.rmtree(THUMB_DIR)
     return before
+
+
+# --------------------------------------------------------------------------- probe and frames
+
+_probe_cache: dict[tuple[str, int, float], dict[str, Any]] = {}
+
+
+def ffprobe() -> str | None:
+    exe = ffmpeg()
+    if exe:
+        cand = Path(exe).with_name("ffprobe" + Path(exe).suffix)
+        if cand.is_file():
+            return str(cand)
+    return shutil.which("ffprobe")
+
+
+def probe(ref: str) -> dict[str, Any]:
+    """Duration, size and audio of a media file (cached by path, size and time)."""
+    src = resolve(ref)
+    st = src.stat()
+    key = (str(src), st.st_size, st.st_mtime)
+    if key in _probe_cache:
+        return _probe_cache[key]
+    kind = kind_of(src.name)
+    info: dict[str, Any] = {"ref": ref, "kind": kind, "duration": None, "width": None, "height": None,
+                            "fps": None, "has_audio": kind == "audio"}
+    if kind == "image":
+        with Image.open(src) as im:
+            info["width"], info["height"] = im.size
+    else:
+        exe = ffprobe()
+        if not exe:
+            raise MediaError("ffprobe isn't installed, so clip lengths can't be read")
+        r = subprocess.run([exe, "-v", "error", "-show_entries",
+                            "format=duration:stream=codec_type,width,height,avg_frame_rate", "-of", "json", str(src)],
+                           capture_output=True, timeout=30, creationflags=NO_WINDOW)
+        if r.returncode:
+            raise MediaError(f"Can't read {src.name}")
+        data = json.loads(r.stdout or b"{}")
+        info["duration"] = float((data.get("format") or {}).get("duration") or 0) or None
+        for s in data.get("streams", []):
+            if s.get("codec_type") == "video" and not info["width"]:
+                info["width"], info["height"] = s.get("width"), s.get("height")
+                num, _, den = (s.get("avg_frame_rate") or "0/1").partition("/")
+                info["fps"] = round(float(num) / float(den or 1), 3) if float(den or 1) else None
+            if s.get("codec_type") == "audio":
+                info["has_audio"] = True
+    _probe_cache[key] = info
+    return info
+
+
+def grab_frame(ref: str, t: float) -> dict[str, Any]:
+    """Save the frame of a video at t seconds (or a copy of a picture) as a PNG upload."""
+    src = resolve(ref)
+    target = config.UPLOAD_DIR / f"frame_{uuid.uuid4().hex[:10]}.png"
+    if kind_of(src.name) == "image":
+        with Image.open(src) as im:
+            im.save(target, "PNG")
+    else:
+        exe = ffmpeg()
+        if not exe:
+            raise MediaError("ffmpeg isn't installed")
+        dur = probe(ref).get("duration") or 0
+        t = max(0.0, min(float(t), max(0.0, dur - 0.05)))
+        r = subprocess.run([exe, "-nostdin", "-v", "error", "-y", "-ss", f"{t:.3f}", "-i", str(src), "-frames:v", "1", str(target)],
+                           capture_output=True, timeout=60, creationflags=NO_WINDOW)
+        if r.returncode or not target.is_file():
+            raise MediaError(f"Couldn't grab a frame from {src.name}")
+    rel = ref_of(target)
+    return {"ref": rel, "url": url_of(rel), "name": target.name}
 
 
 # --------------------------------------------------------------------------- folder picker

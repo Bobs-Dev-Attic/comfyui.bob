@@ -21,7 +21,8 @@ with the id `experiment`.
 
   "settings": { … },              // the studio form, saved as you work
   "config":   { … },              // per-project preferences
-  "library":  { … }               // media, tags and virtual folders
+  "library":  { … },              // media, tags, ratings and virtual folders
+  "timeline": { … }               // the edit: tracks, clips, markers (added in 0.8.0)
 }
 ```
 
@@ -88,6 +89,44 @@ The library collects references to files; it never moves or copies them.
 }
 ```
 
+`rating` is also how studio results are rated in the Results bin: rating or tagging a result adds
+its file to the library.
+
+## `timeline`: the edit
+
+Saved as you work. Times are seconds on the frame grid (`1/fps`).
+
+```jsonc
+"timeline": {
+  "fps": 24,
+  "tracks": [                      // top to bottom; an upper video track covers the ones below
+    { "id": "…", "kind": "video", "name": "V1", "muted": false, "locked": false, "hidden": false, "volume": 1, "height": 56 },
+    { "id": "…", "kind": "audio", "name": "A1", "muted": false, "locked": false, "hidden": false, "volume": 1, "height": 44 }
+  ],
+  "clips": [{
+    "id": "…", "track": "<track id>", "ref": "outputs/2026-11-15/b20789d2c88a_00001_.mp4",
+    "kind": "video",               // video | image (a held still) | audio
+    "name": "Rainy alley",
+    "start": 2.5,                  // where it begins on the timeline
+    "trim_in": 0.25,               // first second of the source used
+    "trim_out": 2.0,               // last second used (exclusive); length = trim_out − trim_in
+    "source_duration": 2.333,      // null for stills
+    "volume": 1, "color": "",
+    "job": "b20789d2c88a"          // the studio result it came from
+  }],
+  "markers": [{ "id": "…", "t": 0.5, "label": "Marker 1", "color": "" }],
+  "playhead": 1.21, "zoom": 60,    // pixels per second
+  "range_in": 0.5, "range_out": 3.0, // In/Out: Render can export just this range
+  "snap": true,
+  "render": {}                     // export settings (reserved: width, height, crf)
+}
+```
+
+Rendering (`POST /api/timeline/render`, `app/render.py`) uses ffmpeg:
+- **Picture:** at each moment the uppermost visible video track wins, and gaps are black.
+- **Sound:** every clip on an unmuted track that has sound is mixed in, at its clip and track volume.
+- **Result:** the MP4 comes back as a studio result in the same project.
+
 ### Media refs
 
 A `ref` names a file the app is allowed to read:
@@ -112,6 +151,7 @@ one.
 
 | From | What happens |
 |---|---|
+| `bob.project/2` from 0.7.0 | No change needed: `timeline` is added with one video and one audio track the first time the project loads. |
 | `"version": 1` (0.6.0) | `schema` is set, and `config` and `library` are added with defaults. Pictures already used as inputs (`settings.refs` and `settings.frames`) become the first library items. |
 
 The upgrade is written back the next time the project saves.
