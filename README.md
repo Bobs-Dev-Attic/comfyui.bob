@@ -58,7 +58,7 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
 - **Results bin and timeline** (bottom right): rate (★1–5) and tag results, then drag them onto a multi-track
   timeline.
   - Trim, split, ripple-delete and snap clips; add markers and an In/Out range.
-  - Play the edit back and render it to MP4.
+  - Play the edit back, render it to MP4, or export FCPXML for DaVinci Resolve.
   - Press **?** for the keyboard shortcuts, and use **▦ Layout** (Alt+1–9) for panel layouts.
 
 Other features:
@@ -114,6 +114,7 @@ Other features:
 - `app/projectfile.py`: the `project.json` schema (pydantic), migration, and JSON Schema export.
 - `app/media.py`: media sources, bookmarks, the thumbnail cache, the folder picker, probing and frame grabs.
 - `app/render.py`: renders a timeline to MP4 with ffmpeg.
+- `app/fcpxml.py`: exports a timeline as FCPXML 1.9 for DaVinci Resolve and Final Cut Pro.
 - `static/`: the UI (vanilla JS, no build step).
   - `shell.js`: the side panel steps, projects, settings persistence and the panel splitter.
   - `winman.js`: movable, resizable windows.

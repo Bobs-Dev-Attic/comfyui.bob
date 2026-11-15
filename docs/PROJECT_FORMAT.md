@@ -127,6 +127,9 @@ Rendering (`POST /api/timeline/render`, `app/render.py`) uses ffmpeg:
 - **Sound:** every clip on an unmuted track that has sound is mixed in, at its clip and track volume.
 - **Result:** the MP4 comes back as a studio result in the same project.
 
+`GET /api/timeline/fcpxml?project=<id>` exports the same timeline as FCPXML 1.9 for DaVinci Resolve. The bottom
+video track becomes the storyline, and the other tracks become lanes.
+
 ### Media refs
 
 A `ref` names a file the app is allowed to read:

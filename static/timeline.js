@@ -599,6 +599,7 @@ const TL = (() => {
     menu(x, y, [
       ["⬇ Render the whole timeline", () => renderTimeline(false)],
       (tl.range_in != null || tl.range_out != null) && ["⬇ Render the In–Out range", () => renderTimeline(true)],
+      ["⇪ Export FCPXML for DaVinci Resolve…", exportFcpxml],
       ...sizes.map(([k, l]) => [`${renderSize === k ? "● " : "○ "}${l}`, () => { renderSize = k; writeUI({ renderSize: k }); }]),
     ].filter(Boolean));
   }
@@ -635,6 +636,20 @@ const TL = (() => {
     if (!c) return toast("No picture at the playhead");
     grabFrame(c, c.kind === "image" ? 0 : c.trim_in + (tl.playhead - c.start));
   }
+  /* Download the timeline as FCPXML 1.9. Media is referenced in place, so the file must be
+     imported on this PC (or wherever the same paths exist). */
+  async function exportFcpxml() {
+    if (!tl.clips.length) return toast("The timeline is empty.");
+    await saveNow();
+    const r = await fetch(`/api/timeline/fcpxml?project=${encodeURIComponent(project)}`);
+    if (!r.ok) { const j = await r.json().catch(() => ({})); return toast(`Export failed: ${j.detail || r.statusText}`); }
+    const name = /filename="([^"]+)"/.exec(r.headers.get("Content-Disposition") || "")?.[1] || "timeline.fcpxml";
+    const url = URL.createObjectURL(await r.blob());
+    Object.assign(document.createElement("a"), { href: url, download: name }).click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    toast(`Saved ${name}. In DaVinci Resolve: File › Import › Timeline…, then pick the file (media is linked from where it is now).`);
+  }
+
   async function renderTimeline(range) {
     if (!tl.clips.length) return toast("The timeline is empty.");
     await saveNow();
