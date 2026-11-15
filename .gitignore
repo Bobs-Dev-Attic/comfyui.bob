@@ -2,3 +2,13 @@
 __pycache__/
 data/
 outputs/
+
+# Secrets: never commit these. Copy .env.example to .env for local settings.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/

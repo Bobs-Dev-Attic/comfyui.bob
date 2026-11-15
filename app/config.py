@@ -8,6 +8,29 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+
+def _load_dotenv(path: Path) -> None:
+    """Read KEY=value lines from a local, gitignored .env into the environment.
+
+    Real environment variables win. Secrets (API keys) belong here or in the
+    environment, never in code or in the repository; see .env.example.
+    """
+    if not path.is_file():
+        return
+    for raw in path.read_text("utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip().removeprefix("export ").strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
+
+
+_load_dotenv(ROOT / ".env")
+
 # Native ComfyUI (used for model discovery, system stats, object_info).
 COMFYUI_URL = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188").rstrip("/")
 
@@ -21,6 +44,10 @@ AUTO_START_PROXY = os.environ.get("BOB_AUTO_START_PROXY", "1") != "0"
 LLM_BACKEND = os.environ.get("BOB_LLM_BACKEND", "ollama")
 LLM_URL = os.environ.get("BOB_LLM_URL", "http://127.0.0.1:8080")  # llama-server's default port
 LLM_MODEL = os.environ.get("BOB_LLM_MODEL", "")
+# Optional bearer token for the OpenAI-compatible server (e.g. llama-server --api-key).
+# Secret: set it in .env or the environment. It is only ever sent to BOB_LLM_URL,
+# never to a URL typed in the browser, and never returned by the API.
+LLM_API_KEY = os.environ.get("BOB_LLM_API_KEY", "")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.environ.get("BOB_OLLAMA_MODEL", "")  # empty = pick the smallest preferred model
 OLLAMA_KEEP_ALIVE = os.environ.get("BOB_OLLAMA_KEEP_ALIVE", "0")  # "0" unloads after each call to free VRAM for H3

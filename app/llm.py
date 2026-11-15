@@ -93,9 +93,12 @@ class Backend:
                 return hit
         return names[0]
 
+    def _headers(self) -> dict[str, str]:
+        return {}
+
     async def _post(self, path: str, body: dict[str, Any], timeout: float = 300) -> dict[str, Any]:
         try:
-            async with httpx.AsyncClient(timeout=timeout) as c:
+            async with httpx.AsyncClient(timeout=timeout, headers=self._headers()) as c:
                 r = await c.post(f"{self.url}{path}", json=body)
         except httpx.HTTPError as exc:
             raise LLMError(f"{self.label} is not reachable at {self.url} ({type(exc).__name__})") from exc
@@ -156,9 +159,16 @@ class Ollama(Backend):
 class OpenAICompatible(Backend):
     name, label = "openai", "Local LLM server"
 
+    def _headers(self) -> dict[str, str]:
+        # The API key goes only to the server configured in .env, so a URL typed
+        # in the browser can never receive it.
+        if config.LLM_API_KEY and self.url == config.LLM_URL.rstrip("/"):
+            return {"Authorization": f"Bearer {config.LLM_API_KEY}"}
+        return {}
+
     async def models(self) -> list[dict[str, Any]]:
         try:
-            async with httpx.AsyncClient(timeout=5) as c:
+            async with httpx.AsyncClient(timeout=5, headers=self._headers()) as c:
                 r = await c.get(f"{self.url}/v1/models")
                 r.raise_for_status()
         except httpx.HTTPError as exc:
