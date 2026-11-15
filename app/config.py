@@ -52,6 +52,10 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.environ.get("BOB_OLLAMA_MODEL", "")  # empty = pick the smallest preferred model
 OLLAMA_KEEP_ALIVE = os.environ.get("BOB_OLLAMA_KEEP_ALIVE", "0")  # "0" unloads after each call to free VRAM for H3
 
+# ComfyUI extra_model_paths.yaml file(s), ";"-separated, used to find model files
+# on disk that the running ComfyUI may not be loading. Machine-specific: set it in .env.
+EXTRA_MODEL_PATHS = os.environ.get("BOB_EXTRA_MODEL_PATHS", "")
+
 HOST = os.environ.get("BOB_HOST", "127.0.0.1")
 PORT = int(os.environ.get("BOB_PORT", "8700"))
 

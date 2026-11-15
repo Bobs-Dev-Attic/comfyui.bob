@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, config, llm, models, workflows
+from . import __version__, config, llm, modelpaths, models, syscheck, workflows
 from .comfy import ComfyService
 from .jobs import GenerateRequest, JobManager, media_path
 
@@ -33,6 +33,10 @@ REQUIRED_NODES = {
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    report = await asyncio.to_thread(syscheck.run)
+    for c in report["checks"]:
+        if c["status"] in ("warn", "fail"):
+            logging.getLogger("bob.syscheck").warning("%s: %s %s", c["label"], c["detail"], c["fix"] and f"({c['fix']})")
     await comfy.start()
     yield
     await comfy.stop()
@@ -68,18 +72,24 @@ async def status():
     }
 
 
+@app.get("/api/syscheck")
+async def system_check():
+    return await asyncio.to_thread(syscheck.run)
+
+
 @app.get("/api/capabilities")
 async def capabilities(refresh: bool = False):
     if not await comfy.system_stats():
         raise HTTPException(503, "ComfyUI is not reachable at " + config.COMFYUI_URL)
     installed = await comfy.installed_models(refresh=refresh)
+    disk = await asyncio.to_thread(modelpaths.scan, refresh)
     try:
         nodes = await comfy.node_types()
     except Exception:
         nodes = set()
     engines = {}
     for key, mset in models.ALL_SETS.items():
-        r = models.resolve(mset, installed)
+        r = models.resolve(mset, installed, disk)
         missing_nodes = sorted(REQUIRED_NODES[key] - nodes) if nodes else []
         r["missing_nodes"] = missing_nodes
         r["ready"] = r["ready"] and not missing_nodes
@@ -90,6 +100,8 @@ async def capabilities(refresh: bool = False):
         "h3_quality": workflows.H3_QUALITY,
         "klein_quality": workflows.KLEIN_QUALITY,
         "fps": workflows.FPS,
+        "model_paths": [str(p) for p in modelpaths.yaml_files()],
+        "comfyui_paths_config": syscheck.comfy_paths_config(await comfy.system_stats()),
     }
 
 

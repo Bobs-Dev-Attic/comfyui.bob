@@ -15,9 +15,22 @@
       <span class="chip" id="st-proxy"><i></i>API v2</span>
       <span class="chip muted" id="st-gpu">GPU</span>
       <span class="chip muted" id="st-queue">Queue 0</span>
+      <button class="chip chip-btn" id="st-sys" title="System check"><i></i>System</button>
       <button class="btn ghost sm" id="btn-free" title="Unload models from VRAM (useful when switching between H3 and FLUX)">Free VRAM</button>
     </div>
   </header>
+
+  <dialog class="sys-dialog" id="sys-dialog" aria-labelledby="sys-title">
+    <div class="sys-head">
+      <h2 id="sys-title">System check</h2>
+      <span class="sys-actions">
+        <button type="button" class="btn ghost sm" id="btn-sys-rerun">Run again</button>
+        <button type="button" class="btn ghost sm" id="btn-sys-close" aria-label="Close">×</button>
+      </span>
+    </div>
+    <p class="hint" id="sys-summary"></p>
+    <ul class="sys-list" id="sys-list"></ul>
+  </dialog>
 
   <main class="layout">
     <!-- ============================================================ CREATE -->

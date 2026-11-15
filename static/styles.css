@@ -290,3 +290,27 @@ details.writer .field + .field, details.writer .row2 + .field, details.writer .f
 }
 .writer-status .warn { color: var(--warn); }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* system check */
+.chip-btn { cursor: pointer; font: inherit; }
+.chip-btn:hover { border-color: var(--accent); }
+.chip.warn i { background: var(--warn); }
+.chip.warn { color: var(--warn); }
+.sys-dialog {
+  width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 64px); border: 1px solid var(--line); border-radius: 14px;
+  background: var(--panel); color: var(--text); padding: 16px 18px;
+}
+.sys-dialog::backdrop { background: rgba(0,0,0,.5); }
+.sys-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.sys-head h2 { margin: 0; font-size: 16px; }
+.sys-actions { display: flex; gap: 6px; }
+.sys-list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
+.sys-list li { display: grid; grid-template-columns: 52px 1fr; gap: 10px; align-items: start; font-size: 13px; }
+.sys-list .badge { font: 700 10px/1 inherit; letter-spacing: .04em; text-align: center; padding: 4px 0; border-radius: 6px; }
+.sys-list .ok .badge { background: rgba(61,214,140,.15); color: var(--ok); }
+.sys-list .warn .badge { background: rgba(245,185,66,.15); color: var(--warn); }
+.sys-list .fail .badge { background: rgba(255,90,90,.15); color: var(--bad); }
+.sys-list .info .badge { background: var(--panel-2); color: var(--muted); }
+.sys-list b { display: block; }
+.sys-list .detail { color: var(--muted); word-break: break-word; }
+.sys-list .fix { color: var(--text); margin-top: 2px; }
