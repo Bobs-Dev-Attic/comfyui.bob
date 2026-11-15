@@ -278,6 +278,7 @@ async function openProject(id, { quiet = false } = {}) {
     writeUI({ lastProject: p.id });
     applySettings(p.settings && p.settings.kind ? p.settings : collectSettings());
     $("#proj-notes").value = p.notes || "";
+    Media.setProject(p.id, p.config?.gallery);
     state.scope = "project"; syncScope();
     renderProjectCard(); renderRecent(); renderGallery(); selectInScope(); renderSteps();
     return p;
@@ -287,6 +288,11 @@ async function openProject(id, { quiet = false } = {}) {
   }
 }
 
+async function loadExperimentMedia() {
+  try { const e = await api("/api/projects/experiment"); Media.setProject("experiment", e.config?.gallery); }
+  catch { Media.setProject("experiment", null); }
+}
+
 async function startExperiment() {
   if (state.project) await saveNow();
   state.project = null; state.projectChosen = true;
@@ -294,6 +300,7 @@ async function startExperiment() {
   const ex = loadExperiment();
   if (ex?.settings) applySettings(ex.settings);
   $("#proj-notes").value = ex?.notes || "";
+  loadExperimentMedia();
   syncScope();
   renderProjectCard(); renderRecent(); renderGallery(); selectInScope(); renderSteps();
 }
@@ -425,6 +432,7 @@ function openSysWindow() {
 /* ------------------------------------------------------------------ init */
 async function initShell() {
   initSplitter();
+  Media.mount($("#media-inputs"));
   state.scope = "project";
   state.projectChosen = false;
   $$(".step-tab").forEach(t => t.addEventListener("click", () => showStep(t.dataset.step)));
@@ -472,6 +480,7 @@ async function initShell() {
     const ex = loadExperiment();
     if (ex?.settings) applySettings(ex.settings);
     $("#proj-notes").value = ex?.notes || "";
+    loadExperimentMedia();
     state.project = null;
     state.projectChosen = !!ex;
     syncScope();

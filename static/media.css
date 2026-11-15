@@ -1,0 +1,113 @@
+/* Media gallery (Inputs step and the Media library window). Uses tokens from styles.css. */
+
+.mg { display: flex; flex-direction: column; min-height: 0; outline: none; position: relative; }
+.mg.drop::after { content: "Drop files to import them"; position: absolute; inset: 0; display: grid; place-items: center;
+  border: 2px dashed var(--accent); border-radius: 12px; background: color-mix(in srgb, var(--panel) 85%, transparent);
+  font-weight: 700; color: var(--accent); z-index: 3; pointer-events: none; }
+.mg-compact { border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); padding: 8px; gap: 6px; }
+.mg-compact .mg-body { max-height: 46vh; min-height: 140px; }
+
+.mg-head { display: flex; flex-direction: column; gap: 6px; }
+.mg-full .mg-head { padding: 10px 12px 0; }
+.mg-full .mg-head h3 { margin: 0; font-size: 15px; }
+.mg-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.mg-row > * { flex: none; }
+.mg-row select { width: auto; }
+.mg-row .btn { white-space: nowrap; }
+.mg-source { flex: 1 1 auto; min-width: 0; width: 100% !important; }
+.mg-kinds { flex-wrap: nowrap; }
+.mg-source, .mg-sort { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; font-size: 12.5px; outline: none; }
+.mg-search { flex: 1 1 120px !important; min-width: 80px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 5px 9px; font-size: 12.5px; outline: none; }
+.mg-search:focus, .mg-source:focus { border-color: var(--accent); }
+.mg input.mg-size { width: 84px; accent-color: var(--accent); }
+.mg-kinds button { padding: 3px 8px; }
+
+.mg-tags { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.mg-full .mg-tagbar, .mg-full .mg-crumbbar { padding: 0 12px; }
+.mg-tagbar:empty, .mg-crumbbar:empty { display: none; }
+.mg-tag {
+  --c: var(--faint);
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 99px; font-size: 11.5px; font-style: normal;
+  border: 1px solid color-mix(in srgb, var(--c) 55%, transparent); background: color-mix(in srgb, var(--c) 12%, transparent);
+  color: var(--text); cursor: pointer; white-space: nowrap;
+}
+.mg-tag small { color: var(--muted); font-size: 10px; }
+.mg-tag.on { background: color-mix(in srgb, var(--c) 34%, transparent); border-color: var(--c); }
+.mg-tag button { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0 0 0 2px; font-size: 13px; line-height: 1; }
+.mg-tag button:hover { color: var(--bad); }
+
+.mg-crumbs { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; font-size: 12px; color: var(--faint); }
+.mg-crumb { border: 0; background: none; color: var(--text); padding: 2px 5px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+.mg-crumb:hover { background: var(--panel); }
+
+.mg-body { overflow: auto; min-height: 0; flex: 1; border-radius: 8px; }
+.mg-full .mg-body { padding: 8px 12px; }
+.mg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--ts, 132px), 1fr)); gap: 8px; }
+.mg-tile { position: relative; display: flex; flex-direction: column; gap: 3px; padding: 4px; border-radius: 10px; cursor: default;
+  border: 1px solid transparent; user-select: none; }
+.mg-tile:hover { background: color-mix(in srgb, var(--panel) 70%, transparent); border-color: var(--line); }
+.mg-tile.sel { background: color-mix(in srgb, var(--accent) 18%, transparent); border-color: var(--accent); }
+.mg-tile.missing { opacity: .5; }
+.mg-img { position: relative; aspect-ratio: 1; border-radius: 7px; overflow: hidden; background: var(--panel); display: grid; place-items: center; }
+.mg-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.mg-ph { font-size: calc(var(--ts, 132px) * .28); opacity: .6; }
+.mg-kind { position: absolute; left: 5px; bottom: 5px; font-size: 10px; padding: 1px 6px; border-radius: 6px; background: rgba(0,0,0,.65); color: #fff; }
+.mg-inlib { position: absolute; right: 6px; bottom: 3px; font-size: 10px; color: var(--accent); text-shadow: 0 0 3px #000; }
+.mg-check { position: absolute; top: 5px; left: 5px; width: 18px; height: 18px; border-radius: 50%; display: none; place-items: center;
+  font-size: 11px; font-weight: 700; background: var(--accent); color: var(--accent-ink); }
+.mg-tile.sel .mg-check { display: grid; }
+.mg-name { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 2px; }
+.mg-dots { display: flex; gap: 3px; padding: 0 2px; }
+.mg-dots i { width: 7px; height: 7px; border-radius: 50%; }
+.mg-folder { cursor: pointer; }
+.mg-empty { padding: 26px 14px; text-align: center; color: var(--faint); font-size: 12.5px; line-height: 1.5; }
+.mg-empty.err { color: var(--bad); }
+
+.mg-foot { display: flex; align-items: center; gap: 8px; min-height: 30px; }
+.mg-full .mg-foot { padding: 6px 12px; border-top: 1px solid var(--line); background: var(--panel-2); }
+.mg-status { font-size: 11.5px; color: var(--muted); flex: 1; }
+.mg-selbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; flex: 1; font-size: 12px; }
+.mg-selbar .btn { padding: 3px 9px; font-size: 12px; }
+.mg-cache { font-size: 11px; color: var(--faint); cursor: pointer; white-space: nowrap; }
+.mg-cache:hover { color: var(--text); text-decoration: underline; }
+
+/* full window: navigation pane */
+.mg-full { flex-direction: row; height: 100%; }
+.mg-nav { width: 230px; flex: none; border-right: 1px solid var(--line); overflow: auto; padding: 6px 6px 12px; background: color-mix(in srgb, var(--panel-2) 60%, transparent); }
+.mg-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.mg-nav-h { display: flex; align-items: center; justify-content: space-between; font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); padding: 10px 6px 4px; }
+.mg-add { border: 0; background: none; color: var(--accent); cursor: pointer; font-size: 15px; line-height: 1; padding: 0 4px; border-radius: 4px; }
+.mg-add:hover { background: var(--panel); }
+.mg-nav-item { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; border: 0; background: none; color: var(--text);
+  padding: 5px 8px; border-radius: 7px; cursor: pointer; font-size: 12.5px; }
+.mg-nav-item:hover { background: var(--panel); }
+.mg-nav-item.on { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.mg-nav-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mg-count { font-size: 10.5px; color: var(--muted); }
+.mg-nav-empty { margin: 0; padding: 2px 8px 4px; font-size: 11px; color: var(--faint); line-height: 1.4; }
+.mg-nav-tags { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 6px; }
+
+/* dialogs */
+.mg-chipin { display: flex; flex-direction: column; gap: 6px; }
+.mg-chips, .mg-current, .mg-sugg { display: flex; flex-wrap: wrap; gap: 5px; min-height: 22px; }
+.mg-fslist { border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); min-height: 160px; max-height: 240px; overflow: auto; padding: 4px; display: grid; align-content: start; }
+.mg-fsitem { text-align: left; border: 0; background: none; color: var(--text); padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.mg-fsitem:hover { background: var(--panel); }
+.mg-preview { display: flex; flex-direction: column; height: 100%; }
+.mg-pv-media { flex: 1; min-height: 0; display: grid; place-items: center; background: #000; }
+.mg-pv-media img, .mg-pv-media video { max-width: 100%; max-height: 100%; object-fit: contain; }
+.mg-audio { display: grid; gap: 10px; justify-items: center; padding: 20px; width: 100%; }
+.mg-audio img { max-width: 100%; }
+.mg-audio audio { width: min(520px, 100%); }
+.mg-pv-info { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 10px 14px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); }
+.mg-pv-info b { color: var(--text); }
+
+.mg-toast { position: fixed; left: 50%; bottom: 22px; transform: translate(-50%, 20px); opacity: 0; pointer-events: none; z-index: 100001;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 9px 14px; font-size: 13px; box-shadow: var(--shadow);
+  transition: .2s; max-width: min(520px, calc(100vw - 32px)); white-space: pre-line; }
+.mg-toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+@media (max-width: 900px) {
+  .mg-nav { display: none; }
+  .mg-size { display: none; }
+}

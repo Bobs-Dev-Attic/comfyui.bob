@@ -1,0 +1,516 @@
+{
+  "$defs": {
+    "Frames": {
+      "properties": {
+        "first_frame": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PictureRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "last_frame": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PictureRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "Frames",
+      "type": "object"
+    },
+    "GalleryConfig": {
+      "description": "How the Inputs media gallery looks for this project.",
+      "properties": {
+        "source": {
+          "default": "library",
+          "description": "library | results | uploads | vf:<folder id> | bm:<bookmark id>",
+          "title": "Source",
+          "type": "string"
+        },
+        "thumb_size": {
+          "default": 132,
+          "maximum": 320,
+          "minimum": 72,
+          "title": "Thumb Size",
+          "type": "integer"
+        },
+        "sort": {
+          "default": "added",
+          "enum": [
+            "added",
+            "name",
+            "modified",
+            "kind"
+          ],
+          "title": "Sort",
+          "type": "string"
+        },
+        "descending": {
+          "default": true,
+          "title": "Descending",
+          "type": "boolean"
+        },
+        "kind": {
+          "default": "all",
+          "enum": [
+            "all",
+            "image",
+            "video",
+            "audio"
+          ],
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "title": "GalleryConfig",
+      "type": "object"
+    },
+    "Library": {
+      "properties": {
+        "media": {
+          "items": {
+            "$ref": "#/$defs/MediaItem"
+          },
+          "title": "Media",
+          "type": "array"
+        },
+        "tags": {
+          "items": {
+            "$ref": "#/$defs/TagDef"
+          },
+          "title": "Tags",
+          "type": "array"
+        },
+        "virtual_folders": {
+          "items": {
+            "$ref": "#/$defs/VirtualFolder"
+          },
+          "title": "Virtual Folders",
+          "type": "array"
+        }
+      },
+      "title": "Library",
+      "type": "object"
+    },
+    "MediaItem": {
+      "description": "A file in the project's library. Only the reference is stored; the file stays where it is.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ref": {
+          "description": "data/uploads/\u2026, outputs/\u2026, or an absolute path inside a bookmarked folder",
+          "title": "Ref",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "image",
+            "video",
+            "audio"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "added": {
+          "title": "Added",
+          "type": "number"
+        },
+        "source": {
+          "default": "other",
+          "enum": [
+            "upload",
+            "output",
+            "bookmark",
+            "other"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        },
+        "rating": {
+          "default": 0,
+          "maximum": 5,
+          "minimum": 0,
+          "title": "Rating",
+          "type": "integer"
+        },
+        "note": {
+          "default": "",
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref",
+        "kind",
+        "name"
+      ],
+      "title": "MediaItem",
+      "type": "object"
+    },
+    "PictureRef": {
+      "description": "A picture used as an input: `ref` is what the server reads, `url` what the browser shows.",
+      "properties": {
+        "ref": {
+          "title": "Ref",
+          "type": "string"
+        },
+        "url": {
+          "default": "",
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref"
+      ],
+      "title": "PictureRef",
+      "type": "object"
+    },
+    "ProjectConfig": {
+      "additionalProperties": true,
+      "properties": {
+        "gallery": {
+          "$ref": "#/$defs/GalleryConfig"
+        },
+        "writer": {
+          "$ref": "#/$defs/WriterConfig"
+        },
+        "defaults": {
+          "additionalProperties": true,
+          "description": "settings a reset goes back to",
+          "title": "Defaults",
+          "type": "object"
+        }
+      },
+      "title": "ProjectConfig",
+      "type": "object"
+    },
+    "StudioSettings": {
+      "additionalProperties": true,
+      "description": "The studio form, saved as you work. Unknown keys are kept so newer versions can add fields.",
+      "properties": {
+        "v": {
+          "default": 1,
+          "title": "V",
+          "type": "integer"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "image",
+                "video",
+                "audio"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kind"
+        },
+        "engine": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "model per kind, e.g. {'video': 'h3ref'}",
+          "title": "Engine",
+          "type": "object"
+        },
+        "prompt": {
+          "default": "",
+          "title": "Prompt",
+          "type": "string"
+        },
+        "lyrics": {
+          "default": "",
+          "title": "Lyrics",
+          "type": "string"
+        },
+        "aspect": {
+          "default": "16:9",
+          "title": "Aspect",
+          "type": "string"
+        },
+        "quality": {
+          "default": "draft",
+          "title": "Quality",
+          "type": "string"
+        },
+        "seconds": {
+          "default": 5,
+          "title": "Seconds",
+          "type": "number"
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "default": -1,
+          "title": "Seed"
+        },
+        "steps": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "",
+          "title": "Steps"
+        },
+        "batch": {
+          "default": 1,
+          "maximum": 4,
+          "minimum": 1,
+          "title": "Batch",
+          "type": "integer"
+        },
+        "turbo": {
+          "default": true,
+          "title": "Turbo",
+          "type": "boolean"
+        },
+        "enhance": {
+          "default": false,
+          "title": "Enhance",
+          "type": "boolean"
+        },
+        "fidelity": {
+          "default": false,
+          "title": "Fidelity",
+          "type": "boolean"
+        },
+        "refs": {
+          "description": "H3 Reference pictures, in <Picture N> order",
+          "items": {
+            "$ref": "#/$defs/PictureRef"
+          },
+          "title": "Refs",
+          "type": "array"
+        },
+        "frames": {
+          "$ref": "#/$defs/Frames"
+        }
+      },
+      "title": "StudioSettings",
+      "type": "object"
+    },
+    "TagDef": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "color": {
+          "default": "",
+          "description": "CSS colour; empty = automatic",
+          "title": "Color",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "TagDef",
+      "type": "object"
+    },
+    "VirtualFolder": {
+      "description": "A saved view of the library: every item whose tags match. Items aren't moved or copied.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        },
+        "match": {
+          "default": "all",
+          "enum": [
+            "all",
+            "any"
+          ],
+          "title": "Match",
+          "type": "string"
+        },
+        "kinds": {
+          "description": "empty = every kind",
+          "items": {
+            "enum": [
+              "image",
+              "video",
+              "audio"
+            ],
+            "type": "string"
+          },
+          "title": "Kinds",
+          "type": "array"
+        },
+        "created": {
+          "title": "Created",
+          "type": "number"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "VirtualFolder",
+      "type": "object"
+    },
+    "WriterConfig": {
+      "description": "Prompt writer preferences for this project (None = use the app's).",
+      "properties": {
+        "backend": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Backend"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "dialogue": {
+          "default": false,
+          "title": "Dialogue",
+          "type": "boolean"
+        },
+        "shots": {
+          "anyOf": [
+            {
+              "maximum": 6,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Shots"
+        }
+      },
+      "title": "WriterConfig",
+      "type": "object"
+    }
+  },
+  "additionalProperties": true,
+  "properties": {
+    "schema": {
+      "default": "bob.project/2",
+      "title": "Schema",
+      "type": "string"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "created": {
+      "title": "Created",
+      "type": "number"
+    },
+    "modified": {
+      "title": "Modified",
+      "type": "number"
+    },
+    "app_version": {
+      "default": "0.7.0",
+      "title": "App Version",
+      "type": "string"
+    },
+    "notes": {
+      "default": "",
+      "title": "Notes",
+      "type": "string"
+    },
+    "thumb": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Thumb"
+    },
+    "settings": {
+      "$ref": "#/$defs/StudioSettings"
+    },
+    "config": {
+      "$ref": "#/$defs/ProjectConfig"
+    },
+    "library": {
+      "$ref": "#/$defs/Library"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "title": "Bob Studio project (bob.project/2)",
+  "type": "object",
+  "$id": "https://github.com/Bobs-Dev-Attic/comfyui.bob/docs/project.schema.json"
+}
