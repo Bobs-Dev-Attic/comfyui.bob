@@ -133,6 +133,18 @@
           "minimum": 0,
           "title": "Fade Out",
           "type": "number"
+        },
+        "fx": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VideoFx"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "picture effects: grading, lights, vignette, blur, grain"
         }
       },
       "required": [
@@ -244,6 +256,97 @@
         }
       },
       "title": "Library",
+      "type": "object"
+    },
+    "Light": {
+      "description": "A light painted onto the picture (ideas from AInVFX Paint a Plate, Apache-2.0).\n\nrelight: multiplies the picture by a soft light ratio, so its texture stays (light falling on things);\nglow: adds light on top (a lamp, a haze); shade: darkens (a shadow, a flag). Position is a fraction\nof the picture; with x2/y2 the light travels there over the clip.",
+      "properties": {
+        "mode": {
+          "default": "relight",
+          "enum": [
+            "relight",
+            "glow",
+            "shade"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "x": {
+          "default": 0.5,
+          "description": "0 = left edge, 1 = right edge",
+          "maximum": 1.5,
+          "minimum": -0.5,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "default": 0.35,
+          "description": "0 = top, 1 = bottom",
+          "maximum": 1.5,
+          "minimum": -0.5,
+          "title": "Y",
+          "type": "number"
+        },
+        "x2": {
+          "anyOf": [
+            {
+              "maximum": 1.5,
+              "minimum": -0.5,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "where it ends up at the clip's end (None = still)",
+          "title": "X2"
+        },
+        "y2": {
+          "anyOf": [
+            {
+              "maximum": 1.5,
+              "minimum": -0.5,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Y2"
+        },
+        "radius": {
+          "default": 0.35,
+          "description": "soft radius, \u00d7 the picture's shorter side",
+          "maximum": 3,
+          "minimum": 0.02,
+          "title": "Radius",
+          "type": "number"
+        },
+        "intensity": {
+          "default": 1.0,
+          "maximum": 4,
+          "minimum": 0,
+          "title": "Intensity",
+          "type": "number"
+        },
+        "color": {
+          "default": "#ffd890",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "title": "Color",
+          "type": "string"
+        },
+        "flicker": {
+          "default": 0,
+          "description": "0 = steady, 1 = strong flicker (fire, a failing bulb)",
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Flicker",
+          "type": "number"
+        }
+      },
+      "title": "Light",
       "type": "object"
     },
     "Marker": {
@@ -789,6 +892,103 @@
       "title": "Transition",
       "type": "object"
     },
+    "VideoFx": {
+      "description": "Picture effects of one clip, applied before it's placed on the canvas.",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "exposure": {
+          "default": 0,
+          "description": "stops",
+          "maximum": 3,
+          "minimum": -3,
+          "title": "Exposure",
+          "type": "number"
+        },
+        "contrast": {
+          "default": 1,
+          "maximum": 3,
+          "minimum": 0.2,
+          "title": "Contrast",
+          "type": "number"
+        },
+        "saturation": {
+          "default": 1,
+          "maximum": 3,
+          "minimum": 0,
+          "title": "Saturation",
+          "type": "number"
+        },
+        "temperature": {
+          "default": 0,
+          "description": "\u2212 cooler (blue), + warmer (orange)",
+          "maximum": 100,
+          "minimum": -100,
+          "title": "Temperature",
+          "type": "number"
+        },
+        "tint": {
+          "default": 0,
+          "description": "\u2212 green, + magenta",
+          "maximum": 100,
+          "minimum": -100,
+          "title": "Tint",
+          "type": "number"
+        },
+        "look": {
+          "default": "none",
+          "enum": [
+            "none",
+            "bw",
+            "sepia"
+          ],
+          "title": "Look",
+          "type": "string"
+        },
+        "vignette": {
+          "default": 0,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Vignette",
+          "type": "number"
+        },
+        "blur": {
+          "default": 0,
+          "description": "pixels at 1080p",
+          "maximum": 20,
+          "minimum": 0,
+          "title": "Blur",
+          "type": "number"
+        },
+        "sharpen": {
+          "default": 0,
+          "maximum": 2,
+          "minimum": 0,
+          "title": "Sharpen",
+          "type": "number"
+        },
+        "grain": {
+          "default": 0,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Grain",
+          "type": "number"
+        },
+        "lights": {
+          "items": {
+            "$ref": "#/$defs/Light"
+          },
+          "maxItems": 4,
+          "title": "Lights",
+          "type": "array"
+        }
+      },
+      "title": "VideoFx",
+      "type": "object"
+    },
     "VirtualFolder": {
       "description": "A saved view of the library: every item whose tags match. Items aren't moved or copied.",
       "properties": {
@@ -915,7 +1115,7 @@
       "type": "number"
     },
     "app_version": {
-      "default": "0.12.0",
+      "default": "0.13.0",
       "title": "App Version",
       "type": "string"
     },

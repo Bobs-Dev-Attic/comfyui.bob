@@ -343,6 +343,8 @@ class RenderReq(BaseModel):
     channels: Literal[1, 2] = 2
     loudness: str = Field("mixer", pattern=r"^(mixer|off|-\d{1,2}(\.\d)?)$")
     overwrite: bool = False
+    timestamp: bool = Field(False, description="add the date and time to the file name")
+    burn_timecode: bool = Field(False, description="draw the timecode on the picture")
 
 
 class Ids(BaseModel):

@@ -63,9 +63,17 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   results, then drag them onto the multi-track **timeline** below.
   - Trim, split, ripple-delete and snap clips; add markers and an In/Out range.
   - Add transitions with **Ctrl+T** (24 types).
+  - **✨ Video Fx** (Shift+E, or right-click a clip): grade (exposure, contrast, saturation, temperature, tint,
+    black and white or sepia), up to 4 lights you drag into place on the viewer (relight, glow or shade, with colour,
+    size, strength, flicker, and an optional path across the clip), vignette, blur, sharpen and film grain. Presets
+    include Golden hour, Moonlight, Noir, Neon side light, Candle flicker, Light sweep and Film look. The lighting
+    approach (multiplying the picture by a soft light ratio so its texture stays) comes from
+    [AInVFX Paint a Plate](https://github.com/AInVFX/ainvfx-paintaplate) (Apache-2.0), done here with ffmpeg
+    instead of generative models.
   - **⬇ Render…** opens the render options: file name, where to save (outputs or a bookmarked folder), format
     (H.264, H.264 on NVENC, H.265, VP9/WebM, ProRes, WAV, MP3), resolution, frame rate, quality, speed and
-    sound (loudness, bitrate, sample rate, mono or stereo).
+    sound (loudness, bitrate, sample rate, mono or stereo). Optionally add a timestamp to the file name or burn
+    the timecode into the picture.
   - Videos with sound get their own audio track each. Mix with **🎚 Mixer** (Shift+M): per-track volume, pan,
     mute and solo, and a master with loudness targets (−14/−16/−23 LUFS) and a limiter. Right-click a clip for
     **Sound…** (volume, pan, fades, mute), or drag the dots at its top corners to fade.

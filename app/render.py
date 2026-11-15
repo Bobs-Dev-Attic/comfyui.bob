@@ -54,6 +54,83 @@ QUALITY = {"high": 18, "medium": 23, "small": 28}           # x264 CRF; the othe
 SPEED = {"fast": ("veryfast", "p2", 6), "balanced": ("medium", "p5", 4), "best": ("slow", "p7", 2)}
 
 
+def _hex(c: str) -> tuple[float, float, float]:
+    c = (c or "#ffffff").lstrip("#")
+    try:
+        return tuple(int(c[i:i + 2], 16) / 255 for i in (0, 2, 4))  # type: ignore[return-value]
+    except ValueError:
+        return (1.0, 1.0, 1.0)
+
+
+def fx_active(fx: Any) -> bool:
+    if not fx or not fx.enabled:
+        return False
+    return bool(abs(fx.exposure) > 1e-3 or abs(fx.contrast - 1) > 1e-3 or abs(fx.saturation - 1) > 1e-3
+                or abs(fx.temperature) > 0.5 or abs(fx.tint) > 0.5 or fx.look != "none" or fx.vignette > 1e-3
+                or fx.blur > 1e-3 or fx.sharpen > 1e-3 or fx.grain > 1e-3 or any(l.intensity > 1e-3 for l in fx.lights))
+
+
+def fx_filters(fx: Any, src: str, dst: str, tag: str, length: float, height: int) -> list[str]:
+    """Filter-graph pieces that take [src] (any format) to [dst] (gbrp) with the clip's effects.
+
+    Lights are soft masks drawn with geq at a quarter of the size (they're smooth, so that's
+    invisible and 16× cheaper), scaled back up and blended in RGB:
+      relight  A·(1 + I·B)   light falling on the plate, keeping its texture
+      glow     A + I·B       light added on top
+      shade    A·(1 − d·B)   a soft shadow
+    A light can travel from (x, y) to (x2, y2) over the clip, and flicker."""
+    out: list[str] = []
+    chain = []
+    if abs(fx.contrast - 1) > 1e-3 or abs(fx.saturation - 1) > 1e-3:
+        chain.append(f"eq=contrast={fx.contrast:.3f}:saturation={fx.saturation:.3f}")
+    chain.append("format=gbrp")
+    gain = 2 ** fx.exposure
+    if abs(gain - 1) > 1e-3 or abs(fx.tint) > 0.5:
+        g_green = gain * (1 - 0.18 * fx.tint / 100)
+        g_rb = gain * (1 + 0.06 * max(0.0, fx.tint) / 100)
+        chain.append(f"colorchannelmixer=rr={g_rb:.4f}:gg={g_green:.4f}:bb={g_rb:.4f}")
+    if abs(fx.temperature) > 0.5:
+        chain.append(f"colortemperature=temperature={6500 - fx.temperature * 35:.0f}")
+    if fx.look == "bw":
+        chain.append("colorchannelmixer=.299:.587:.114:0:.299:.587:.114:0:.299:.587:.114")
+    elif fx.look == "sepia":
+        chain.append("colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131")
+    cur = f"{tag}g"
+    out.append(f"[{src}]{','.join(chain)}[{cur}]")
+    L = max(length, 1e-3)
+    for i, lt in enumerate(l for l in fx.lights if l.intensity > 1e-3):
+        x2 = lt.x if lt.x2 is None else lt.x2
+        y2 = lt.y if lt.y2 is None else lt.y2
+        p = f"min(1,max(0,T/{L:.4f}))"
+        cx, cy = f"({lt.x:.4f}+({x2 - lt.x:.4f})*{p})", f"({lt.y:.4f}+({y2 - lt.y:.4f})*{p})"
+        r = f"({lt.radius:.4f}*min(W,H))"
+        g = f"exp(-(pow(X-{cx}*W,2)+pow(Y-{cy}*H,2))/(2*{r}*{r}))"
+        if lt.flicker > 1e-3:
+            g += f"*(1-{lt.flicker * 0.6:.3f}*0.5*(1+sin(T*13.1)*sin(T*5.3+1)))"
+        rgb = (1.0, 1.0, 1.0) if lt.mode == "shade" else _hex(lt.color)
+        b, m, ms, nxt = f"{tag}b{i}", f"{tag}m{i}", f"{tag}s{i}", f"{tag}l{i}"
+        out.append(f"[{cur}]split[{b}][{m}]")
+        out.append(f"[{m}]scale=iw/4:ih/4,geq=r='255*{rgb[0]:.3f}*{g}':g='255*{rgb[1]:.3f}*{g}':b='255*{rgb[2]:.3f}*{g}'[{ms}0]")
+        out.append(f"[{ms}0][{b}]scale2ref[{ms}][{b}r]")
+        I = lt.intensity
+        expr = {"relight": f"min(255,A*(1+{I:.3f}*B/255))", "glow": f"min(255,A+{I:.3f}*B)",
+                "shade": f"A*(1-{min(1.0, I * 0.7):.3f}*B/255)"}[lt.mode]
+        out.append(f"[{b}r][{ms}]blend=all_expr='{expr}'[{nxt}]")
+        cur = nxt
+    tail = []
+    if fx.vignette > 1e-3:
+        tail.append(f"vignette=angle={0.15 + 0.85 * fx.vignette:.3f}")
+    scale = max(0.25, height / 1080)
+    if fx.blur > 1e-3:
+        tail.append(f"gblur=sigma={fx.blur * scale:.2f}")
+    if fx.sharpen > 1e-3:
+        tail.append(f"unsharp=5:5:{fx.sharpen:.2f}")
+    if fx.grain > 1e-3:
+        tail.append(f"noise=alls={int(4 + 36 * fx.grain)}:allf=t")
+    out.append(f"[{cur}]{','.join(tail) if tail else 'null'}[{dst}]")
+    return out
+
+
 def formats() -> list[dict[str, Any]]:
     """The render formats this ffmpeg can write."""
     have = _encoders()
@@ -200,6 +277,8 @@ def commands(tl: Timeline, out: str, w0: float | None = None, w1: float | None =
 
     norm = (f"scale={W}:{H}:force_original_aspect_ratio=decrease,format=yuva420p,"
             f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black@0,setsar=1,fps={fps},settb=AVTB")
+    fit = f"scale={W}:{H}:force_original_aspect_ratio=decrease,setsar=1,fps={fps},settb=AVTB"
+    place = f"format=yuva420p,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black@0,setsar=1"
 
     # ---------------------------------------------------------------- picture, one stream per track
     layers: list[str] = []
@@ -220,7 +299,13 @@ def commands(tl: Timeline, out: str, w0: float | None = None, w1: float | None =
                 pieces.append((g, c.start - cursor, None))
             idx = add_input(c)
             lab = f"t{ti}c{len(pieces)}"
-            filters.append(f"[{idx}:v]{norm},trim=duration={_dur(c):.4f},setpts=PTS-STARTPTS[{lab}]")
+            if fx_active(c.fx):  # effects run on the picture itself (lights follow it), then it's placed
+                pre, post = f"{lab}p", f"{lab}x"
+                filters.append(f"[{idx}:v]{fit},trim=duration={_dur(c):.4f},setpts=PTS-STARTPTS[{pre}]")
+                filters.extend(fx_filters(c.fx, pre, post, f"{lab}f", _dur(c), H))
+                filters.append(f"[{post}]{place}[{lab}]")
+            else:
+                filters.append(f"[{idx}:v]{norm},trim=duration={_dur(c):.4f},setpts=PTS-STARTPTS[{lab}]")
             overlap = (prev.end - c.start) if t_in is not None else 0.0
             pieces.append((lab, _dur(c), (t_in, overlap) if t_in is not None else None))
             cursor = c.end
@@ -251,7 +336,19 @@ def commands(tl: Timeline, out: str, w0: float | None = None, w1: float | None =
     for i, lab in enumerate(layers):
         filters.append(f"[{cur}][{lab}]overlay=eof_action=pass:format=auto[ov{i}]")
         cur = f"ov{i}"
-    filters.append(f"[{cur}]trim=start={w0:.4f}:end={w1:.4f},setpts=PTS-STARTPTS,format=yuv420p[vout]")
+    burn = ""
+    if o.get("burn_timecode"):
+        font = next((f for f in (Path("C:/Windows/Fonts/consola.ttf"), Path("C:/Windows/Fonts/arial.ttf"),
+                                 Path("/System/Library/Fonts/Menlo.ttc"), Path("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"))
+                     if f.is_file()), None)
+        r = round(fps) if isinstance(fps, float) else fps
+        start = int(round(w0 * r))
+        tc = f"{start // (3600 * r):02d}\\:{start // (60 * r) % 60:02d}\\:{start // r % 60:02d}\\:{start % r:02d}"
+        ff = f"fontfile='{font.as_posix().replace(':', chr(92) + ':')}':" if font else ""
+        size = max(14, H // 30)
+        burn = (f",drawtext={ff}timecode='{tc}':rate={r}:fontsize={size}:fontcolor=white:box=1:boxcolor=black@0.55:"
+                f"boxborderw={size // 3}:x=(w-tw)/2:y=h-th-{size}")
+    filters.append(f"[{cur}]trim=start={w0:.4f}:end={w1:.4f},setpts=PTS-STARTPTS,format=yuv420p{burn}[vout]")
 
     # ---------------------------------------------------------------- sound
     fades_for = sound_fades(tl, clips, out_of, into)
@@ -366,7 +463,8 @@ def safe_name(s: str) -> str:
     return s[:120]
 
 
-def destination(folder: str, filename: str, ext: str, item_id: str, overwrite: bool = False) -> Path:
+def destination(folder: str, filename: str, ext: str, item_id: str, overwrite: bool = False,
+                stamp: bool = False) -> Path:
     """Where a render goes: outputs/<date> by default, or a folder inside outputs or a bookmarked folder."""
     if folder:
         d = Path(folder)
@@ -379,6 +477,8 @@ def destination(folder: str, filename: str, ext: str, item_id: str, overwrite: b
         d = config.OUTPUT_DIR / datetime.now().strftime("%Y-%m-%d")
         d.mkdir(parents=True, exist_ok=True)
     base = safe_name(filename) or f"{item_id}_timeline"
+    if stamp:  # "My cut 2026-11-15 14.03.27": sorts by time, safe on every file system
+        base = f"{base} {datetime.now().strftime('%Y-%m-%d %H.%M.%S')}"
     target = d / f"{base}{ext}"
     n = 2
     while target.exists() and not overwrite:
@@ -399,7 +499,8 @@ async def render(jobs, project_id: str | None, tl: Timeline, *, w0: float | None
         raise ValueError(f"This ffmpeg can't write {FORMATS[fmt_id]['label']}")
     fmt = FORMATS[fmt_id]
     item_id = uuid.uuid4().hex[:12]
-    target = destination(o.get("folder") or "", o.get("filename") or "", fmt["ext"], item_id, bool(o.get("overwrite")))
+    target = destination(o.get("folder") or "", o.get("filename") or "", fmt["ext"], item_id, bool(o.get("overwrite")),
+                         bool(o.get("timestamp")))
     steps, duration, temps = commands(tl, str(target), w0, w1, width, height, int(tl.render.get("crf", 18)), o)
     kind = "video" if fmt["video"] is not None else "audio"
     item = {
@@ -419,6 +520,13 @@ async def render(jobs, project_id: str | None, tl: Timeline, *, w0: float | None
         say("Sound: " + ("off" if not o.get("audio", True) else
                          f"{o.get('sample_rate') or 48000} Hz, {'mono' if int(o.get('channels') or 2) == 1 else 'stereo'}"
                          f", {o.get('audio_bitrate') or 192} kbps"))
+    fx_n = sum(1 for c in tl.clips if fx_active(c.fx))
+    if fx_n:
+        say(f"Video Fx on {fx_n} clip{'s' if fx_n != 1 else ''}"
+            + (f", {sum(len([l for l in c.fx.lights if l.intensity > 0]) for c in tl.clips if fx_active(c.fx))} light(s)"
+               if any(c.fx and c.fx.lights for c in tl.clips) else ""))
+    if o.get("burn_timecode") and kind == "video":
+        say("Burning in the timecode")
     say(f"Saving to {target.as_posix()}")
 
     async def run_step(args: list[str], base: float, span: float, label: str) -> None:

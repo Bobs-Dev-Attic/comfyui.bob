@@ -82,7 +82,7 @@ const TL = (() => {
       if (c.track !== trackId || keep.has(c.id) || transPair(c, keep) || c.start >= t1 || end(c) <= t0) continue;
       if (c.start >= t0 && end(c) <= t1) { tl.clips.splice(tl.clips.indexOf(c), 1); sel.delete(c.id); }
       else if (c.start < t0 && end(c) > t1) {
-        tl.clips.push({ ...c, id: uid(), start: t1, trim_in: q(c.trim_in + (t1 - c.start)) });
+        tl.clips.push({ ...structuredClone(c), id: uid(), start: t1, trim_in: q(c.trim_in + (t1 - c.start)) });
         c.trim_out = q(c.trim_in + (t0 - c.start));
       } else if (c.start < t0) c.trim_out = q(c.trim_out - (end(c) - t0));
       else { const d = t1 - c.start; c.trim_in = q(c.trim_in + d); c.start = q(t1); }
@@ -90,7 +90,7 @@ const TL = (() => {
   }
   function splitAt(c, t) {
     if (t <= c.start + 1 / fps() / 2 || t >= end(c) - 1 / fps() / 2) return null;
-    const right = { ...c, id: uid(), start: q(t), trim_in: q(c.trim_in + (t - c.start)) };
+    const right = { ...structuredClone(c), id: uid(), start: q(t), trim_in: q(c.trim_in + (t - c.start)) };
     c.trim_out = q(c.trim_in + (t - c.start));
     tl.clips.push(right);
     return right;
@@ -121,8 +121,10 @@ const TL = (() => {
     sanitize();
   }
 
+  const probeInfo = new Map();  // ref → probe result, once known (sync access for drawing)
   async function probe(ref) {
-    if (!probes.has(ref)) probes.set(ref, fetch(`/api/media/probe?path=${encodeURIComponent(ref)}`).then(r => r.ok ? r.json() : null).catch(() => null));
+    if (!probes.has(ref)) probes.set(ref, fetch(`/api/media/probe?path=${encodeURIComponent(ref)}`).then(r => r.ok ? r.json() : null)
+      .then(j => { if (j) probeInfo.set(ref, j); return j; }).catch(() => null));
     return probes.get(ref);
   }
 
@@ -176,7 +178,7 @@ const TL = (() => {
     }
     c.link = c.link || uid();
     c.audio_off = true;
-    const a = { ...c, id: uid(), track: at.id, audio_off: false };
+    const a = { ...structuredClone(c), id: uid(), track: at.id, audio_off: false, fx: null };
     tl.clips.push(a);
     return a;
   }
@@ -314,14 +316,14 @@ const TL = (() => {
     changed();
   }
 
-  function copySel() { clipboard = [...sel].map(clip).filter(Boolean).map(c => ({ ...c })); if (clipboard.length) toast(`Copied ${clipboard.length} clip${clipboard.length > 1 ? "s" : ""}`); }
+  function copySel() { clipboard = [...sel].map(clip).filter(Boolean).map(c => structuredClone(c)); if (clipboard.length) toast(`Copied ${clipboard.length} clip${clipboard.length > 1 ? "s" : ""}`); }
   function paste(at = tl.playhead) {
     if (!clipboard.length) return;
     const base = Math.min(...clipboard.map(c => c.start));
     checkpoint(); sel.clear();
     for (const src of clipboard) {
       if (!track(src.track) || track(src.track).locked) continue;
-      const c = { ...src, id: uid(), start: q(at + src.start - base) };
+      const c = { ...structuredClone(src), id: uid(), start: q(at + src.start - base) };
       carve(c.track, c.start, end(c), new Set());
       tl.clips.push(c); sel.add(c.id);
     }
@@ -330,7 +332,7 @@ const TL = (() => {
   function duplicate() {
     const list = [...sel].map(clip).filter(Boolean);
     if (!list.length) return;
-    clipboard = list.map(c => ({ ...c }));
+    clipboard = list.map(c => structuredClone(c));
     paste(Math.max(...list.map(end)));  // right after the selection
   }
 
@@ -570,7 +572,7 @@ const TL = (() => {
       : c ? c.name : (tl.clips.length ? "— gap —" : "Empty timeline");
     const prog = $("#program");
     prog.classList.toggle("white", !!pic?.b && pic.type === "fadewhite");
-    const L1 = { v: $("#prog-video"), i: $("#prog-img") }, L2 = { v: $("#prog-video2"), i: $("#prog-img2") };
+    const L1 = { v: $("#prog-video"), i: $("#prog-img"), fx: fxLayer(1) }, L2 = { v: $("#prog-video2"), i: $("#prog-img2"), fx: fxLayer(2) };
     const look = { a: { opacity: 1, clip: "none", transform: "none" }, b: { opacity: 1, clip: "none", transform: "none" } };
     if (pic?.b) {
       const p = pic.p, k = pic.type, pc = `${(1 - p) * 100}%`;
@@ -608,7 +610,8 @@ const TL = (() => {
 
   function showLayer(L, c, t, live, look, onTop) {
     const { v, i } = L;
-    for (const el of [v, i]) { el.style.opacity = look.opacity; el.style.clipPath = look.clip; el.style.transform = look.transform; el.style.zIndex = onTop ? 2 : 1; }
+    for (const el of [v, i, L.fx]) { el.style.opacity = look.opacity; el.style.clipPath = look.clip; el.style.transform = look.transform; el.style.zIndex = onTop ? 2 : 1; }
+    paintFx(L, c, t);
     if (!c) { v.hidden = true; i.hidden = true; v.pause(); return; }
     if (c.kind === "image") {
       v.hidden = true; v.pause(); i.hidden = false;
@@ -623,6 +626,246 @@ const TL = (() => {
       if (Math.abs(v.currentTime - target) > 0.2) v.currentTime = target;
       if (v.paused) v.play().catch(() => {});
     } else { v.pause(); if (Math.abs(v.currentTime - target) > 1 / fps() / 2) v.currentTime = target; }
+  }
+
+  /* ------------------------------------------------------------------ Video Fx: live preview
+     The render (app/render.py) is exact; the preview is close: CSS filters for the grade, and
+     blended gradients for lights, temperature, tint and the vignette. Grain and sharpening only
+     show in the render. */
+  const FX_DEFAULT = { enabled: true, exposure: 0, contrast: 1, saturation: 1, temperature: 0, tint: 0, look: "none", vignette: 0, blur: 0, sharpen: 0, grain: 0, lights: [] };
+  const LIGHT_DEFAULT = { mode: "relight", x: 0.5, y: 0.35, x2: null, y2: null, radius: 0.35, intensity: 1, color: "#ffd890", flicker: 0 };
+  const fxOn = c => !!(c?.fx && c.fx.enabled !== false);
+  function fxLayer(n) {
+    let el = document.getElementById(`prog-fx${n}`);
+    if (!el) {
+      el = document.createElement("div");
+      el.id = `prog-fx${n}`; el.className = "prog-fx"; el.hidden = true;
+      $("#program").appendChild(el);
+    }
+    return el;
+  }
+  // Where the picture of clip c sits inside the program monitor (object-fit: contain).
+  function picRect(c, el) {
+    const box = $("#program").getBoundingClientRect();
+    const info = probeInfo.get(c.ref) || {};
+    let w = info.width || el?.videoWidth || el?.naturalWidth, h = info.height || el?.videoHeight || el?.naturalHeight;
+    if (!w || !h) { w = 16; h = 9; probe(c.ref); }
+    const k = Math.min(box.width / w, box.height / h);
+    return { left: (box.width - w * k) / 2, top: (box.height - h * k) / 2, width: w * k, height: h * k, box };
+  }
+  const rgbOf = hex => { const n = parseInt((hex || "#ffffff").slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+  function lightAt(lt, c, t) {
+    const p = clamp((t - c.start) / Math.max(1e-3, dur(c)), 0, 1);
+    const x = lt.x + ((lt.x2 ?? lt.x) - lt.x) * p, y = lt.y + ((lt.y2 ?? lt.y) - lt.y) * p;
+    const T = t - c.start;
+    const flick = lt.flicker > 0 ? 1 - lt.flicker * 0.6 * 0.5 * (1 + Math.sin(T * 13.1) * Math.sin(T * 5.3 + 1)) : 1;
+    return { x, y, flick };
+  }
+  function paintFx(L, c, t) {
+    const media = [L.v, L.i];
+    const ov = L.fx;
+    if (!c || !fxOn(c)) { for (const m of media) m.style.filter = ""; ov.hidden = true; return; }
+    const fx = { ...FX_DEFAULT, ...c.fx };
+    const el = c.kind === "image" ? L.i : L.v;
+    const r = picRect(c, el);
+    const px = r.height / 1080;
+    const f = [];
+    if (fx.exposure) f.push(`brightness(${(2 ** fx.exposure).toFixed(3)})`);
+    if (fx.contrast !== 1) f.push(`contrast(${fx.contrast})`);
+    if (fx.saturation !== 1) f.push(`saturate(${fx.saturation})`);
+    if (fx.look === "bw") f.push("grayscale(1)");
+    if (fx.look === "sepia") f.push("sepia(1)");
+    if (fx.blur > 0) f.push(`blur(${(fx.blur * px).toFixed(2)}px)`);
+    for (const m of media) m.style.filter = f.join(" ");
+    Object.assign(ov.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` });
+    const layers = [];
+    if (fx.temperature) {
+      const warm = fx.temperature > 0, a = Math.abs(fx.temperature) / 100 * 0.55;
+      layers.push(`<i style="background:rgba(${warm ? "255,136,32" : "48,128,255"},${a.toFixed(3)});mix-blend-mode:soft-light"></i>`);
+    }
+    if (fx.tint) layers.push(`<i style="background:rgba(${fx.tint > 0 ? "255,0,200" : "0,220,60"},${(Math.abs(fx.tint) / 100 * 0.35).toFixed(3)});mix-blend-mode:soft-light"></i>`);
+    const short = Math.min(r.width, r.height);
+    for (const lt0 of fx.lights || []) {
+      const lt = { ...LIGHT_DEFAULT, ...lt0 };
+      if (!(lt.intensity > 0)) continue;
+      const { x, y, flick } = lightAt(lt, c, t);
+      const sig = lt.radius * short, [R, G, B] = lt.mode === "shade" ? [0, 0, 0] : rgbOf(lt.color);
+      const peak = clamp((lt.mode === "shade" ? Math.min(1, lt.intensity * 0.7) : lt.mode === "glow" ? lt.intensity * 0.9 : lt.intensity * 0.55) * flick, 0, 1);
+      const stops = [0, 0.5, 1, 1.5, 2, 2.6].map(k => `rgba(${R},${G},${B},${(peak * Math.exp(-k * k / 2)).toFixed(3)}) ${(k * sig).toFixed(1)}px`).join(",");
+      const blend = lt.mode === "shade" ? "multiply" : lt.mode === "glow" ? "screen" : "color-dodge";
+      layers.push(`<i style="background:radial-gradient(circle at ${(x * 100).toFixed(2)}% ${(y * 100).toFixed(2)}%,${stops},transparent ${(2.7 * sig).toFixed(1)}px);mix-blend-mode:${blend}"></i>`);
+    }
+    if (fx.vignette > 0) layers.push(`<i style="background:radial-gradient(ellipse at center,transparent ${(62 - 30 * fx.vignette).toFixed(0)}%,rgba(0,0,0,${(0.25 + 0.6 * fx.vignette).toFixed(2)}) 100%)"></i>`);
+    const html = layers.join("");
+    if (ov.dataset.html !== html) { ov.innerHTML = html; ov.dataset.html = html; }
+    ov.hidden = !layers.length;
+    drawFxHandles();
+  }
+
+  /* ---- light handles on the viewer while the Fx window is open: drag ● to place a light, ○ to set where it travels */
+  let fxEdit = null;  // {clipId, win, onChange}
+  function drawFxHandles() {
+    let hl = document.getElementById("prog-fx-handles");
+    const c = fxEdit && clip(fxEdit.clipId);
+    if (!c || Monitor.mode !== "timeline") { if (hl) hl.hidden = true; return; }
+    if (!hl) {
+      hl = document.createElement("div");
+      hl.id = "prog-fx-handles"; hl.className = "prog-fx-handles";
+      $("#program").appendChild(hl);
+      hl.addEventListener("pointerdown", fxHandleDown);
+    }
+    const r = picRect(c, c.kind === "image" ? $("#prog-img") : $("#prog-video"));
+    Object.assign(hl.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` });
+    const visible = c.start <= tl.playhead && end(c) > tl.playhead;
+    const lights = c.fx?.lights || [];
+    const html = (visible ? "" : `<span class="fxh-note">Move the playhead into “${esc2(c.name)}” to see it</span>`) + lights.map((lt0, i) => {
+      const lt = { ...LIGHT_DEFAULT, ...lt0 };
+      const moving = lt.x2 != null;
+      const now = lightAt(lt, c, tl.playhead);
+      const col = lt.mode === "shade" ? "#222" : lt.color;
+      return `${moving ? `<svg class="fxh-path"><line x1="${lt.x * 100}%" y1="${lt.y * 100}%" x2="${lt.x2 * 100}%" y2="${lt.y2 * 100}%"/></svg>
+          <b class="fxh end" data-li="${i}" data-pt="end" style="left:${lt.x2 * 100}%;top:${lt.y2 * 100}%" title="Light ${i + 1}: where it ends up"></b>` : ""}
+        <b class="fxh" data-li="${i}" data-pt="start" style="left:${lt.x * 100}%;top:${lt.y * 100}%;--c:${col}" title="Light ${i + 1} (${lt.mode}): drag to place${moving ? "; it starts here" : ""}"><span>${i + 1}</span></b>
+        ${moving ? `<i class="fxh-now" style="left:${now.x * 100}%;top:${now.y * 100}%"></i>` : ""}`;
+    }).join("");
+    if (hl.dataset.html !== html) { hl.innerHTML = html; hl.dataset.html = html; }
+    hl.hidden = false;
+  }
+  function fxHandleDown(e) {
+    const h = e.target.closest(".fxh");
+    const c = fxEdit && clip(fxEdit.clipId);
+    if (!h || !c) return;
+    e.preventDefault(); e.stopPropagation();
+    const lt = c.fx.lights[+h.dataset.li], hl = e.currentTarget, kx = h.dataset.pt === "end" ? "x2" : "x", ky = h.dataset.pt === "end" ? "y2" : "y";
+    h.setPointerCapture(e.pointerId);
+    const mv = ev => {
+      const r = hl.getBoundingClientRect();
+      lt[kx] = +clamp((ev.clientX - r.left) / r.width, -0.5, 1.5).toFixed(4);
+      lt[ky] = +clamp((ev.clientY - r.top) / r.height, -0.5, 1.5).toFixed(4);
+      syncProgram(false); fxEdit.onChange?.();
+    };
+    const up = () => { h.removeEventListener("pointermove", mv); h.removeEventListener("pointerup", up); };
+    h.addEventListener("pointermove", mv); h.addEventListener("pointerup", up);
+  }
+
+  /* ---- the Video Fx window */
+  const FX_PRESETS = {
+    "Golden hour": { exposure: 0.15, contrast: 1.08, saturation: 1.15, temperature: 45, lights: [{ mode: "relight", x: 0.15, y: 0.25, radius: 0.6, intensity: 1.2, color: "#ffb060" }], vignette: 0.25 },
+    "Moonlight": { exposure: -0.8, contrast: 1.15, saturation: 0.6, temperature: -55, lights: [{ mode: "relight", x: 0.8, y: 0.1, radius: 0.5, intensity: 0.9, color: "#9ec4ff" }], vignette: 0.5 },
+    "Noir": { look: "bw", contrast: 1.45, exposure: -0.2, lights: [{ mode: "relight", x: 0.35, y: 0.3, radius: 0.3, intensity: 1.4, color: "#ffffff" }, { mode: "shade", x: 0.85, y: 0.6, radius: 0.5, intensity: 1 }], vignette: 0.7, grain: 0.35 },
+    "Neon side light": { contrast: 1.1, saturation: 1.2, lights: [{ mode: "relight", x: -0.05, y: 0.45, radius: 0.45, intensity: 1.8, color: "#ff3cc8" }, { mode: "relight", x: 1.05, y: 0.45, radius: 0.45, intensity: 1.6, color: "#2ee6ff" }] },
+    "Candle flicker": { exposure: -0.6, temperature: 55, lights: [{ mode: "relight", x: 0.5, y: 0.75, radius: 0.45, intensity: 1.6, color: "#ff9a40", flicker: 0.7 }], vignette: 0.55 },
+    "Light sweep": { lights: [{ mode: "glow", x: -0.1, y: 0.3, x2: 1.1, y2: 0.3, radius: 0.25, intensity: 0.8, color: "#fff2d0" }] },
+    "Film look": { contrast: 1.12, saturation: 0.9, temperature: 12, tint: 6, vignette: 0.35, grain: 0.4, sharpen: 0.3 },
+  };
+  let fxClipboard = null;
+  function fxTargets(c) { return c && (c.kind === "video" || c.kind === "image") && track(c.track)?.kind === "video"; }
+  function fxDialog(c) {
+    if (!fxTargets(c)) return toast("Video Fx work on pictures and videos on a video track.");
+    if (fxEdit?.win) fxEdit.win.close();
+    const before = snapshot();
+    if (!c.fx) c.fx = structuredClone(FX_DEFAULT);
+    c.fx = { ...structuredClone(FX_DEFAULT), ...c.fx, lights: (c.fx.lights || []).map(l => ({ ...LIGHT_DEFAULT, ...l })) };
+    if (!(c.start <= tl.playhead && end(c) > tl.playhead)) seek(c.start + Math.min(dur(c) / 2, 1));
+    Monitor.show("timeline");
+    probe(c.ref);
+    const form = document.createElement("div");
+    form.className = "wm-form fxd";
+    const sl = (k, label, min, max, step, fmt) => `<div class="field fxs"><label for="fx-${k}">${label} <span class="opt" data-out="${k}"></span></label>
+      <input id="fx-${k}" data-k="${k}" type="range" min="${min}" max="${max}" step="${step}" data-fmt="${fmt || ""}"></div>`;
+    form.innerHTML = `
+      <div class="fx-top"><label class="check"><input type="checkbox" data-k="enabled"> Effects on <span class="hint inline">(off: compare with the original)</span></label></div>
+      <div class="fx-presets">${Object.keys(FX_PRESETS).map(n => `<button type="button" class="btn sm" data-preset="${esc2(n)}">${esc2(n)}</button>`).join("")}</div>
+      <fieldset><legend>Grade</legend><div class="row2">
+        ${sl("exposure", "Exposure", -3, 3, 0.05, "ev")}${sl("contrast", "Contrast", 0.2, 3, 0.01, "x")}
+        ${sl("saturation", "Saturation", 0, 3, 0.01, "x")}${sl("temperature", "Temperature", -100, 100, 1, "temp")}
+        ${sl("tint", "Tint", -100, 100, 1, "tint")}
+        <div class="field"><label for="fx-look">Look</label><select id="fx-look" data-k="look"><option value="none">Colour</option><option value="bw">Black and white</option><option value="sepia">Sepia</option></select></div>
+      </div></fieldset>
+      <fieldset><legend>Lights <span class="hint inline">— drag the numbered dots on the viewer to place them</span></legend>
+        <div class="fx-lights"></div>
+        <button type="button" class="btn sm" data-a="add-light">＋ Add light</button>
+        <p class="hint">Relight brightens what's there, keeping its texture (light falling on the scene). Glow adds light on top
+          (a lamp, a haze). Shade darkens (a shadow). A moving light travels from ● to ○ over the clip.</p>
+      </fieldset>
+      <fieldset><legend>Finish</legend><div class="row2">
+        ${sl("vignette", "Vignette", 0, 1, 0.01, "pct")}${sl("blur", "Blur", 0, 20, 0.1, "px")}
+        ${sl("sharpen", "Sharpen", 0, 2, 0.01, "x")}${sl("grain", "Film grain", 0, 1, 0.01, "pct")}
+      </div><p class="hint">Grain and sharpening show in the render only; the preview of everything else is close, the render is exact.</p></fieldset>`;
+    const fmtv = (v, f) => f === "ev" ? `${v > 0 ? "+" : ""}${(+v).toFixed(2)} stops` : f === "x" ? `${(+v).toFixed(2)}×` : f === "pct" ? `${Math.round(v * 100)}%`
+      : f === "px" ? `${(+v).toFixed(1)} px` : f === "temp" ? (+v === 0 ? "neutral" : `${+v > 0 ? "warmer" : "cooler"} ${Math.abs(v)}`)
+      : f === "tint" ? (+v === 0 ? "neutral" : `${+v > 0 ? "magenta" : "green"} ${Math.abs(v)}`) : String(v);
+    const fill = () => {
+      for (const inp of form.querySelectorAll("[data-k]")) {
+        const k = inp.dataset.k;
+        if (inp.type === "checkbox") inp.checked = c.fx[k] !== false; else inp.value = c.fx[k];
+        const o = form.querySelector(`[data-out="${k}"]`); if (o) o.textContent = fmtv(c.fx[k], inp.dataset.fmt);
+      }
+      renderLights();
+    };
+    const renderLights = () => {
+      const box = form.querySelector(".fx-lights");
+      box.innerHTML = c.fx.lights.map((lt, i) => `
+        <div class="fx-light" data-li="${i}">
+          <span class="fx-ln" style="--c:${lt.mode === "shade" ? "#222" : lt.color}">${i + 1}</span>
+          <select data-lk="mode" aria-label="Light ${i + 1} kind"><option value="relight"${lt.mode === "relight" ? " selected" : ""}>Relight</option><option value="glow"${lt.mode === "glow" ? " selected" : ""}>Glow</option><option value="shade"${lt.mode === "shade" ? " selected" : ""}>Shade</option></select>
+          <input type="color" data-lk="color" value="${lt.color}" aria-label="Colour"${lt.mode === "shade" ? " disabled" : ""}>
+          <label>Strength <input type="range" data-lk="intensity" min="0" max="4" step="0.05" value="${lt.intensity}"></label>
+          <label>Size <input type="range" data-lk="radius" min="0.03" max="1.5" step="0.01" value="${lt.radius}"></label>
+          <label>Flicker <input type="range" data-lk="flicker" min="0" max="1" step="0.01" value="${lt.flicker}"></label>
+          <label class="check"><input type="checkbox" data-lk="moves"${lt.x2 != null ? " checked" : ""}> Moves</label>
+          <button type="button" class="btn sm ghost danger" data-a="del-light" title="Remove this light">✕</button>
+        </div>`).join("") || `<p class="hint">No lights yet.</p>`;
+      form.querySelector('[data-a="add-light"]').disabled = c.fx.lights.length >= 4;
+    };
+    const live = () => { if (!playing) syncProgram(false); drawFxHandles(); };
+    form.addEventListener("input", e => {
+      const k = e.target.dataset.k, lk = e.target.dataset.lk;
+      if (k) {
+        c.fx[k] = e.target.type === "checkbox" ? e.target.checked : e.target.type === "range" ? +e.target.value : e.target.value;
+        const o = form.querySelector(`[data-out="${k}"]`); if (o) o.textContent = fmtv(c.fx[k], e.target.dataset.fmt);
+      } else if (lk) {
+        const lt = c.fx.lights[+e.target.closest("[data-li]").dataset.li];
+        if (lk === "moves") { if (e.target.checked) { lt.x2 = clamp(lt.x + 0.4, -0.5, 1.5); lt.y2 = lt.y; } else { lt.x2 = null; lt.y2 = null; } }
+        else lt[lk] = e.target.type === "range" ? +e.target.value : e.target.value;
+        if (lk === "mode" || lk === "color") renderLights();
+      }
+      live();
+    });
+    form.addEventListener("change", e => { if (e.target.dataset.k === "look") { c.fx.look = e.target.value; live(); } });
+    form.addEventListener("click", e => {
+      const p = e.target.closest("[data-preset]");
+      if (p) { c.fx = { ...structuredClone(FX_DEFAULT), ...structuredClone(FX_PRESETS[p.dataset.preset]) }; c.fx.lights = c.fx.lights.map(l => ({ ...LIGHT_DEFAULT, ...l })); fill(); live(); return; }
+      const a = e.target.closest("[data-a]")?.dataset.a;
+      if (a === "add-light" && c.fx.lights.length < 4) { c.fx.lights.push({ ...LIGHT_DEFAULT, x: [0.3, 0.7, 0.5, 0.2][c.fx.lights.length] }); renderLights(); live(); }
+      if (a === "del-light") { c.fx.lights.splice(+e.target.closest("[data-li]").dataset.li, 1); renderLights(); live(); }
+    });
+    const foot = document.createElement("div");
+    foot.innerHTML = `<button type="button" class="btn sm" data-f="copy">Copy</button><button type="button" class="btn sm" data-f="paste"${fxClipboard ? "" : " disabled"}>Paste</button>
+      <button type="button" class="btn sm" data-f="all" title="Give every selected picture clip these effects">Apply to selected</button>
+      <span class="wm-foot-gap"></span><button type="button" class="btn sm danger" data-f="reset">Remove effects</button><button type="button" class="btn sm primary" data-f="done">Done</button>`;
+    let committed = false;
+    const commit = () => {
+      if (committed) return; committed = true;
+      if (c.fx && !Object.keys(FX_DEFAULT).some(k => k !== "enabled" && JSON.stringify(c.fx[k]) !== JSON.stringify(FX_DEFAULT[k]))) c.fx = null;  // nothing set
+      if (snapshot() !== before) { undoStack.push(before); if (undoStack.length > UNDO_MAX) undoStack.shift(); redoStack = []; }
+      fxEdit = null; drawFxHandles(); changed();
+    };
+    const w = WM.open({ id: "fx", title: `Video Fx · ${c.name}`, content: form, footer: foot, width: 600, height: 720, minWidth: 340, minHeight: 320, modal: false, onClose: commit });
+    fxEdit = { clipId: c.id, win: w, onChange: null };
+    foot.addEventListener("click", e => {
+      const f = e.target.closest("[data-f]")?.dataset.f;
+      if (f === "copy") { fxClipboard = structuredClone(c.fx); foot.querySelector('[data-f="paste"]').disabled = false; toast("Effects copied: paste them in another clip's Video Fx window, or right-click › Paste Fx."); }
+      if (f === "paste" && fxClipboard) { c.fx = structuredClone(fxClipboard); fill(); live(); }
+      if (f === "all") {
+        const others = [...sel].map(clip).filter(x => x && x !== c && fxTargets(x));
+        for (const x of others) x.fx = structuredClone(c.fx);
+        toast(others.length ? `Applied to ${others.length} more clip${others.length > 1 ? "s" : ""}.` : "Select other picture clips first (Ctrl+click).");
+      }
+      if (f === "reset") { c.fx = structuredClone(FX_DEFAULT); fill(); live(); }
+      if (f === "done") w.close();
+    });
+    fill(); live();
   }
 
   /* ------------------------------------------------------------------ render */
@@ -693,7 +936,7 @@ const TL = (() => {
       fi > 0 && `fade in ${fi.toFixed(2)}s`, fo > 0 && `fade out ${fo.toFixed(2)}s`, c.muted && "muted"].filter(Boolean).join(" · ") : "";
     const fades = hasSnd ? `<i class="tl-fade in" style="width:${fi * tl.zoom}px"></i><i class="tl-fade out" style="width:${fo * tl.zoom}px"></i>
       <b class="tl-fh in" data-fade="in" style="left:${fi * tl.zoom}px" title="Drag: fade in"></b><b class="tl-fh out" data-fade="out" style="right:${fo * tl.zoom}px" title="Drag: fade out"></b>` : "";
-    return `<div class="tl-clip k-${c.kind}${sound ? " snd" : ""}${sel.has(c.id) ? " sel" : ""}${c.link ? " linked" : ""}${c.audio_off ? " silent" : ""}${c.muted ? " cmuted" : ""}" data-clip="${c.id}" style="left:${c.start * tl.zoom}px;width:${w}px"
+    return `<div class="tl-clip k-${c.kind}${sound ? " snd" : ""}${sel.has(c.id) ? " sel" : ""}${c.link ? " linked" : ""}${c.audio_off ? " silent" : ""}${c.muted ? " cmuted" : ""}${fxOn(c) ? " has-fx" : ""}" data-clip="${c.id}" style="left:${c.start * tl.zoom}px;width:${w}px"
       title="${esc2(c.name)}${c.link ? " · linked (Alt+click selects just this one)" : ""}${c.audio_off ? " · sound on its linked audio clip" : ""}${mix ? " · " + esc2(mix) : ""}">
       <div class="tl-strip" style="${bg}"></div>${fades}
       <span class="tl-cname">${esc2(c.name)}</span><span class="tl-cdur">${dur(c).toFixed(2)}s</span>
@@ -909,6 +1152,10 @@ const TL = (() => {
       isVid && ["Continue from this clip's last frame", () => grabFrame(c, c.trim_out - 1 / fps())],
       isVid && ["Use the frame at the playhead", () => grabAtPlayhead()],
       ["Show in viewer", () => { const it = c.job && state.items.get(c.job); if (it) { select(it.id); Monitor.show("result"); } else Media.toast("The result for this clip isn't in the gallery."); }],
+      fxTargets(c) && ["✨ Video Fx… (light, grade, vignette) (Shift+E)", () => fxDialog(c)],
+      fxTargets(c) && fxClipboard && ["Paste Fx", () => { checkpoint(); for (const x of [...sel].map(clip).filter(fxTargets)) x.fx = structuredClone(fxClipboard); changed(); }],
+      fxTargets(c) && c.fx && ["Copy Fx", () => { fxClipboard = structuredClone(c.fx); toast("Effects copied."); }],
+      fxTargets(c) && c.fx && [c.fx.enabled === false ? "Turn Fx on" : "Turn Fx off", () => { checkpoint(); c.fx.enabled = c.fx.enabled === false; changed(); }],
       c.kind !== "image" && ["🔉 Sound… (volume, pan, fades, mute)", () => soundDialog(c)],
       c.kind !== "image" && [soundTargets(c).every(x => x.muted) ? "Unmute clip sound" : "Mute clip sound", () => {
         checkpoint(); const m = !soundTargets(c).every(x => x.muted); for (const x of soundTargets(c)) x.muted = m; changed();
@@ -1156,6 +1403,10 @@ const TL = (() => {
         <div class="field"><label for="rd-name">File name</label><input id="rd-name" maxlength="120" placeholder="${esc2(projName)} cut" value="${esc2(r.filename || "")}"></div>
         <div class="field"><label for="rd-folder">Save to</label><select id="rd-folder">${renderInfo.places.map(p => opt(p.path, p.name + (p.path ? ` — ${p.path}` : ""), r.folder)).join("")}</select></div>
       </div>
+      <div class="rd-checks">
+        <label class="check"><input type="checkbox" id="rd-stamp"${r.timestamp ? " checked" : ""}> Add timestamp to the file name</label>
+        <label class="check"><input type="checkbox" id="rd-burn"${r.burn_timecode ? " checked" : ""}> Burn the timecode into the picture</label>
+      </div>
       <p class="hint" id="rd-where"></p>
       <div class="row2">
         <div class="field"><label for="rd-format">Format</label><select id="rd-format">${renderInfo.formats.map(f => opt(f.id, f.label, r.format)).join("")}</select></div>
@@ -1208,7 +1459,10 @@ const TL = (() => {
       for (const id of ["#rd-loud", "#rd-abr", "#rd-rate", "#rd-ch"]) $f(id).disabled = noSnd;
       $f("#rd-abr").disabled = noSnd || /wav|prores/.test(f.id || "");
       const place = renderInfo.places.find(p => p.path === $f("#rd-folder").value);
-      const name = ($f("#rd-name").value.trim() || `${projName} cut`).replace(/[<>:"/\\|?*]+/g, "_");
+      const d = new Date(), p2 = n => String(n).padStart(2, "0");
+      const stamp = $f("#rd-stamp").checked ? ` ${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}.${p2(d.getMinutes())}.${p2(d.getSeconds())}` : "";
+      $f("#rd-burn").disabled = f.video === false;
+      const name = ($f("#rd-name").value.trim() || `${projName} cut`).replace(/[<>:"/\\|?*]+/g, "_") + stamp;
       $f("#rd-where").textContent = `→ ${place?.path ? place.path : "outputs/<today>"}/${name}${f.ext || ".mp4"} · shows up in the results gallery. A file that exists isn't overwritten: a number is added.`;
     };
     form.addEventListener("input", sync); form.addEventListener("change", sync); sync();
@@ -1225,7 +1479,7 @@ const TL = (() => {
         size: $f("#rd-size").value, width: $f("#rd-size").value === "custom" ? W : undefined, height: $f("#rd-size").value === "custom" ? H : undefined,
         fps: $f("#rd-fps").value, quality: $f("#rd-quality").value, speed: $f("#rd-speed").value, audio: $f("#rd-audio").checked,
         audio_bitrate: +$f("#rd-abr").value, sample_rate: +$f("#rd-rate").value, channels: +$f("#rd-ch").value, loudness: $f("#rd-loud").value,
-        range: $f("#rd-range").value,
+        range: $f("#rd-range").value, timestamp: $f("#rd-stamp").checked, burn_timecode: $f("#rd-burn").checked,
       };
       tl.render = { ...o, filename: $f("#rd-name").value.trim() };  // remembered (the default name stays a default)
       w.close();
@@ -1290,7 +1544,8 @@ const TL = (() => {
     const range = o.range === "inout";
     const body = { project, range_in: range ? tl.range_in : null, range_out: range ? tl.range_out : null, width, height,
       filename: o.filename, folder: o.folder, format: o.format, fps: o.fps ? +o.fps : null, quality: o.quality, speed: o.speed,
-      audio: o.audio, audio_bitrate: o.audio_bitrate, sample_rate: o.sample_rate, channels: o.channels, loudness: o.loudness };
+      audio: o.audio, audio_bitrate: o.audio_bitrate, sample_rate: o.sample_rate, channels: o.channels, loudness: o.loudness,
+      timestamp: !!o.timestamp, burn_timecode: !!o.burn_timecode };
     try {
       const r = await fetch("/api/timeline/render", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const j = await r.json();
@@ -1308,7 +1563,7 @@ const TL = (() => {
     ["Editing", [["S or Ctrl+B", "Split at the playhead"], ["Ctrl+T", "Add a transition at the nearest cut"],
       ["Double-click a transition", "Change its type or length"], ["Shift (dropping a clip)", "Overlap the clip before as a transition"],
       ["Alt+click", "Select one clip of a linked video/sound pair"], ["Drag the dot at a clip's top corner", "Fade the sound in / out"],
-      ["Right-click a clip › Sound…", "Volume, pan, fades, mute"], ["Del / Backspace", "Delete"], ["Shift+Del", "Ripple delete (close the gap)"],
+      ["Right-click a clip › Sound…", "Volume, pan, fades, mute"], ["Shift+E", "Video Fx for the selected clip"], ["Del / Backspace", "Delete"], ["Shift+Del", "Ripple delete (close the gap)"],
       ["Ctrl+C / Ctrl+V", "Copy / paste at the playhead"], ["Ctrl+D", "Duplicate after the selection"], [", / .", "Nudge selection 1 frame"],
       ["Ctrl+A", "Select all"], ["Esc", "Clear the selection"], ["Ctrl+Z", "Undo"], ["Ctrl+Shift+Z / Ctrl+Y", "Redo"], ["Alt (while dragging)", "Don't snap"]]],
     ["Timeline", [["I / O", "Set In / Out"], ["Alt+X", "Clear In and Out"], ["M", "Add a marker"], ["N", "Snapping on / off"],
@@ -1367,6 +1622,7 @@ const TL = (() => {
       case "End": handled(); return seek(total());
       case "i": case "I": handled(); return setRange("in");
       case "o": case "O": handled(); return setRange("out");
+      case "E": if (e.shiftKey) { handled(); const c = [...sel].map(clip).find(fxTargets) || topClipAt(tl.playhead); return c ? fxDialog(c) : toast("Select a picture clip first."); } return;
       case "M": if (e.shiftKey) { handled(); return mixer(); } // fall through
       case "m": handled(); return addMarker();
       case "n": case "N": handled(); tl.snap = !tl.snap; toast(tl.snap ? "Snapping on" : "Snapping off"); save(); return renderBar();
@@ -1407,6 +1663,7 @@ const TL = (() => {
           <button type="button" class="tl-b" data-act="split" title="Split at the playhead (S, Ctrl+B)">✂</button>
           <button type="button" class="tl-b" data-act="trans" title="Add a transition at the nearest cut (Ctrl+T); right-click a transition to change it">⧓</button>
           <button type="button" class="tl-b" data-act="linkaudio" title="Linked audio: a video with sound also puts its sound on an audio track">🔗</button>
+          <button type="button" class="tl-b" data-act="fx" title="Video Fx for the selected clip: lights, grade, vignette (Shift+E)">✨</button>
           <button type="button" class="tl-b" data-act="mixer" title="Mixer: volume, pan, solo, master loudness (Shift+M)">🎚</button>
           <button type="button" class="tl-b" data-act="snap" title="Snapping (N); hold Alt while dragging to skip">🧲</button>
           <button type="button" class="tl-b" data-act="marker" title="Add a marker (M)">⚑</button>
@@ -1452,6 +1709,7 @@ const TL = (() => {
         loop: () => { loop = !loop; renderBar(); }, split: splitSelection, trans: () => addTransition(),
         linkaudio: () => { tl.link_audio = !tl.link_audio; save(); renderBar(); toast(tl.link_audio ? "Linked audio on: new videos bring their sound onto an audio track." : "Linked audio off: new videos keep their sound inside the clip."); }, marker: addMarker, in: () => setRange("in"), out: () => setRange("out"),
         snap: () => { tl.snap = !tl.snap; save(); renderBar(); }, grab: grabAtPlayhead, undo, redo, mixer,
+        fx: () => { const c = [...sel].map(clip).find(fxTargets) || topClipAt(tl.playhead); return c ? fxDialog(c) : toast("Select a picture clip first."); },
         zoomin: () => zoomStep(1), zoomout: () => zoomStep(-1), fit: () => fit(),
         "add-video": () => addTrack("video"), "add-audio": () => addTrack("audio"),
         keys: showShortcuts, layout: () => Layout.menu(r.left, r.bottom + 4), render: () => renderDialog(),
@@ -1522,6 +1780,7 @@ const TL = (() => {
   async function setProject(id, timeline) {
     if (saveTimer) await saveNow();
     pause();
+    clearTimeout(saveTimer); saveTimer = null;  // pause() queued a playhead save of the old timeline: never let it hit the new one
     project = id || "experiment";
     tl = timeline && timeline.tracks?.length ? structuredClone(timeline) : blank();
     tl.transitions = tl.transitions || [];
@@ -1539,6 +1798,7 @@ const TL = (() => {
 
   return {
     mount, setProject, add, play, pause, toggle, seek, render, saveNow, showShortcuts, onKey, mixer, setLinkAudio, soundDialog: id => soundDialog(clip(id)),
+    fxDialog: id => fxDialog(clip(id)),
     get playing() { return playing; }, get model() { return tl; }, setZoom, fit,
     syncProgram: () => syncProgram(false), clipsForJob: job => tl ? tl.clips.filter(c => c.job === job && !(c.link && track(c.track)?.kind === "audio")).length : 0,
   };

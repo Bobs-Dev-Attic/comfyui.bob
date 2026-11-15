@@ -5,6 +5,36 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.13.0] - 2026-11-15
+
+### Added
+- **Video Fx** for picture clips: **✨** in the timeline toolbar, **Shift+E**, or **Video Fx…** on the clip's
+  right-click menu.
+  - **Grade:** exposure (stops), contrast, saturation, temperature, tint, and black and white or sepia.
+  - **Lights:** up to 4 per clip. Drag the numbered dots on the viewer to place them.
+    - **Kinds:** **Relight** brightens what's there and keeps its texture, **Glow** adds light on top, and
+      **Shade** darkens.
+    - **Settings:** colour, strength, size and flicker. **Moves** makes a light travel from ● to ○ over the clip.
+    - The approach follows [AInVFX Paint a Plate](https://github.com/AInVFX/ainvfx-paintaplate) (Apache-2.0),
+      which multiplies the plate by a smooth light ratio. Here it's done with ffmpeg rather than generative
+      models, so it's instant but doesn't know the scene's shapes.
+  - **Finish:** vignette, blur, sharpen and film grain.
+  - **Presets:** Golden hour, Moonlight, Noir, Neon side light, Candle flicker, Light sweep and Film look.
+  - **Live preview** on the program monitor, close to the render. The render is exact, and grain and sharpening
+    show only there.
+  - **Sharing and switching:** Copy, Paste, Apply to selected, a quick Fx on/off on the clip menu, and the ✨
+    badge on clips. Undo covers each edit session.
+  - `project.json`: `clips[].fx`.
+- **Render options:**
+  - **Add timestamp** to the file name ("My cut 2026-11-15 14.03.27").
+  - **Burn the timecode** into the picture.
+
+### Fixed
+- **Copied clips shared effects.** Split, copied, pasted and duplicated clips shared one settings object in the
+  page, so editing one changed the other until reload. They're now independent copies.
+- **Stray playhead saves.** Switching projects could save a pending playhead change into the newly opened
+  timeline.
+
 ## [0.12.0] - 2026-11-15
 
 ### Added
