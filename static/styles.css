@@ -314,3 +314,7 @@ details.writer .field + .field, details.writer .row2 + .field, details.writer .f
 .sys-list b { display: block; }
 .sys-list .detail { color: var(--muted); word-break: break-word; }
 .sys-list .fix { color: var(--text); margin-top: 2px; }
+
+/* prompt arrives from the writer window */
+#prompt.flash { animation: prompt-flash 1.2s ease-out; }
+@keyframes prompt-flash { from { box-shadow: 0 0 0 3px rgba(122,162,255,.6); } to { box-shadow: 0 0 0 0 rgba(122,162,255,0); } }

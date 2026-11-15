@@ -68,6 +68,13 @@ Other features:
 - **Model folders:** set `BOB_EXTRA_MODEL_PATHS` in `.env` to your ComfyUI `extra_model_paths.yaml`. The app then finds
   models on disk that the running ComfyUI isn't loading, and tells you which `--extra-model-paths-config` file to
   restart ComfyUI with.
+- **Prompt Writer window:** click **↗ Writer window** next to the prompt.
+  - Type your idea on the left; the LLM fills the style, sound and per-shot fields (framing, setting, action, camera,
+    spoken line).
+  - The H3 prompt on the right rebuilds on every keystroke, colour-coded by who wrote each part: H3 format, you, the
+    LLM, or missing.
+  - Typing into a field locks it 🔒, so the LLM keeps it and writes around it.
+  - **Use in studio** sends the prompt back.
 - **Model check:** each engine checks its model files. Music 3 isn't installed here yet, so the app shows which files to get from https://huggingface.co/Comfy-Org/MiniMax-Music-3.
 
 ## Layout
@@ -82,7 +89,8 @@ Other features:
 - `app/comfy.py`: comfy-sdk client, proxy lifecycle, and native ComfyUI calls.
 - `app/jobs.py`: submits jobs, streams progress, downloads outputs to `outputs/`, keeps history in `data/history.json`.
 - `app/main.py`: the HTTP API.
-- `static/`: the UI (vanilla JS, no build step).
+- `static/`: the UI (vanilla JS, no build step). `writer.html`/`writer.js` is the Prompt Writer window;
+  `h3prompt.js` mirrors the server's prompt assembly (`tests/h3prompt_parity.py` keeps them identical).
 
 Settings are environment variables, or lines in a local `.env` file (copy `.env.example`): `COMFYUI_URL`, `COMFY_BASE_URL` (proxy),
 `BOB_PORT`, `BOB_HOST`, `BOB_EXTRA_MODEL_PATHS` (your `extra_model_paths.yaml`), `BOB_COMFYUI_DIR` and

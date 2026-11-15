@@ -210,6 +210,7 @@ function updateDerived() {
   const refTurboSteps = /8step/i.test(refLora) ? 8 : 4;
   const autoSteps = eng === "h3" ? (turbo ? 8 : 20) : eng === "h3ref" ? (turbo && refLora ? refTurboSteps : 20) : eng === "klein" ? 16 : 30;
   $("#steps-hint").textContent = `auto = ${autoSteps}`;
+  postContext();
   $("#turbo-note").textContent = eng === "h3ref"
     ? (refLora ? `${refTurboSteps} steps with the ref2v turbo LoRA` : "Ref2v turbo LoRA not installed: runs 20 steps")
     : "8 steps with the turbo LoRA (≈3× faster)";
@@ -352,6 +353,7 @@ const MAX_REFS = 9;
 function renderRefs() {
   const box = $("#refs");
   if (!box) return;
+  postContext();
   box.innerHTML = state.refs.map((r, i) => `
     <div class="ref">
       <img src="${esc(r.url)}" alt="Reference ${i + 1}">
@@ -407,6 +409,53 @@ function initRefs() {
     if (ref) return addRef(ref, "/" + ref);
     uploadRefs([...e.dataTransfer.files]);
   });
+}
+
+/* ------------------------------------------------------------------ Prompt Writer window link */
+// The writer (static/writer.html) runs in its own window. This channel tells it what the
+// studio is set to and receives "Use in studio" from it.
+const studioChannel = new BroadcastChannel("bob-studio");
+let contextTimer = null;
+let writerWin = null;
+
+function studioContext() {
+  const pic = f => f ? { ref: f.ref, url: f.url } : null;
+  return {
+    kind: state.kind, engine: state.engine[state.kind],
+    seconds: +$("#seconds").value, aspect: $("#aspect").value,
+    references: state.refs.map(r => ({ ref: r.ref, url: r.url })),
+    first_frame: state.engine.video === "h3" ? pic(state.frames.first_frame) : null,
+    last_frame: state.engine.video === "h3" ? pic(state.frames.last_frame) : null,
+    idea: $("#prompt").value,
+  };
+}
+function postContext(now = false) {
+  clearTimeout(contextTimer);
+  const send = () => studioChannel.postMessage({ type: "context", ctx: studioContext() });
+  if (now) send(); else contextTimer = setTimeout(send, 120);
+}
+studioChannel.onmessage = ({ data: msg }) => {
+  if (msg?.type === "hello") postContext(true);
+  else if (msg?.type === "set" && typeof msg.seconds === "number") {
+    $("#seconds").value = msg.seconds; updateDerived();
+  } else if (msg?.type === "use" && typeof msg.prompt === "string") {
+    const p = $("#prompt");
+    writer.undo = p.value;
+    p.value = msg.prompt;
+    if (typeof msg.seconds === "number") { $("#seconds").value = msg.seconds; updateDerived(); }
+    writerStatus(`Prompt from the writer window <button type="button" class="link" id="btn-undo-write">Undo</button>`);
+    $("#btn-undo-write").onclick = () => { if (writer.undo != null) p.value = writer.undo; writer.undo = null; writerStatus(""); };
+    p.classList.remove("flash"); void p.offsetWidth; p.classList.add("flash");
+    studioChannel.postMessage({ type: "used" });
+  }
+};
+window.addEventListener("beforeunload", () => studioChannel.postMessage({ type: "bye" }));
+
+function openWriterWindow() {
+  if (writerWin && !writerWin.closed) { writerWin.focus(); postContext(true); return; }
+  const w = Math.min(1400, screen.availWidth - 80), h = Math.min(950, screen.availHeight - 80);
+  writerWin = window.open("/writer", "bob-writer", `popup,width=${w},height=${h}`);
+  if (!writerWin) location.href = "/writer";  // popups blocked: open it here instead
 }
 
 /* ------------------------------------------------------------------ system check */
@@ -471,6 +520,7 @@ function writerSupported() {
 function renderWriter() {
   const ok = writerSupported();
   $("#btn-write").hidden = !ok;
+  $("#btn-writer-window").hidden = !ok;
   $("#f-writer").hidden = !ok;
   const multi = state.kind === "video";
   $("#llm-shots").closest(".row2").hidden = !multi;
@@ -848,6 +898,8 @@ function init() {
   initRefs();
   initWriter();
   initSysCheck();
+  $("#btn-writer-window").onclick = openWriterWindow;
+  $("#prompt").addEventListener("input", () => postContext());
   $("#aspect").innerHTML = Object.keys(ASPECT).map(a => `<option>${a}</option>`).join("");
   renderForm();
 

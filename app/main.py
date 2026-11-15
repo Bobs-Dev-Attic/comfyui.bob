@@ -48,7 +48,7 @@ app = FastAPI(title="ComfyUI.Bob Studio", version=__version__, lifespan=lifespan
 @app.middleware("http")
 async def no_cache_ui(request: Request, call_next):
     response = await call_next(request)
-    if request.url.path == "/" or request.url.path.startswith("/static/"):
+    if request.url.path in ("/", "/writer") or request.url.path.startswith("/static/"):
         response.headers["Cache-Control"] = "no-cache"  # revalidate so UI edits show up on reload
     return response
 
@@ -173,6 +173,7 @@ class WritePromptRequest(BaseModel):
     backend: str | None = None
     url: str | None = None
     model: str | None = None
+    locked: dict = Field(default_factory=dict)
 
 
 @app.post("/api/prompt/write")
@@ -195,7 +196,7 @@ async def write_prompt(req: WritePromptRequest):
         result = await llm.write_prompt(llm.WriteRequest(
             mode=mode, idea=req.idea, seconds=req.seconds, shots=req.shots, aspect=req.aspect, images=images,
             first_frame=bool(req.first_frame), last_frame=bool(req.last_frame), dialogue=req.dialogue,
-            backend=req.backend, url=req.url, model=req.model or None,
+            backend=req.backend, url=req.url, model=req.model or None, locked=req.locked or {},
         ))
     except (llm.LLMError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -253,3 +254,8 @@ app.mount("/static", StaticFiles(directory=config.STATIC_DIR), name="static")
 @app.get("/")
 async def index():
     return FileResponse(config.STATIC_DIR / "index.html")
+
+
+@app.get("/writer")
+async def writer_page():
+    return FileResponse(config.STATIC_DIR / "writer.html")

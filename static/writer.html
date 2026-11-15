@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prompt Writer · Bob Studio</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23ff7a45'/><path d='M9 22l3-1 10-10-2-2-10 10z' fill='white'/></svg>">
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/writer.css">
+</head>
+<body class="writer">
+  <header class="topbar">
+    <div class="brand"><span class="logo"></span>Prompt Writer <small>for MiniMax H3</small></div>
+    <div class="status">
+      <span class="chip" id="w-link"><i></i>Studio</span>
+      <span class="chip muted" id="w-mode">—</span>
+      <span class="chip muted" id="w-llm">LLM</span>
+      <button class="btn primary sm" id="w-use" title="Put this prompt into the studio's prompt box">Use in studio</button>
+    </div>
+  </header>
+
+  <main class="w-layout">
+    <!-- ------------------------------------------------------------ input -->
+    <section class="panel w-input" aria-label="Your input">
+      <div class="w-unsupported" id="w-unsupported" hidden>
+        The prompt writer is for the H3 engines. In the studio, pick <b>MiniMax H3</b>, <b>H3 Reference</b>,
+        <b>H3 still</b> or <b>H3 sound</b>.
+      </div>
+
+      <div class="field">
+        <div class="label-row">
+          <label for="w-idea">Your idea</label>
+          <span class="label-actions">
+            <label class="mini-toggle" title="Rewrite the prompt a moment after you stop typing">
+              <input type="checkbox" id="w-auto" checked> Auto
+            </label>
+            <button type="button" class="btn sm" id="w-write">✨ Write</button>
+          </span>
+        </div>
+        <textarea id="w-idea" rows="4" placeholder="Say it in your own words, e.g. “a lighthouse keeper climbs the stairs in a storm and lights the lamp”"></textarea>
+        <p class="hint" id="w-status"></p>
+      </div>
+
+      <div class="w-controls">
+        <div class="field w-dur" id="w-dur-field">
+          <div class="label-row"><label for="w-seconds">Duration</label><span class="val" id="w-seconds-val"></span></div>
+          <input type="range" id="w-seconds" min="2" max="15" step="0.5" value="5">
+        </div>
+        <div class="field" id="w-shots-field">
+          <label for="w-shots">Shots</label>
+          <select id="w-shots">
+            <option value="">Auto</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option>
+          </select>
+        </div>
+        <div class="field toggle-row" id="w-dialogue-field">
+          <label class="switch"><input type="checkbox" id="w-dialogue"><span></span></label>
+          <div><strong>Spoken lines</strong></div>
+        </div>
+      </div>
+
+      <div class="w-pictures" id="w-pictures" hidden></div>
+
+      <h3 class="w-h">Look and sound</h3>
+      <div id="w-globals"></div>
+
+      <h3 class="w-h" id="w-shots-h">Shots</h3>
+      <div id="w-shotlist"></div>
+      <p class="hint">Type into any field to lock it 🔒: the LLM keeps it and writes the rest around it. Click 🔒 to let the LLM rewrite it.</p>
+    </section>
+
+    <!-- ------------------------------------------------------------ output -->
+    <section class="panel w-output" aria-label="H3 prompt">
+      <div class="w-out-head">
+        <h2>H3 prompt</h2>
+        <div class="legend">
+          <span class="lg tpl">H3 format</span><span class="lg user">you</span><span class="lg llm">LLM</span><span class="lg hole">missing</span>
+        </div>
+      </div>
+      <pre class="w-prompt" id="w-prompt" aria-live="polite"></pre>
+      <ul class="w-warnings" id="w-warnings"></ul>
+      <div class="w-out-actions">
+        <span class="hint" id="w-count"></span>
+        <button class="btn sm" id="w-copy">Copy</button>
+        <button class="btn sm" id="w-clear" title="Clear every field the LLM wrote and every lock">Start over</button>
+        <button class="btn primary sm" id="w-use2">Use in studio</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/h3prompt.js"></script>
+  <script src="/static/writer.js"></script>
+</body>
+</html>
