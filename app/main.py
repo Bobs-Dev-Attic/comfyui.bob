@@ -7,6 +7,7 @@ import logging
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
@@ -329,6 +330,19 @@ class RenderReq(BaseModel):
     range_out: float | None = Field(None, ge=0)
     width: int | None = Field(None, ge=64, le=7680)
     height: int | None = Field(None, ge=64, le=4320)
+    # Render options (the Render dialog); all optional.
+    filename: str = Field("", max_length=120)
+    folder: str = Field("", max_length=1000)
+    format: str = "mp4-h264"
+    fps: float | None = Field(None, ge=1, le=120)
+    quality: Literal["high", "medium", "small"] = "high"
+    speed: Literal["fast", "balanced", "best"] = "balanced"
+    audio: bool = True
+    audio_bitrate: int = Field(192, ge=64, le=512)
+    sample_rate: Literal[44100, 48000] = 48000
+    channels: Literal[1, 2] = 2
+    loudness: str = Field("mixer", pattern=r"^(mixer|off|-\d{1,2}(\.\d)?)$")
+    overwrite: bool = False
 
 
 class Ids(BaseModel):
@@ -452,11 +466,20 @@ async def timeline_render(req: RenderReq):
     p = _project_call(projects.find, req.project)
     pf = _project_call(projects.load_file, p)
     try:
+        opts = req.model_dump(exclude={"project", "range_in", "range_out", "width", "height"})
         return await render.render(jobs, None if req.project == "experiment" else req.project, pf.timeline,
                                    w0=req.range_in, w1=req.range_out, width=req.width, height=req.height,
-                                   name=pf.name)
+                                   name=pf.name, opts=opts)
     except (ValueError, media.MediaError) as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/timeline/formats")
+async def timeline_formats():
+    """Render formats this ffmpeg can write, and places a render can be saved to."""
+    fmts = await asyncio.to_thread(render.formats)
+    places = [{"name": "Studio results (outputs)", "path": ""}] + [{"name": b["name"], "path": b["path"]} for b in media.bookmarks()]
+    return {"formats": fmts, "places": places}
 
 
 @app.get("/api/timeline/fcpxml")

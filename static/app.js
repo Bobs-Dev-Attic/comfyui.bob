@@ -655,10 +655,12 @@ function renderQueue() {
     const label = it.status === "running" ? `${pct}%${step}` : it.status;
     return `<div class="q-item" data-id="${it.id}">
       <span class="q-title"><b>${esc(engineName(it.kind, it.engine))}</b> · ${esc(label)} — ${esc((it.params.prompt || "").slice(0, 60))}</span>
+      <button class="btn ghost sm" data-log="${it.id}" title="Log, progress and time left">Log</button>
       <button class="btn ghost sm danger" data-cancel="${it.id}">Cancel</button>
       <div class="bar ${it.status === "running" && !pct ? "indeterminate" : ""}"><i style="width:${pct}%"></i></div></div>`;
   }).join("");
   $$("[data-cancel]", q).forEach(b => b.onclick = () => cancel(b.dataset.cancel));
+  $$("[data-log]", q).forEach(b => b.onclick = () => Activity.show(b.dataset.log));
 }
 
 async function cancel(id) { try { await api(`/api/items/${id}/cancel`, { method: "POST" }); } catch (e) { alert(e.message); } }
@@ -782,6 +784,7 @@ function connectEvents() {
   const es = new EventSource("/api/events");
   es.onmessage = e => {
     const ev = JSON.parse(e.data);
+    Activity.onEvent(ev);
     if (ev.type === "item") {
       const prev = state.items.get(ev.item.id);
       state.items.set(ev.item.id, ev.item);
@@ -818,7 +821,7 @@ async function pollStatus() {
       $("#st-gpu").textContent = `${s.gpu.name} · ${used.toFixed(1)}/${tot.toFixed(0)} GB`;
     }
     const q = s.queue || { running: 0, pending: 0 };
-    $("#st-queue").textContent = `Queue ${q.running + q.pending}`;
+    Activity.setQueue(q);
     if (s.comfyui && !state.caps) loadCaps();
   } catch {
     $("#st-comfy").className = "chip bad";
@@ -883,6 +886,7 @@ function init() {
 
   api("/api/items").then(({ items }) => {
     for (const it of items) state.items.set(it.id, it);
+    Activity.load(items.slice(0, 40));
     renderGallery(); renderQueue();
     if (state.shellReady) selectInScope();  // otherwise initShell does it once the project is open
   });

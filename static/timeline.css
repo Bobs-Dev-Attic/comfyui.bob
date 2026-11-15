@@ -1,10 +1,14 @@
-/* Stage: monitor above, results bin + timeline below (sizes from --mon-frac and --bin-w). */
+/* Stage: results gallery + monitor above, timeline below (sizes from --mon-frac and --bin-w). */
 
 .stage {
   display: grid; grid-template-rows: calc((100% - 10px) * var(--mon-frac, .55)) 10px minmax(0, 1fr);
   padding: 12px; gap: 0; overflow: hidden;
 }
-.monitor { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: hidden; }
+.top { display: grid; grid-template-columns: var(--bin-w, 340px) 10px minmax(0, 1fr); min-height: 0; }
+.top.no-gallery { grid-template-columns: minmax(0, 1fr); }
+.top.no-gallery > .bin, .top.no-gallery > #bin-split { display: none; }
+.mon-gal[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 18%, transparent); border-color: var(--accent); }
+.monitor { display: flex; flex-direction: column; gap: 8px; min-height: 0; min-width: 0; overflow: hidden; }
 .mon-head { display: flex; align-items: center; gap: 8px; flex: none; }
 .monitor .viewer { height: auto; max-height: none; min-height: 90px; flex: 1 1 auto; }
 .monitor .meta { flex: 0 1 auto; max-height: 42%; overflow: auto; gap: 8px; }
@@ -27,7 +31,7 @@
 .vsplit:hover::after, .vsplit.drag::after, .vsplit:focus-visible::after { background: var(--accent); }
 body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select: none !important; }
 
-.bottom { display: grid; grid-template-columns: var(--bin-w, 340px) 10px minmax(0, 1fr); min-height: 0; }
+.bottom { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; }
 
 /* ---------------------------------------------------------------- results bin */
 .bin { display: flex; flex-direction: column; min-height: 0; min-width: 0; gap: 6px; }
@@ -148,6 +152,7 @@ kbd { font: 11px ui-monospace, Consolas, monospace; padding: 1px 5px; border-rad
   .stage { grid-template-rows: auto; display: flex; flex-direction: column; overflow: visible; }
   .monitor .viewer { min-height: 220px; height: 46vh; flex: none; }
   .hsplit, .vsplit { display: none; }
+  .top { display: flex; flex-direction: column-reverse; gap: 10px; }
   .bottom { grid-template-columns: 1fr; gap: 10px; }
   .bin .gallery { max-height: 50vh; }
   .timeline { height: 60vh; }

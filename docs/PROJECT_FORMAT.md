@@ -136,20 +136,28 @@ Saved as you work (or with Ctrl+S when auto-save is off). Times are seconds on t
   "playhead": 1.21, "zoom": 60,    // pixels per second
   "range_in": 0.5, "range_out": 3.0, // In/Out: Render can export just this range
   "snap": true,
-  "render": {}                     // export settings (reserved: width, height, crf)
+  "render": {                      // the Render dialog's last choices (free-form; all optional)
+    "filename": "My cut", "folder": "",          // "" = outputs/<date>; else outputs or a bookmarked folder
+    "format": "mp4-h264",          // mp4-h264 | mp4-h264-nvenc | mp4-h265 | webm-vp9 | mov-prores | wav | mp3
+    "size": "s1080",               // original | s2160…s480 (short side) | 1920x1080 | 1080x1920 | 1080x1080 | custom
+    "fps": "", "quality": "high", "speed": "balanced", "range": "all",
+    "audio": true, "audio_bitrate": 192, "sample_rate": 48000, "channels": 2, "loudness": "mixer"
+  }
 }
 ```
 
 A transition's length is the overlap (`a.end − b.start`), and each clip uses its own frames, so no spare footage
 is needed.
 
-Rendering (`POST /api/timeline/render`, `app/render.py`) uses ffmpeg:
+Rendering (`POST /api/timeline/render`, `app/render.py`) uses ffmpeg. `GET /api/timeline/formats` lists the
+formats this ffmpeg can write and the places a render can be saved:
 - **Picture:** at each moment the uppermost visible video track wins, and gaps are black.
 - **Sound:** every clip with sound on an unmuted (and, when anything is soloed, soloed) track is mixed in: clip ×
   track volume, pan, its fades, and crossfades at transitions. Linked sound clips on other tracks crossfade with
   their videos' transition. Then the master: volume, loudness normalisation (measured first, then applied), and a
   limiter at −0.5 dBFS.
-- **Result:** the MP4 comes back as a studio result in the same project.
+- **Result:** the file comes back as a studio result in the same project, with a step-by-step log (shown in the
+  Activity console). An existing file is never overwritten: a number is added to the name.
 
 `GET /api/timeline/fcpxml?project=<id>` exports the same timeline as FCPXML 1.9 for DaVinci Resolve.
 - **Tracks:** the bottom video track becomes the storyline, and the other tracks become lanes.

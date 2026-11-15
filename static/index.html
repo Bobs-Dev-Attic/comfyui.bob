@@ -17,7 +17,7 @@
       <span class="chip" id="st-comfy"><i></i>ComfyUI</span>
       <span class="chip" id="st-proxy"><i></i>API v2</span>
       <span class="chip muted" id="st-gpu">GPU</span>
-      <span class="chip muted" id="st-queue">Queue 0</span>
+      <button type="button" class="chip chip-btn act-chip" id="st-queue" title="Activity: what the studio is doing, with logs (Ctrl+Shift+A)"><i></i>Activity</button>
       <button class="chip chip-btn" id="st-sys" title="System check"><i></i>System</button>
       <button class="chip chip-btn unsaved" id="st-save" hidden title="Save the project (Ctrl+S)"><i></i>Unsaved · Save</button>
       <button class="btn ghost sm" id="btn-media" title="Open the media library: pictures, clips and sounds, with tags and bookmarks">🗂 Media</button>
@@ -247,35 +247,9 @@
 
     <div class="splitter" id="splitter" role="separator" aria-orientation="vertical" aria-label="Resize the side panel (double-click to reset)" tabindex="0"></div>
 
-    <!-- ============================================================ STAGE: monitor above, bin + timeline below -->
+    <!-- ============================================================ STAGE: gallery + monitor above, timeline below -->
     <section class="panel stage" aria-label="Preview and edit">
-      <div class="monitor" id="monitor">
-        <div class="mon-head">
-          <div class="seg sm" id="mon-seg" role="tablist" aria-label="Viewer shows">
-            <button type="button" data-m="result" class="active" title="The selected result">Result</button>
-            <button type="button" data-m="timeline" title="Timeline playback">Timeline</button>
-          </div>
-        </div>
-        <div class="viewer" id="viewer">
-          <div class="empty" id="viewer-empty">
-            <div class="empty-art"></div>
-            <h2>Make something</h2>
-            <p>Results show up in the bin below. Drag them onto the timeline to cut them together.</p>
-          </div>
-        </div>
-        <div class="viewer program" id="program" hidden>
-          <video id="prog-video" playsinline preload="auto" hidden></video>
-          <img id="prog-img" alt="" hidden>
-          <video id="prog-video2" playsinline preload="auto" hidden></video>
-          <img id="prog-img2" alt="" hidden>
-          <div class="prog-hud"><span id="prog-name"></span><span id="prog-tc">00:00:00</span></div>
-        </div>
-        <div class="meta" id="meta" hidden></div>
-      </div>
-
-      <div class="hsplit" id="stage-split" role="separator" aria-orientation="horizontal" aria-label="Resize viewer and timeline (double-click to reset)" tabindex="0"></div>
-
-      <div class="bottom" id="bottom">
+      <div class="top" id="top">
         <div class="bin" id="bin" aria-label="Results">
           <div class="bin-head">
             <h3>Results <small id="bin-count"></small></h3>
@@ -298,7 +272,36 @@
           </div>
           <div class="gallery" id="gallery"></div>
         </div>
-        <div class="vsplit" id="bin-split" role="separator" aria-orientation="vertical" aria-label="Resize results and timeline (double-click to reset)" tabindex="0"></div>
+        <div class="vsplit" id="bin-split" role="separator" aria-orientation="vertical" aria-label="Resize the gallery and viewer (double-click to reset)" tabindex="0"></div>
+        <div class="monitor" id="monitor">
+          <div class="mon-head">
+            <button type="button" class="btn sm ghost mon-gal" id="btn-gallery" aria-pressed="true" title="Show or hide the results gallery (Alt+G)">🗂 Gallery</button>
+            <div class="seg sm" id="mon-seg" role="tablist" aria-label="Viewer shows">
+              <button type="button" data-m="result" class="active" title="The selected result">Result</button>
+              <button type="button" data-m="timeline" title="Timeline playback">Timeline</button>
+            </div>
+          </div>
+          <div class="viewer" id="viewer">
+            <div class="empty" id="viewer-empty">
+              <div class="empty-art"></div>
+              <h2>Make something</h2>
+              <p>Results show up in the gallery. Drag them onto the timeline below to cut them together.</p>
+            </div>
+          </div>
+          <div class="viewer program" id="program" hidden>
+            <video id="prog-video" playsinline preload="auto" hidden></video>
+            <img id="prog-img" alt="" hidden>
+            <video id="prog-video2" playsinline preload="auto" hidden></video>
+            <img id="prog-img2" alt="" hidden>
+            <div class="prog-hud"><span id="prog-name"></span><span id="prog-tc">00:00:00</span></div>
+          </div>
+          <div class="meta" id="meta" hidden></div>
+        </div>
+      </div>
+
+      <div class="hsplit" id="stage-split" role="separator" aria-orientation="horizontal" aria-label="Resize the top section and timeline (double-click to reset)" tabindex="0"></div>
+
+      <div class="bottom" id="bottom">
         <div class="timeline" id="timeline" aria-label="Timeline"></div>
       </div>
     </section>
@@ -309,6 +312,7 @@
   <script src="/static/media.js"></script>
   <script src="/static/timeline.js"></script>
   <script src="/static/bin.js"></script>
+  <script src="/static/activity.js"></script>
   <script src="/static/app.js"></script>
   <script src="/static/shell.js"></script>
 </body>
