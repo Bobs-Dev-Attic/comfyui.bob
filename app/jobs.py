@@ -22,7 +22,7 @@ from .comfy import ComfyService
 log = logging.getLogger("bob.jobs")
 
 Kind = Literal["video", "image", "audio"]
-Engine = Literal["h3", "h3ref", "klein", "music3"]
+Engine = Literal["h3", "h3ref", "klein", "music3", "reshoot"]
 
 
 class GenerateRequest(BaseModel):
@@ -43,6 +43,12 @@ class GenerateRequest(BaseModel):
     lyrics: str = Field("", max_length=20000)  # Music 3
     batch: int = Field(1, ge=1, le=4)  # number of takes (seeds seed, seed+1, ...)
     project: str | None = Field(None, max_length=64)  # project id; None = Experiment
+    # AI reshoot (camera moves): guide frames + masks of the uncovered areas, and where they sit
+    guides: list[str] = Field(default_factory=list, max_length=8)
+    guide_masks: list[str] = Field(default_factory=list, max_length=8)
+    guide_frames: list[int] = Field(default_factory=list, max_length=8)
+    fill_prompt: str = Field("", max_length=8000)
+    camera_clip: str | None = Field(None, max_length=64)
 
 
 class JobManager:
@@ -138,11 +144,15 @@ class JobManager:
 
     async def generate(self, req: GenerateRequest) -> list[dict[str, Any]]:
         installed = await self.comfy.installed_models()
-        mset = models.ALL_SETS[req.engine]
-        resolved = models.resolve(mset, installed)
-        if not resolved["ready"]:
-            names = ", ".join(m["want"] for m in resolved["missing"])
-            raise ValueError(f"{mset.title} is missing model files: {names}")
+        sets = [models.ALL_SETS["h3"], models.ALL_SETS["klein"]] if req.engine == "reshoot" else [models.ALL_SETS[req.engine]]
+        files: dict[str, Any] = {}
+        for mset in sets:
+            resolved = models.resolve(mset, installed)
+            if not resolved["ready"]:
+                names = ", ".join(m["want"] for m in resolved["missing"])
+                raise ValueError(f"{mset.title} is missing model files: {names}")
+            files[mset.key] = resolved["files"]
+        resolved = {"files": files if req.engine == "reshoot" else files[sets[0].key]}
         self._validate(req)
 
         base_seed = req.seed if req.seed >= 0 else random.randint(0, 2**48)
@@ -181,6 +191,13 @@ class JobManager:
             raise ValueError("FLUX 3 Klein only makes images")
         if req.engine == "music3" and req.kind != "audio":
             raise ValueError("Music 3 only makes audio")
+        if req.engine == "reshoot":
+            if req.kind != "video":
+                raise ValueError("A reshoot makes video")
+            if len(req.guides) < 2 or len(req.guides) != len(req.guide_masks) or len(req.guides) != len(req.guide_frames):
+                raise ValueError("A reshoot needs at least two guide frames, each with a mask")
+            for ref in (*req.guides, *req.guide_masks):
+                media_path(ref)
         if not req.prompt.strip():
             raise ValueError("Prompt is empty")
         if req.aspect not in workflows.ASPECTS:
@@ -207,6 +224,14 @@ class JobManager:
                 files, output=req.kind, prompt=req.prompt, width=w, height=h, seconds=req.seconds, seed=seed,
                 turbo=req.turbo, steps=req.steps, first_frame=bool(req.first_frame) and req.kind == "video",
                 last_frame=bool(req.last_frame) and req.kind == "video", prefix=prefix,
+            )
+        if req.engine == "reshoot":
+            with Image.open(media_path(req.guides[0])) as im:
+                w, h = im.size
+            return workflows.build_reshoot(
+                files["h3"], files["klein"], prompt=req.prompt, fill_prompt=req.fill_prompt, width=w, height=h,
+                seconds=req.seconds, seed=seed, turbo=req.turbo, guide_frames=req.guide_frames,
+                references=len(req.references), steps=req.steps, prefix=prefix,
             )
         if req.engine == "h3ref":
             mp = workflows.H3_QUALITY.get(req.quality, workflows.H3_QUALITY["draft"])
@@ -240,7 +265,14 @@ class JobManager:
                      + "".join(f", {k} {v}" for k, v in (built.info or {}).items() if isinstance(v, (int, float, str)) and len(str(v)) < 40))
             wf = client.workflows.from_json(built.graph)
             for role, node_id in built.image_inputs.items():
-                ref = req.references[int(role[4:])] if role.startswith("ref_") else getattr(req, role)
+                if role.startswith("ref_"):
+                    ref = req.references[int(role[4:])]
+                elif role.startswith("guide_"):
+                    ref = req.guides[int(role[6:])]
+                elif role.startswith("mask_"):
+                    ref = req.guide_masks[int(role[5:])]
+                else:
+                    ref = getattr(req, role)
                 self.log(item, f"Input {role}: {ref}")
                 wf.set_input(node_id, "image", client.assets.from_file(media_path(ref)))
 

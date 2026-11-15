@@ -28,7 +28,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from . import config, media
+from . import camera, config, media
 from .projectfile import TRANSITIONS, Clip, Timeline
 
 log = logging.getLogger("bob.render")
@@ -470,6 +470,16 @@ def commands(tl: Timeline, out: str, w0: float | None = None, w1: float | None =
         size = max(14, H // 30)
         burn = (f",drawtext={ff}timecode='{tc}':rate={r}:fontsize={size}:fontcolor=white:box=1:boxcolor=black@0.55:"
                 f"boxborderw={size // 3}:x=(w-tw)/2:y=h-th-{size}")
+    if camera.active(tl) and not o.get("no_camera"):  # the virtual camera looks at the finished picture
+        warp = camera.perspective_filter(tl, W, H, fps)
+        if camera.fill_of(tl) == "blur":
+            filters.append(f"[{cur}]split[cam_b][cam_f]")
+            filters.append(f"[cam_b]gblur=sigma={max(8, H // 22)},scale=iw*1.12:ih*1.12,crop={W}:{H},format=yuva420p[cam_bg]")
+            filters.append(f"[cam_f]{warp}[cam_w]")
+            filters.append("[cam_bg][cam_w]overlay=format=auto[cam]")
+        else:
+            filters.append(f"[{cur}]{warp}[cam]")
+        cur = "cam"
     filters.append(f"[{cur}]trim=start={w0:.4f}:end={w1:.4f},setpts=PTS-STARTPTS,format=yuv420p{burn}[vout]")
 
     # ---------------------------------------------------------------- sound
@@ -478,7 +488,8 @@ def commands(tl: Timeline, out: str, w0: float | None = None, w1: float | None =
     alabels: list[str] = []
     for c in clips:
         tr = tracks[c.track]
-        if tr.muted or c.muted or c.kind == "image" or (tr.kind == "video" and c.audio_off) or (soloing and not tr.solo):
+        if (tr.kind == "camera" or c.kind == "camera" or tr.muted or c.muted or c.kind == "image"
+                or (tr.kind == "video" and c.audio_off) or (soloing and not tr.solo)):
             continue
         if c.kind == "video":
             try:
@@ -497,7 +508,12 @@ def commands(tl: Timeline, out: str, w0: float | None = None, w1: float | None =
         bal = max(-1.0, min(1.0, c.pan + tr.pan))
         pan = [f"pan=stereo|c0={min(1.0, 1 - bal):.3f}*c0|c1={min(1.0, 1 + bal):.3f}*c1"] if abs(bal) > 1e-3 else []
         ms = int(round(c.start * 1000))
-        chain = ",".join(["aformat=sample_rates=48000:channel_layouts=stereo", f"volume={c.volume * tr.volume:.3f}", *pan, *fades,
+        if c.vol_keys:  # keyframed volume: an expression of the clip's local time
+            keyed = _Track([(k.t - (0.0 if c.kind == "image" else c.trim_in), k.v * tr.volume, k.ease) for k in c.vol_keys])
+            vol = f"volume='{keyed.expr('t', '{:.4f}')}':eval=frame" if not keyed.const else f"volume={keyed.pts[0][1]:.3f}"
+        else:
+            vol = f"volume={c.volume * tr.volume:.3f}"
+        chain = ",".join(["aformat=sample_rates=48000:channel_layouts=stereo", vol, *pan, *fades,
                           f"adelay={ms}|{ms}"])
         lab = f"a{len(alabels)}"
         afilters.append(f"[{idx}:a]{chain}[{lab}]")
@@ -517,7 +533,15 @@ def commands(tl: Timeline, out: str, w0: float | None = None, w1: float | None =
     vfile, afile = out + ".v" + fmt["ext"] if want_video else "", out + ".a.wav"
     raw = out + ".raw.wav" if loudness is not None else afile
     if want_video:
-        vargs += ["-filter_complex", ";".join(filters), "-map", "[vout]", "-an", *_fill(fmt["video"], **kv), "-t", f"{D_out:.4f}", vfile]
+        graph = ";".join(filters)
+        if len(graph) > 16000:  # long camera paths: Windows command lines stop at 32k characters
+            gfile = out + ".v.graph"
+            Path(gfile).write_text(graph, encoding="utf-8")
+            cmdfiles.append(gfile)
+            vargs += ["-/filter_complex", gfile]
+        else:
+            vargs += ["-filter_complex", graph]
+        vargs += ["-map", "[vout]", "-an", *_fill(fmt["video"], **kv), "-t", f"{D_out:.4f}", vfile]
     aargs += ["-filter_complex", ";".join(afilters), "-map", "[aout]", "-vn", "-c:a", "pcm_s16le", "-t", f"{D_out:.4f}", raw]
     fast = ["-movflags", "+faststart"] if fmt["ext"] in (".mp4", ".mov") else []
     sound = ["-ar", str(rate), "-ac", str(chans), *_fill(fmt["audio"], **kv)]

@@ -72,12 +72,19 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
     approach (multiplying the picture by a soft light ratio so its texture stays) comes from
     [AInVFX Paint a Plate](https://github.com/AInVFX/ainvfx-paintaplate) (Apache-2.0), done here with ffmpeg
     instead of generative models.
+  - **🎥 Camera track** (Shift+C, ＋ Camera): camera moves over the finished picture: pan, tilt, roll, zoom,
+    dolly, truck, crane and orbit, keyframed, with handheld shake and presets (push in, orbit, crane, dutch tilt,
+    dolly zoom…). The viewer previews it in 3D and the render matches. **AI reshoot** regenerates the shot along
+    the move: FLUX Klein fills in what the camera newly sees from your description and reference pictures, then
+    MiniMax H3 makes the video; it lands on its own track. Idea from
+    [Reshoot 4D](https://github.com/itsmetamike/reshoot-4d) (AGPL-3.0, no code used), built on the models here.
   - **⬇ Render…** opens the render options: file name, where to save (outputs or a bookmarked folder), format
     (H.264, H.264 on NVENC, H.265, VP9/WebM, ProRes, WAV, MP3), resolution, frame rate, quality, speed and
     sound (loudness, bitrate, sample rate, mono or stereo). Optionally add a timestamp to the file name or burn
     the timecode into the picture.
   - Videos with sound get their own audio track each. Audio clips are drawn as waveform graphs, scaled by
-    their volume and fades, with the volume line on top and red marks where the sound would clip. Mix with **🎚 Mixer** (Shift+M): per-track volume, pan,
+    their volume and fades, with the volume line on top and red marks where the sound would clip. Click the line
+    to add volume keyframes, drag them, double-click to delete. Mix with **🎚 Mixer** (Shift+M): per-track volume, pan,
     mute and solo, and a master with loudness targets (−14/−16/−23 LUFS) and a limiter. Right-click a clip for
     **Sound…** (volume, pan, fades, mute), or drag the dots at its top corners to fade.
   - Videos with sound bring it onto a linked audio track.

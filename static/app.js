@@ -785,6 +785,7 @@ function connectEvents() {
   es.onmessage = e => {
     const ev = JSON.parse(e.data);
     Activity.onEvent(ev);
+    if (ev.type === "item") TL.onItem?.(ev.item);
     if (ev.type === "item") {
       const prev = state.items.get(ev.item.id);
       state.items.set(ev.item.id, ev.item);

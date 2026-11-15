@@ -331,6 +331,102 @@ def build_klein(
                  info={"width": width, "height": height, "steps": steps, "enhanced": use_enhance})
 
 
+# ------------------------------------------------------------------- AI reshoot
+
+def build_reshoot(
+    h3: dict[str, str | None],
+    klein: dict[str, str | None],
+    *,
+    prompt: str,
+    fill_prompt: str,
+    width: int,
+    height: int,
+    seconds: float,
+    seed: int,
+    turbo: bool,
+    guide_frames: list[int],
+    references: int = 0,
+    steps: int | None = None,
+    klein_steps: int = 12,
+    prefix: str = "bob/reshoot",
+) -> Built:
+    """Regenerate a shot along a new camera move.
+
+    Guide frames are the original picture warped to the new camera, with masks of the areas
+    the move uncovers. FLUX Klein fills those areas (the frame and any reference pictures are
+    Klein references, so the fill continues the scene), the filled frames are pasted back over
+    the untouched pixels, and MiniMax H3 makes the video: the first and last guides as its first
+    and last frames, the ones between as guides at their frame positions."""
+    g = Graph()
+    o = Graph.out
+    image_inputs: dict[str, str] = {}
+
+    k_unet = g.add("UNETLoader", unet_name=klein["unet"], weight_dtype="default")
+    k_clip = g.add("CLIPLoader", clip_name=klein["clip"], type="flux3", device="default")
+    k_vae = g.add("VAELoader", vae_name=klein["vae"])
+    k_pos = g.add("CLIPTextEncode", clip=o(k_clip), text=fill_prompt)
+    k_neg = g.add("CLIPTextEncode", clip=o(k_clip), text="")
+    ref_lats = []
+    for i in range(references):
+        load = g.add("LoadImage", image="")
+        image_inputs[f"ref_{i}"] = load
+        scaled = g.add("ImageScale", image=o(load), upscale_method="lanczos", width=width, height=height, crop="center")
+        ref_lats.append(g.add("VAEEncode", pixels=o(scaled), vae=o(k_vae)))
+    filled = []
+    for i, _ in enumerate(guide_frames):
+        load = g.add("LoadImage", image="")
+        image_inputs[f"guide_{i}"] = load
+        mload = g.add("LoadImageMask", image="", channel="red")
+        image_inputs[f"mask_{i}"] = mload
+        img = g.add("ImageScale", image=o(load), upscale_method="lanczos", width=width, height=height, crop="disabled")
+        mask = g.add("GrowMask", mask=o(mload), expand=6, tapered_corners=True)
+        lat = g.add("VAEEncode", pixels=o(img), vae=o(k_vae))
+        noised = g.add("SetLatentNoiseMask", samples=o(lat), mask=o(mask))
+        cond = g.add("ReferenceLatent", conditioning=o(k_pos), latent=o(lat))
+        for r in ref_lats:
+            cond = g.add("ReferenceLatent", conditioning=o(cond), latent=o(r))
+        sampled = g.add("KSampler", model=o(k_unet), seed=int(seed) + i, steps=int(klein_steps), cfg=1.0, sampler_name="euler",
+                        scheduler="simple", positive=o(cond), negative=o(k_neg), latent_image=o(noised), denoise=1.0)
+        decoded = g.add("VAEDecode", samples=o(sampled), vae=o(k_vae))
+        filled.append(g.add("ImageCompositeMasked", destination=o(img), source=o(decoded), x=0, y=0, resize_source=False, mask=o(mask)))
+
+    unet = g.add("UNETLoader", unet_name=h3["unet"], weight_dtype="default")
+    model = unet
+    use_turbo = turbo and bool(h3.get("turbo_lora"))
+    if use_turbo:
+        model = g.add("LoraLoaderModelOnly", model=o(unet), lora_name=h3["turbo_lora"], strength_model=1.0)
+        default_steps = 4 if "4step" in h3["turbo_lora"].lower() else 8
+    else:
+        default_steps = 20
+    n_steps = int(steps or default_steps)
+    clip = g.add("CLIPLoader", clip_name=h3["clip"], type="minimax", device="default")
+    vae = g.add("VAELoader", vae_name=h3["vae"])
+    length = h3_length(seconds)
+    lead = h3_frame_alignment(True, True, length)
+    text = f"{lead}\n\n{prompt}"
+    cond = g.add("MiniMaxH3ImageToVideo", clip=o(clip), vae=o(vae), prompt=text, width=width, height=height, length=length,
+                 first_frame=o(filled[0]), last_frame=o(filled[-1]))
+    positive = o(cond, 0)
+    for img, frame in list(zip(filled, guide_frames))[1:-1]:
+        positive = o(g.add("MiniMaxH3AddGuide", positive=positive, latent=o(cond, 1), frame_idx=int(min(frame, length - 1)),
+                           vae=o(vae), image=o(img)))
+    noise = g.add("RandomNoise", noise_seed=int(seed))
+    sampler = g.add("KSamplerSelect", sampler_name="res_multistep")
+    sigmas = g.add("BasicScheduler", model=o(model), scheduler="simple", steps=n_steps, denoise=1.0)
+    guider = g.add("BasicGuider", model=o(model), conditioning=positive)
+    latent = g.add("SamplerCustomAdvanced", noise=o(noise), guider=o(guider), sampler=o(sampler), sigmas=o(sigmas),
+                   latent_image=o(cond, 1))
+    audio_vae = g.add("VAELoader", vae_name=h3["audio_vae"])
+    audio = g.add("VAEDecodeAudio", samples=o(latent), vae=o(audio_vae))
+    frames = g.add("VAEDecode", samples=o(latent), vae=o(vae))
+    video = g.add("CreateVideo", images=o(frames), audio=o(audio), fps=float(FPS))
+    save = g.add("SaveVideo", video=o(video), filename_prefix=prefix, format="auto", codec="auto")
+    return Built(graph=g.nodes, outputs=[save], image_inputs=image_inputs,
+                 info={"width": width, "height": height, "frames": length, "steps": n_steps, "turbo": use_turbo,
+                       "guides": len(guide_frames), "references": references, "final_prompt": text,
+                       "seconds": round(length / FPS, 2)})
+
+
 # ------------------------------------------------------------------- Music 3
 
 def build_music3(
