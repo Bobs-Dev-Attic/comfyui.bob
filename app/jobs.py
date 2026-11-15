@@ -42,6 +42,7 @@ class GenerateRequest(BaseModel):
     enhance: bool = False  # Klein prompt upsampler
     lyrics: str = Field("", max_length=20000)  # Music 3
     batch: int = Field(1, ge=1, le=4)  # number of takes (seeds seed, seed+1, ...)
+    project: str | None = Field(None, max_length=64)  # project id; None = Experiment
 
 
 class JobManager:
@@ -92,6 +93,13 @@ class JobManager:
         self._publish({"type": "item", "item": item})
 
     # ------------------------------------------------------------------ public API
+    def project_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for it in self.items.values():
+            if it.get("project"):
+                counts[it["project"]] = counts.get(it["project"], 0) + 1
+        return counts
+
     def list(self) -> list[dict[str, Any]]:
         return sorted(self.items.values(), key=lambda i: i["created"], reverse=True)
 
@@ -135,6 +143,7 @@ class JobManager:
                 "id": uuid.uuid4().hex[:12],
                 "kind": req.kind,
                 "engine": req.engine,
+                "project": req.project,
                 "status": "submitting",
                 "params": req.model_dump(),
                 "seed": base_seed + i,
@@ -273,6 +282,15 @@ class JobManager:
 
             saved = await self._download(item, done, built.outputs)
             self._update(item, status="done", files=saved, progress=1.0, finished=time.time())
+            if item.get("project"):
+                from . import projects  # the project's thumbnail and "modified" follow its latest result
+
+                params = item.get("params", {})
+                if item["kind"] == "image" and saved:
+                    thumb = saved[0]["path"]
+                else:  # videos and sound: the picture it started from, if any
+                    thumb = params.get("first_frame") or (params.get("references") or [None])[0]
+                projects.touch(item["project"], thumb or None)
         except JobFailed as exc:
             status = "cancelled" if "cancel" in str(exc).lower() else "failed"
             self._update(item, status=status, error=_short_error(exc), finished=time.time())

@@ -61,6 +61,9 @@ EXTRA_MODEL_PATHS = os.environ.get("BOB_EXTRA_MODEL_PATHS", "")
 COMFYUI_DIR = os.environ.get("BOB_COMFYUI_DIR", "")
 COMFYUI_ARGS = os.environ.get("BOB_COMFYUI_ARGS", "")
 
+# Where projects are saved (folders with a project.json, browsed like Explorer).
+PROJECTS_DIR = Path(os.environ.get("BOB_PROJECTS_DIR", "") or ROOT / "projects").expanduser()
+
 HOST = os.environ.get("BOB_HOST", "127.0.0.1")
 PORT = int(os.environ.get("BOB_PORT", "8700"))
 

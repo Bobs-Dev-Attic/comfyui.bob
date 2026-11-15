@@ -124,23 +124,8 @@ function waveHTML(seed, n = 28) {
 function curKey() { return `${state.kind}:${state.engine[state.kind]}`; }
 
 function renderForm() {
-  const kind = state.kind, eng = state.engine[kind], key = curKey();
-  $$(".tabs button").forEach(b => b.classList.toggle("active", b.dataset.kind === kind));
-
-  // engines
-  const seg = $("#engine-seg");
-  seg.innerHTML = "";
-  for (const e of ENGINES[kind]) {
-    const b = document.createElement("button");
-    b.type = "button"; b.textContent = e.label; b.dataset.engine = e.key;
-    const cap = state.caps?.engines?.[e.key];
-    if (cap && !cap.ready) b.title = "Models not installed";
-    b.classList.toggle("active", e.key === eng);
-    b.onclick = () => { state.engine[kind] = e.key; renderForm(); };
-    seg.appendChild(b);
-  }
-  $("#f-engine").hidden = ENGINES[kind].length < 2;
-  $("#engine-note").textContent = ENGINE_NOTES[key] || "";
+  const kind = state.kind, eng = state.engine[kind];
+  renderModels();  // the Model step (shell.js)
 
   const isRef = eng === "h3ref";
   const isH3 = eng === "h3" || isRef, isKlein = eng === "klein", isMusic = eng === "music3";
@@ -179,6 +164,7 @@ function renderForm() {
   renderWriter();
   updateDerived();
   renderMissing();
+  renderSteps();
 }
 
 function updateDerived() {
@@ -211,6 +197,7 @@ function updateDerived() {
   const autoSteps = eng === "h3" ? (turbo ? 8 : 20) : eng === "h3ref" ? (turbo && refLora ? refTurboSteps : 20) : eng === "klein" ? 16 : 30;
   $("#steps-hint").textContent = `auto = ${autoSteps}`;
   postContext();
+  scheduleSave();
   $("#turbo-note").textContent = eng === "h3ref"
     ? (refLora ? `${refTurboSteps} steps with the ref2v turbo LoRA` : "Ref2v turbo LoRA not installed: runs 20 steps")
     : "8 steps with the turbo LoRA (≈3× faster)";
@@ -265,6 +252,7 @@ function collectRequest() {
     last_frame: kind === "video" && eng === "h3" ? state.frames.last_frame?.ref ?? null : null,
     references: eng === "h3ref" ? state.refs.map(r => r.ref) : [],
     max_fidelity: eng === "h3ref" && $("#fidelity").checked,
+    project: state.project?.id ?? null,
   };
 }
 
@@ -354,6 +342,7 @@ function renderRefs() {
   const box = $("#refs");
   if (!box) return;
   postContext();
+  scheduleSave();
   box.innerHTML = state.refs.map((r, i) => `
     <div class="ref">
       <img src="${esc(r.url)}" alt="Reference ${i + 1}">
@@ -470,7 +459,7 @@ async function runSysCheck(show = false) {
     chip.className = "chip chip-btn " + (r.status === "ok" ? "ok" : r.status === "warn" ? "warn" : "bad");
     chip.lastChild.textContent = label;
     renderSysCheck();
-    if (r.status === "fail" && !show) $("#sys-dialog").showModal();  // don't let a broken setup go unnoticed
+    if (r.status === "fail" && !show && !WM.top()) openSysWindow();  // don't let a broken setup go unnoticed
   } catch (e) {
     chip.className = "chip chip-btn bad"; chip.lastChild.textContent = "System check failed";
     $("#sys-summary").textContent = e.message;
@@ -489,10 +478,7 @@ function renderSysCheck() {
 }
 
 function initSysCheck() {
-  $("#st-sys").onclick = () => { renderSysCheck(); $("#sys-dialog").showModal(); };
-  $("#btn-sys-close").onclick = () => $("#sys-dialog").close();
-  $("#btn-sys-rerun").onclick = () => runSysCheck(true);
-  $("#sys-dialog").addEventListener("click", e => { if (e.target.id === "sys-dialog") $("#sys-dialog").close(); });
+  $("#st-sys").onclick = openSysWindow;
   runSysCheck();
 }
 
@@ -648,7 +634,7 @@ function thumbHTML(it) {
 
 function renderGallery() {
   const g = $("#gallery");
-  const list = itemsSorted().filter(it => state.filter === "all" || it.kind === state.filter);
+  const list = itemsSorted().filter(it => inScope(it) && (state.filter === "all" || it.kind === state.filter));
   g.innerHTML = "";
   if (!list.length) { g.innerHTML = `<p class="gallery-empty">Nothing here yet.</p>`; return; }
   const tpl = $("#tile-tpl");
@@ -788,18 +774,18 @@ function updateLive(id) {
 
 async function action(a, it) {
   if (a === "cancel") return cancel(it.id);
-  if (a === "reuse") { applyParams(it.params); $("#seed").value = it.seed; return; }
+  if (a === "reuse") { applyParams(it.params); $("#seed").value = it.seed; scheduleSave(); showStep("prompt"); return; }
   if (a === "reroll") return submit({ ...it.params, seed: -1, batch: 1 });
   if (a === "ref") {
     state.kind = "video"; state.engine.video = "h3ref";
     addRef(it.files[0].path, it.files[0].url); renderForm();
-    $("#prompt").focus();
+    showStep("inputs");
     return;
   }
   if (a === "first" || a === "last") {
     state.kind = "video"; state.engine.video = "h3"; renderForm();
     setFrame(a === "first" ? "first_frame" : "last_frame", it.files[0].path, it.files[0].url);
-    $("#prompt").focus();
+    showStep("inputs");
     return;
   }
   if (a === "delete") {
@@ -858,7 +844,9 @@ async function pollStatus() {
 async function loadCaps(refresh = false) {
   try {
     state.caps = await api(`/api/capabilities${refresh ? "?refresh=true" : ""}`);
+    const aspect = $("#aspect").value;
     $("#aspect").innerHTML = state.caps.aspects.map(a => `<option>${a}</option>`).join("");
+    if (state.caps.aspects.includes(aspect)) $("#aspect").value = aspect;
     renderForm();
   } catch (e) {
     $("#form-error").textContent = e.message;
@@ -867,7 +855,6 @@ async function loadCaps(refresh = false) {
 
 /* ------------------------------------------------------------------ init */
 function init() {
-  $$(".tabs button").forEach(b => b.onclick = () => { state.kind = b.dataset.kind; renderForm(); });
   $$("#filter-seg button").forEach(b => b.onclick = () => {
     state.filter = b.dataset.f;
     $$("#filter-seg button").forEach(x => x.classList.toggle("active", x === b));
@@ -877,6 +864,7 @@ function init() {
     state.batch = +b.dataset.v;
     $$("#batch-seg button").forEach(x => x.classList.toggle("active", x === b));
     renderMissing();
+    scheduleSave();
   });
   ["#seconds", "#quality", "#aspect", "#turbo"].forEach(s => $(s).addEventListener("input", updateDerived));
   $("#btn-dice").onclick = () => { $("#seed").value = -1; };
@@ -902,15 +890,17 @@ function init() {
   $("#prompt").addEventListener("input", () => postContext());
   $("#aspect").innerHTML = Object.keys(ASPECT).map(a => `<option>${a}</option>`).join("");
   renderForm();
+  initShell();
 
   api("/api/items").then(({ items }) => {
     for (const it of items) state.items.set(it.id, it);
     renderGallery(); renderQueue();
-    if (items[0]) select(items[0].id);
+    if (state.shellReady) selectInScope();  // otherwise initShell does it once the project is open
   });
   connectEvents();
   pollStatus();
   setInterval(pollStatus, 5000);
 }
 
-init();
+// Start once every script (winman.js, explorer.js, shell.js) has loaded.
+document.addEventListener("DOMContentLoaded", init);

@@ -5,6 +5,58 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.6.0] - 2026-11-15
+
+### Added
+- **Step tabs** down the side panel walk through a generation: **1 Project → 2 Model → 3 Inputs → 4 Prompt →
+  5 Settings → 6 Generate**.
+  - Back/Next buttons and arrow keys move between steps, and finished steps get a ✓.
+  - The Inputs step only appears for models that take pictures.
+  - A Generate button stays in the footer on every step.
+  - The Generate step sums up your choices, with an Edit link on each.
+- **Model step:** cards grouped by Video, Image and Audio.
+  - Each card shows whether its files are ready, not loaded, or not installed, plus the options it offers and the
+    model file in use.
+  - Picking a card sets up the following steps for that model.
+- **Projects**, saved as folders under `projects/` (`BOB_PROJECTS_DIR` to change it):
+  - **New project:** a name, a location chosen in an Explorer window, starting from the current settings or the
+    defaults, and notes.
+  - **Open existing:** an Explorer-style browser.
+    - Back, Forward, Up, Refresh, a clickable address bar and search.
+    - A Quick access › Recent list and a folder tree.
+    - A Details view with sortable Name, Date modified, Type and Items columns, or Large icons with project
+      thumbnails.
+    - A status bar, a right-click menu (Open, Rename, Delete), and keyboard shortcuts: Enter, Backspace,
+      Alt+arrows, F2, Del, F5, Ctrl+Shift+N.
+    - Delete moves things into `projects/.trash`.
+  - **Experiment:** work without a project, with settings kept in the browser. **Save as project…** turns an
+    experiment into a project at any time.
+  - A Recent projects list, and notes saved with each project.
+  - Results are tagged with their project. The gallery has a **This project / All** switch, and the viewer follows
+    the open project.
+  - A project's thumbnail and date follow its latest result. Renaming or moving a project keeps its history,
+    because results point to the project's id.
+- **Settings persist:**
+  - The open project's settings save to its `project.json` as you work: model, prompt, pictures, size, length,
+    turbo, seed, steps and takes.
+  - In Experiment mode they're kept in the browser.
+  - The last project and step reopen on the next visit.
+- **Adjustable side panel:**
+  - Drag the divider, or use the arrow keys on it. Double-click resets the width.
+  - The width is remembered.
+- **Movable, resizable windows** (`static/winman.js`) for New project, Open, the system check, and the prompts
+  and confirmations:
+  - Drag the title bar to move a window, or any edge or corner to resize it. Double-click the title bar to
+    maximise.
+  - Esc closes a window, and keyboard focus stays inside it.
+  - Each window remembers its position and size.
+- API: `/api/projects` endpoints (`browse`, `tree`, `recent`, create, get, update, folder, rename, delete), and
+  `project` on `/api/generate`.
+
+### Changed
+- The Video/Image/Audio tabs and the engine switch are replaced by the Model step.
+- The system check opens in a movable window instead of a fixed dialog.
+
 ## [0.5.1] - 2026-11-15
 
 ### Fixed
@@ -100,6 +152,7 @@ All notable changes to Bob Studio are recorded here. The format follows
 - "Write for me" prompt writer using Ollama or any OpenAI-compatible local server, with a validator and retries.
 - Live step progress over SSE, takes, a gallery with reuse and re-roll, and per-engine model checks.
 
+[0.6.0]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Bobs-Dev-Attic/comfyui.bob/compare/v0.3.0...v0.4.0

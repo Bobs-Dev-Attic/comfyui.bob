@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, config, llm, modelpaths, models, syscheck, workflows
+from . import __version__, config, llm, modelpaths, models, projects, syscheck, workflows
 from .comfy import ComfyService
 from .jobs import GenerateRequest, JobManager, media_path
 
@@ -201,6 +201,87 @@ async def write_prompt(req: WritePromptRequest):
     except (llm.LLMError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
     return {"mode": mode, **result}
+
+
+# ------------------------------------------------------------------ projects
+
+class NewProject(BaseModel):
+    folder: str = ""
+    name: str = Field(..., max_length=200)
+    settings: dict = Field(default_factory=dict)
+    notes: str = Field("", max_length=20000)
+
+
+class ProjectPatch(BaseModel):
+    settings: dict | None = None
+    notes: str | None = Field(None, max_length=20000)
+
+
+class PathName(BaseModel):
+    path: str = ""
+    name: str = ""
+
+
+def _project_call(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except projects.ProjectError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(400, f"File system error: {exc.strerror or exc}") from exc
+
+
+@app.get("/api/projects/browse")
+async def projects_browse(path: str = ""):
+    return _project_call(projects.browse, path, jobs.project_counts())
+
+
+@app.get("/api/projects/tree")
+async def projects_tree():
+    return _project_call(projects.tree)
+
+
+@app.get("/api/projects/recent")
+async def projects_recent(limit: int = 8):
+    return {"projects": _project_call(projects.recent, jobs.project_counts(), limit)}
+
+
+@app.post("/api/projects")
+async def projects_create(req: NewProject):
+    return _project_call(projects.create, req.folder, req.name, req.settings, req.notes)
+
+
+@app.get("/api/projects/by-path")
+async def projects_by_path(path: str):
+    p = _project_call(projects.safe, path)
+    if not projects.is_project(p):
+        raise HTTPException(404, "Not a project")
+    return _project_call(projects.read, p)
+
+
+@app.get("/api/projects/{project_id}")
+async def projects_get(project_id: str):
+    return _project_call(projects.load, project_id)
+
+
+@app.put("/api/projects/{project_id}")
+async def projects_update(project_id: str, req: ProjectPatch):
+    return _project_call(projects.update, project_id, settings=req.settings, notes=req.notes)
+
+
+@app.post("/api/projects/folder")
+async def projects_folder(req: PathName):
+    return _project_call(projects.make_folder, req.path, req.name)
+
+
+@app.post("/api/projects/rename")
+async def projects_rename(req: PathName):
+    return _project_call(projects.rename, req.path, req.name)
+
+
+@app.post("/api/projects/delete")
+async def projects_delete(req: PathName):
+    return _project_call(projects.delete, req.path)
 
 
 @app.post("/api/free")
