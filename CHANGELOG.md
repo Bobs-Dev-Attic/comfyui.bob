@@ -5,6 +5,19 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.24.0] - 2026-11-15
+
+### Added
+- **Krea 2 image engine.** Pick **Krea 2** under Image, next to FLUX 3 Klein.
+  - It runs Krea 2 Turbo the way ComfyUI's "Text to Image (Krea-2 Turbo)" blueprint does: 8 steps, cfg 1,
+    euler/simple and a zeroed negative.
+  - It uses the Krea 2 Turbo diffusion model (the fp8 file first, then the bf16 original), the Qwen3-VL 4B
+    text encoder (`krea2` type, shared with Klein) and the Qwen Image VAE.
+  - Draft, Standard and High give 0.5, 1 and 2 MP.
+  - **Enhance prompt** has Krea 2's own text encoder expand short prompts, as the blueprint does, so it needs
+    no extra model.
+  - Krea 2 LoRAs are offered for it in the LoRAs step.
+
 ## [0.23.0] - 2026-11-15
 
 ### Added

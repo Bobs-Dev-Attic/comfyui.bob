@@ -33,7 +33,7 @@ FAMILIES = {
     "ltx": "LTX", "flux1": "FLUX 1", "sdxl": "SDXL", "sd15": "SD 1.5", "hunyuan": "Hunyuan", "music3": "Music 3", "unknown": "Unknown",
 }
 # The engines of this studio and the LoRA families that fit them.
-ENGINE_FAMILIES = {"h3": {"h3"}, "h3ref": {"h3"}, "klein": {"flux2"}, "music3": {"music3"}}
+ENGINE_FAMILIES = {"h3": {"h3"}, "h3ref": {"h3"}, "klein": {"flux2"}, "krea2": {"krea2"}, "music3": {"music3"}}
 _lock = threading.Lock()
 _mem: dict[str, Any] | None = None
 

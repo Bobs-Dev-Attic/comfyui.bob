@@ -30,6 +30,7 @@ REQUIRED_NODES = {
     "h3": {"MiniMaxH3ImageToVideo", "SamplerCustomAdvanced", "VAEDecodeAudio", "CreateVideo", "SaveVideo"},
     "h3ref": {"MiniMaxH3ReferenceToVideo", "SamplerCustomAdvanced", "VAEDecodeAudio", "CreateVideo", "SaveVideo"},
     "klein": {"EmptyFlux2LatentImage", "TextGenerate"},
+    "krea2": {"ConditioningZeroOut", "TextGenerate"},
     "music3": {"MiniMaxMusic3TextEncode", "EmptyMiniMaxMusic3LatentAudio", "SaveAudioMP3"},
     "angles": {"TextEncodeQwenImageEditPlus", "FluxKontextMultiReferenceLatentMethod", "CFGNorm", "ModelSamplingAuraFlow"},
 }
@@ -183,6 +184,7 @@ async def capabilities(refresh: bool = False):
         "aspects": list(workflows.ASPECTS),
         "h3_quality": workflows.H3_QUALITY,
         "klein_quality": workflows.KLEIN_QUALITY,
+        "krea2_quality": workflows.KREA2_QUALITY,
         "fps": workflows.FPS,
         "model_paths": [str(p) for p in modelpaths.yaml_files()],
         "comfyui_paths_config": syscheck.comfy_paths_config(await comfy.system_stats()),
