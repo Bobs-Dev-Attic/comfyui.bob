@@ -700,6 +700,39 @@ async def media_list(source: str, path: str = "", id: str = "", project: str = "
 _thumb_slots = asyncio.Semaphore(4)
 
 
+class MediaDelete(BaseModel):
+    refs: list[str] = Field(..., min_length=1, max_length=2000)
+    project: str = ""
+
+
+@app.post("/api/media/delete")
+async def media_delete(req: MediaDelete):
+    """Delete media files: they go to the Recycle Bin. Results made from them leave the gallery,
+    and the files leave the given project's library (other projects show them as missing)."""
+    paths, refs, errors = [], [], []
+    for ref in dict.fromkeys(req.refs):
+        try:
+            paths.append(media.resolve(ref)); refs.append(ref)
+        except media.MediaError as exc:
+            errors.append(str(exc))
+    try:
+        await asyncio.to_thread(media.recycle, paths)
+    except media.MediaError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    gone = {media.ref_of(p) for p in paths} | set(refs)
+    results = [it["id"] for it in jobs.list() if any(f.get("path") in gone for f in it.get("files", []))]
+    for item_id in results:
+        jobs.delete(item_id, delete_files=False)  # the files are already in the Recycle Bin
+    lib = None
+    if req.project:
+        try:
+            ids = [m["id"] for m in projects.library(req.project)["media"] if m["ref"] in gone]
+            lib = projects.remove_media(req.project, ids) if ids else projects.library(req.project)
+        except projects.ProjectError:
+            pass
+    return {"deleted": len(paths), "results": len(results), "errors": errors, "lib": lib}
+
+
 @app.get("/api/media/peaks")
 async def media_peaks(path: str):
     """Sound levels of a file for waveform graphs (cached)."""

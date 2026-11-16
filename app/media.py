@@ -138,6 +138,37 @@ def resolve(ref: str) -> Path:
     return p
 
 
+def recycle(paths: list[Path]) -> None:
+    """Send files to the Recycle Bin (Windows), so a delete can be undone from there.
+
+    Elsewhere only the studio's own folders (uploads, results) are deleted for good; files in
+    bookmarked folders are refused, since they belong to the user and couldn't come back."""
+    if not paths:
+        return
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        class SHFILEOPSTRUCTW(ctypes.Structure):
+            _fields_ = [("hwnd", wintypes.HWND), ("wFunc", wintypes.UINT), ("pFrom", wintypes.LPCWSTR),
+                        ("pTo", wintypes.LPCWSTR), ("fFlags", ctypes.c_uint16), ("fAnyOperationsAborted", wintypes.BOOL),
+                        ("hNameMappings", ctypes.c_void_p), ("lpszProgressTitle", wintypes.LPCWSTR)]
+
+        FO_DELETE, FOF_SILENT, FOF_NOCONFIRMATION, FOF_ALLOWUNDO, FOF_NOERRORUI = 3, 0x4, 0x10, 0x40, 0x400
+        op = SHFILEOPSTRUCTW(wFunc=FO_DELETE, pFrom="\0".join(str(p) for p in paths) + "\0\0",
+                             fFlags=FOF_SILENT | FOF_NOCONFIRMATION | FOF_ALLOWUNDO | FOF_NOERRORUI)
+        rc = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
+        if rc or op.fAnyOperationsAborted:
+            raise MediaError(f"Windows couldn't move the files to the Recycle Bin (code {rc})")
+        return
+    own = [config.UPLOAD_DIR.resolve(), config.OUTPUT_DIR.resolve()]
+    for p in paths:
+        if not any(r in p.parents for r in own):
+            raise MediaError(f"Only the studio's own files can be deleted here (no Recycle Bin): {p.name}")
+    for p in paths:
+        p.unlink()
+
+
 def ref_of(p: Path) -> str:
     p = p.resolve()
     try:

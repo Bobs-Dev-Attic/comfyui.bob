@@ -95,6 +95,8 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   - Thumbnails are cached in `data/thumbs`.
   - Tag files and save tag filters as virtual folders.
   - Double-click or drag a picture onto a slot to use it.
+  - Pick several with the ✓ on each tile (or Ctrl/Shift+click, Select all); **🗑 Delete…** sends files to the
+    Recycle Bin, and **Remove** only takes them out of the library.
 - **Activity console** (the top bar's Activity chip, a queue item's **Log**, or **Ctrl+Shift+A**): every
   generation, render and export, with a detailed log, progress, elapsed time, time left and when it'll finish.
 - **☰ Menu and Settings** (left of "Bob Studio", or **Ctrl+,**): app-wide settings in a window, saved to

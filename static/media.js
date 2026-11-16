@@ -192,7 +192,7 @@ const Media = (() => {
         <div class="mg-img">${thumb && m.exists !== false ? `<img src="${esc(thumb)}" alt="" loading="lazy" decoding="async" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'mg-ph',textContent:'${KIND_ICON[m.kind]}'}))">` : `<span class="mg-ph">${m.exists === false ? "⚠" : KIND_ICON[m.kind]}</span>`}
           ${m.kind !== "image" ? `<span class="mg-kind">${KIND_ICON[m.kind]}</span>` : ""}
           ${inLib ? `<span class="mg-inlib" title="In the library">●</span>` : ""}
-          <span class="mg-check">✓</span></div>
+          <span class="mg-check" role="checkbox" aria-checked="${sel}" aria-label="Select ${esc(m.name)}" title="Select (Ctrl+click, Shift+click for a range)">✓</span></div>
         <div class="mg-name">${esc(m.name)}</div>
         ${m.tags.length ? `<div class="mg-dots">${m.tags.slice(0, 6).map(t => `<i style="background:${tagColor(t)}" title="${esc(t)}"></i>`).join("")}</div>` : ""}
       </div>`;
@@ -218,16 +218,21 @@ const Media = (() => {
 
   function selBarHTML(items) {
     const n = st.selected.size;
-    if (!n) return `<div class="mg-status">${items.length} item${items.length === 1 ? "" : "s"}${st.listing?.truncated ? " (first 2000)" : ""}</div>`;
+    if (!n) return `<div class="mg-status">${items.length} item${items.length === 1 ? "" : "s"}${st.listing?.truncated ? " (first 2000)" : ""}
+      ${items.length ? ` · <button type="button" class="link" data-act="select-all" title="Select every item shown (Ctrl+A)">Select all</button>
+        <span class="mg-hint">· click the ✓ on a tile, Ctrl+click or Shift+click to pick several</span>` : ""}</div>`;
     const byRef = libByRef(), refs = [...st.selected];
     const inLib = refs.filter(r => byRef.has(r)).length;
     const pics = refs.filter(r => (byRef.get(r) || items.find(m => m.ref === r))?.kind === "image").length;
+    const all = items.length && items.every(m => st.selected.has(m.ref));
     return `<div class="mg-selbar"><b>${n} selected</b>
+      ${all ? "" : `<button type="button" class="btn sm ghost" data-act="select-all" title="Select every item shown (Ctrl+A)">Select all</button>`}
       ${pics ? `<button type="button" class="btn sm primary" data-act="use">Use</button>` : ""}
       <button type="button" class="btn sm" data-act="tags">🏷 Tags…</button>
       ${inLib < n ? `<button type="button" class="btn sm" data-act="add">＋ Library</button>` : ""}
-      ${inLib ? `<button type="button" class="btn sm" data-act="remove">Remove</button>` : ""}
-      <button type="button" class="btn sm ghost" data-act="deselect" title="Clear selection">✕</button></div>`;
+      ${inLib ? `<button type="button" class="btn sm" data-act="remove" title="Take it out of this project's library; the file stays">Remove</button>` : ""}
+      <button type="button" class="btn sm danger" data-act="delete" title="Delete the files: they go to the Recycle Bin (Shift+Delete)">🗑 Delete…</button>
+      <button type="button" class="btn sm ghost" data-act="deselect" title="Clear selection (Esc)">✕</button></div>`;
   }
 
   function render(root) {
@@ -281,6 +286,32 @@ const Media = (() => {
     if (!ok) return;
     try { applyLib(await post(`/api/projects/${pid()}/library/remove`, { ids })); st.selected.clear(); renderAll(); }
     catch (e) { toast(e.message); }
+  }
+
+  /* Delete the files themselves: they go to the Recycle Bin. Results made from them leave the
+     gallery, and they leave this project's library. */
+  async function deleteFiles(items) {
+    items = items.filter(m => m.exists !== false);
+    if (!items.length) return toast("Those files aren't on disk anymore. Use Remove to take them out of the library.");
+    const n = items.length, kinds = { image: "picture", video: "video", audio: "sound" };
+    const one = n === 1 ? `“${items[0].name}”` : `${n} files`;
+    const what = n === 1 ? (kinds[items[0].kind] || "file") : "files";
+    const results = items.filter(m => m.ref.startsWith("outputs/")).length;
+    const outside = items.filter(m => !/^(outputs|data\/uploads)\//.test(m.ref)).length;
+    const ok = await WM.ask({ title: `Delete ${n === 1 ? "this " + what : n + " " + what}?`, danger: true, ok: "Delete",
+      message: `Move ${one} to the Recycle Bin? You can restore ${n === 1 ? "it" : "them"} from there.`
+        + (results ? ` ${results === n ? (n === 1 ? "It's a result, so it" : "They're results, so they") : `${results} of them are results, which`} also leave${results === 1 && n === 1 ? "s" : ""} the gallery.` : "")
+        + (outside ? ` ${outside === n ? "" : `${outside} of them `}${outside === 1 && n === 1 ? "is" : "are"} in a bookmarked folder on your PC.` : "")
+        + " Other projects that use them will show them as missing." });
+    if (!ok) return;
+    try {
+      const r = await post("/api/media/delete", { refs: items.map(m => m.ref), project: pid() });
+      if (r.lib) applyLib(r.lib);
+      st.selected.clear();
+      if (r.errors?.length) toast(r.errors.join("\n"));
+      else toast(`Moved ${r.deleted} file${r.deleted === 1 ? "" : "s"} to the Recycle Bin${r.results ? `; ${r.results} result${r.results === 1 ? "" : "s"} removed from the gallery` : ""}.`);
+      await loadSource();
+    } catch (e) { toast(e.message); }
   }
 
   async function importFiles(files) {
@@ -526,6 +557,7 @@ const Media = (() => {
       ["🏷 Tags…", () => tagsDialog(items)],
       items.some(m => !byRef.has(m.ref)) && ["＋ Add to library", () => addToLibrary(items.map(m => m.ref))],
       items.some(m => byRef.has(m.ref)) && ["Remove from library", () => removeFromLibrary(items.map(m => m.ref))],
+      [`🗑 Delete ${items.length === 1 ? "file" : items.length + " files"}…`, () => deleteFiles(items)],
       one && ["Copy path", () => navigator.clipboard?.writeText(one.ref).then(() => toast("Path copied."))],
     ].filter(Boolean);
     menu(x, y, entries);
@@ -572,6 +604,8 @@ const Media = (() => {
         if (act === "tags") return tagsDialog(selectedItems(root));
         if (act === "add") return addToLibrary([...st.selected]);
         if (act === "remove") return removeFromLibrary([...st.selected]);
+        if (act === "delete") return deleteFiles(selectedItems(root));
+        if (act === "select-all") { for (const m of root._items || []) st.selected.add(m.ref); return renderAll(); }
         if (act === "cache") return cacheDialog();
       }
       const nav = e.target.closest("[data-src]"); if (nav) return setSource(nav.dataset.src);
@@ -584,6 +618,10 @@ const Media = (() => {
       const tile = e.target.closest(".mg-tile[data-ref]");
       if (tile) {
         const ref = tile.dataset.ref, items = root._items || [];
+        if (e.target.closest(".mg-check")) {  // the tile's check: add or take away, like Ctrl+click
+          st.selected.has(ref) ? st.selected.delete(ref) : st.selected.add(ref); st.anchor = ref;
+          return renderAll();
+        }
         if (e.shiftKey && st.anchor) {
           const a = items.findIndex(m => m.ref === st.anchor), b = items.findIndex(m => m.ref === ref);
           if (a >= 0 && b >= 0) { if (!(e.ctrlKey || e.metaKey)) st.selected.clear(); for (const m of items.slice(Math.min(a, b), Math.max(a, b) + 1)) st.selected.add(m.ref); }
@@ -650,7 +688,11 @@ const Media = (() => {
     root.addEventListener("drop", e => { if (e.dataTransfer.files.length) { e.preventDefault(); root.classList.remove("drop"); importFiles([...e.dataTransfer.files]); } });
     root.addEventListener("keydown", e => {
       if (e.target.matches("input, select, textarea")) return;
-      if (e.key === "Delete" && st.selected.size) { e.preventDefault(); removeFromLibrary([...st.selected]); }
+      if (e.key === "Delete" && st.selected.size) {
+        e.preventDefault();
+        const inLibView = st.view.source === "library" || st.view.source.startsWith("vf:");
+        if (e.shiftKey || !inLibView) deleteFiles(selectedItems(root)); else removeFromLibrary([...st.selected]);
+      }
       if (e.key === "Enter" && st.selected.size) { e.preventDefault(); useItems(selectedItems(root)); }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") { e.preventDefault(); for (const m of root._items || []) st.selected.add(m.ref); renderAll(); }
       if (e.key === "Escape" && st.selected.size) { e.stopPropagation(); st.selected.clear(); renderAll(); }
