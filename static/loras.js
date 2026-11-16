@@ -83,7 +83,7 @@ const Loras = (() => {
         ${icon(r)}
         <div class="lora-main">
           <div class="lora-name">${cut >= 0 ? `<span class="lora-dir">${wrapName(path.slice(0, cut + 1))}</span>` : ""}${wrapName(path.slice(cut + 1))}</div>
-          <div class="lora-sub">${esc(r.family_label || "Unknown")}${ok ? "" : ` · <span class="warn" title="Made for ${esc(r.family_label || "another model")}, not ${esc(modelName())}: it may do nothing or break the result">⚠ not for ${esc(modelName())}</span>`}</div>
+          ${ok ? "" : `<div class="lora-sub"><span class="warn" title="Made for ${esc(r.family_label || "another model")}, not ${esc(modelName())}: it may do nothing or break the result">⚠ not for ${esc(modelName())}</span></div>`}
           ${r.triggers?.length ? `<div class="lora-trig">${r.triggers.slice(0, 6).map(t => `<button type="button" class="chip-btn lora-tw" data-tw="${esc(t)}" title="Insert into the prompt">${esc(t)}</button>`).join("")}</div>` : ""}
         </div>
         <label class="lora-str" title="Strength from -10 to 10: 1 = full, 0.5 = half, negative = away from it">
@@ -171,6 +171,16 @@ const Loras = (() => {
       l.strength = clampStr(e.target.value); e.target.value = l.strength;
       scheduleSave();
     });
+    // Mouse wheel over a strength box: up adds 0.1, down takes 0.1 (Shift: 1). One notch is one step.
+    step.addEventListener("wheel", e => {
+      const box = e.target.closest('[data-k="num"]'), row = box?.closest("[data-i]");
+      if (!row || !e.deltaY) return;
+      e.preventDefault();
+      const l = state.loras[+row.dataset.i];
+      l.strength = clampStr((+box.value || 0) + (e.deltaY < 0 ? 1 : -1) * (e.shiftKey ? 1 : 0.1));
+      box.value = l.strength;
+      scheduleSave();
+    }, { passive: false });
     // Drag the grip to reorder (pointer events, so mouse, pen and touch all work). The row
     // under the pointer shows a line where the dragged LoRA will land.
     let drag = null;

@@ -5,6 +5,14 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.25.1] - 2026-11-15
+
+### Changed
+- **LoRAs step: change a strength with the mouse wheel.** With the pointer over a LoRA's strength box,
+  wheel up adds 0.1 and wheel down takes away 0.1. Hold Shift for steps of 1. It stays within -10 to 10.
+- **LoRAs step: no model name under each file name.** The line now appears only when the LoRA isn't made
+  for the selected model, to show the "not for …" warning.
+
 ## [0.25.0] - 2026-11-15
 
 ### Changed
