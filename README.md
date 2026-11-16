@@ -67,7 +67,7 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   **Magic wand** (tolerance, contiguous or not); Shift adds to the selection, Alt subtracts, both intersect (or pick
   New, Add, Subtract or Intersect), and marching ants outline it. Or select by hand with a brush, with **AI select**
   (paint over an object and SAM 3.1 selects all of it), or by typing what to select. Ctrl+A selects all, Ctrl+D
-  deselects, Ctrl+Shift+I inverts. Then **Erase** it, **Replace it with…** something you describe, or
+  deselects, Ctrl+Shift+I inverts; **Feather** softens the edge of new selections (Feather now softens the current one). Then **Erase** it, **Replace it with…** something you describe, or
   **Change it with a prompt** (Krea 2, with a strength). **Edit the whole picture** takes an instruction ("make it
   night time") with no selection. Erase, Replace and whole-picture edits use the **Edit model** you pick: Qwen Image
   Edit 2511 (4 steps, fast) or MiniMax H3 Image (6 steps; needs its diffusion model and VAE from
