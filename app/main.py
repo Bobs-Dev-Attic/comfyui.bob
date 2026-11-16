@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, config, llm, media, modelpaths, models, projects, render, syscheck, workflows
+from . import __version__, appsettings, config, llm, media, modelpaths, models, projects, render, syscheck, workflows
 from .comfy import ComfyService
 from .jobs import EnhanceOpts, GenerateRequest, JobManager, media_path
 
@@ -31,6 +31,7 @@ REQUIRED_NODES = {
     "h3ref": {"MiniMaxH3ReferenceToVideo", "SamplerCustomAdvanced", "VAEDecodeAudio", "CreateVideo", "SaveVideo"},
     "klein": {"EmptyFlux2LatentImage", "TextGenerate"},
     "krea2": {"ConditioningZeroOut", "TextGenerate"},
+    "h3image": {"MiniMaxH3ImageConditioning", "ConditioningZeroOut"},
     "music3": {"MiniMaxMusic3TextEncode", "EmptyMiniMaxMusic3LatentAudio", "SaveAudioMP3"},
     "angles": {"TextEncodeQwenImageEditPlus", "FluxKontextMultiReferenceLatentMethod", "CFGNorm", "ModelSamplingAuraFlow"},
 }
@@ -267,6 +268,7 @@ async def capabilities(refresh: bool = False):
         "h3_quality": workflows.H3_QUALITY,
         "klein_quality": workflows.KLEIN_QUALITY,
         "krea2_quality": workflows.KREA2_QUALITY,
+        "h3image_quality": workflows.H3_IMAGE_QUALITY,
         "fps": workflows.FPS,
         "model_paths": [str(p) for p in modelpaths.yaml_files()],
         "comfyui_paths_config": syscheck.comfy_paths_config(await comfy.system_stats()),
@@ -443,6 +445,58 @@ async def projects_update(project_id: str, req: ProjectPatch):
 @app.get("/api/projects/{project_id}/history")
 async def projects_history(project_id: str):
     return {"versions": _project_call(projects.history, project_id)}
+
+
+class VersionLabel(BaseModel):
+    label: str = Field("", max_length=120)
+
+
+@app.post("/api/projects/{project_id}/versions")
+async def versions_save(project_id: str, req: VersionLabel):
+    """Keep the current state now as a named version."""
+    return _project_call(projects.save_version, project_id, req.label)
+
+
+@app.put("/api/projects/{project_id}/versions/{name}")
+async def versions_label(project_id: str, name: str, req: VersionLabel):
+    return _project_call(projects.label_version, project_id, name, req.label)
+
+
+@app.delete("/api/projects/{project_id}/versions/{name}")
+async def versions_delete(project_id: str, name: str):
+    return _project_call(projects.delete_version, project_id, name)
+
+
+# ------------------------------------------------------------------ app settings (data/settings.json)
+@app.get("/api/settings")
+async def settings_get():
+    return appsettings.payload()
+
+
+@app.put("/api/settings")
+async def settings_update(patch: dict):
+    """Merge a partial settings object, e.g. {"appearance": {"theme": "light"}}."""
+    try:
+        appsettings.update(patch)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return appsettings.payload()
+
+
+@app.post("/api/settings/import")
+async def settings_import(data: dict):
+    """Replace every setting (an exported settings.json); missing values get their defaults."""
+    try:
+        appsettings.replace(data.get("settings", data) if isinstance(data.get("settings"), dict) else data)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return appsettings.payload()
+
+
+@app.post("/api/settings/reset")
+async def settings_reset():
+    appsettings.reset()
+    return appsettings.payload()
 
 
 @app.post("/api/projects/{project_id}/restore")

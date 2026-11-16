@@ -37,7 +37,7 @@ port 8189 by itself if nothing is listening there.
 |---|---|---|
 | Video | MiniMax H3: text-to-video, or image-to-video with optional first and last keyframes | MP4 with native stereo audio |
 | Video | H3 Reference: 1–9 reference pictures (people, objects, places, style) tagged `<Picture N>` in the prompt, and up to 3 reference sounds tagged `<Audio N>` to clone a voice (Inputs › Reference sound). Needs the separate `minimax_h3_ref2va` model (about 19.5 GB) | MP4 with native stereo audio |
-| Image | H3 still (one frame on H3's 768p canvas) or FLUX 3 Klein (with optional prompt upsampler) | PNG |
+| Image | H3 still (one frame on H3's 768p canvas), FLUX 3 Klein (with optional prompt upsampler), Krea 2, or MiniMax H3 Image (6 steps, up to 4 MP, optional reference pictures tagged `<Picture N>`; files from [Comfy-Org/MiniMax-H3-Image](https://huggingface.co/Comfy-Org/MiniMax-H3-Image)) | PNG |
 | Audio | H3 sound (generates sound jointly with a tiny video and keeps only the audio) or MiniMax Music 3 | MP3 |
 
 The side panel walks through a generation in steps: **1 Project → 2 Model → 3 Inputs → 4 Prompt → 5 Settings →
@@ -45,7 +45,11 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
 
 - **Projects:** New project, Open existing (an Explorer-style browser), or Experiment (no project).
   - Projects are folders under `projects/`, and each one keeps its settings, notes and results.
-  - Settings save automatically, and the last project reopens on the next visit.
+  - Settings save automatically, and the last project reopens on the next visit (Settings › Projects can turn that off).
+  - **Versions…** (project card, project settings, or the ☰ menu): every change is kept as a version, at most every N
+    minutes, keeping the last N (both in Settings › Projects). Each version lists what changed since the one before
+    (prompt, model, settings, clips, library, notes). **Save a version** keeps a named one, which is never pruned;
+    any version can be named, renamed, deleted or restored, and a restore keeps the current state first.
   - **⧉ Duplicate…** (project card, or right-click in the Explorer) copies a project: settings always, and the
     timeline, media library and results if you choose. Experiment can be copied into a new project the same way.
     Files aren't duplicated; both projects use the same uploads and results.
@@ -91,8 +95,16 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   - Double-click or drag a picture onto a slot to use it.
 - **Activity console** (the top bar's Activity chip, a queue item's **Log**, or **Ctrl+Shift+A**): every
   generation, render and export, with a detailed log, progress, elapsed time, time left and when it'll finish.
+- **☰ Menu and Settings** (left of "Bob Studio", or **Ctrl+,**): app-wide settings in a window, saved to
+  `data/settings.json` as you change them:
+  - **Appearance:** 8 color themes (System, Dark, Light, Midnight, Graphite, Forest, Paper, High contrast), 8 accent
+    colors, text size and reduce motion.
+  - **Projects:** how many automatic versions to keep, how often, a version at startup, and reopening the last project.
+  - **Generation:** a chime or a desktop notification when a job finishes, and asking before deleting a result.
+  - **Image editor:** the default edit model.
+  - **Settings file:** edit the JSON directly, export it, import it, or reset everything. **About** shows the version.
 - **Project files:** `project.json` stores settings, preferences, the media library and the timeline, and keeps
-  earlier versions you can restore. Every project is backed up when the app starts. **⚙ Settings…** on the Project
+  earlier versions you can restore (in the project's `.history` folder). Every project is backed up when the app starts. **⚙ Settings…** on the Project
   step turns auto-save off (then **Ctrl+S** saves, and you're asked before leaving unsaved changes). See
   [docs/PROJECT_FORMAT.md](docs/PROJECT_FORMAT.md).
 

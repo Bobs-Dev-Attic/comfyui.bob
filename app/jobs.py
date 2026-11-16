@@ -23,7 +23,7 @@ from .comfy import ComfyService
 log = logging.getLogger("bob.jobs")
 
 Kind = Literal["video", "image", "audio"]
-Engine = Literal["h3", "h3ref", "klein", "krea2", "music3", "reshoot", "enhance", "angles", "imgedit"]
+Engine = Literal["h3", "h3ref", "klein", "krea2", "h3image", "music3", "reshoot", "enhance", "angles", "imgedit"]
 EditOp = Literal["erase", "replace", "prompt", "instruct", "remove_bg", "adjust"]
 
 
@@ -406,6 +406,8 @@ class JobManager:
             raise ValueError("FLUX 3 Klein only makes images")
         if req.engine == "krea2" and req.kind != "image":
             raise ValueError("Krea 2 only makes images")
+        if req.engine == "h3image" and req.kind != "image":
+            raise ValueError("MiniMax H3 Image only makes images")
         if req.engine == "music3" and req.kind != "audio":
             raise ValueError("Music 3 only makes audio")
         if req.engine == "reshoot":
@@ -537,6 +539,11 @@ class JobManager:
                 files, prompt=req.prompt, width=w, height=h, seed=seed, steps=req.steps or 16,
                 enhance=req.enhance, aspect_label=req.aspect, prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras],
             )
+        if req.engine == "h3image":
+            mp = workflows.H3_IMAGE_QUALITY.get(req.quality, 2.0)
+            w, h = workflows.dims_for(aspect, mp, multiple=32)
+            return workflows.build_h3_image(files, prompt=req.prompt, width=w, height=h, seed=seed, references=len(req.references),
+                                            prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras])
         if req.engine == "krea2":
             mp = workflows.KREA2_QUALITY.get(req.quality, 1.0)
             w, h = workflows.dims_for(aspect, mp, multiple=16)

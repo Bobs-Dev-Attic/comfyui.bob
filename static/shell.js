@@ -19,6 +19,7 @@ const MODEL_CARDS = [
   { kind: "image", engine: "h3", name: "H3 still", opts: ["One frame", "768p canvas", "8 aspect ratios"] },
   { kind: "image", engine: "klein", name: "FLUX 3 Klein", opts: ["Up to 2 MP", "Prompt upsampler", "Fast"] },
   { kind: "image", engine: "krea2", name: "Krea 2", opts: ["Up to 2 MP", "Photoreal", "Turbo 8 steps", "Prompt expander"] },
+  { kind: "image", engine: "h3image", name: "MiniMax H3 Image", opts: ["Up to 4 MP", "6 steps", "Reference pictures", "<Picture N> tags"] },
   { kind: "audio", engine: "h3", name: "H3 sound", opts: ["Ambience and effects", "2–15 s", "MP3"] },
   { kind: "audio", engine: "music3", name: "Music 3", opts: ["Songs with vocals", "Tagged lyrics", "10–300 s", "MP3"] },
 ];
@@ -338,7 +339,7 @@ function renderProjectCard() {
     card.innerHTML = `<div class="proj-thumb">${p.thumb ? `<img src="/${esc(p.thumb)}" alt="">` : PROJECT_ICON}</div>
       <div><h3>${esc(p.name)}</h3><div class="where">${esc(where(p.path))}</div>
       <div class="saved">${Autosave.enabled ? "Saved automatically" : "Auto-save off (Ctrl+S saves)"} · last change ${esc(timeOf(p.modified))} ·
-        <button type="button" class="link" id="btn-history">Earlier versions…</button> ·
+        <button type="button" class="link" id="btn-history">Versions…</button> ·
         <button type="button" class="link" id="btn-duplicate">⧉ Duplicate…</button> ·
         <button type="button" class="link" id="btn-psettings">⚙ Settings…</button></div></div>`;
     $("#btn-history").onclick = () => historyDialog(p.id);
@@ -350,7 +351,7 @@ function renderProjectCard() {
       <div><h3>Experiment</h3><div class="where">Nothing is saved as a project. Your settings stay in this browser.</div>
       <div class="saved"><button type="button" class="link" id="btn-save-as">Save as project…</button> ·
         <button type="button" class="link" id="btn-duplicate" title="A new project with Experiment's settings, timeline, library and results">⧉ Copy to a project…</button> ·
-        <button type="button" class="link" id="btn-history">Earlier versions…</button> ·
+        <button type="button" class="link" id="btn-history">Versions…</button> ·
         <button type="button" class="link" id="btn-psettings">⚙ Settings…</button></div></div>`;
     $("#btn-history").onclick = () => historyDialog("experiment");
     $("#btn-duplicate").onclick = () => duplicateProjectDialog({ id: "experiment", name: "Experiment", path: "" });
@@ -373,7 +374,7 @@ async function renderRecent() {
   } catch (e) { box.innerHTML = `<p class="hint">${esc(e.message)}</p>`; }
 }
 
-async function openProject(id, { quiet = false, save = true } = {}) {
+async function openProject(id, { quiet = false, save = true, restored = false } = {}) {
   if (save && !(await leaveProject())) return null;
   try {
     clearTimeout(saveTimer);
@@ -382,7 +383,8 @@ async function openProject(id, { quiet = false, save = true } = {}) {
     const p = await api(`/api/projects/${encodeURIComponent(id)}`);
     state.project = p; state.projectChosen = true;
     writeUI({ lastProject: p.id });
-    applySettings(p.settings && (p.settings.kind || p.settings.prompt) ? p.settings : collectSettings());
+    // A brand-new project takes what's on screen; a restored version always brings its own settings back.
+    applySettings(restored || (p.settings && (p.settings.kind || p.settings.prompt)) ? p.settings : collectSettings());
     $("#proj-notes").value = p.notes || "";
     Autosave.configure(p.config);
     Media.setProject(p.id, p.config?.gallery);
@@ -469,8 +471,8 @@ async function projectSettingsDialog() {
     <div class="field"><label for="ps-where">Sound goes on</label><select id="ps-where">
       <option value="new"${tlm.link_audio_track !== "free" ? " selected" : ""}>A new audio track for each video (A1, A2, A3…)</option>
       <option value="free"${tlm.link_audio_track === "free" ? " selected" : ""}>The first free audio track</option></select></div>
-    <div class="field"><label>Versions</label><p class="hint">A copy of the project is kept automatically: at most once a minute while it changes, and once every
-      time the app starts (the last 30). <button type="button" class="link" id="ps-history">Earlier versions…</button></p></div>`;
+    <div class="field"><label>Versions</label><p class="hint">Versions of the project are kept automatically as it changes, and you can save named ones.
+      How often and how many: <button type="button" class="link" id="ps-vsettings">Settings › Projects</button>. <button type="button" class="link" id="ps-history">Versions…</button></p></div>`;
   const sync = () => { form.querySelector("#ps-delay").disabled = !form.querySelector("#ps-auto").checked; form.querySelector("#ps-where").disabled = !form.querySelector("#ps-link").checked; };
   form.addEventListener("change", sync); sync();
   const foot = document.createElement("div");
@@ -478,6 +480,7 @@ async function projectSettingsDialog() {
   const w = WM.open({ id: "project-settings", title: `Project settings · ${state.project ? state.project.name : "Experiment"}`, content: form, footer: foot,
     width: 560, height: 460, minWidth: 360, minHeight: 320 });
   form.querySelector("#ps-history").onclick = () => historyDialog(id);
+  form.querySelector("#ps-vsettings").onclick = () => Settings.open("projects");
   foot.querySelector('[data-a="cancel"]').onclick = () => w.close();
   foot.querySelector('[data-a="ok"]').onclick = async () => {
     const config = { autosave: form.querySelector("#ps-auto").checked, autosave_delay: +form.querySelector("#ps-delay").value };
@@ -493,31 +496,73 @@ async function projectSettingsDialog() {
   };
 }
 
-/* Earlier versions of project.json, kept automatically (one a minute, last 30). */
+/* Versions of project.json: kept automatically (Settings > Projects: how often, how many) and
+   by name (Save a version). Each shows what changed since the one before it; any can come back. */
 async function historyDialog(id) {
-  let versions = [];
-  try { versions = (await api(`/api/projects/${id}/history`)).versions; } catch (e) { return Media.toast(e.message); }
   const box = document.createElement("div");
   box.className = "wm-form";
-  box.innerHTML = versions.length ? `<p class="hint">A copy is kept at most once a minute while you work (the last 30). Restoring keeps the current state as a version too.</p>
-    <div class="hist-list">${versions.map(v => `<div class="hist-row"><span><b>${esc(new Date(v.saved * 1000).toLocaleString())}</b>
-      <small>${v.clips} timeline clip${v.clips === 1 ? "" : "s"} · ${v.media} library item${v.media === 1 ? "" : "s"}${v.prompt ? ` · “${esc(v.prompt)}”` : ""}</small></span>
-      <button type="button" class="btn sm" data-restore="${esc(v.file)}">Restore</button></div>`).join("")}</div>`
-    : `<p class="hint">No earlier versions yet. They're saved automatically as you work, at most once a minute.</p>`;
-  const w = WM.open({ id: "history", title: "Earlier versions", content: box, width: 560, height: 480, minWidth: 360, minHeight: 240 });
+  const keep = Settings.get("projects.versions_keep", 30), mins = Settings.get("projects.version_minutes", 1);
+  const every = mins < 1 ? `${Math.round(mins * 60)} seconds` : mins === 1 ? "minute" : `${mins} minutes`;
+  const w = WM.open({ id: "history", title: `Versions · ${id === "experiment" ? "Experiment" : state.project?.name || "Project"}`, content: box,
+    width: 620, height: 560, minWidth: 380, minHeight: 280 });
+  const tagText = { startup: "kept at startup", "before-restore": "kept before a restore", current: "" };
+  async function render() {
+    let versions = [];
+    try { versions = (await api(`/api/projects/${id}/history`)).versions; } catch (e) { box.innerHTML = `<p class="hint">${esc(e.message)}</p>`; return; }
+    const rows = versions.map(v => {
+      const cur = !v.file, named = !!v.label;
+      const when = new Date(v.saved * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      const chg = (v.changes || []).length ? v.changes : [cur ? "no changes since the last version" : "same as the version before"];
+      return `<div class="ver-row${cur ? " current" : ""}${named ? " named" : ""}">
+        <div>${named ? `<span class="ver-name">★ ${esc(v.label)}</span>` : ""}<b>${cur ? "Now" : esc(when)}</b>${tagText[v.tag] ? `<span class="ver-tag">${tagText[v.tag]}</span>` : ""}
+          <small>${v.clips} clip${v.clips === 1 ? "" : "s"} · ${v.media} library item${v.media === 1 ? "" : "s"}${v.prompt ? ` · “${esc(v.prompt)}”` : ""}</small>
+          ${chg.length ? `<div class="ver-chg" title="What changed since the version before">${chg.map(c => `<span>${esc(c)}</span>`).join("")}</div>` : ""}</div>
+        <div class="ver-acts">${cur ? "" : `<button type="button" class="btn sm" data-restore="${esc(v.file)}" title="Go back to this version">Restore</button>
+          <button type="button" class="btn sm ghost" data-name="${esc(v.file)}" data-label="${esc(v.label)}" title="${named ? "Rename, or clear the name" : "Name it: named versions are kept until you delete them"}">${named ? "Rename" : "☆ Name"}</button>
+          <button type="button" class="btn sm ghost" data-del="${esc(v.file)}" title="Delete this version" aria-label="Delete this version">🗑</button>`}</div></div>`;
+    }).join("");
+    box.innerHTML = `<div class="ver-save"><input type="text" maxlength="120" placeholder="Name this version, e.g. “Before the new ending”" aria-label="Version name">
+        <button type="button" class="btn sm primary" data-a="save">Save a version</button></div>
+      <p class="hint">A version is kept automatically at most every ${every} while you work (the last ${keep}, set in <button type="button" class="link" data-a="settings">Settings</button>). Named versions are kept until you delete them. Restoring keeps the current state as a version first.</p>
+      <div class="ver-list">${rows || `<p class="hint">No versions yet.</p>`}</div>`;
+  }
+  box.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.matches(".ver-save input")) box.querySelector('[data-a="save"]').click(); });
   box.addEventListener("click", async e => {
-    const b = e.target.closest("[data-restore]");
-    if (!b) return;
-    if (!await WM.ask({ title: "Restore this version?", message: "Settings, library and timeline go back to how they were then. The current state is kept as a version, so you can undo this.", ok: "Restore" })) return;
+    const t = e.target;
+    if (t.closest('[data-a="settings"]')) return Settings.open("projects");
     try {
-      await TL.saveNow();
-      await api(`/api/projects/${id}/restore`, { method: "POST", body: JSON.stringify({ path: "", name: b.dataset.restore }) });
-      w.close();
-      // Reopen without saving first: saving now would write the old form over the restored version.
-      if (id === "experiment") await loadExperimentMedia(); else await openProject(id, { save: false });
-      Media.toast("Restored.");
+      if (t.closest('[data-a="save"]')) {
+        await Autosave.saveAll?.(); await TL.saveNow();
+        const label = box.querySelector(".ver-save input").value.trim();
+        const r = await api(`/api/projects/${id}/versions`, { method: "POST", body: JSON.stringify({ label }) });
+        Media.toast(`Saved the version “${r.label}”.`); return render();
+      }
+      const n = t.closest("[data-name]");
+      if (n) {
+        const label = prompt("Name this version (empty clears the name; unnamed versions can be pruned):", n.dataset.label || "");
+        if (label === null) return;
+        await api(`/api/projects/${id}/versions/${encodeURIComponent(n.dataset.name)}`, { method: "PUT", body: JSON.stringify({ label }) });
+        return render();
+      }
+      const d = t.closest("[data-del]");
+      if (d) {
+        if (!await WM.ask({ title: "Delete this version?", message: "It can't come back afterwards.", ok: "Delete" })) return;
+        await api(`/api/projects/${id}/versions/${encodeURIComponent(d.dataset.del)}`, { method: "DELETE" });
+        return render();
+      }
+      const b = t.closest("[data-restore]");
+      if (b) {
+        if (!await WM.ask({ title: "Restore this version?", message: "Settings, library and timeline go back to how they were then. The current state is kept as a named version first, so you can undo this.", ok: "Restore" })) return;
+        await TL.saveNow();
+        await api(`/api/projects/${id}/restore`, { method: "POST", body: JSON.stringify({ path: "", name: b.dataset.restore }) });
+        // Reopen without saving first: saving now would write the old form over the restored version.
+        if (id === "experiment") await loadExperimentMedia(); else await openProject(id, { save: false, restored: true });
+        Media.toast("Restored."); return render();
+      }
     } catch (err) { Media.toast(err.message); }
   });
+  await render();
+  return w;
 }
 
 function newProjectDialog({ fromCurrent = false } = {}) {
@@ -747,7 +792,7 @@ async function initShell() {
   // Reopen what was open last time; otherwise the experiment.
   const ui = readUI();
   let opened = null;
-  if (ui.lastProject) opened = await openProject(ui.lastProject, { quiet: true });
+  if (ui.lastProject && Settings.get("projects.reopen_last", true)) opened = await openProject(ui.lastProject, { quiet: true });
   if (!opened) {
     const ex = loadExperiment();
     if (ex?.settings) applySettings(ex.settings);

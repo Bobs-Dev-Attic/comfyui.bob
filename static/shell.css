@@ -88,7 +88,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
   border: 1px solid var(--line); background: var(--panel); cursor: pointer; color: var(--text);
 }
 .model-card:hover { border-color: var(--faint); }
-.model-card.sel { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255,122,69,.15); }
+.model-card.sel { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
 .model-card b { font-size: 14px; }
 .model-card .mc-file.custom { color: var(--accent); }
 .unet-field { margin-top: 14px; }

@@ -10,10 +10,19 @@
   <link rel="stylesheet" href="/static/media.css">
   <link rel="stylesheet" href="/static/timeline.css">
   <link rel="stylesheet" href="/static/editor.css">
+  <link rel="stylesheet" href="/static/themes.css">
+  <link rel="stylesheet" href="/static/settings.css">
+  <script>
+    // Start in the saved theme (Settings > Appearance) before anything is drawn.
+    try { const a = JSON.parse(localStorage.getItem("bob.look") || "null"); if (a) { const r = document.documentElement;
+      r.dataset.theme = a.theme || "system"; r.dataset.accent = a.accent || "orange"; r.dataset.text = a.font_size || "normal"; r.dataset.motion = a.reduce_motion ? "reduce" : ""; } } catch {}
+  </script>
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><span class="logo"></span>Bob Studio <small>MiniMax H3 · local <span id="app-version"></span></small></div>
+    <div class="brand"><button type="button" class="menu-btn" id="btn-menu" aria-label="Menu" aria-haspopup="menu" aria-expanded="false" title="Menu">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3.5 5.5h13M3.5 10h13M3.5 14.5h13"/></svg></button>
+      <span class="logo"></span>Bob Studio <small>MiniMax H3 · local <span id="app-version"></span></small></div>
     <div class="status" id="status">
       <span class="chip" id="st-comfy"><i></i>ComfyUI</span>
       <span class="chip" id="st-proxy"><i></i>API v2</span>
@@ -392,6 +401,7 @@
   <script src="/static/enhance.js"></script>
   <script src="/static/angles.js"></script>
   <script src="/static/editor.js"></script>
+  <script src="/static/settings.js"></script>
   <script src="/static/app.js"></script>
   <script src="/static/shell.js"></script>
 </body>

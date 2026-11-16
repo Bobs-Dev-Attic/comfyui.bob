@@ -243,13 +243,22 @@ formats this ffmpeg can write and the places a render can be saved:
 - **Linked sound:** a video whose sound moved to a linked clip is exported at −96 dB, so the sound isn't doubled.
   Muted clips are too. Pan, fades and the master aren't exported; set them in Resolve's mixer.
 
-### Earlier versions
+### Versions
 
-Every project keeps its previous `project.json` files in `<project>/.history/` (Experiment: `data/experiment/.history/`),
-at most one a minute while it changes, plus one each time the app starts (`project-…-startup.json`, skipped when
-nothing changed), the last 30. **Earlier versions…** on the Project step lists them and can restore one
-(`GET /api/projects/{id}/history`, `POST /api/projects/{id}/restore`). The state being replaced is kept as a version
-first.
+Every project keeps its previous `project.json` files in `<project>/.history/` (Experiment: `data/experiment/.history/`).
+
+- **Automatic versions:** kept at most every N minutes while the project changes, plus one each time the app starts
+  (`project-…-startup.json`, skipped when nothing changed). Only the last N are kept. Both limits come from the app
+  settings (`data/settings.json`, `projects.version_minutes` and `projects.versions_keep`; defaults 1 minute and 30).
+- **Named versions:** `.history/labels.json` maps a version file to its name. Named versions are never pruned;
+  **Save a version** makes one (`POST /api/projects/{id}/versions` `{label}`). `PUT`/`DELETE
+  /api/projects/{id}/versions/{file}` names, renames or deletes a version.
+- **Listing and restoring:** **Versions…** lists them newest first, each with what changed since the one before
+  (`GET /api/projects/{id}/history`; the first row, `file: null`, is the current state). It can restore one
+  (`POST /api/projects/{id}/restore`). The state being replaced is first kept as a named version, "Before going back
+  to …".
+- **File names:** `project-YYYYMMDD-HHMMSS[-tag][-n].json`. The tag is `startup` or `before-restore`; `n` counts the
+  versions kept in the same second. Versions are ordered by when they were kept (the file's modified time).
 
 ### Duplicating
 
