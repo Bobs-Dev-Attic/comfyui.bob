@@ -341,8 +341,12 @@ function renderProjectCard() {
       <div class="saved">${Autosave.enabled ? "Saved automatically" : "Auto-save off (Ctrl+S saves)"} · last change ${esc(timeOf(p.modified))} ·
         <button type="button" class="link" id="btn-history">Versions…</button> ·
         <button type="button" class="link" id="btn-duplicate">⧉ Duplicate…</button> ·
+        <button type="button" class="link" id="btn-rename">✎ Rename…</button> ·
+        <button type="button" class="link danger-link" id="btn-delete">🗑 Delete…</button> ·
         <button type="button" class="link" id="btn-psettings">⚙ Settings…</button></div></div>`;
     $("#btn-history").onclick = () => historyDialog(p.id);
+    $("#btn-rename").onclick = () => renameProjectDialog();
+    $("#btn-delete").onclick = () => deleteProjectDialog();
     $("#btn-duplicate").onclick = () => duplicateProjectDialog({ id: p.id, name: p.name, path: p.path });
     $("#btn-psettings").onclick = projectSettingsDialog;
     $("#notes-where").textContent = "saved with the project";
@@ -563,6 +567,50 @@ async function historyDialog(id) {
   });
   await render();
   return w;
+}
+
+/* Rename the open project: its folder and its name. Pending changes are saved first. */
+async function renameProjectDialog() {
+  const p = state.project;
+  if (!p) return Media.toast("Experiment isn't a project. Save it as one first.");
+  const name = await WM.ask({ title: "Rename project", message: `New name for “${p.name}”. Its folder is renamed too.`, input: p.name, ok: "Rename" });
+  if (name === null || !name.trim() || name.trim() === p.name) return;
+  try {
+    await Autosave.saveAll(); await TL.saveNow?.();
+    const r = await api("/api/projects/rename", { method: "POST", body: JSON.stringify({ path: p.path, name: name.trim() }) });
+    window.dispatchEvent(new CustomEvent("bob:project-renamed", { detail: { id: p.id, path: r.path, name: r.name } }));
+    renderRecent();
+    Media.toast(`Renamed to “${r.name}”.`);
+  } catch (e) { WM.ask({ title: "Can't rename the project", message: e.message, ok: "OK", cancel: "Close" }); }
+}
+
+/* Delete the open project: its folder goes to projects/.trash (it can be brought back by hand). */
+async function deleteProjectDialog() {
+  const p = state.project;
+  if (!p) return Media.toast("Experiment isn't a project, so there's nothing to delete.");
+  const ok = await WM.ask({ title: "Delete project", danger: true, ok: "Delete",
+    message: `Delete “${p.name}”? Its folder, settings, timeline, library and versions move to the projects trash (projects\\.trash), where they can be recovered by hand. Its generated pictures, videos and sounds stay in the gallery under All.` });
+  if (!ok) return;
+  // Nothing may write into the folder once it's in the trash: drop the pending settings save, flush the timeline's.
+  clearTimeout(saveTimer); saveTimer = null;
+  Autosave.dirty.clear(); Autosave.render();
+  try {
+    await TL.saveNow?.();
+    await api("/api/projects/delete", { method: "POST", body: JSON.stringify({ path: p.path }) });
+    window.dispatchEvent(new CustomEvent("bob:project-deleted", { detail: { id: p.id, path: p.path } }));
+    renderRecent();
+    Media.toast(`Deleted “${p.name}”: it's in the projects trash.`);
+  } catch (e) { WM.ask({ title: "Can't delete the project", message: e.message, ok: "OK", cancel: "Close" }); }
+}
+
+/* The open project was deleted: drop what's pending for it (don't save into the trash) and go to Experiment. */
+async function closeDeletedProject() {
+  clearTimeout(saveTimer); saveTimer = null;
+  TL.detach?.();
+  Autosave.dirty.clear(); Autosave.render();
+  state.project = null;
+  writeUI({ lastProject: null });
+  await startExperiment();
 }
 
 function newProjectDialog({ fromCurrent = false } = {}) {
@@ -786,7 +834,7 @@ async function initShell() {
   window.addEventListener("bob:project-renamed", e => {
     if (state.project && e.detail.id === state.project.id) { state.project.name = e.detail.name; state.project.path = e.detail.path; renderProjectCard(); renderSteps(); }
   });
-  window.addEventListener("bob:project-deleted", e => { if (state.project && e.detail.id === state.project.id) startExperiment(); });
+  window.addEventListener("bob:project-deleted", e => { if (state.project && e.detail.id === state.project.id) closeDeletedProject(); });
   window.addEventListener("beforeunload", () => { if (saveTimer) saveNow(); });
 
   // Reopen what was open last time; otherwise the experiment.
