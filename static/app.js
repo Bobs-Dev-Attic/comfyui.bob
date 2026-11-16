@@ -764,6 +764,54 @@ function select(id) {
   renderViewer();
 }
 
+/* Result viewer zoom: the wheel zooms the picture at the pointer (fit .. 16x of fit), scroll bars
+   and dragging move around a zoomed picture, double-click goes back to fit. */
+const ImageZoom = (() => {
+  const MAX = 16, STEP = 1.2;
+  function attach(wrap, badge) {
+    const img = wrap.querySelector("img");
+    let z = 1, drag = null;
+    const fitScale = () => Math.min(wrap.clientWidth / img.naturalWidth, wrap.clientHeight / img.naturalHeight, 1);
+    function apply(nz, cx, cy) {
+      if (!img.naturalWidth) return;
+      const wr = wrap.getBoundingClientRect(), ir = img.getBoundingClientRect();
+      // The picture point under the pointer (as a fraction) stays under the pointer.
+      const fx = ir.width ? (cx - ir.left) / ir.width : .5, fy = ir.height ? (cy - ir.top) / ir.height : .5;
+      z = Math.min(MAX, Math.max(1, nz));
+      wrap.classList.toggle("zoomed", z > 1);
+      if (z === 1) { img.style.width = img.style.height = ""; }
+      else {
+        const s = fitScale() * z;
+        img.style.width = `${Math.round(img.naturalWidth * s)}px`;
+        img.style.height = `${Math.round(img.naturalHeight * s)}px`;
+        wrap.scrollLeft = img.offsetLeft + fx * img.offsetWidth - (cx - wr.left);
+        wrap.scrollTop = img.offsetTop + fy * img.offsetHeight - (cy - wr.top);
+      }
+      if (badge) { badge.hidden = z === 1; badge.textContent = `${Math.round(fitScale() * z * 100)}%`; }
+    }
+    wrap.addEventListener("wheel", e => {
+      if (!img.naturalWidth) return;
+      e.preventDefault();
+      // One mouse-wheel notch (about 100 px) is one step; touchpads send many small deltas.
+      const px = e.deltaY * (e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 800 : 1);
+      apply(z * Math.pow(STEP, -Math.max(-300, Math.min(300, px)) / 100), e.clientX, e.clientY);
+    }, { passive: false });
+    wrap.addEventListener("dblclick", e => apply(1, e.clientX, e.clientY));
+    wrap.addEventListener("pointerdown", e => {
+      if (z === 1 || e.button !== 0) return;
+      drag = { x: e.clientX, y: e.clientY, l: wrap.scrollLeft, t: wrap.scrollTop };
+      wrap.setPointerCapture(e.pointerId); wrap.classList.add("panning");
+    });
+    wrap.addEventListener("pointermove", e => {
+      if (!drag) return;
+      wrap.scrollLeft = drag.l - (e.clientX - drag.x); wrap.scrollTop = drag.t - (e.clientY - drag.y);
+    });
+    const end = () => { drag = null; wrap.classList.remove("panning"); };
+    wrap.addEventListener("pointerup", end); wrap.addEventListener("pointercancel", end);
+  }
+  return { attach };
+})();
+
 function renderViewer() {
   const it = state.items.get(state.selected);
   const viewer = $("#viewer"), meta = $("#meta");
@@ -777,7 +825,8 @@ function renderViewer() {
     // No autoplay: the viewer often changes on its own (a project opens, a result finishes),
     // and sound must never start without the user pressing play.
     if (it.kind === "video") html = `<video class="media" src="${esc(f.url)}" controls playsinline preload="metadata"></video>`;
-    else if (it.kind === "image") html = `<img class="media" src="${esc(f.url)}" alt="">`;
+    else if (it.kind === "image") html = `<div class="zoom-wrap" title="Wheel: zoom at the pointer · drag: move · double-click: fit">
+      <img class="media" src="${esc(f.url)}" alt="" draggable="false"></div><span class="zoom-badge" hidden></span>`;
     else html = `<div class="audio-card">${waveHTML(it.id, 48)}<audio src="${esc(f.url)}" controls preload="metadata"></audio></div>`;
   } else if (isBusy(it)) {
     const pv = state.previews.get(it.id) || mediaUrl(it.params.first_frame || it.params.references?.[0]);
@@ -789,6 +838,8 @@ function renderViewer() {
   }
   viewer.insertAdjacentHTML("beforeend", html);
   if (isBusy(it)) updateLive(it.id);
+  const zw = viewer.querySelector(".zoom-wrap");
+  if (zw) ImageZoom.attach(zw, viewer.querySelector(".zoom-badge"));
 
   // meta
   const info = it.info || {};

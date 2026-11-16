@@ -5,6 +5,15 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.24.1] - 2026-11-15
+
+### Added
+- **Zoom in the Result viewer.** With the pointer over a picture, the mouse wheel zooms in and out at the
+  pointer, from fit up to 16x. A badge shows the zoom in % of the picture's real pixels.
+  - Scroll bars appear when the zoomed picture is bigger than the viewer. You can also drag the picture to move
+    it, and double-click goes back to fit.
+  - A touchpad zooms smoothly: one mouse-wheel notch is one 1.2x step.
+
 ## [0.24.0] - 2026-11-15
 
 ### Added
