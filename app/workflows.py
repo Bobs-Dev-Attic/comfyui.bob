@@ -384,8 +384,21 @@ ANGLE_ELEVATIONS = ["low-angle shot", "eye-level shot", "elevated shot", "high-a
 ANGLE_DISTANCES = ["close-up", "medium shot", "wide shot"]
 
 
+# The LoRA alone tends to turn back-quarter views into side profiles; spelling out what the camera
+# sees fixes that (tested on 2511 + Lightning, same seed).
+ANGLE_HINTS = {
+    "back-right quarter view": "The camera is behind the person, over their right shoulder: we see mostly the back of "
+                               "the head and hair, the face is turned away from the camera, only the edge of the cheek shows.",
+    "back-left quarter view": "The camera is behind the person, over their left shoulder: we see mostly the back of "
+                              "the head and hair, the face is turned away from the camera, only the edge of the cheek shows.",
+}
+
+
 def angle_prompt(pose: str, extra: str = "") -> str:
-    return f"<sks> {pose.strip()}" + (f". {extra.strip()}" if extra.strip() else "")
+    pose = pose.strip()
+    hint = next((v for k, v in ANGLE_HINTS.items() if pose.startswith(k)), "")
+    rest = " ".join(x for x in (hint, extra.strip()) if x)
+    return f"<sks> {pose}" + (f". {rest}" if rest else "")
 
 
 def build_angles(

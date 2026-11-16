@@ -5,6 +5,26 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.23.0] - 2026-11-15
+
+### Added
+- **Angles: "Make a plain background pure white"** (on by default).
+  - **Why:** the model keeps the reference's backdrop tone, so "plain white" came out light grey (about 225).
+  - **What it does:** after each angle is saved, the server floods the light, grey backdrop from the picture's
+    edges and blends pure white over it with a soft edge, so hair keeps its fine strands. It runs before SeedVR2,
+    so the enhanced copies are white too.
+  - **How:** it uses PIL only (`app/imaging.py`) and needs no model, in under a second per picture. A
+    background-removal model (u2net) was tried first, but it cut away shoulders on back views.
+  - If there's no plain light backdrop touching the edges, the picture is left as it is, and the job's log says
+    which.
+  - `POST /api/angles` takes `white_bg`, and so do generation requests.
+
+### Fixed
+- **Angles: back-¾ views came out as side profiles** (back-left even as a front-¾ view). The prompt for
+  back-right and back-left quarter views now spells out what the camera sees: from behind, over the shoulder,
+  mostly the back of the head, with only the edge of the cheek showing. A stronger LoRA (1.2) and full
+  20-step sampling made no difference. Tested on all six back-¾ poses.
+
 ## [0.22.0] - 2026-11-15
 
 ### Added
