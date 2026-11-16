@@ -3,6 +3,9 @@
    address bar, search, details or large-icon view, a details pane with the preview picture,
    what model it's for, trigger words and description, and a strength to add it with.
 
+   Rows in the step: drag the grip to reorder; the ⋯ menu moves, replaces, removes or shows
+   a LoRA's details (its full safetensors metadata). Strength runs from -10 to 10.
+
    state.loras = [{name, strength}] (saved with the project settings, sent with each
    generation and applied in order after the model and any turbo LoRA). */
 "use strict";
@@ -34,6 +37,11 @@ const Loras = (() => {
   const icon = (r, big) => `<span class="lx-ico${big ? " big" : ""}" style="--c:${FAM_COLOR[r.family] || FAM_COLOR.unknown}">${esc(FAM_SHORT[r.family] || "?")}</span>`;
 
   /* ---------------------------------------------------------------- the LoRAs step */
+  const STR_MIN = -10, STR_MAX = 10;
+  const clampStr = v => +Math.max(STR_MIN, Math.min(STR_MAX, +v || 0)).toFixed(2);
+  // Long file names wrap after _ - . / (zero-width break points) rather than mid-word.
+  const wrapName = t => esc(t).replace(/([_\-./])/g, "$1<wbr>");
+  const fullPath = (r, name) => (r?.path || name).replace(/\\/g, "/");
   function add(name, strength = 1) {
     const i = state.loras.findIndex(l => l.name === name);
     if (i >= 0) state.loras[i].strength = strength;
@@ -41,6 +49,20 @@ const Loras = (() => {
     else state.loras.push({ name, strength });
     render(); scheduleSave();
     return true;
+  }
+  // Put another LoRA in row i, keeping its place and strength.
+  function replace(i, name) {
+    if (!state.loras[i]) return false;
+    if (state.loras.some((l, j) => j !== i && l.name === name)) { Media.toast("That LoRA is already in the list."); return false; }
+    state.loras[i] = { name, strength: state.loras[i].strength };
+    render(); scheduleSave();
+    return true;
+  }
+  function move(from, to) {
+    if (from === to || from < 0 || to < 0 || from >= state.loras.length || to >= state.loras.length) return;
+    const [l] = state.loras.splice(from, 1);
+    state.loras.splice(to, 0, l);
+    render(); scheduleSave();
   }
   async function render() {
     const box = document.getElementById("lora-list");
@@ -51,54 +73,152 @@ const Loras = (() => {
       return;
     }
     try { await load(); } catch {}
+    const multi = state.loras.length > 1;
     box.innerHTML = state.loras.map((l, i) => {
-      const r = byName(l.name) || { name: l.name, file: l.name.split(/[\\/]/).pop(), family: "unknown", triggers: [] };
+      const r = byName(l.name) || { name: l.name, family: "unknown", triggers: [] };
       const ok = fits(r);
+      const path = fullPath(r, l.name), cut = path.lastIndexOf("/");
       return `<div class="lora-row" data-i="${i}">
+        <span class="lora-grip${multi ? "" : " off"}" data-grip title="${multi ? "Drag to reorder (LoRAs apply top to bottom)" : ""}" aria-hidden="true">⠿</span>
         ${icon(r)}
         <div class="lora-main">
-          <div class="lora-name" title="${esc(l.name)}">${esc(label(r))}</div>
+          <div class="lora-name">${cut >= 0 ? `<span class="lora-dir">${wrapName(path.slice(0, cut + 1))}</span>` : ""}${wrapName(path.slice(cut + 1))}</div>
           <div class="lora-sub">${esc(r.family_label || "Unknown")}${ok ? "" : ` · <span class="warn" title="Made for ${esc(r.family_label || "another model")}, not ${esc(modelName())}: it may do nothing or break the result">⚠ not for ${esc(modelName())}</span>`}</div>
           ${r.triggers?.length ? `<div class="lora-trig">${r.triggers.slice(0, 6).map(t => `<button type="button" class="chip-btn lora-tw" data-tw="${esc(t)}" title="Insert into the prompt">${esc(t)}</button>`).join("")}</div>` : ""}
         </div>
-        <label class="lora-str" title="Strength: 1 = full, 0.5 = half, negative = away from it">
-          <input type="range" min="-2" max="2" step="0.05" value="${l.strength}" data-k="str"><input type="number" min="-4" max="4" step="0.05" value="${l.strength}" data-k="num">
+        <label class="lora-str" title="Strength from -10 to 10: 1 = full, 0.5 = half, negative = away from it">
+          <input type="number" min="${STR_MIN}" max="${STR_MAX}" step="0.1" value="${l.strength}" data-k="num" aria-label="Strength">
         </label>
-        <span class="lora-btns">
-          <button type="button" class="ex-btn" data-lx="up" title="Earlier (applied first)" ${i ? "" : "disabled"}>↑</button>
-          <button type="button" class="ex-btn" data-lx="down" title="Later" ${i < state.loras.length - 1 ? "" : "disabled"}>↓</button>
-          <button type="button" class="ex-btn" data-lx="remove" title="Remove">✕</button>
-        </span>
+        <button type="button" class="ex-btn lora-more" data-lx="menu" title="More" aria-label="More for ${esc(path)}" aria-haspopup="menu">⋯</button>
       </div>`;
     }).join("");
   }
+  function rowMenu(i, btn) {
+    const n = state.loras.length, r = btn.getBoundingClientRect();
+    Media.menu(r.left, r.bottom + 4, [
+      i > 0 && ["Move up", () => move(i, i - 1)],
+      i < n - 1 && ["Move down", () => move(i, i + 1)],
+      ["Replace…", () => browse({ replace: i })],
+      ["Details…", () => details(state.loras[i].name)],
+      ["Remove", () => { state.loras.splice(i, 1); render(); scheduleSave(); }],
+    ].filter(Boolean));
+  }
+  async function details(name) {
+    try { await load(); } catch {}
+    const r = byName(name) || { name, family_label: "Unknown" };
+    const box = document.createElement("div");
+    box.className = "lora-details";
+    box.innerHTML = `<p class="hint">Reading its metadata…</p>`;
+    const foot = document.createElement("div");
+    foot.innerHTML = `<span class="ex-gap"></span><button type="button" class="btn sm" data-act="close">Close</button>`;
+    const win = WM.open({ id: `lora-details:${name}`, title: label(r.file ? r : { name }), content: box, footer: foot, width: 720, height: 600, minWidth: 380, minHeight: 300 });
+    foot.querySelector('[data-act="close"]').onclick = () => win.close();
+    let md = null, err = "";
+    try {
+      const res = await fetch(`/api/loras/metadata?name=${encodeURIComponent(name)}`);
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+      md = await res.json();
+    } catch (e) { err = e.message; }
+    const pretty = v => { const t = v.trim(); if (/^[[{]/.test(t)) { try { return JSON.stringify(JSON.parse(t), null, 2); } catch {} } return v; };
+    const rows = md ? Object.entries(md.metadata) : [];
+    box.innerHTML = `
+      <div class="lora-det-head">
+        <div class="lx-prev">${r.preview ? `<img src="/api/loras/preview?name=${encodeURIComponent(r.name)}" alt="">` : icon(r, true)}</div>
+        <div class="lora-det-info">
+          <h4 class="lora-det-name">${esc(fullPath(r, name))}</h4>
+          ${r.title && r.title !== label(r.file ? r : { name }) ? `<p class="lx-title">“${esc(r.title)}”</p>` : ""}
+          <dl class="lx-dl">
+            <dt>Made for</dt><dd>${esc(r.family_label || "Unknown")} ${fits(r) ? `<span class="ok">✓ fits ${esc(modelName())}</span>` : `<span class="warn">⚠ not ${esc(modelName())}</span>`}</dd>
+            ${r.base ? `<dt>Base</dt><dd>${esc(r.base)}</dd>` : ""}
+            <dt>Type</dt><dd>${esc(r.kind || "lora")}${r.rank ? ` · rank ${r.rank}` : ""}${md ? ` · ${md.tensors} tensors${md.dtypes.length ? ` · ${esc(md.dtypes.join(", "))}` : ""}` : ""}</dd>
+            ${r.size ? `<dt>Size</dt><dd>${fmtSize(r.size)} · ${fmtDate(r.mtime)}</dd>` : ""}
+            ${r.trainer ? `<dt>Trained with</dt><dd>${esc(String(r.trainer).slice(0, 120))}</dd>` : ""}
+          </dl>
+        </div>
+      </div>
+      ${r.triggers?.length ? `<div class="lx-sec">Trigger words <span class="hint inline">(click to copy)</span></div><div class="lx-trig">${r.triggers.map(t => `<button type="button" class="chip-btn" data-copy="${esc(t)}">${esc(t)}</button>`).join("")}</div>` : ""}
+      ${r.description ? `<div class="lx-sec">About</div><p class="lx-desc">${esc(r.description)}</p>` : ""}
+      <div class="lx-sec">Metadata ${md ? `<span class="hint inline">(${rows.length} field${rows.length === 1 ? "" : "s"})</span>` : ""}</div>
+      ${err ? `<p class="warn">${esc(err)}</p>` : !rows.length ? `<p class="hint">This file has no metadata.</p>`
+        : `<table class="lora-md"><tbody>${rows.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${v.length > 300 || v.includes("\n")
+          ? `<details><summary>${esc(v.slice(0, 120))}${v.length > 120 ? "…" : ""}</summary><pre>${esc(pretty(v))}</pre></details>` : esc(v)}</td></tr>`).join("")}</tbody></table>`}`;
+    box.addEventListener("click", e => {
+      const cp = e.target.closest("[data-copy]");
+      if (cp) navigator.clipboard?.writeText(cp.dataset.copy).then(() => Media.toast(`Copied “${cp.dataset.copy}”`));
+    });
+  }
   function initStep() {
     const step = document.querySelector('.step[data-step="loras"]');
+    const list = document.getElementById("lora-list");
     step.addEventListener("click", e => {
       const a = e.target.closest("[data-lx]")?.dataset.lx, tw = e.target.closest("[data-tw]")?.dataset.tw;
       if (tw) return insertAtCursor($("#prompt"), tw);
       if (a === "browse") return browse();
       const i = +e.target.closest("[data-i]")?.dataset.i;
       if (Number.isNaN(i)) return;
-      if (a === "remove") state.loras.splice(i, 1);
-      if (a === "up" && i > 0) [state.loras[i - 1], state.loras[i]] = [state.loras[i], state.loras[i - 1]];
-      if (a === "down" && i < state.loras.length - 1) [state.loras[i + 1], state.loras[i]] = [state.loras[i], state.loras[i + 1]];
-      render(); scheduleSave();
+      if (a === "menu") rowMenu(i, e.target.closest("[data-lx]"));
     });
     step.addEventListener("input", e => {
-      const k = e.target.dataset.k, row = e.target.closest("[data-i]");
-      if (!k || !row) return;
-      const v = Math.max(-4, Math.min(4, +e.target.value || 0)), l = state.loras[+row.dataset.i];
-      l.strength = +v.toFixed(2);
-      row.querySelector(k === "str" ? '[data-k="num"]' : '[data-k="str"]').value = l.strength;
+      const row = e.target.closest("[data-i]");
+      if (e.target.dataset.k !== "num" || !row || e.target.value === "") return;
+      state.loras[+row.dataset.i].strength = clampStr(e.target.value);
       scheduleSave();
     });
+    step.addEventListener("change", e => {  // on leaving the box: show the clamped value
+      const row = e.target.closest("[data-i]");
+      if (e.target.dataset.k !== "num" || !row) return;
+      const l = state.loras[+row.dataset.i];
+      l.strength = clampStr(e.target.value); e.target.value = l.strength;
+      scheduleSave();
+    });
+    // Drag the grip to reorder (pointer events, so mouse, pen and touch all work). The row
+    // under the pointer shows a line where the dragged LoRA will land.
+    let drag = null;
+    const clearMarks = () => list.querySelectorAll(".drop-before, .drop-after").forEach(x => x.classList.remove("drop-before", "drop-after"));
+    const target = y => {  // [row, insert index] for a pointer height
+      const rows = [...list.querySelectorAll(".lora-row")];
+      if (!rows.length) return [null, -1];
+      for (const row of rows) {
+        const r = row.getBoundingClientRect();
+        if (y < r.top + r.height / 2) return [row, +row.dataset.i];
+      }
+      const last = rows[rows.length - 1];
+      return [last, +last.dataset.i + 1];
+    };
+    list.addEventListener("pointerdown", e => {
+      const g = e.target.closest("[data-grip]");
+      if (!g || state.loras.length < 2 || e.button !== 0) return;
+      e.preventDefault();
+      const row = g.closest(".lora-row");
+      drag = { from: +row.dataset.i, row, to: -1 };
+      g.setPointerCapture(e.pointerId);
+      row.classList.add("dragging");
+      list.classList.add("reordering");
+    });
+    list.addEventListener("pointermove", e => {
+      if (!drag) return;
+      const [row, to] = target(e.clientY);
+      drag.to = to;
+      clearMarks();
+      if (row && to !== drag.from && to !== drag.from + 1) row.classList.add(to === +row.dataset.i ? "drop-before" : "drop-after");
+    });
+    const end = e => {
+      if (!drag) return;
+      const { from, row } = drag;
+      let to = drag.to;
+      drag = null;
+      clearMarks(); row.classList.remove("dragging"); list.classList.remove("reordering");
+      if (e.type === "pointerup" && to >= 0) { if (to > from) to--; move(from, to); }
+    };
+    list.addEventListener("pointerup", end);
+    list.addEventListener("pointercancel", end);
     document.getElementById("btn-lora-browse").onclick = () => browse();
   }
 
   /* ---------------------------------------------------------------- the LoRA Explorer */
-  async function browse() {
+  async function browse(opts = {}) {
     const ui = readUI().loraBrowser || {};
+    const rep = Number.isInteger(opts.replace) && state.loras[opts.replace] ? opts.replace : null;
     const st = { path: ui.path ?? "", view: ui.view || "details", onlyFits: ui.onlyFits ?? true, q: "", sel: null,
       sort: ui.sort || { key: "name", dir: 1 }, back: [], fwd: [], expanded: new Set(ui.expanded || [""]), strength: 1 };
     const root = document.createElement("div");
@@ -128,10 +248,14 @@ const Loras = (() => {
       <div class="ex-status"></div>`;
     const foot = document.createElement("div");
     foot.innerHTML = `<span class="ex-foot-label">Strength</span>
-      <input type="range" class="lx-str" min="-2" max="2" step="0.05" value="1" aria-label="Strength"><input type="number" class="lx-strn" min="-4" max="4" step="0.05" value="1" aria-label="Strength">
+      <input type="range" class="lx-str" min="-2" max="2" step="0.05" value="1" aria-label="Strength"><input type="number" class="lx-strn" min="-10" max="10" step="0.1" value="1" aria-label="Strength">
       <span class="ex-gap"></span>
       <button type="button" class="btn sm primary" data-act="add" disabled>Add</button><button type="button" class="btn sm" data-act="close">Close</button>`;
-    const win = WM.open({ id: "lora-browser", title: `LoRAs for ${modelName()}`, content: root, footer: foot, width: 1080, height: 660,
+    if (rep !== null) {  // replacing a row keeps its strength: no strength box
+      foot.querySelector(".ex-foot-label").textContent = `Replace ${label(byName(state.loras[rep].name) || { name: state.loras[rep].name })}`;
+      foot.querySelectorAll(".lx-str, .lx-strn").forEach(x => x.remove());
+    }
+    const win = WM.open({ id: "lora-browser", title: rep !== null ? `Replace a LoRA on ${modelName()}` : `LoRAs for ${modelName()}`, content: root, footer: foot, width: 1080, height: 660,
       minWidth: 520, minHeight: 360, className: "wm-explorer" });
     const $r = s => root.querySelector(s), view = $r(".ex-view");
     view.innerHTML = `<p class="ex-empty">Reading the LoRA folders…</p>`;
@@ -262,7 +386,7 @@ const Loras = (() => {
         ${r.kind === "refmod" ? `<p class="warn">A RefMod reference embedding, not a LoRA: it needs the RefMod nodes, so it can't be added here.</p>` : ""}
         ${r.turbo ? `<p class="hint">H3's turbo LoRA: the Turbo switch in Settings applies it.</p>` : ""}`;
       addBtn.disabled = r.kind === "refmod" || r.turbo;
-      addBtn.textContent = have ? "Update strength" : "Add";
+      addBtn.textContent = rep !== null ? "Replace" : have ? "Update strength" : "Add";
     }
     function draw() { drawNav(); drawAddr(); drawView(); drawPane(); status(); }
     function status() {
@@ -274,6 +398,10 @@ const Loras = (() => {
     function addSel() {
       const r = byName(st.sel);
       if (!r || r.kind === "refmod" || r.turbo) return;
+      if (rep !== null) {
+        if (replace(rep, r.name)) { Media.toast(`Replaced with ${label(r)}.`); win.close(); }
+        return;
+      }
       if (add(r.name, st.strength)) { Media.toast(`${label(r)} ${state.loras.length ? "is on" : "added to"} ${modelName()} at ${st.strength}.`); drawView(); drawPane(); status(); }
     }
 
@@ -316,7 +444,7 @@ const Loras = (() => {
       else if (e.key === "F5") { e.preventDefault(); load(true).then(draw); }
       else if (e.altKey && e.key === "ArrowLeft" && st.back.length) { st.fwd.push(st.path); nav(st.back.pop(), false); }
     });
-    const syncStr = v => { st.strength = +Math.max(-4, Math.min(4, +v || 0)).toFixed(2); foot.querySelector(".lx-str").value = st.strength; foot.querySelector(".lx-strn").value = st.strength; };
+    const syncStr = v => { st.strength = clampStr(v); foot.querySelectorAll(".lx-str, .lx-strn").forEach(x => { x.value = st.strength; }); };
     foot.addEventListener("input", e => { if (e.target.matches(".lx-str, .lx-strn")) syncStr(e.target.value); });
     foot.querySelector('[data-act="add"]').onclick = addSel;
     foot.querySelector('[data-act="close"]').onclick = () => win.close();
@@ -325,5 +453,5 @@ const Loras = (() => {
   }
 
   function forRequest() { return state.loras.map(l => ({ name: l.name, strength: l.strength })); }
-  return { load, render, browse, initStep, add, forRequest, fits: name => fits(byName(name)) };
+  return { load, render, browse, initStep, add, replace, details, forRequest, fits: name => fits(byName(name)) };
 })();

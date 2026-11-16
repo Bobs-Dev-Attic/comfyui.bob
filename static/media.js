@@ -700,5 +700,5 @@ const Media = (() => {
   /* Results finishing or new uploads: refresh views that show them. */
   function refreshSource() { if (["results", "uploads"].includes(st.view.source) || st.view.source.startsWith("bm:")) loadSource(); }
 
-  return { mount, openWindow, setProject, refreshSource, addToLibrary, toast, tagsDialog, tagColor };
+  return { mount, openWindow, setProject, refreshSource, addToLibrary, toast, tagsDialog, tagColor, menu };
 })();
