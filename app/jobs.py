@@ -66,6 +66,7 @@ class GenerateRequest(BaseModel):
     # The Model step's sampler and scheduler (None = the engine's own, workflows.SAMPLING_DEFAULTS).
     sampler: str | None = Field(None, max_length=80)
     scheduler: str | None = Field(None, max_length=80)
+    cfg: float | None = Field(None, ge=0.0, le=30.0)  # None = the engine's own (workflows.CFG_DEFAULTS)
     # Image editor (engine "imgedit", static/editor.js): the op, the selection mask (a media ref,
     # white = selected), how much the prompt op may change, and remove_bg's new background.
     edit_op: EditOp | None = None
@@ -92,6 +93,18 @@ class GenerateRequest(BaseModel):
     guide_frames: list[int] = Field(default_factory=list, max_length=8)
     fill_prompt: str = Field("", max_length=8000)
     camera_clip: str | None = Field(None, max_length=64)
+
+
+WORKFLOW_DIR = config.DATA_DIR / "workflows"
+
+
+def save_workflow(item_id: str, graph: dict[str, Any]) -> None:
+    """Keep the exact ComfyUI graph (API format) a result was made with: data/workflows/<id>.json."""
+    try:
+        WORKFLOW_DIR.mkdir(parents=True, exist_ok=True)
+        (WORKFLOW_DIR / f"{item_id}.json").write_text(json.dumps(graph, indent=2), "utf-8")
+    except OSError:
+        pass  # a missing copy must never fail the job
 
 
 class JobManager:
@@ -215,6 +228,7 @@ class JobManager:
         item = self.items.pop(item_id, None)
         if not item:
             return False
+        (WORKFLOW_DIR / f"{item_id}.json").unlink(missing_ok=True)
         if delete_files:
             # A copied project's results share their files: keep any another result still uses.
             used = {f.get("path") for other in self.items.values() for f in other.get("files", [])}
@@ -360,9 +374,11 @@ class JobManager:
                 resolved = {"files": {**resolved["files"], "unet": pick}}
                 req.unet = pick
         self._validate(req)
+        if req.engine not in workflows.SAMPLING_DEFAULTS:
+            req.cfg = None
         if req.sampler or req.scheduler:
             if req.engine not in workflows.SAMPLING_DEFAULTS:
-                req.sampler = req.scheduler = None  # editor, enhance, angles…: their own tuned sampling
+                req.sampler = req.scheduler = req.cfg = None  # editor, enhance, angles…: their own tuned sampling
             else:
                 await self.comfy.node_types()
                 if req.sampler and self.comfy.samplers and req.sampler not in self.comfy.samplers:
@@ -554,7 +570,7 @@ class JobManager:
         if req.engine == "h3image":
             mp = workflows.H3_IMAGE_QUALITY.get(req.quality, 2.0)
             w, h = workflows.dims_for(aspect, mp, multiple=32)
-            return workflows.build_h3_image(files, prompt=req.prompt, width=w, height=h, seed=seed, references=len(req.references),
+            return workflows.build_h3_image(files, prompt=req.prompt, width=w, height=h, seed=seed, references=len(req.references), steps=req.steps,
                                             prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras])
         if req.engine == "krea2":
             mp = workflows.KREA2_QUALITY.get(req.quality, 1.0)
@@ -575,8 +591,8 @@ class JobManager:
         try:
             t_start = time.time()
             built = self._build(item, req, files)
-            if req.engine in workflows.SAMPLING_DEFAULTS and (req.sampler or req.scheduler):
-                built.info = {**(built.info or {}), **workflows.apply_sampling(built.graph, req.sampler, req.scheduler)}
+            if req.engine in workflows.SAMPLING_DEFAULTS and (req.sampler or req.scheduler or req.cfg is not None):
+                built.info = {**(built.info or {}), **workflows.apply_sampling(built.graph, req.sampler, req.scheduler, req.cfg)}
             item["info"] = built.info
             self.log(item, f"Built the {req.engine} workflow: {len(built.graph)} nodes"
                      + "".join(f", {k} {v}" for k, v in (built.info or {}).items() if isinstance(v, (int, float, str)) and len(str(v)) < 40))
@@ -602,6 +618,11 @@ class JobManager:
                     ref = getattr(req, role)
                 self.log(item, f"Input {role}: {ref}")
                 wf.set_input(node_id, field, client.assets.from_file(media_path(ref)))
+                sent = built.graph.get(str(node_id))
+                if sent:  # the saved copy names the file (ComfyUI needs it in its input folder to load it)
+                    sent["inputs"][field] = Path(ref).name
+                    sent.setdefault("_meta", {})["title"] = f"{role}: {ref}"
+            save_workflow(item["id"], built.graph)
 
             # No `metadata=`: comfy-api-proxy 0.1.6 rejects the SDK's mapping form.
             job = await client.submit(wf)

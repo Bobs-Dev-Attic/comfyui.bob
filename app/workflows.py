@@ -115,18 +115,32 @@ SAMPLING_DEFAULTS = {
     "h3": ("res_multistep", "simple"), "h3ref": ("res_multistep", "simple"), "klein": ("euler", "simple"),
     "krea2": ("euler", "simple"), "h3image": ("euler", "simple"), "music3": ("euler", "simple"),
 }
+# CFG each engine runs at (H3 and H3 Reference use a BasicGuider: no negative, which is CFG 1).
+CFG_DEFAULTS = {"h3": 1.0, "h3ref": 1.0, "klein": 1.0, "krea2": 1.0, "h3image": 1.0, "music3": 1.7}
 
 
-def apply_sampling(graph: dict[str, dict], sampler: str | None, scheduler: str | None) -> dict[str, str]:
-    """Use the picked sampler and/or scheduler in a built graph: every KSampler, KSamplerSelect and
-    BasicScheduler in it (the main engines have one of each). Returns what was changed, for the info."""
-    changed: dict[str, str] = {}
-    for node in graph.values():
+def apply_sampling(graph: dict[str, dict], sampler: str | None, scheduler: str | None,
+                   cfg: float | None = None) -> dict[str, Any]:
+    """Use the picked sampler, scheduler and/or CFG in a built graph: every KSampler,
+    KSamplerSelect and BasicScheduler in it (the main engines have one of each). A CFG on a
+    BasicGuider graph (H3) swaps it for a CFGGuider with a zeroed negative, as ComfyUI's own
+    CFG workflows do. Returns what was changed, for the info."""
+    changed: dict[str, Any] = {}
+    next_id = max((int(k) for k in graph if str(k).isdigit()), default=0) + 1
+    for nid, node in list(graph.items()):
         t, inp = node.get("class_type"), node.get("inputs", {})
         if sampler and t in ("KSampler", "KSamplerSelect"):
             inp["sampler_name"] = changed["sampler"] = sampler
         if scheduler and t in ("KSampler", "BasicScheduler"):
             inp["scheduler"] = changed["scheduler"] = scheduler
+        if cfg is not None and t == "KSampler":
+            inp["cfg"] = changed["cfg"] = float(cfg)
+        if cfg is not None and t == "BasicGuider":
+            neg = str(next_id); next_id += 1
+            graph[neg] = {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": inp["conditioning"]}}
+            graph[nid] = {"class_type": "CFGGuider", "inputs": {"model": inp["model"], "positive": inp["conditioning"],
+                                                                "negative": [neg, 0], "cfg": float(cfg)}}
+            changed["cfg"] = float(cfg)
     return changed
 
 
@@ -475,6 +489,7 @@ def build_h3_image(
     height: int,
     seed: int,
     references: int = 0,
+    steps: int | None = None,
     prefix: str = "bob/h3image",
     loras: list[tuple[str, float]] | None = None,
 ) -> Built:
@@ -495,7 +510,7 @@ def build_h3_image(
         images[f"images.image_{i + 1}"] = o(load)
     cond = g.add("MiniMaxH3ImageConditioning", clip=o(clip), vae=o(vae), prompt=prompt, width=int(width), height=int(height), **images)
     neg = g.add("ConditioningZeroOut", conditioning=o(cond, 0))
-    steps = 6
+    steps = int(steps or 6)  # its distilled grid has 6 steps; other counts interpolate it
     sampled = g.add("KSampler", model=o(chain_loras(g, unet, loras)), seed=int(seed), steps=steps, cfg=1.0, sampler_name="euler",
                     scheduler="simple", positive=o(cond, 0), negative=o(neg), latent_image=o(cond, 1), denoise=1.0)
     decoded = g.add("VAEDecode", samples=o(sampled), vae=o(vae))
