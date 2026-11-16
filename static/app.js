@@ -123,7 +123,7 @@ async function api(path, opts = {}) {
   return res.json();
 }
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const engineName = (kind, eng) => eng === "enhance" ? "Enhanced" : eng === "angles" ? "Angles" : (ENGINES[kind]?.find(e => e.key === eng) || {}).label || eng;
+const engineName = (kind, eng) => eng === "enhance" ? "Enhanced" : eng === "angles" ? "Angles" : eng === "imgedit" ? "Edited" : (ENGINES[kind]?.find(e => e.key === eng) || {}).label || eng;
 function fmtDur(s) { if (s == null) return ""; s = Math.round(s); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`; }
 function waveHTML(seed, n = 28) {
   let x = 0; for (const c of seed) x = (x * 31 + c.charCodeAt(0)) >>> 0;
@@ -869,9 +869,10 @@ function renderViewer() {
     <div class="actions">
       ${isBusy(it) ? `<button class="btn danger" data-a="cancel">Cancel</button>` : ""}
       ${it.status === "done" && f ? `<button class="btn primary-soft" data-a="timeline" title="Add to the end of the timeline (Enter)">＋ Timeline</button>` : ""}
-      ${!["enhance", "angles"].includes(it.engine) ? `<button class="btn" data-a="reuse">Reuse settings</button>` : ""}
-      ${it.engine !== "timeline" ? `<button class="btn" data-a="reroll">Re-roll</button>` : ""}
+      ${!["enhance", "angles", "imgedit"].includes(it.engine) ? `<button class="btn" data-a="reuse">Reuse settings</button>` : ""}
+      ${it.engine !== "timeline" && !(it.engine === "imgedit" && it.params?.edit_op === "adjust") ? `<button class="btn" data-a="reroll">Re-roll</button>` : ""}
       ${it.status === "done" && f && (it.kind === "video" || it.kind === "image") ? `<button class="btn" data-a="enhance" title="FaceRefine, DLSS 5, SeedVR2 or RelayVSR">✨ Enhance…</button>` : ""}
+      ${it.status === "done" && f && it.kind === "image" ? `<button class="btn" data-a="edit" title="Crop, resize, colors, and AI: select, erase, replace, change with a prompt, remove the background">✏ Edit</button>` : ""}
       ${it.status === "done" && f && it.kind === "image" ? `<button class="btn" data-a="angles" title="Re-shoot this picture from other camera angles (Qwen Image Edit)">🔄 Angles…</button>` : ""}
       ${canFrame ? `<button class="btn" data-a="first">→ First frame</button><button class="btn" data-a="last">→ Last frame</button><button class="btn" data-a="ref">→ Reference</button>` : ""}
       ${f ? `<a class="btn" href="${esc(f.url)}" download="${esc(f.name)}">Download</a>` : ""}
@@ -909,6 +910,7 @@ async function action(a, it) {
   if (a === "reuse") { applyParams(it.params); $("#seed").value = it.seed; scheduleSave(); showStep("prompt"); return; }
   if (a === "reroll") return submit({ ...it.params, seed: -1, batch: 1 });
   if (a === "enhance") return Enhance.dialog(it);
+  if (a === "edit") return Editor.open(it);
   if (a === "angles") { const f = it.files[0]; return Angles.dialog({ ref: f.path, url: f.url, name: f.name }); }
   if (a === "ref") {
     state.kind = "video"; state.engine.video = "h3ref";

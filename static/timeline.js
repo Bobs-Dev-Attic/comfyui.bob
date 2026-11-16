@@ -2385,6 +2385,7 @@ const TL = (() => {
 
   function onKey(e) {
     if (!tl || !root) return;
+    if (typeof Editor !== "undefined" && Editor.isOpen()) return;  // the image editor covers the timeline
     const tgt = e.target;
     if (tgt.closest?.("input, textarea, select, [contenteditable], .wm-win") || document.querySelector(".wm-backdrop")) return;
     if (tgt.closest?.(".side") && !tgt.closest?.(".steps")) return;  // the side panel keeps its keys

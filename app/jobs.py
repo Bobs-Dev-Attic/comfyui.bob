@@ -23,7 +23,8 @@ from .comfy import ComfyService
 log = logging.getLogger("bob.jobs")
 
 Kind = Literal["video", "image", "audio"]
-Engine = Literal["h3", "h3ref", "klein", "krea2", "music3", "reshoot", "enhance", "angles"]
+Engine = Literal["h3", "h3ref", "klein", "krea2", "music3", "reshoot", "enhance", "angles", "imgedit"]
+EditOp = Literal["erase", "replace", "prompt", "remove_bg", "adjust"]
 
 
 class LoraUse(BaseModel):
@@ -62,6 +63,12 @@ class GenerateRequest(BaseModel):
     ref_audios: list[str] = Field(default_factory=list, max_length=3)  # H3 reference sounds: voices to clone (<Audio N>)
     loras: list[LoraUse] = Field(default_factory=list, max_length=8)  # LoRAs on the model, in order
     unet: str | None = Field(None, max_length=500)  # a diffusion model to use instead of the engine's default
+    # Image editor (engine "imgedit", static/editor.js): the op, the selection mask (a media ref,
+    # white = selected), how much the prompt op may change, and remove_bg's new background.
+    edit_op: EditOp | None = None
+    edit_mask: str | None = Field(None, max_length=2000)
+    edit_strength: float = Field(0.75, ge=0.05, le=1.0)
+    edit_bg: Literal["transparent", "white", "black"] = "transparent"
     source: str | None = Field(None, max_length=2000)  # enhance: the picture or video to improve (a media ref)
     enhance_opts: EnhanceOpts | None = None  # engine "enhance": the chain
     enhance_of: str | None = Field(None, max_length=64)  # enhance: the studio item it came from
@@ -314,6 +321,9 @@ class JobManager:
         installed = await self.comfy.installed_models()
         if req.engine == "enhance":
             sets = [models.ALL_SETS["h3ref"]] if req.enhance_opts and req.enhance_opts.facerefine else []
+        elif req.engine == "imgedit":
+            sets = ([] if req.edit_op == "remove_bg" else [models.QWEN_EDIT] if req.edit_op in ("erase", "replace")
+                    else [models.ALL_SETS["krea2"]])
         else:
             sets = [models.ALL_SETS["h3"], models.ALL_SETS["klein"]] if req.engine == "reshoot" else [models.ALL_SETS[req.engine]]
         files: dict[str, Any] = {}
@@ -329,8 +339,11 @@ class JobManager:
                               "vae": next((n for n in installed.get("vae", []) if "relayvsr" in n.lower()), "")}
             resolved = {"files": files}
         else:
-            resolved = {"files": files if req.engine == "reshoot" else files[sets[0].key]}
-            if req.unet and req.engine != "reshoot":
+            resolved = {"files": files if req.engine == "reshoot" else files[sets[0].key] if sets else {}}
+            if req.engine == "imgedit" and req.edit_op == "remove_bg":
+                bg = sorted(installed.get("background_removal", []), key=lambda n: ("birefnet" not in n.lower(), n.lower()))
+                resolved["files"] = {"bg_model": bg[0] if bg else None}
+            if req.unet and sets and req.engine != "reshoot":
                 # The user's own pick from the Model step's "Diffusion model" list.
                 known = {n.replace("\\", "/").lower(): n for n in installed.get("diffusion_models", [])}
                 pick = known.get(req.unet.replace("\\", "/").lower())
@@ -399,6 +412,20 @@ class JobManager:
                 raise ValueError("A reshoot needs at least two guide frames, each with a mask")
             for ref in (*req.guides, *req.guide_masks):
                 media_path(ref)
+        if req.engine == "imgedit":
+            if req.kind != "image":
+                raise ValueError("The image editor makes pictures")
+            if not req.source:
+                raise ValueError("Pick a picture to edit")
+            media_path(req.source)
+            if req.edit_op not in ("erase", "replace", "prompt", "remove_bg"):
+                raise ValueError("Pick an AI edit: erase, replace, change with a prompt, or remove the background")
+            if req.edit_op != "remove_bg":
+                if not req.edit_mask:
+                    raise ValueError("Select an area first (paint over it with the brush)")
+                media_path(req.edit_mask)
+            if req.edit_op in ("replace", "prompt") and not req.prompt.strip():
+                raise ValueError("Say what should be there")
         if req.engine == "angles":
             if req.kind != "image":
                 raise ValueError("Angles makes pictures")
@@ -420,7 +447,7 @@ class JobManager:
                 raise ValueError("FaceRefine and RelayVSR are for videos; pictures can use DLSS 5 and SeedVR2")
             media_path(req.source)
             return
-        if not req.prompt.strip():
+        if not req.prompt.strip() and not (req.engine == "imgedit" and req.edit_op in ("erase", "remove_bg")):
             raise ValueError("Prompt is empty")
         if req.aspect not in workflows.ASPECTS:
             raise ValueError(f"Unknown aspect ratio {req.aspect}")
@@ -494,6 +521,11 @@ class JobManager:
                 max_fidelity=req.max_fidelity, audios=len(req.ref_audios),
                 clean_audio=req.clean_audio and self.has_node("H3RefAudioPrep"), prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras],
             )
+        if req.engine == "imgedit":
+            return workflows.build_imgedit(
+                req.edit_op, files if req.edit_op != "remove_bg" else None, prompt=req.prompt, strength=req.edit_strength,
+                seed=seed, steps=req.steps, background=req.edit_bg, bg_model=(files or {}).get("bg_model"), prefix=prefix,
+            )
         if req.engine == "klein":
             mp = workflows.KLEIN_QUALITY.get(req.quality, 1.0)
             w, h = workflows.dims_for(aspect, mp, multiple=16)
@@ -526,6 +558,11 @@ class JobManager:
             wf = client.workflows.from_json(built.graph)
             for role, node_id in built.image_inputs.items():
                 field = "image"
+                if role == "edit_rect":  # the image editor's marked rectangle, made from the selection
+                    rect = config.UPLOAD_DIR / f"{item['id']}_rect.png"
+                    await asyncio.to_thread(imaging.mask_rect, media_path(req.edit_mask), rect)
+                    wf.set_input(node_id, field, client.assets.from_file(rect))
+                    continue
                 if role == "source":
                     ref, field = req.source, ("file" if media.kind_of(req.source or "") == "video" else "image")
                 elif role.startswith("aref_"):
@@ -635,6 +672,60 @@ class JobManager:
         finally:
             self._handles.pop(item["id"], None)
             self._tasks.pop(item["id"], None)
+
+    async def run_quick(self, built: workflows.Built, refs: dict[str, str], timeout: float = 300) -> list[Path]:
+        """Run a small helper graph (not a studio item, e.g. the editor's AI select) and save its
+        outputs in data/uploads. ``refs``: image role -> media ref."""
+        from comfy_sdk import _core
+
+        client = self.comfy.client
+        wf = client.workflows.from_json(built.graph)
+        for role, node_id in built.image_inputs.items():
+            wf.set_input(node_id, "image", client.assets.from_file(media_path(refs[role])))
+        job = await client.submit(wf)
+        deadline = time.monotonic() + timeout
+        while True:
+            await job.refresh()
+            if _core.is_terminal(job.status):
+                break
+            if time.monotonic() > deadline:
+                await job.cancel()
+                raise TimeoutError("ComfyUI took too long")
+            await asyncio.sleep(0.4)
+        done = await job.result()
+        paths = []
+        for out in [o for n in built.outputs for o in done.get_outputs(n)] or list(done.outputs):
+            target = config.UPLOAD_DIR / f"{uuid.uuid4().hex[:12]}{Path(out.name).suffix or '.png'}"
+            await out.to_file(target)
+            paths.append(target)
+        return paths
+
+    def add_edit(self, data: bytes, *, source: str | None, project: str | None, note: str = "") -> dict[str, Any]:
+        """A picture the image editor made in the browser (crop, resize, colors) becomes a result."""
+        item_id = uuid.uuid4().hex[:12]
+        out_dir = config.OUTPUT_DIR / datetime.now().strftime("%Y-%m-%d")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        target = out_dir / f"{item_id}_edit.png"
+        target.write_bytes(data)
+        with Image.open(target) as im:
+            w, h = im.size
+        rel = target.relative_to(config.ROOT).as_posix()
+        now = time.time()
+        item = {
+            "id": item_id, "kind": "image", "engine": "imgedit", "project": project, "status": "done",
+            "params": {"kind": "image", "engine": "imgedit", "edit_op": "adjust", "source": source, "prompt": note[:2000],
+                       "project": project},
+            "seed": 0, "created": now, "started": now, "finished": now, "progress": 1.0, "error": None,
+            "info": {"width": w, "height": h, "op": "adjust"},
+            "files": [{"name": target.name, "path": rel, "url": "/" + rel, "content_type": "image/png", "size": target.stat().st_size}],
+        }
+        self.items[item_id] = item
+        self._update(item)
+        if project:
+            from . import projects
+
+            projects.touch(project, rel)
+        return item
 
     async def _whiten(self, item: dict[str, Any], saved: list[dict[str, Any]]) -> None:
         for f in saved:

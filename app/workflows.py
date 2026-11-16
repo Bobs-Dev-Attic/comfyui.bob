@@ -405,7 +405,7 @@ def build_krea2(
     width: int,
     height: int,
     seed: int,
-    steps: int = 8,
+    steps: int | None = None,
     enhance: bool = False,
     prefix: str = "bob/krea2",
     loras: list[tuple[str, float]] | None = None,
@@ -527,7 +527,7 @@ def build_reshoot(
     turbo: bool,
     guide_frames: list[int],
     references: int = 0,
-    steps: int | None = None,
+    steps: int = 8,
     klein_steps: int = 12,
     prefix: str = "bob/reshoot",
     loras: list[tuple[str, float]] | None = None,
@@ -785,3 +785,194 @@ def build_music3(
     audio = g.add("VAEDecodeAudio", samples=o(sampled), vae=o(vae))
     save = g.add("SaveAudioMP3", audio=o(audio), filename_prefix=prefix, quality="V0")
     return Built(graph=g.nodes, outputs=[save], info={"seconds": seconds, "steps": steps})
+
+
+# ------------------------------------------------------------------ Image editor (static/editor.js)
+
+# The editor's AI tools. Masks come from the browser as black/white PNGs the size of the
+# picture (white = selected), loaded with LoadImage and read from the red channel.
+# Replace paints the selection's rectangle solid magenta on the cropped context and tells Qwen
+# Image Edit 2511 what goes there (magenta is rare in photos; a red mark was read as a red
+# object). Erase names the selected thing and asks Qwen to remove it from the clean picture:
+# painting over it made Qwen redraw the object from the hole's shape, or tint the fill.
+EDIT_MARK_COLOR = 0xFF00FF
+EDIT_REPLACE_INSTRUCTION = ("Replace the solid magenta patch with {what}. Make it fit the scene's lighting, perspective, "
+                            "scale and style. No magenta remains. Keep everything else exactly the same.")
+EDIT_ERASE_INSTRUCTION = ("Remove {what}. Fill the space where it was with the background that was behind it, matching "
+                          "the surrounding surfaces, textures and lighting. Keep everything else exactly the same.")
+EDIT_NAME_PROMPT = ("Something in this picture is tinted magenta. Name only that tinted thing in a few words, with "
+                    "its color, for example: 'the blue cup' or 'the man in the red jacket'. Answer with the name only.")
+
+
+def build_ai_select(sam_ckpt: str, *, positive: list[dict] | None = None, negative: list[dict] | None = None,
+                    box: dict | None = None, text: str = "", threshold: float = 0.5,
+                    prefix: str = "bob/select") -> Built:
+    """SAM 3.1 selection: points from the AI brush strokes, a box, or words (open vocabulary).
+    image_inputs: source. Output: the mask as a black/white picture."""
+    import json as _json
+
+    g = Graph()
+    o = Graph.out
+    ckpt = g.add("CheckpointLoaderSimple", ckpt_name=sam_ckpt)
+    load = g.add("LoadImage", image="")
+    args: dict[str, Any] = {"model": o(ckpt), "image": o(load), "threshold": float(threshold),
+                            "refine_iterations": 2, "individual_masks": False}
+    if text.strip():
+        args["conditioning"] = o(g.add("CLIPTextEncode", clip=o(ckpt, 1), text=text.strip()))
+    if positive:
+        args["positive_coords"] = _json.dumps([{"x": int(p["x"]), "y": int(p["y"])} for p in positive])
+    if negative:
+        args["negative_coords"] = _json.dumps([{"x": int(p["x"]), "y": int(p["y"])} for p in negative])
+    if box:
+        args["bboxes"] = {k: int(box[k]) for k in ("x", "y", "width", "height")}
+    det = g.add("SAM3_Detect", **args)
+    pic = g.add("MaskToImage", mask=o(det))
+    save = g.add("SaveImage", images=o(pic), filename_prefix=prefix)
+    return Built(graph=g.nodes, outputs=[save], image_inputs={"source": load})
+
+
+def build_imgedit(
+    op: str,
+    files: dict[str, str | None] | None,
+    *,
+    prompt: str = "",
+    strength: float = 1.0,
+    seed: int = 0,
+    steps: int | None = None,
+    background: str = "transparent",
+    bg_model: str | None = None,
+    prefix: str = "bob/edit",
+) -> Built:
+    """One AI edit of a picture. image_inputs: source; edit_mask for the selection ops; and
+    edit_rect (the selection's bounding rectangle, made by jobs) for replace.
+
+    NKDInpaintCrop cuts the selection out with context at about 1 MP and NKDInpaintStitch puts
+    the result back; then only the edited area is pasted onto the original.
+      erase    Qwen Image Edit 2511: "Remove <the selection>" on the clean crop; what it is comes
+               from the user's words, else Qwen3-VL names it (looking at it tinted magenta).
+      replace  Qwen Image Edit 2511: the rectangle is painted magenta, "replace it with …".
+      prompt   Krea 2 redraws the selection at the given strength (Differential Diffusion).
+      remove_bg  BiRefNet (core RemoveBackground) when a background-removal model is installed,
+               else rembg's u2net; the background becomes transparent, white or black.
+    """
+    g = Graph()
+    o = Graph.out
+    src = g.add("LoadImage", image="")
+    inputs = {"source": src}
+    if op == "remove_bg":
+        if bg_model:
+            m = g.add("LoadBackgroundRemovalModel", bg_removal_name=bg_model)
+            fg = o(g.add("RemoveBackground", bg_removal_model=o(m), image=o(src)))
+        else:
+            pic = g.add("Image Rembg (Remove Background)", images=o(src), transparency=False, model="u2net",
+                        post_processing=False, only_mask=True, alpha_matting=False, alpha_matting_foreground_threshold=240,
+                        alpha_matting_background_threshold=10, alpha_matting_erode_size=10, background_color="none")
+            fg = o(g.add("ImageToMask", image=o(pic), channel="red"))
+        if background == "transparent":
+            out = g.add("JoinImageWithAlpha", image=o(src), alpha=o(g.add("InvertMask", mask=fg)))
+        else:
+            color = 0xFFFFFF if background == "white" else 0x000000
+            size = g.add("GetImageSize", image=o(src))
+            bg = g.add("EmptyImage", width=o(size, 0), height=o(size, 1), batch_size=1, color=color)
+            out = g.add("ImageCompositeMasked", destination=o(bg), source=o(src), x=0, y=0, resize_source=False, mask=fg)
+        save = g.add("SaveImage", images=o(out), filename_prefix=prefix)
+        return Built(graph=g.nodes, outputs=[save], image_inputs=inputs,
+                     info={"op": op, "remover": "BiRefNet" if bg_model else "u2net", "background": background})
+
+    assert files, "the inpainting ops need model files"
+    mask_pic = g.add("LoadImage", image="")
+    inputs["edit_mask"] = mask_pic
+    mask = g.add("ImageToMask", image=o(mask_pic), channel="red")
+    erase = op == "erase"
+    # Replace marks the selection's bounding rectangle (jobs makes it: imaging.mask_rect), so the
+    # new thing isn't clipped to the old one's outline; Erase and the prompt edit use the selection.
+    area = mask
+    if op == "replace":
+        rect_pic = g.add("LoadImage", image="")
+        inputs["edit_rect"] = rect_pic
+        area = g.add("ImageToMask", image=o(rect_pic), channel="red")
+    crop = g.add("NKDInpaintCrop", image=o(src), mask=o(area), invert_mask=False, fill_holes=True,
+                 mask_expand=16 if op != "prompt" else 8, mask_blur=10 if op != "prompt" else 8, inpaint_blend=1.0,
+                 padding=128 if op != "prompt" else 96, resize_mode="Megapixels", megapixels=1.0, longest_side=1024,
+                 min_resolution=768, max_resolution=2048, separate_regions=False, region_min_area=0.1, max_regions=8,
+                 region_order="Largest First")
+    if op in ("erase", "replace"):
+        # Qwen Image Edit 2511 on the cropped context, then only the edited area is pasted back.
+        unet = g.add("UNETLoader", unet_name=files["unet"], weight_dtype="default")
+        clip = g.add("CLIPLoader", clip_name=files["clip"], type="qwen_image", device="default")
+        vae = g.add("VAELoader", vae_name=files["vae"])
+        fast = bool(files.get("lightning_lora"))
+        model = unet
+        if fast:
+            model = g.add("LoraLoaderModelOnly", model=o(model), lora_name=files["lightning_lora"], strength_model=1.0)
+        model = g.add("ModelSamplingAuraFlow", model=o(model), shift=3.1)
+        model = g.add("CFGNorm", model=o(model), strength=1.0)
+        size = g.add("GetImageSize", image=o(crop, 1))
+        magenta = g.add("EmptyImage", width=o(size, 0), height=o(size, 1), batch_size=1, color=EDIT_MARK_COLOR)
+        hard = g.add("ThresholdMask", mask=o(crop, 2), value=0.5)
+        text: Any
+        if erase:
+            # Qwen removes a named object from a clean picture very well (a painted-over hole made
+            # it redraw the object or tint the fill). So: name what's selected (the user's words,
+            # else Qwen3-VL looks at it tinted magenta), then "Remove <it>" on the clean crop.
+            ref = g.add("ImageScaleToTotalPixels", image=o(crop, 1), upscale_method="lanczos", megapixels=1.0, resolution_steps=16)
+            if prompt.strip():
+                name: Any = prompt.strip()
+            elif files.get("describer"):
+                half = g.add("MaskComposite", destination=o(hard), source=o(g.add("SolidMask", value=0.55, width=o(size, 0),
+                             height=o(size, 1))), x=0, y=0, operation="multiply")
+                tinted = g.add("ImageCompositeMasked", destination=o(crop, 1), source=o(magenta), x=0, y=0, resize_source=False, mask=o(half))
+                look = g.add("ImageScaleToTotalPixels", image=o(tinted), upscale_method="lanczos", megapixels=0.6, resolution_steps=16)
+                eye = g.add("CLIPLoader", clip_name=files["describer"], type="krea2", device="default")
+                name = o(g.add("TextGenerate", clip=o(eye), image=o(look), prompt=EDIT_NAME_PROMPT, max_length=40,
+                               sampling_mode="off", thinking=False, use_default_template=True))
+            else:
+                name = "the object in the middle"
+            head, tail = EDIT_ERASE_INSTRUCTION.split("{what}")
+            text = (o(g.add("StringConcatenate", string_a=head, string_b=o(g.add(
+                "StringConcatenate", string_a=name, string_b=tail, delimiter="")), delimiter=""))
+                if isinstance(name, list) else head + name + tail)
+        else:
+            marked = g.add("ImageCompositeMasked", destination=o(crop, 1), source=o(magenta), x=0, y=0, resize_source=False, mask=o(hard))
+            ref = g.add("ImageScaleToTotalPixels", image=o(marked), upscale_method="lanczos", megapixels=1.0, resolution_steps=16)
+            text = EDIT_REPLACE_INSTRUCTION.format(what=prompt.strip())
+        pos = g.add("TextEncodeQwenImageEditPlus", clip=o(clip), prompt=text, vae=o(vae), image1=o(ref))
+        neg = g.add("TextEncodeQwenImageEditPlus", clip=o(clip), prompt="", vae=o(vae), image1=o(ref))
+        pos = g.add("FluxKontextMultiReferenceLatentMethod", conditioning=o(pos), reference_latents_method="index_timestep_zero")
+        neg = g.add("FluxKontextMultiReferenceLatentMethod", conditioning=o(neg), reference_latents_method="index_timestep_zero")
+        n_steps = 4 if fast else int(steps or 20)
+        sampled = g.add("KSampler", model=o(model), positive=o(pos), negative=o(neg),
+                        latent_image=o(g.add("VAEEncode", pixels=o(ref), vae=o(vae))), seed=int(seed), steps=n_steps,
+                        cfg=1.0 if fast else 4.0, sampler_name="euler", scheduler="simple", denoise=1.0)
+        decoded = g.add("VAEDecode", samples=o(sampled), vae=o(vae))
+        back = g.add("ImageScale", image=o(decoded), upscale_method="lanczos", width=o(size, 0), height=o(size, 1), crop="disabled")
+        # No color matching here: it pulls the old colors back in and leaves a ghost of what was removed.
+        stitched = g.add("NKDInpaintStitch", image=o(back), crop_data=o(crop, 4), feather=10, edge_hardness=0.0,
+                         match_colors=0.0, seamless_edges=False)
+        info = {"op": op, "model": "Qwen Image Edit 2511", "steps": n_steps,
+                "final_prompt": text if isinstance(text, str) else EDIT_ERASE_INSTRUCTION.format(what="<the selection, named by Qwen3-VL>")}
+    else:
+        # Change with a prompt: Krea 2 redraws the selection at the chosen strength.
+        unet = g.add("UNETLoader", unet_name=files["unet"], weight_dtype="default")
+        clip = g.add("CLIPLoader", clip_name=files["clip"], type="krea2", device="default")
+        vae = g.add("VAELoader", vae_name=files["vae"])
+        latent = g.add("SetLatentNoiseMask", samples=o(g.add("VAEEncode", pixels=o(crop, 1), vae=o(vae))), mask=o(crop, 2))
+        model = g.add("DifferentialDiffusion", model=o(unet))
+        pos = g.add("CLIPTextEncode", clip=o(clip), text=prompt.strip())
+        neg = g.add("ConditioningZeroOut", conditioning=o(pos))
+        denoise = max(0.05, min(1.0, float(strength)))
+        sampled = g.add("KSampler", model=o(model), seed=int(seed), steps=int(steps or 8), cfg=1.0, sampler_name="euler",
+                        scheduler="simple", positive=o(pos), negative=o(neg), latent_image=o(latent), denoise=denoise)
+        decoded = g.add("VAEDecode", samples=o(sampled), vae=o(vae))
+        stitched = g.add("NKDInpaintStitch", image=o(decoded), crop_data=o(crop, 4), feather=10, edge_hardness=0.0,
+                         match_colors=0.3, seamless_edges=False)
+        info = {"op": op, "model": "Krea 2", "steps": int(steps or 8), "denoise": denoise}
+    # Paste the result onto the original through a soft mask, so nothing outside the edited area
+    # changes (the model's slight color shift elsewhere in the crop can't show as a rectangle).
+    # Replace takes its whole marked rectangle; Erase and the prompt edit the grown selection.
+    grow, blur = {"replace": (10, 8.0), "erase": (14, 8.0)}.get(op, (6, 6.0))
+    soft = g.add("GrowMaskWithBlur", mask=o(area), expand=grow, incremental_expandrate=0.0,
+                 tapered_corners=True, flip_input=False, blur_radius=blur, lerp_alpha=1.0, decay_factor=1.0)
+    stitched = g.add("ImageCompositeMasked", destination=o(src), source=o(stitched), x=0, y=0, resize_source=False, mask=o(soft))
+    save = g.add("SaveImage", images=o(stitched), filename_prefix=prefix)
+    return Built(graph=g.nodes, outputs=[save], image_inputs=inputs, info=info)

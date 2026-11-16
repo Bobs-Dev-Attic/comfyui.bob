@@ -5,6 +5,42 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.27.0] - 2026-11-15
+
+### Added
+- **Image editor.** A finished picture's **✏ Edit** button opens an editor over the stage, and the timeline hides
+  while it's open.
+  - **Toolbar:** Move, Crop, Resize, Adjust and Select + AI, plus Undo/Redo, Fit/100% and **Save as new result**. The
+    mouse wheel zooms at the pointer in every tool; the middle button or Space + drag pans.
+  - **Crop:** free or a fixed ratio (original, 1:1, 4:3, 3:2, 16:9 and the portrait ones). Drag the box or its handles;
+    Enter applies.
+  - **Resize:** width and height (proportions locked or not) or 25–200 %, with high-quality resampling. Also rotate
+    90° and flip.
+  - **Adjust:** brightness, contrast, saturation, hue, grayscale and sepia, with a live preview. Apply bakes them in.
+  - **Select:** a brush and an eraser, or **AI select**. Paint a stroke over an object and SAM 3.1 selects all of it
+    (Alt + stroke takes it away), or type what to select ("the cup"). Clear, Invert and All.
+  - **AI edits on the selection:**
+    - **Erase:** Qwen Image Edit 2511 removes it and fills in the background. Qwen3-VL names what's selected, or you
+      can type its name.
+    - **Replace with…:** Qwen Image Edit 2511 puts what you describe in its place.
+    - **Change with a prompt:** Krea 2 redraws it as much as the strength allows.
+  - **Remove background:** works on the whole picture, to transparent, white or black. It uses BiRefNet when a model
+    is in `models/background_removal`, else u2net.
+  - **How the AI edits work:** they only redraw a crop around the selection (NKD Inpaint Crop/Stitch) and paste back
+    only the edited area, so the rest of the picture keeps its pixels. Each one is a job and a result in the gallery,
+    and becomes the editor's picture; Undo goes back.
+  - **Saving:** crop, size and color changes are saved with **Save as new result**, which adds a result with a note
+    of what was done.
+  - **API:** `POST /api/edit/select` (SAM 3.1 from points, a box or words) and `POST /api/edit/save`. Generation
+    requests take engine `imgedit` with `edit_op`, `edit_mask`, `edit_strength` and `edit_bg`. `/api/capabilities`
+    has an `editor` section saying which tools are ready.
+
+### Notes
+- Erase took several tries to get right. Painting over the selection and telling Qwen to "fill the hole" made it
+  redraw the object from the hole's shape, or tint the fill. Krea 2 inpainting at full strength left noise. Naming
+  the object and asking Qwen to remove it from the clean picture works. Faint traces can remain; Undo and try again,
+  or type what it is.
+
 ## [0.26.0] - 2026-11-15
 
 ### Added

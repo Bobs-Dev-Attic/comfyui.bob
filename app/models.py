@@ -134,6 +134,17 @@ ANGLES = ModelSet(
     ),
 )
 
+# The image editor's Erase and Replace (not an engine of its own): Qwen Image Edit 2511 with the
+# Lightning LoRA when installed; the same files Angles uses, without the angles LoRA. Erase also
+# uses Krea 2's Qwen3-VL 4B text encoder, when installed, to name the background to fill with.
+QWEN_EDIT = ModelSet(
+    key="qwen_edit",
+    title="Qwen Image Edit 2511",
+    source=HF_QWEN_EDIT,
+    slots=tuple(s for s in ANGLES.slots if s.key != "angles_lora")
+    + (Slot("describer", "text_encoders", ("qwen3vl_4b*",), optional=True, label="Qwen3-VL 4B (names the background)"),),
+)
+
 ALL_SETS = {s.key: s for s in (H3, H3REF, KLEIN, KREA2, MUSIC3, ANGLES)}
 
 

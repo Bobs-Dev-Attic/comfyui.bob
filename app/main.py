@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -176,6 +176,60 @@ async def loras_preview(name: str):
     return FileResponse(pic, headers={"Cache-Control": "max-age=3600"})
 
 
+# ------------------------------------------------------------------ image editor (static/editor.js)
+
+class SelectReq(BaseModel):
+    source: str = Field(..., max_length=2000)
+    positive: list[dict[str, float]] = Field(default_factory=list, max_length=64)
+    negative: list[dict[str, float]] = Field(default_factory=list, max_length=64)
+    box: dict[str, float] | None = None
+    text: str = Field("", max_length=300)
+    threshold: float = Field(0.5, ge=0.05, le=0.95)
+
+
+def _sam_ckpt(installed: dict[str, list[str]]) -> str | None:
+    return next((n for n in sorted(installed.get("checkpoints", []), reverse=True) if "sam3" in n.lower().replace("\\", "/").rsplit("/", 1)[-1]), None)
+
+
+@app.post("/api/edit/select")
+async def edit_select(req: SelectReq):
+    """AI select: SAM 3.1 turns brush points, a box or words into a mask (a picture in data/uploads)."""
+    if not (req.positive or req.box or req.text.strip()):
+        raise HTTPException(400, "Paint over something, or type what to select")
+    ckpt = _sam_ckpt(await comfy.installed_models())
+    if not ckpt:
+        raise HTTPException(409, "AI select needs a SAM 3 checkpoint (sam3*.safetensors) in models/checkpoints")
+    built = workflows.build_ai_select(ckpt, positive=req.positive, negative=req.negative, box=req.box,
+                                      text=req.text, threshold=req.threshold)
+    try:
+        paths = await jobs.run_quick(built, {"source": req.source})
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - ComfyUI's own error text is the useful part
+        raise HTTPException(502, f"AI select failed: {str(exc)[:500]}") from exc
+    if not paths:
+        raise HTTPException(502, "AI select returned nothing")
+    rel = paths[0].relative_to(config.ROOT).as_posix()
+    return {"mask": rel, "url": "/" + rel}
+
+
+@app.post("/api/edit/save")
+async def edit_save(file: UploadFile = File(...), source: str = Form(""), project: str = Form(""), note: str = Form("")):
+    """Save the editor's picture (crop, resize, colors done in the browser) as a new result."""
+    data = await file.read(60 * 1024 * 1024 + 1)
+    if len(data) > 60 * 1024 * 1024:
+        raise HTTPException(400, "The picture is larger than 60 MB")
+    try:
+        from PIL import Image as _Image
+        import io as _io
+
+        with _Image.open(_io.BytesIO(data)) as im:
+            im.verify()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"Not a picture: {exc}") from exc
+    return {"item": jobs.add_edit(data, source=source or None, project=project or None, note=note)}
+
+
 @app.get("/api/capabilities")
 async def capabilities(refresh: bool = False):
     if not await comfy.system_stats():
@@ -194,7 +248,16 @@ async def capabilities(refresh: bool = False):
         r["ready"] = r["ready"] and not missing_nodes
         r["unet_choices"] = models.unet_choices(mset, installed)
         engines[key] = r
+    editor = {
+        "select": bool(_sam_ckpt(installed)) and "SAM3_Detect" in nodes,
+        "erase": models.resolve(models.QWEN_EDIT, installed)["ready"] and {"NKDInpaintCrop", "NKDInpaintStitch", "TextEncodeQwenImageEditPlus"} <= nodes,
+        "inpaint": engines["krea2"]["ready"] and {"NKDInpaintCrop", "NKDInpaintStitch"} <= nodes,
+        "remove_bg": ("RemoveBackground" in nodes and bool(installed.get("background_removal")))
+                     or "Image Rembg (Remove Background)" in nodes,
+        "remover": "BiRefNet" if installed.get("background_removal") else "u2net",
+    }
     return {
+        "editor": editor,
         "engines": engines,
         "aspects": list(workflows.ASPECTS),
         "h3_quality": workflows.H3_QUALITY,
