@@ -250,12 +250,16 @@ async def capabilities(refresh: bool = False):
         engines[key] = r
     editor = {
         "select": bool(_sam_ckpt(installed)) and "SAM3_Detect" in nodes,
-        "erase": models.resolve(models.QWEN_EDIT, installed)["ready"] and {"NKDInpaintCrop", "NKDInpaintStitch", "TextEncodeQwenImageEditPlus"} <= nodes,
+        # The models for erase, replace and whole-picture edits; erase and replace also need the NKD crop nodes.
+        "qwen": models.resolve(models.QWEN_EDIT, installed)["ready"] and "TextEncodeQwenImageEditPlus" in nodes,
+        "h3image": models.resolve(models.H3_IMAGE, installed)["ready"] and "MiniMaxH3ImageConditioning" in nodes,
+        "crop": {"NKDInpaintCrop", "NKDInpaintStitch"} <= nodes,
         "inpaint": engines["krea2"]["ready"] and {"NKDInpaintCrop", "NKDInpaintStitch"} <= nodes,
         "remove_bg": ("RemoveBackground" in nodes and bool(installed.get("background_removal")))
                      or "Image Rembg (Remove Background)" in nodes,
         "remover": "BiRefNet" if installed.get("background_removal") else "u2net",
     }
+    editor["erase"] = editor["crop"] and (editor["qwen"] or editor["h3image"])
     return {
         "editor": editor,
         "engines": engines,

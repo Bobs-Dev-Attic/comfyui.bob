@@ -255,6 +255,8 @@ const Editor = (() => {
       hint("Adjust, then Apply");
     } else if (t === "select") {
       const m = ed.mode, on = ed.maskOn, busy = !!ed.busy;
+      const model = editModel(caps), modelName = EDIT_MODELS.find(x => x[0] === model)[2];
+      const whole = !!caps[model], sel = whole && caps.crop;
       const dis = (ok, why) => ok ? "" : ` disabled title="${why}"`;
       side.innerHTML = `<h4>Select</h4>
         <div class="seg sm ed-modes">
@@ -270,20 +272,38 @@ const Editor = (() => {
         <p class="hint">${m === "ai" ? "Paint a stroke over the object. Alt + stroke takes it away from the selection." : "Paint the area to change. [ and ] change the brush size."}</p>
 
         <h4>AI edit ${on ? "" : `<span class="hint inline">(select an area first)</span>`}</h4>
+        <label class="ed-l">Edit model<select data-k="edit-model" aria-label="Model for Erase, Replace and whole-picture edits">${EDIT_MODELS.map(([v, l]) =>
+          `<option value="${v}"${model === v ? " selected" : ""}${caps[v] ? "" : " disabled"}>${l}${caps[v] ? "" : " (not installed)"}</option>`).join("")}</select></label>
         <div class="ed-ai">
-          <button type="button" class="btn sm" data-ai="erase"${dis(on && caps.erase && !busy, on ? "Needs Qwen Image Edit 2511" : "Select an area first")} title="Remove the selection and fill it with the background">🧽 Erase</button>
+          <button type="button" class="btn sm" data-ai="erase"${dis(on && sel && !busy, on ? `Needs ${modelName}` : "Select an area first")} title="Remove the selection and fill it with the background">🧽 Erase</button>
           <input type="text" data-k="erase-hint" value="${fv("erase-hint")}" placeholder="What is it? e.g. the blue cup (optional)" aria-label="What the selection is">
-          <button type="button" class="btn sm" data-ai="replace"${dis(on && caps.erase && !busy, on ? "Needs Qwen Image Edit 2511" : "Select an area first")}>🔁 Replace with…</button>
+          <button type="button" class="btn sm" data-ai="replace"${dis(on && sel && !busy, on ? `Needs ${modelName}` : "Select an area first")}>🔁 Replace with…</button>
           <input type="text" data-k="replace" value="${fv("replace")}" placeholder="e.g. a vase of tulips" aria-label="Replace with">
           <button type="button" class="btn sm" data-ai="prompt"${dis(on && caps.inpaint && !busy, on ? "Needs Krea 2" : "Select an area first")}>💬 Change with a prompt</button>
           <textarea data-k="prompt" rows="2" placeholder="Describe how the selected area should look" aria-label="Prompt for the selection">${fv("prompt")}</textarea>
           <label class="ed-l ed-slider">Strength <span class="ed-v">${Math.round((ed.strength ?? 0.7) * 100)}%</span><input type="range" min="10" max="100" value="${Math.round((ed.strength ?? 0.7) * 100)}" data-k="strength"></label>
+        </div>
+        <h4>Edit the whole picture</h4>
+        <div class="ed-ai">
+          <textarea data-k="instruct" rows="2" placeholder="e.g. make it night time · turn it into a watercolor" aria-label="Instruction for the whole picture">${fv("instruct")}</textarea>
+          <button type="button" class="btn sm" data-ai="instruct"${dis(whole && !busy, `Needs ${modelName}`)} title="No selection needed: the edit model changes the picture as you describe">✍ Edit with ${esc(modelName)}</button>
         </div>
         <h4>Background</h4>
         <div class="ed-row"><button type="button" class="btn sm" data-ai="remove_bg"${dis(caps.remove_bg && !busy, "Needs a background remover in ComfyUI")} title="Uses ${esc(caps.remover || "u2net")}">✂ Remove background</button>
           <select data-k="bg" aria-label="New background">${[["transparent", "Transparent"], ["white", "White"], ["black", "Black"]].map(([v, l]) => `<option value="${v}"${ed.fields.bg === v ? " selected" : ""}>${l}</option>`).join("")}</select></div>`;
       hint(m === "ai" ? "Paint over an object · Alt subtracts" : m === "brush" ? "Paint the selection" : "Erase from the selection");
     }
+  }
+
+  // [key, label in the picker, short name]
+  const EDIT_MODELS = [["qwen", "Qwen Image Edit 2511 · fast", "Qwen Image Edit"],
+                       ["h3image", "MiniMax H3 Image", "H3 Image"]];
+  // The picked edit model, else the remembered one, else the first installed.
+  function editModel(caps) {
+    let v = ed.fields["edit-model"];
+    if (!v) { try { v = localStorage.getItem("bob.editModel"); } catch { v = null; } }
+    if (!caps[v]) v = EDIT_MODELS.find(([k]) => caps[k])?.[0] || "qwen";
+    return ed.fields["edit-model"] = v;
   }
 
   /* ---------------------------------------------------------------- crop */
@@ -438,15 +458,18 @@ const Editor = (() => {
   async function runAi(op) {
     if (ed.busy) return;
     const val = k => String(ed.fields[k] || "").trim();
-    const prompt = op === "erase" ? val("erase-hint") : op === "replace" ? val("replace") : op === "prompt" ? val("prompt") : "";
-    if ((op === "replace" || op === "prompt") && !prompt) { Media.toast(op === "replace" ? "Say what to put there." : "Describe how it should look."); $e(`[data-k="${op}"]`)?.focus(); return; }
-    if (op !== "remove_bg" && !ed.maskOn) { Media.toast("Select an area first."); return; }
-    const labels = { erase: "Erasing", replace: "Replacing", prompt: "Changing the selection", remove_bg: "Removing the background" };
+    const prompt = op === "erase" ? val("erase-hint") : ["replace", "prompt", "instruct"].includes(op) ? val(op) : "";
+    if (["replace", "prompt", "instruct"].includes(op) && !prompt) {
+      Media.toast(op === "replace" ? "Say what to put there." : op === "instruct" ? "Say how to change the picture." : "Describe how it should look.");
+      $e(`[data-k="${op}"]`)?.focus(); return;
+    }
+    if (!["remove_bg", "instruct"].includes(op) && !ed.maskOn) { Media.toast("Select an area first."); return; }
+    const labels = { erase: "Erasing", replace: "Replacing", prompt: "Changing the selection", instruct: "Editing the picture", remove_bg: "Removing the background" };
     busy(`${labels[op]}…`, 0);
     try {
       const body = { kind: "image", engine: "imgedit", edit_op: op, source: await sourceRef(), prompt, seed: -1, batch: 1,
-        edit_strength: ed.strength ?? 0.7, edit_bg: val("bg") || "transparent", project: ed.project };
-      if (op !== "remove_bg") body.edit_mask = await maskRef();
+        edit_strength: ed.strength ?? 0.7, edit_bg: val("bg") || "transparent", edit_model: editModel(state.caps?.editor || {}), project: ed.project };
+      if (!["remove_bg", "instruct"].includes(op)) body.edit_mask = await maskRef();
       const r = await api("/api/generate", { method: "POST", body: JSON.stringify(body) });
       const it = r.items?.[0];
       if (!it) throw new Error("The studio didn't start the edit");
@@ -457,9 +480,9 @@ const Editor = (() => {
       if (done.status !== "done") throw new Error(done.status === "cancelled" ? "Cancelled" : (done.error || "The edit failed"));
       const f = done.files[0], im = await loadImg(f.url + `?t=${Date.now()}`);
       const c = mk(im.naturalWidth, im.naturalHeight); c.getContext("2d").drawImage(im, 0, 0);
-      commit(c, { ref: f.path, item: done, op: { erase: "AI erase", replace: `replaced with ${prompt}`, prompt: `AI: ${prompt}`, remove_bg: "background removed" }[op] });
+      commit(c, { ref: f.path, item: done, op: { erase: "AI erase", replace: `replaced with ${prompt}`, prompt: `AI: ${prompt}`, instruct: `AI edit: ${prompt}`, remove_bg: "background removed" }[op] });
       ed.dirty = false;  // the result is already in the gallery
-      Media.toast(`${{ erase: "Erased", replace: "Replaced", prompt: "Changed", remove_bg: "Background removed" }[op]}. It's also in your results; Undo goes back.`);
+      Media.toast(`${{ erase: "Erased", replace: "Replaced", prompt: "Changed", instruct: "Edited", remove_bg: "Background removed" }[op]}. It's also in your results; Undo goes back.`);
     } catch (e) { if (e.message !== "Cancelled") Media.toast(e.message); }
     finally { busy(null); }
   }
@@ -541,7 +564,7 @@ const Editor = (() => {
         $e('[data-ed="adj-apply"]').disabled = !adjChanged(ed.adj);
         draw(); return;
       }
-      if (["find", "erase-hint", "replace", "prompt"].includes(k)) ed.fields[k] = e.target.value;
+      if (["find", "erase-hint", "replace", "prompt", "instruct"].includes(k)) ed.fields[k] = e.target.value;
       if (k === "brush") { ed.brush = +e.target.value; e.target.previousElementSibling.textContent = `${ed.brush}px`; draw(); }
       if (k === "strength") { ed.strength = +e.target.value / 100; e.target.previousElementSibling.textContent = `${e.target.value}%`; }
       if (k === "rw" && $e('[data-k="lock"]').checked) $e('[data-k="rh"]').value = Math.round(+e.target.value * ed.base.height / ed.base.width);
@@ -549,6 +572,11 @@ const Editor = (() => {
     });
     root.addEventListener("change", e => {
       if (e.target.dataset.k === "bg") ed.fields.bg = e.target.value;
+      if (e.target.dataset.k === "edit-model") {
+        ed.fields["edit-model"] = e.target.value;
+        try { localStorage.setItem("bob.editModel", e.target.value); } catch { /* private window */ }
+        renderSide();
+      }
       if (e.target.dataset.k === "aspect") { ed.aspect = e.target.value; fitAspect(); renderSide(); draw(); } });
     root.addEventListener("dblclick", e => {
       const adj = e.target.dataset.adj;

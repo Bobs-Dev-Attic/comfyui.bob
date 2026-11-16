@@ -24,7 +24,7 @@ log = logging.getLogger("bob.jobs")
 
 Kind = Literal["video", "image", "audio"]
 Engine = Literal["h3", "h3ref", "klein", "krea2", "music3", "reshoot", "enhance", "angles", "imgedit"]
-EditOp = Literal["erase", "replace", "prompt", "remove_bg", "adjust"]
+EditOp = Literal["erase", "replace", "prompt", "instruct", "remove_bg", "adjust"]
 
 
 class LoraUse(BaseModel):
@@ -69,6 +69,8 @@ class GenerateRequest(BaseModel):
     edit_mask: str | None = Field(None, max_length=2000)
     edit_strength: float = Field(0.75, ge=0.05, le=1.0)
     edit_bg: Literal["transparent", "white", "black"] = "transparent"
+    # Model for erase, replace and instruct: Qwen Image Edit 2511 or MiniMax H3 Image.
+    edit_model: Literal["qwen", "h3image"] = "qwen"
     source: str | None = Field(None, max_length=2000)  # enhance: the picture or video to improve (a media ref)
     enhance_opts: EnhanceOpts | None = None  # engine "enhance": the chain
     enhance_of: str | None = Field(None, max_length=64)  # enhance: the studio item it came from
@@ -322,7 +324,8 @@ class JobManager:
         if req.engine == "enhance":
             sets = [models.ALL_SETS["h3ref"]] if req.enhance_opts and req.enhance_opts.facerefine else []
         elif req.engine == "imgedit":
-            sets = ([] if req.edit_op == "remove_bg" else [models.QWEN_EDIT] if req.edit_op in ("erase", "replace")
+            edit_set = models.H3_IMAGE if req.edit_model == "h3image" else models.QWEN_EDIT
+            sets = ([] if req.edit_op == "remove_bg" else [edit_set] if req.edit_op in ("erase", "replace", "instruct")
                     else [models.ALL_SETS["krea2"]])
         else:
             sets = [models.ALL_SETS["h3"], models.ALL_SETS["klein"]] if req.engine == "reshoot" else [models.ALL_SETS[req.engine]]
@@ -418,13 +421,14 @@ class JobManager:
             if not req.source:
                 raise ValueError("Pick a picture to edit")
             media_path(req.source)
-            if req.edit_op not in ("erase", "replace", "prompt", "remove_bg"):
-                raise ValueError("Pick an AI edit: erase, replace, change with a prompt, or remove the background")
-            if req.edit_op != "remove_bg":
+            if req.edit_op not in ("erase", "replace", "prompt", "instruct", "remove_bg"):
+                raise ValueError("Pick an AI edit: erase, replace, change with a prompt, edit the whole picture, "
+                                 "or remove the background")
+            if req.edit_op not in ("remove_bg", "instruct"):
                 if not req.edit_mask:
                     raise ValueError("Select an area first (paint over it with the brush)")
                 media_path(req.edit_mask)
-            if req.edit_op in ("replace", "prompt") and not req.prompt.strip():
+            if req.edit_op in ("replace", "prompt", "instruct") and not req.prompt.strip():
                 raise ValueError("Say what should be there")
         if req.engine == "angles":
             if req.kind != "image":
@@ -524,7 +528,7 @@ class JobManager:
         if req.engine == "imgedit":
             return workflows.build_imgedit(
                 req.edit_op, files if req.edit_op != "remove_bg" else None, prompt=req.prompt, strength=req.edit_strength,
-                seed=seed, steps=req.steps, background=req.edit_bg, bg_model=(files or {}).get("bg_model"), prefix=prefix,
+                seed=seed, steps=req.steps, background=req.edit_bg, bg_model=(files or {}).get("bg_model"), edit_model=req.edit_model, prefix=prefix,
             )
         if req.engine == "klein":
             mp = workflows.KLEIN_QUALITY.get(req.quality, 1.0)

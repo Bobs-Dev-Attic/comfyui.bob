@@ -14,6 +14,7 @@ HF_KLEIN = "https://huggingface.co/Comfy-Org"
 HF_KREA2 = "https://huggingface.co/Comfy-Org/Krea-2"
 HF_MUSIC3 = "https://huggingface.co/Comfy-Org/MiniMax-Music-3"
 HF_QWEN_EDIT = "https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI"
+HF_H3_IMAGE = "https://huggingface.co/Comfy-Org/MiniMax-H3-Image"
 
 
 @dataclass(frozen=True)
@@ -143,6 +144,21 @@ QWEN_EDIT = ModelSet(
     source=HF_QWEN_EDIT,
     slots=tuple(s for s in ANGLES.slots if s.key != "angles_lora")
     + (Slot("describer", "text_encoders", ("qwen3vl_4b*",), optional=True, label="Qwen3-VL 4B (names the background)"),),
+)
+
+# MiniMax H3 Image: MiniMax's image model (6 distilled steps, edits guided by the picture), as the
+# image editor's other edit model. It shares H3's Qwen3-VL 32B text encoder; its VAE is its own.
+H3_IMAGE = ModelSet(
+    key="h3image",
+    title="MiniMax H3 Image",
+    source=HF_H3_IMAGE,
+    slots=(
+        Slot("unet", "diffusion_models", ("minimax_h3_image_pruned_int8*", "minimax_h3_image_pruned_w4a8*",
+                                          "minimax_h3_image_pruned_bf16*", "minimax_h3_image*"), label="H3 Image diffusion model"),
+        Slot("clip", "text_encoders", ("qwen3vl_32b_minimax_h3_nvfp4*", "qwen3vl_32b_minimax_h3*"), label="Qwen3-VL 32B text encoder"),
+        Slot("vae", "vae", ("minimax_h3_image_vae*",), label="H3 Image VAE"),
+        Slot("describer", "text_encoders", ("qwen3vl_4b*",), optional=True, label="Qwen3-VL 4B (names what to erase)"),
+    ),
 )
 
 ALL_SETS = {s.key: s for s in (H3, H3REF, KLEIN, KREA2, MUSIC3, ANGLES)}
