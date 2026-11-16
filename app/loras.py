@@ -215,6 +215,18 @@ def scan(comfy_names: list[str], refresh: bool = False) -> list[dict[str, Any]]:
     return out
 
 
+def metadata(path: Path) -> dict[str, Any]:
+    """The full __metadata__ block (values cut at 20k characters) and a summary of the tensors."""
+    try:
+        h = _header(path)
+    except struct.error as exc:
+        raise ValueError(str(exc)) from exc
+    md = {k: (v if isinstance(v, str) else json.dumps(v))[:20000] for k, v in (h.get("__metadata__") or {}).items()}
+    keys = [k for k in h if k != "__metadata__"]
+    dtypes = sorted({str(h[k].get("dtype")) for k in keys if isinstance(h[k], dict)})
+    return {"metadata": dict(sorted(md.items())), "tensors": len(keys), "dtypes": dtypes}
+
+
 def find_path(name: str) -> Path | None:
     key = name.replace("\\", "/")
     p = modelpaths.scan().get("loras", {}).get(key)

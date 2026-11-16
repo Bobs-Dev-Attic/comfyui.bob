@@ -28,7 +28,7 @@ Engine = Literal["h3", "h3ref", "klein", "krea2", "music3", "reshoot", "enhance"
 
 class LoraUse(BaseModel):
     name: str = Field(..., max_length=500)  # as ComfyUI lists it (models/loras)
-    strength: float = Field(1.0, ge=-4, le=4)
+    strength: float = Field(1.0, ge=-10, le=10)
 
 
 class EnhanceOpts(BaseModel):

@@ -150,6 +150,20 @@ async def loras_list(refresh: bool = False):
     return {"loras": rows, "families": loras.FAMILIES, "engine_families": {k: sorted(v) for k, v in loras.ENGINE_FAMILIES.items()}}
 
 
+@app.get("/api/loras/metadata")
+async def loras_metadata(name: str):
+    """A LoRA's full safetensors metadata (the __metadata__ block), for the Details dialog."""
+    from . import loras
+
+    path = await asyncio.to_thread(loras.find_path, name)
+    if not path or not path.is_file():
+        raise HTTPException(404, "That LoRA isn't on disk")
+    try:
+        return await asyncio.to_thread(loras.metadata, path)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(422, f"Couldn't read its header: {exc}") from exc
+
+
 @app.get("/api/loras/preview")
 async def loras_preview(name: str):
     """The preview picture saved next to a LoRA (name.png, name.preview.png, ...)."""

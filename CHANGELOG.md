@@ -5,6 +5,23 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.25.0] - 2026-11-15
+
+### Changed
+- **LoRAs step: reworked LoRA rows.**
+  - **Full name:** each row shows the LoRA's full file name with its folder. Long names wrap at `_ - . /`
+    instead of being cut off.
+  - **Strength:** only a number box now, from -10.0 to 10.0 in 0.1 steps (the slider is gone). The server
+    accepts the same range, and so does the strength box in the LoRA browser.
+  - **Reorder:** drag a row by its ⠿ grip, instead of using the ↑ ↓ buttons. A line shows where it will
+    land. Dragging works with a mouse, a pen or touch.
+  - **⋯ menu on each row:** Move up, Move down, Replace…, Details… and Remove.
+    - **Replace…** opens the LoRA browser and swaps in the LoRA you pick, keeping the row's place and strength.
+    - **Details…** opens a dialog with the preview, what the LoRA is made for, base, type, rank, tensors and
+      data types, size, trigger words, and its full safetensors metadata. Long values (tag frequencies,
+      training settings) fold open, with JSON pretty-printed.
+  - New endpoint `GET /api/loras/metadata?name=…` returns a LoRA's `__metadata__` block.
+
 ## [0.24.1] - 2026-11-15
 
 ### Added
