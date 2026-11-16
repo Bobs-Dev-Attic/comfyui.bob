@@ -45,6 +45,7 @@ const Editor = (() => {
     erase: ["Paint over the selection to take parts away. [ and ] change the brush size.", "Erase from the selection"],
     shape: ["Drag over the picture. Shift + drag adds, Alt + drag subtracts. A click without dragging deselects (so does Ctrl+D).", "Drag · Shift adds · Alt subtracts"],
     lasso: ["Hold the button and draw around the area; it closes itself when you let go. Shift adds, Alt subtracts.", "Draw around the area · Shift adds · Alt subtracts"],
+    feather: "Feather softens the selection's edge over this many pixels, so AI edits blend in. It applies to new selections (not the brush); Feather now softens the current one.",
     wand: ["Click a color to select the area of similar color. A higher tolerance takes in more shades; Contiguous keeps to the touching area. Shift + click adds, Alt + click subtracts.", "Click a color · Shift adds · Alt subtracts"],
   };
   const selHint = m => SEL_HINTS[SHAPES.has(m) ? "shape" : m] || SEL_HINTS.ai;
@@ -87,6 +88,7 @@ const Editor = (() => {
       hist: [], redo: [], tool: "select", zoom: 1, panX: 0, panY: 0,
       crop: null, aspect: "free", adj: adjDefault(), brush: 40, mode: "ai", stroke: null, busy: null,
       combine: "new", tol: 32, contiguous: true, shape: null, maskVer: 0, antsPhase: -1, raf: 0,
+      feather: 0, soft: false,  // feather: px of soft edge for new selections; soft: the mask has soft edges
       fields: { bg: "transparent" },  // the side panel's text boxes and choices, kept across redraws
       ops: [],  // what was done, for the saved result's note
     };
@@ -244,7 +246,7 @@ const Editor = (() => {
     sg.setTransform(1, 0, 0, 1, 0, 0); sg.globalCompositeOperation = "source-over"; sg.clearRect(0, 0, W, H);
     sg.imageSmoothingEnabled = false;
     sg.setTransform(dpr * ed.zoom, 0, 0, dpr * ed.zoom, dpr * ed.panX, dpr * ed.panY);
-    sg.drawImage(ed.mask, 0, 0);
+    sg.drawImage(ed.soft ? hardMask() : ed.mask, 0, 0);
     sg.setTransform(1, 0, 0, 1, 0, 0);
     ig.globalCompositeOperation = "copy"; ig.drawImage(edgeS, 0, 0);
     ig.globalCompositeOperation = "destination-in";
@@ -253,6 +255,18 @@ const Editor = (() => {
     sg.globalCompositeOperation = "destination-out"; sg.drawImage(edgeI, 0, 0);
     sg.globalCompositeOperation = "source-over";
     return edgeS;
+  }
+  // A feathered selection's ants run along its half-way line, as in other editors.
+  let hardVer = -1, hardC = null;
+  function hardMask() {
+    if (hardVer === ed.maskVer && hardC) return hardC;
+    const m = ed.mask, W = m.width, H = m.height;
+    if (!hardC || hardC.width !== W || hardC.height !== H) hardC = mk(W, H);
+    const d = m.getContext("2d").getImageData(0, 0, W, H), o = new Uint32Array(d.data.buffer);
+    for (let i = 0; i < o.length; i++) o[i] = (o[i] >>> 24) >= 128 ? 0xffffffff : 0;
+    hardC.getContext("2d").putImageData(d, 0, 0);
+    hardVer = ed.maskVer;
+    return hardC;
   }
   const antsNow = () => stillAnts() ? 0 : Math.floor(performance.now() / 110) % 8;
   function drawOverlay() {
@@ -291,10 +305,10 @@ const Editor = (() => {
   }
 
   /* ---------------------------------------------------------------- history */
-  function snapshot() { return { base: ed.base, ref: ed.ref, mask: clone(ed.mask), dirty: ed.dirty, item: ed.item }; }
+  function snapshot() { return { base: ed.base, ref: ed.ref, mask: clone(ed.mask), dirty: ed.dirty, item: ed.item, soft: ed.soft }; }
   function restore(s) {
     const resized = s.base.width !== ed.base.width || s.base.height !== ed.base.height;
-    ed.base = s.base; ed.ref = s.ref; ed.mask = s.mask; ed.dirty = s.dirty; ed.item = s.item;
+    ed.base = s.base; ed.ref = s.ref; ed.mask = s.mask; ed.dirty = s.dirty; ed.item = s.item; ed.soft = !!s.soft;
     ed.crop = ed.tool === "crop" ? { x: 0, y: 0, w: s.base.width, h: s.base.height } : null;
     maskChanged();
     if (resized) fit();
@@ -305,7 +319,7 @@ const Editor = (() => {
     ed.redo = [];
     ed.base = canvas; ed.ref = ref; ed.dirty = !ref || !item; if (item) ed.item = item;
     if (op) ed.ops.push(op);
-    if (!keepMask || ed.mask.width !== canvas.width || ed.mask.height !== canvas.height) ed.mask = mk(canvas.width, canvas.height);
+    if (!keepMask || ed.mask.width !== canvas.width || ed.mask.height !== canvas.height) { ed.mask = mk(canvas.width, canvas.height); ed.soft = false; }
     ed.crop = ed.tool === "crop" ? { x: 0, y: 0, w: canvas.width, h: canvas.height } : null;
     maskChanged();
   }
@@ -370,11 +384,13 @@ const Editor = (() => {
           `<button type="button" data-combine="${k}" class="${ed.combine === k ? "active" : ""}" title="${tip}">${l}</button>`).join("")}</div>` : ""}
         ${m === "wand" ? `<label class="ed-l ed-slider">Tolerance <span class="ed-v">${ed.tol}</span><input type="range" min="0" max="255" value="${ed.tol}" data-k="tol"></label>
           <label class="ed-chk"><input type="checkbox" data-k="contig"${ed.contiguous ? " checked" : ""}> Contiguous (only the touching area)</label>` : ""}
+        ${m !== "brush" && m !== "erase" ? `<label class="ed-l ed-slider" title="${SEL_HINTS.feather}">Feather <span class="ed-v">${ed.feather}px</span><input type="range" min="0" max="100" value="${ed.feather}" data-k="feather" aria-label="Feather: soft edge for new selections, in pixels"></label>` : ""}
         ${["ai", "brush", "erase"].includes(m) ? `<label class="ed-l ed-slider">Brush size <span class="ed-v">${ed.brush}px</span><input type="range" min="4" max="400" value="${ed.brush}" data-k="brush"></label>` : ""}
         <div class="ed-row"><input type="text" data-k="find" value="${fv("find")}" placeholder="…or type what to select" aria-label="Select by words"${dis(caps.select, "Needs a SAM 3 checkpoint")}>
           <button type="button" class="btn sm" data-ed="find"${dis(caps.select, "Needs a SAM 3 checkpoint")}>Find</button></div>
         <div class="ed-row wrap"><button type="button" class="btn sm" data-ed="mask-clear"${dis(on, "Nothing selected")}>Clear</button>
-          <button type="button" class="btn sm" data-ed="mask-invert">Invert</button><button type="button" class="btn sm" data-ed="mask-all">All</button></div>
+          <button type="button" class="btn sm" data-ed="mask-invert">Invert</button><button type="button" class="btn sm" data-ed="mask-all">All</button>
+          <button type="button" class="btn sm" data-ed="mask-feather"${dis(on && ed.feather > 0 && !busy, on ? "Set a Feather amount first" : "Nothing selected")} title="${on && ed.feather > 0 ? `Soften the current selection's edge by ${ed.feather}px` : ""}">Feather now</button></div>
         <p class="hint">${selHint(m)[0]}</p>
 
         <h4>AI edit ${on ? "" : `<span class="hint inline">(select an area first)</span>`}</h4>
@@ -519,15 +535,39 @@ const Editor = (() => {
   }
   function setMask(fn) { ed.hist.push(snapshot()); ed.redo = []; fn(ed.mask.getContext("2d")); maskChanged(); }
   const MASK_OPS = {
-    clear: () => setMask(g => g.clearRect(0, 0, ed.mask.width, ed.mask.height)),
-    all: () => setMask(g => { g.fillStyle = "#fff"; g.fillRect(0, 0, ed.mask.width, ed.mask.height); }),
+    clear: () => setMask(g => { g.clearRect(0, 0, ed.mask.width, ed.mask.height); ed.soft = false; }),
+    all: () => setMask(g => { g.fillStyle = "#fff"; g.fillRect(0, 0, ed.mask.width, ed.mask.height); ed.soft = false; }),
+    feather: () => {
+      if (!ed.maskOn || !ed.feather) return;
+      const s = soften(ed.mask, ed.feather);
+      setMask(g => { g.save(); g.globalCompositeOperation = "copy"; g.drawImage(s, 0, 0); g.restore(); ed.soft = true; });
+    },
     invert: () => setMask(g => { g.save(); g.globalCompositeOperation = "xor"; g.fillStyle = "#fff"; g.fillRect(0, 0, ed.mask.width, ed.mask.height); g.restore(); }),
   };
   // Modifier keys pick how a new selection combines: Shift adds, Alt subtracts, both intersect.
   const opFrom = e => e.shiftKey && e.altKey ? "int" : e.shiftKey ? "add" : e.altKey ? "sub" : ed.combine;
+  /* Feather: blur a selection's edge over r px (a Gaussian, sigma r/2, so the soft band is about r on
+     each side). The edge pixels are stretched outward first, so a selection that reaches the picture's
+     border stays solid there instead of fading out. */
+  function soften(c, r) {
+    const W = c.width, H = c.height, p = Math.ceil(r * 1.5) + 2, P = mk(W + 2 * p, H + 2 * p), g = P.getContext("2d");
+    g.imageSmoothingEnabled = false;
+    g.drawImage(c, p, p);
+    g.drawImage(c, 0, 0, W, 1, p, 0, W, p); g.drawImage(c, 0, H - 1, W, 1, p, H + p, W, p);
+    g.drawImage(c, 0, 0, 1, H, 0, p, p, H); g.drawImage(c, W - 1, 0, 1, H, W + p, p, p, H);
+    for (const [sx, sy, dx, dy] of [[0, 0, 0, 0], [W - 1, 0, W + p, 0], [0, H - 1, 0, H + p], [W - 1, H - 1, W + p, H + p]])
+      g.drawImage(c, sx, sy, 1, 1, dx, dy, p, p);
+    const out = mk(W, H), og = out.getContext("2d");
+    og.filter = `blur(${r / 2}px)`;
+    og.drawImage(P, -p, -p);
+    og.filter = "none";
+    return out;
+  }
   // Put a new selection (white on transparent, picture size) together with the current one.
   function combineMask(c, op) {
+    if (ed.feather > 0) c = soften(c, ed.feather);
     setMask(g => {
+      if (ed.feather > 0) ed.soft = true; else if (op === "new") ed.soft = false;
       g.save();
       if (op === "new") g.clearRect(0, 0, ed.mask.width, ed.mask.height);
       g.globalCompositeOperation = op === "sub" ? "destination-out" : op === "int" ? "destination-in" : "source-over";
@@ -637,7 +677,8 @@ const Editor = (() => {
       for (let i = 0; i < px.length; i += 4) { const v = px[i]; px[i] = px[i + 1] = px[i + 2] = 255; px[i + 3] = v; }
       g.putImageData(d, 0, 0);
       if (!hasAlpha(t)) { Media.toast("AI didn't find anything there. Try painting over more of it."); return; }
-      setMask(mg => { mg.save(); mg.globalCompositeOperation = subtract ? "destination-out" : "source-over"; mg.drawImage(t, 0, 0); mg.restore(); });
+      const f = ed.feather > 0 ? soften(t, ed.feather) : t;
+      setMask(mg => { if (ed.feather > 0) ed.soft = true; mg.save(); mg.globalCompositeOperation = subtract ? "destination-out" : "source-over"; mg.drawImage(f, 0, 0); mg.restore(); });
     } catch (e) { Media.toast(`AI select: ${e.message}`); }
     finally { busy(null); }
   }
@@ -738,7 +779,7 @@ const Editor = (() => {
         "resize-apply": applyResize, "rot-l": () => transform("rot-l"), "rot-r": () => transform("rot-r"),
         "flip-h": () => transform("flip-h"), "flip-v": () => transform("flip-v"),
         "adj-apply": applyAdjust, "adj-reset": () => { ed.adj = adjDefault(); renderSide(); draw(); },
-        "mask-clear": MASK_OPS.clear, "mask-all": MASK_OPS.all, "mask-invert": MASK_OPS.invert,
+        "mask-clear": MASK_OPS.clear, "mask-all": MASK_OPS.all, "mask-invert": MASK_OPS.invert, "mask-feather": MASK_OPS.feather,
         find: () => { const q = String(ed.fields.find || "").trim(); if (q) selectWith({ text: q }); else Media.toast("Type what to select, e.g. “the cup”."); },
         "cancel-ai": () => { if (ed.busy?.id) cancel(ed.busy.id); },
       })[a]?.();
@@ -755,6 +796,11 @@ const Editor = (() => {
       if (["find", "erase-hint", "replace", "prompt", "instruct"].includes(k)) ed.fields[k] = e.target.value;
       if (k === "brush") { ed.brush = +e.target.value; e.target.previousElementSibling.textContent = `${ed.brush}px`; draw(); }
       if (k === "tol") { ed.tol = +e.target.value; e.target.previousElementSibling.textContent = ed.tol; }
+      if (k === "feather") {
+        ed.feather = +e.target.value; e.target.previousElementSibling.textContent = `${ed.feather}px`;
+        const b = $e('[data-ed="mask-feather"]');
+        if (b) { const ok = ed.maskOn && ed.feather > 0 && !ed.busy; b.disabled = !ok; b.title = ok ? `Soften the current selection's edge by ${ed.feather}px` : ed.maskOn ? "Set a Feather amount first" : "Nothing selected"; }
+      }
       if (k === "strength") { ed.strength = +e.target.value / 100; e.target.previousElementSibling.textContent = `${e.target.value}%`; }
       if (k === "rw" && $e('[data-k="lock"]').checked) $e('[data-k="rh"]').value = Math.round(+e.target.value * ed.base.height / ed.base.width);
       if (k === "rh" && $e('[data-k="lock"]').checked) $e('[data-k="rw"]').value = Math.round(+e.target.value * ed.base.width / ed.base.height);

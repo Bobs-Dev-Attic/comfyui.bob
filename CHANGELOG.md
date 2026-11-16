@@ -5,6 +5,15 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.36.0] - 2026-11-16
+
+### Added
+- **Feather for selections in the image editor** (Select + AI). A **Feather** slider (0–100 px) softens the edge of
+  new selections from the shape tools, the lasso, the magic wand and AI select, so Erase, Replace and prompt edits
+  blend into the picture. **Feather now** softens the current selection by that amount (undo takes it back).
+  - The orange tint fades across the soft edge; the marching ants run along its halfway line.
+  - A selection that reaches the picture's border stays solid there instead of fading out.
+
 ## [0.35.0] - 2026-11-16
 
 ### Added
