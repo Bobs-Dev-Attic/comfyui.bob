@@ -270,7 +270,8 @@ async def capabilities(refresh: bool = False):
         "krea2_quality": workflows.KREA2_QUALITY,
         "h3image_quality": workflows.H3_IMAGE_QUALITY,
         "samplers": comfy.samplers, "schedulers": comfy.schedulers,
-        "sampling_defaults": {k: {"sampler": a, "scheduler": b} for k, (a, b) in workflows.SAMPLING_DEFAULTS.items()},
+        "sampling_defaults": {k: {"sampler": a, "scheduler": b, "cfg": workflows.CFG_DEFAULTS.get(k)}
+                              for k, (a, b) in workflows.SAMPLING_DEFAULTS.items()},
         "fps": workflows.FPS,
         "model_paths": [str(p) for p in modelpaths.yaml_files()],
         "comfyui_paths_config": syscheck.comfy_paths_config(await comfy.system_stats()),
@@ -300,6 +301,17 @@ async def items():
 @app.post("/api/items/{item_id}/cancel")
 async def cancel(item_id: str):
     return {"ok": await jobs.cancel(item_id)}
+
+
+@app.get("/api/items/{item_id}/workflow")
+async def item_workflow(item_id: str, download: bool = False):
+    """The exact ComfyUI workflow (API format) a result was made with, to compare or load in ComfyUI."""
+    from .jobs import WORKFLOW_DIR
+    f = WORKFLOW_DIR / f"{item_id}.json"
+    if not f.is_file():
+        raise HTTPException(404, "No saved workflow for this result (it was made before v0.33.0)")
+    headers = {"Content-Disposition": f'attachment; filename="bob-{item_id}-workflow_api.json"'} if download else {}
+    return FileResponse(f, media_type="application/json", headers=headers)
 
 
 @app.delete("/api/items/{item_id}")

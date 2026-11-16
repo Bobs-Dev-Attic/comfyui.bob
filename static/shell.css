@@ -46,6 +46,16 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .samp-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .samp-l { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 500; }
 .samp-l select { min-width: 0; }
+.samp-nums { margin-top: -4px; }
+.wf-box { display: flex; flex-direction: column; gap: 10px; height: 100%; }
+.wf-sum { display: flex; flex-wrap: wrap; gap: 6px; }
+.wf-sum span { display: flex; flex-direction: column; padding: 5px 10px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--line); }
+.wf-sum small { font-size: 10.5px; color: var(--muted); }
+.wf-sum b { font-size: 13px; }
+.wf-models { margin: 0; display: flex; flex-wrap: wrap; gap: 4px; font-size: 11px; }
+.wf-models code { padding: 2px 6px; border-radius: 6px; background: var(--panel-2); }
+.wf-json { flex: 1; min-height: 160px; resize: none; font: 11.5px/1.45 ui-monospace, Consolas, monospace;
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
 
 .side-body { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .step-head { padding: 14px 16px 10px; border-bottom: 1px solid var(--line); }

@@ -238,8 +238,13 @@ function updateDerived() {
     ? (refLora ? `${refTurboSteps} steps with the ref2v turbo LoRA` : "Ref2v turbo LoRA not installed: runs 20 steps")
     : "8 steps with the turbo LoRA (≈3× faster)";
   $("#steps").placeholder = `auto (${autoSteps})`;
-  $("#steps").disabled = eng === "h3image";  // distilled: always its 6 steps
-  $("#steps").title = eng === "h3image" ? "MiniMax H3 Image always runs its 6 distilled steps" : "";
+  $("#steps").title = eng === "h3image" ? "MiniMax H3 Image is distilled for 6 steps; other counts interpolate its schedule" : "";
+  const cfgDef = state.caps?.sampling_defaults?.[eng]?.cfg;
+  $("#samp-nums").hidden = !state.caps?.sampling_defaults?.[eng];
+  $("#cfg").placeholder = cfgDef != null ? `auto (${cfgDef})` : "auto";
+  $("#cfg-hint").textContent = eng === "h3" || eng === "h3ref"
+    ? "auto = no negative (BasicGuider). A value switches to a CFG guider with an empty negative, about 2× slower."
+    : cfgDef != null ? `auto = ${cfgDef}${cfgDef === 1 ? " (distilled: higher burns the picture)" : ""}` : "auto";
 }
 
 function renderMissing() {
@@ -274,6 +279,7 @@ function renderMissing() {
 function collectRequest() {
   const kind = state.kind, eng = state.engine[kind];
   const steps = $("#steps").value ? +$("#steps").value : null;
+  const cfg = $("#cfg").value !== "" ? +$("#cfg").value : null;
   return {
     kind, engine: eng,
     prompt: $("#prompt").value,
@@ -295,6 +301,7 @@ function collectRequest() {
     loras: Loras.forRequest(),
     unet: state.unet[eng] || null,
     sampler: state.sampling[eng]?.sampler || null,
+    cfg,
     scheduler: state.sampling[eng]?.scheduler || null,
     enhance_after: (kind === "video" || kind === "image") ? Enhance.after() : null,
     project: state.project?.id ?? null,
@@ -321,6 +328,7 @@ function applyParams(p) {
     $("#clean-audio").checked = p.clean_audio !== false;
   }
   $("#steps").value = p.steps ?? "";
+  $("#cfg").value = p.cfg ?? "";
   for (const role of ["first_frame", "last_frame"]) {
     if (p[role]) setFrame(role, p[role], mediaUrl(p[role])); else clearFrame(role);
   }
@@ -893,6 +901,7 @@ function renderViewer() {
       ${it.status === "done" && f && it.kind === "image" ? `<button class="btn" data-a="angles" title="Re-shoot this picture from other camera angles (Qwen Image Edit)">🔄 Angles…</button>` : ""}
       ${canFrame ? `<button class="btn" data-a="first">→ First frame</button><button class="btn" data-a="last">→ Last frame</button><button class="btn" data-a="ref">→ Reference</button>` : ""}
       ${f ? `<a class="btn" href="${esc(f.url)}" download="${esc(f.name)}">Download</a>` : ""}
+      ${it.engine !== "timeline" && it.status !== "submitting" ? `<button class="btn" data-a="workflow" title="The exact ComfyUI workflow this was made with: compare it with yours, or load it in ComfyUI">{ } Workflow</button>` : ""}
       <button class="btn ghost danger" data-a="delete">Delete</button>
     </div>`;
   meta.hidden = Monitor.mode === "timeline";
@@ -928,6 +937,7 @@ async function action(a, it) {
   if (a === "reroll") return submit({ ...it.params, seed: -1, batch: 1 });
   if (a === "enhance") return Enhance.dialog(it);
   if (a === "edit") return Editor.open(it);
+  if (a === "workflow") return workflowDialog(it);
   if (a === "angles") { const f = it.files[0]; return Angles.dialog({ ref: f.path, url: f.url, name: f.name }); }
   if (a === "ref") {
     state.kind = "video"; state.engine.video = "h3ref";
@@ -1070,6 +1080,36 @@ function init() {
   connectEvents();
   pollStatus();
   setInterval(pollStatus, 5000);
+}
+
+/* The exact ComfyUI workflow (API format) a result was made with. */
+async function workflowDialog(it) {
+  let text;
+  try {
+    const r = await fetch(`/api/items/${it.id}/workflow`);
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+    text = JSON.stringify(await r.json(), null, 2);
+  } catch (e) { return Media.toast(e.message); }
+  const g = JSON.parse(text);
+  const pick = t => Object.values(g).filter(n => n.class_type === t).map(n => n.inputs);
+  const ks = pick("KSampler")[0], sel = pick("KSamplerSelect")[0], sch = pick("BasicScheduler")[0], guide = pick("CFGGuider")[0];
+  const sum = ks ? [["Sampler", ks.sampler_name], ["Scheduler", ks.scheduler], ["Steps", ks.steps], ["CFG", ks.cfg], ["Denoise", ks.denoise], ["Seed", ks.seed]]
+    : [["Sampler", sel?.sampler_name], ["Scheduler", sch?.scheduler], ["Steps", sch?.steps], ["CFG", guide ? guide.cfg : "— (BasicGuider)"],
+       ["Shift", pick("MiniMaxH3SigmaShift")[0] ? `${pick("MiniMaxH3SigmaShift")[0].shift_video} / ${pick("MiniMaxH3SigmaShift")[0].shift_audio}` : null],
+       ["Seed", pick("RandomNoise")[0]?.noise_seed]];
+  const models = Object.values(g).filter(n => /Loader/.test(n.class_type)).map(n => Object.values(n.inputs).filter(v => typeof v === "string" && /\.(safetensors|gguf|ckpt|pt)$/i.test(v))).flat();
+  const box = document.createElement("div");
+  box.className = "wm-form wf-box";
+  box.innerHTML = `<p class="hint">The workflow sent to ComfyUI, in its API format. Load it in ComfyUI (drag the downloaded file onto the canvas) or compare these values with your own workflow. Input pictures and sounds are named by file; ComfyUI needs them in its <code>input</code> folder to run it.</p>
+    <div class="wf-sum">${sum.filter(([, v]) => v != null && v !== "").map(([k, v]) => `<span><small>${k}</small><b>${esc(v)}</b></span>`).join("")}</div>
+    ${models.length ? `<p class="wf-models">${models.map(m => `<code>${esc(m.replace(/\\/g, "/"))}</code>`).join(" ")}</p>` : ""}
+    <textarea class="wf-json" readonly spellcheck="false" aria-label="Workflow JSON">${esc(text)}</textarea>`;
+  const foot = document.createElement("div");
+  foot.innerHTML = `<span class="wm-foot-gap"></span><button type="button" class="btn sm" data-a="copy">Copy</button>
+    <a class="btn sm primary" href="/api/items/${esc(it.id)}/workflow?download=true">⬇ Download</a>`;
+  WM.open({ id: `wf-${it.id}`, title: `Workflow · ${engineName(it.kind, it.engine)} · seed ${it.seed ?? ""}`, content: box, footer: foot,
+    width: 720, height: 600, minWidth: 420, minHeight: 320 });
+  foot.querySelector('[data-a="copy"]').onclick = () => navigator.clipboard?.writeText(text).then(() => Media.toast("Workflow copied."));
 }
 
 /* The ☰ menu left of "Bob Studio". */

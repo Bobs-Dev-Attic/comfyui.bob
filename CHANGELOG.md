@@ -5,6 +5,22 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.33.0] - 2026-11-16
+
+### Added
+- **Steps and CFG on the Model tab**, under Sampler and Scheduler. Steps moved here from Settings › Advanced. Empty
+  means the engine's own value, shown in the box.
+  - **CFG** applies to Klein, Krea 2, H3 Image and Music 3. H3 and H3 Reference have no CFG in their templates (a
+    BasicGuider with no negative); a value there switches to a CFG guider with an empty negative, like ComfyUI's CFG
+    workflows. That runs about 2× slower.
+  - **H3 Image** steps can now be changed too (it stays 6 by default; other counts interpolate its distilled schedule).
+  - Both are saved with the project and restored by Reuse.
+- **{ } Workflow** (results viewer): the exact ComfyUI workflow, in API format, that a result was made with.
+  - It shows the sampler, scheduler, steps, CFG and seed, plus every model file used, and the full JSON to copy or
+    download.
+  - Drag the downloaded file onto ComfyUI to load it, or compare it with your own workflow when results differ.
+  - Saved in `data/workflows/` for new results (`GET /api/items/{id}/workflow`); deleting a result deletes its copy.
+
 ## [0.32.1] - 2026-11-16
 
 ### Changed

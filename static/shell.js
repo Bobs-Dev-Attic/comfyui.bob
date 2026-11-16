@@ -88,7 +88,7 @@ function renderUnet() {
 /* Sampler and scheduler for the picked engine (the Model step). Empty = the engine's own, which
    is what its ComfyUI template uses; the lists are ComfyUI's own (KSampler). */
 const SAMPLING_NOTES = {
-  h3image: "H3 Image is distilled for 6 steps on its own sigma grid: keep the simple scheduler, or the picture may come out noisy.",
+  h3image: "H3 Image is distilled for 6 steps on its own sigma grid: keep the simple scheduler and 6 steps, or the picture may come out noisy.",
   h3ref: "By default H3 Reference uses simple with the turbo LoRA and beta without it.",
   h3: "With the turbo LoRA, H3 is distilled for res_multistep and simple.",
   krea2: "Krea 2 Turbo is distilled for 8 steps with euler and simple.",
@@ -247,7 +247,7 @@ function collectSettings() {
     v: 1, kind: state.kind, engine: { ...state.engine },
     prompt: $("#prompt").value, lyrics: $("#lyrics").value,
     aspect: $("#aspect").value, quality: $("#quality").value, seconds: +$("#seconds").value,
-    seed: $("#seed").value, steps: $("#steps").value, batch: state.batch,
+    seed: $("#seed").value, steps: $("#steps").value, cfg: $("#cfg").value, batch: state.batch,
     turbo: $("#turbo").checked, enhance: $("#enhance").checked, fidelity: $("#fidelity").checked,
     refs: state.refs.map(pickRef), frames: { first_frame: pickRef(state.frames.first_frame), last_frame: pickRef(state.frames.last_frame) },
     audios: state.arefs.map(pickRef), clean_audio: $("#clean-audio").checked,
@@ -287,6 +287,7 @@ function applySettings(s) {
     if (s.seconds) $("#seconds").value = s.seconds;
     $("#seed").value = s.seed ?? -1;
     $("#steps").value = s.steps ?? "";
+    $("#cfg").value = s.cfg ?? "";
     $("#turbo").checked = s.turbo !== false;
     $("#enhance").checked = !!s.enhance;
     $("#fidelity").checked = !!s.fidelity;
@@ -849,6 +850,7 @@ async function initShell() {
   $("#model-list").addEventListener("click", e => { const c = e.target.closest("[data-model]"); if (c) pickModel(c.dataset.model); });
   $("#model-list").addEventListener("dblclick", e => { if (e.target.closest("[data-model]")) moveStep(1); });
   $("#summary").addEventListener("click", e => { const b = e.target.closest("[data-goto]"); if (b) showStep(b.dataset.goto); });
+  $("#form").addEventListener("click", e => { const b = e.target.closest(".advanced [data-goto]"); if (b) showStep(b.dataset.goto); });
   $("#btn-proj-new").onclick = () => newProjectDialog();
   $("#btn-proj-open").onclick = openProjectDialog;
   $("#btn-proj-exp").onclick = () => startExperiment().then(() => showStep("model"));
