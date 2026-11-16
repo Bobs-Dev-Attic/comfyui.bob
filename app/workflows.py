@@ -831,6 +831,46 @@ def build_ai_select(sam_ckpt: str, *, positive: list[dict] | None = None, negati
     return Built(graph=g.nodes, outputs=[save], image_inputs={"source": load})
 
 
+EDIT_MODELS = {"qwen": "Qwen Image Edit 2511", "h3image": "MiniMax H3 Image"}
+
+
+def _edit_model(g: Graph, which: str, files: dict, ref: Any, text: Any, *, seed: int, steps: int | None) -> tuple[list, dict]:
+    """An instruction edit of one picture (``ref``, a node) with the chosen model -> (decoded image output, info).
+    The result's size is the model's own; callers scale it back."""
+    o = Graph.out
+    if which == "h3image":
+        # MiniMax H3 Image as ComfyUI's "Image Edit" template runs it: 6 distilled steps at cfg 1;
+        # the picture conditions the text encoder and is anchored as a reference latent.
+        unet = g.add("UNETLoader", unet_name=files["unet"], weight_dtype="default")
+        clip = g.add("CLIPLoader", clip_name=files["clip"], type="minimax", device="default")
+        vae = g.add("VAELoader", vae_name=files["vae"])
+        cond = g.add("MiniMaxH3ImageConditioning", clip=o(clip), vae=o(vae), prompt=text, width=0, height=0,
+                     **{"images.image_1": o(ref)})
+        neg = g.add("ConditioningZeroOut", conditioning=o(cond, 0))
+        n_steps = 6
+        sampled = g.add("KSampler", model=o(unet), positive=o(cond, 0), negative=o(neg), latent_image=o(cond, 1),
+                        seed=int(seed), steps=n_steps, cfg=1.0, sampler_name="euler", scheduler="simple", denoise=1.0)
+        return o(g.add("VAEDecode", samples=o(sampled), vae=o(vae))), {"model": EDIT_MODELS["h3image"], "steps": n_steps}
+    unet = g.add("UNETLoader", unet_name=files["unet"], weight_dtype="default")
+    clip = g.add("CLIPLoader", clip_name=files["clip"], type="qwen_image", device="default")
+    vae = g.add("VAELoader", vae_name=files["vae"])
+    fast = bool(files.get("lightning_lora"))
+    model = unet
+    if fast:
+        model = g.add("LoraLoaderModelOnly", model=o(model), lora_name=files["lightning_lora"], strength_model=1.0)
+    model = g.add("ModelSamplingAuraFlow", model=o(model), shift=3.1)
+    model = g.add("CFGNorm", model=o(model), strength=1.0)
+    pos = g.add("TextEncodeQwenImageEditPlus", clip=o(clip), prompt=text, vae=o(vae), image1=o(ref))
+    neg = g.add("TextEncodeQwenImageEditPlus", clip=o(clip), prompt="", vae=o(vae), image1=o(ref))
+    pos = g.add("FluxKontextMultiReferenceLatentMethod", conditioning=o(pos), reference_latents_method="index_timestep_zero")
+    neg = g.add("FluxKontextMultiReferenceLatentMethod", conditioning=o(neg), reference_latents_method="index_timestep_zero")
+    n_steps = 4 if fast else int(steps or 20)
+    sampled = g.add("KSampler", model=o(model), positive=o(pos), negative=o(neg),
+                    latent_image=o(g.add("VAEEncode", pixels=o(ref), vae=o(vae))), seed=int(seed), steps=n_steps,
+                    cfg=1.0 if fast else 4.0, sampler_name="euler", scheduler="simple", denoise=1.0)
+    return o(g.add("VAEDecode", samples=o(sampled), vae=o(vae))), {"model": EDIT_MODELS["qwen"], "steps": n_steps}
+
+
 def build_imgedit(
     op: str,
     files: dict[str, str | None] | None,
@@ -841,6 +881,7 @@ def build_imgedit(
     steps: int | None = None,
     background: str = "transparent",
     bg_model: str | None = None,
+    edit_model: str = "qwen",
     prefix: str = "bob/edit",
 ) -> Built:
     """One AI edit of a picture. image_inputs: source; edit_mask for the selection ops; and
@@ -854,6 +895,10 @@ def build_imgedit(
       prompt   Krea 2 redraws the selection at the given strength (Differential Diffusion).
       remove_bg  BiRefNet (core RemoveBackground) when a background-removal model is installed,
                else rembg's u2net; the background becomes transparent, white or black.
+      instruct The whole picture edited by an instruction ("make it night"), no selection; the
+               result is scaled back to the picture's size.
+    edit_model picks the model for erase, replace and instruct: "qwen" (Qwen Image Edit 2511) or
+    "h3image" (MiniMax H3 Image, 6 steps).
     """
     g = Graph()
     o = Graph.out
@@ -879,7 +924,16 @@ def build_imgedit(
         return Built(graph=g.nodes, outputs=[save], image_inputs=inputs,
                      info={"op": op, "remover": "BiRefNet" if bg_model else "u2net", "background": background})
 
-    assert files, "the inpainting ops need model files"
+    assert files, "the AI edits need model files"
+    if op == "instruct":
+        size = g.add("GetImageSize", image=o(src))
+        ref = g.add("ImageScaleToTotalPixels", image=o(src), upscale_method="lanczos",
+                    megapixels=1.0 if edit_model == "qwen" else 4.0, resolution_steps=32)
+        decoded, model_info = _edit_model(g, edit_model, files, ref, prompt.strip(), seed=seed, steps=steps)
+        out = g.add("ImageScale", image=decoded, upscale_method="lanczos", width=o(size, 0), height=o(size, 1), crop="disabled")
+        save = g.add("SaveImage", images=o(out), filename_prefix=prefix)
+        return Built(graph=g.nodes, outputs=[save], image_inputs=inputs, info={"op": op, **model_info, "final_prompt": prompt.strip()})
+
     mask_pic = g.add("LoadImage", image="")
     inputs["edit_mask"] = mask_pic
     mask = g.add("ImageToMask", image=o(mask_pic), channel="red")
@@ -897,16 +951,8 @@ def build_imgedit(
                  min_resolution=768, max_resolution=2048, separate_regions=False, region_min_area=0.1, max_regions=8,
                  region_order="Largest First")
     if op in ("erase", "replace"):
-        # Qwen Image Edit 2511 on the cropped context, then only the edited area is pasted back.
-        unet = g.add("UNETLoader", unet_name=files["unet"], weight_dtype="default")
-        clip = g.add("CLIPLoader", clip_name=files["clip"], type="qwen_image", device="default")
-        vae = g.add("VAELoader", vae_name=files["vae"])
-        fast = bool(files.get("lightning_lora"))
-        model = unet
-        if fast:
-            model = g.add("LoraLoaderModelOnly", model=o(model), lora_name=files["lightning_lora"], strength_model=1.0)
-        model = g.add("ModelSamplingAuraFlow", model=o(model), shift=3.1)
-        model = g.add("CFGNorm", model=o(model), strength=1.0)
+        # The edit model (Qwen Image Edit 2511 or MiniMax H3 Image) on the cropped context, then
+        # only the edited area is pasted back.
         size = g.add("GetImageSize", image=o(crop, 1))
         magenta = g.add("EmptyImage", width=o(size, 0), height=o(size, 1), batch_size=1, color=EDIT_MARK_COLOR)
         hard = g.add("ThresholdMask", mask=o(crop, 2), value=0.5)
@@ -936,20 +982,12 @@ def build_imgedit(
             marked = g.add("ImageCompositeMasked", destination=o(crop, 1), source=o(magenta), x=0, y=0, resize_source=False, mask=o(hard))
             ref = g.add("ImageScaleToTotalPixels", image=o(marked), upscale_method="lanczos", megapixels=1.0, resolution_steps=16)
             text = EDIT_REPLACE_INSTRUCTION.format(what=prompt.strip())
-        pos = g.add("TextEncodeQwenImageEditPlus", clip=o(clip), prompt=text, vae=o(vae), image1=o(ref))
-        neg = g.add("TextEncodeQwenImageEditPlus", clip=o(clip), prompt="", vae=o(vae), image1=o(ref))
-        pos = g.add("FluxKontextMultiReferenceLatentMethod", conditioning=o(pos), reference_latents_method="index_timestep_zero")
-        neg = g.add("FluxKontextMultiReferenceLatentMethod", conditioning=o(neg), reference_latents_method="index_timestep_zero")
-        n_steps = 4 if fast else int(steps or 20)
-        sampled = g.add("KSampler", model=o(model), positive=o(pos), negative=o(neg),
-                        latent_image=o(g.add("VAEEncode", pixels=o(ref), vae=o(vae))), seed=int(seed), steps=n_steps,
-                        cfg=1.0 if fast else 4.0, sampler_name="euler", scheduler="simple", denoise=1.0)
-        decoded = g.add("VAEDecode", samples=o(sampled), vae=o(vae))
-        back = g.add("ImageScale", image=o(decoded), upscale_method="lanczos", width=o(size, 0), height=o(size, 1), crop="disabled")
+        decoded, model_info = _edit_model(g, edit_model, files, ref, text, seed=seed, steps=steps)
+        back = g.add("ImageScale", image=decoded, upscale_method="lanczos", width=o(size, 0), height=o(size, 1), crop="disabled")
         # No color matching here: it pulls the old colors back in and leaves a ghost of what was removed.
         stitched = g.add("NKDInpaintStitch", image=o(back), crop_data=o(crop, 4), feather=10, edge_hardness=0.0,
                          match_colors=0.0, seamless_edges=False)
-        info = {"op": op, "model": "Qwen Image Edit 2511", "steps": n_steps,
+        info = {"op": op, **model_info,
                 "final_prompt": text if isinstance(text, str) else EDIT_ERASE_INSTRUCTION.format(what="<the selection, named by Qwen3-VL>")}
     else:
         # Change with a prompt: Krea 2 redraws the selection at the chosen strength.

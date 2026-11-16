@@ -53,8 +53,12 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
 - **✏ Edit** (any finished picture: the viewer's button): an image editor over the stage (the timeline hides). The toolbar
   has **Crop** (free or a ratio), **Resize** (plus rotate and flip), **Adjust** (brightness, contrast, saturation, hue,
   grayscale, sepia) and **Select + AI**. Select by hand with a brush, with **AI select** (paint over an object and SAM 3.1
-  selects all of it), or by typing what to select. Then **Erase** it (Qwen Image Edit 2511 removes it), **Replace it
-  with…** something you describe, or **Change it with a prompt** (Krea 2, with a strength). **Remove background** works
+  selects all of it), or by typing what to select. Then **Erase** it, **Replace it with…** something you describe, or
+  **Change it with a prompt** (Krea 2, with a strength). **Edit the whole picture** takes an instruction ("make it
+  night time") with no selection. Erase, Replace and whole-picture edits use the **Edit model** you pick: Qwen Image
+  Edit 2511 (4 steps, fast) or MiniMax H3 Image (6 steps; needs its diffusion model and VAE from
+  [Comfy-Org/MiniMax-H3-Image](https://huggingface.co/Comfy-Org/MiniMax-H3-Image) plus H3's Qwen3-VL 32B text
+  encoder). **Remove background** works
   on the whole picture, to transparent, white or black (BiRefNet when one is in `models/background_removal`, else
   u2net). Every AI edit is also a result in the gallery; Undo/Redo step through them. **Save as new result** keeps the
   crop, size and color changes. Needs `sam3.1_multiplex_fp16` in `models/checkpoints` for AI select, and the NKD

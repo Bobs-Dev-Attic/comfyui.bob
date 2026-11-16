@@ -5,6 +5,22 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.28.0] - 2026-11-16
+
+### Added
+- **MiniMax H3 Image in the image editor.** The Select + AI panel has an **Edit model** choice for Erase, Replace and
+  whole-picture edits:
+  - **Qwen Image Edit 2511:** 4 steps with the Lightning LoRA. It's the fast one and stays the default.
+  - **MiniMax H3 Image:** MiniMax's image model, run the way ComfyUI's "MiniMax-H3-Image: Image Edit" template runs it
+    (6 distilled steps, cfg 1). It uses the H3 Image diffusion model and VAE, plus the Qwen3-VL 32B text encoder that
+    H3 already uses. The first edit loads about 34 GB of models.
+  - The picker remembers your choice in this browser and greys out a model that isn't installed.
+- **Edit the whole picture.** A new box in the Select + AI panel takes an instruction ("make it night time", "turn
+  it into a watercolor") and edits the whole picture with the chosen model. No selection is needed, and the result
+  keeps the picture's size.
+- **API:** generation requests for engine `imgedit` take `edit_model` (`qwen` or `h3image`) and the new `edit_op`
+  `instruct`. In `/api/capabilities`, `editor` gains `qwen`, `h3image` and `crop`.
+
 ## [0.27.0] - 2026-11-15
 
 ### Added
