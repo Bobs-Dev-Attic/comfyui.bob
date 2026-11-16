@@ -109,6 +109,27 @@ def h3_frame_alignment(first: bool, last: bool, frames: int) -> str:
     return ""
 
 
+# The sampler and scheduler each engine uses unless the Model step picks others: ComfyUI's
+# templates for each model. H3 Reference uses beta without turbo (see build_h3_ref).
+SAMPLING_DEFAULTS = {
+    "h3": ("res_multistep", "simple"), "h3ref": ("res_multistep", "simple"), "klein": ("euler", "simple"),
+    "krea2": ("euler", "simple"), "h3image": ("euler", "simple"), "music3": ("euler", "simple"),
+}
+
+
+def apply_sampling(graph: dict[str, dict], sampler: str | None, scheduler: str | None) -> dict[str, str]:
+    """Use the picked sampler and/or scheduler in a built graph: every KSampler, KSamplerSelect and
+    BasicScheduler in it (the main engines have one of each). Returns what was changed, for the info."""
+    changed: dict[str, str] = {}
+    for node in graph.values():
+        t, inp = node.get("class_type"), node.get("inputs", {})
+        if sampler and t in ("KSampler", "KSamplerSelect"):
+            inp["sampler_name"] = changed["sampler"] = sampler
+        if scheduler and t in ("KSampler", "BasicScheduler"):
+            inp["scheduler"] = changed["scheduler"] = scheduler
+    return changed
+
+
 def build_h3(
     files: dict[str, str | None],
     *,

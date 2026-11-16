@@ -50,6 +50,7 @@ function renderModels() {
           ${file ? `<span class="mc-file${file !== state.caps?.engines?.[m.engine]?.files?.unet ? " custom" : ""}">${esc(file.split(/[\\/]/).pop())}</span>` : ""}</button>`;
       }).join("")}</div>`).join("");
   renderUnet();
+  renderSampling();
 }
 
 /* The diffusion model an engine uses: the user's pick (if ComfyUI still has it) or the default. */
@@ -82,6 +83,40 @@ function renderUnet() {
     if (e.target.value) state.unet[eng] = e.target.value; else delete state.unet[eng];
     renderModels(); scheduleSave();
   };
+}
+
+/* Sampler and scheduler for the picked engine (the Model step). Empty = the engine's own, which
+   is what its ComfyUI template uses; the lists are ComfyUI's own (KSampler). */
+const SAMPLING_NOTES = {
+  h3image: "H3 Image is distilled for 6 steps on its own sigma grid: keep the simple scheduler, or the picture may come out noisy.",
+  h3ref: "By default H3 Reference uses simple with the turbo LoRA and beta without it.",
+  h3: "With the turbo LoRA, H3 is distilled for res_multistep and simple.",
+  krea2: "Krea 2 Turbo is distilled for 8 steps with euler and simple.",
+};
+function renderSampling() {
+  const box = $("#sampling-field");
+  if (!box) return;
+  const eng = state.engine[state.kind], caps = state.caps, def = caps?.sampling_defaults?.[eng];
+  if (!def || !caps.samplers?.length) { box.hidden = true; return; }
+  box.hidden = false;
+  const cur = state.sampling[eng] || {};
+  const defSched = eng === "h3ref" ? "simple or beta" : def.scheduler;
+  const sel = (id, list, val, dflt, label) => `<label class="samp-l">${label}<select id="${id}">
+      <option value=""${val ? "" : " selected"}>Default · ${esc(dflt)}</option>
+      ${list.map(n => `<option value="${esc(n)}"${n === val ? " selected" : ""}>${esc(n)}</option>`).join("")}</select></label>`;
+  const changed = !!(cur.sampler || cur.scheduler);
+  box.innerHTML = `<label>Sampling <span class="opt">sampler and scheduler</span></label>
+    <div class="samp-row">${sel("samp-sampler", caps.samplers, cur.sampler, def.sampler, "Sampler")}${sel("samp-scheduler", caps.schedulers, cur.scheduler, defSched, "Scheduler")}</div>
+    <p class="hint">${changed && SAMPLING_NOTES[eng] ? `<span class="warn">⚠ ${esc(SAMPLING_NOTES[eng])}</span>`
+      : "Default is what the model's ComfyUI template uses. Other choices change the look and the speed."}
+      ${changed ? ` <button type="button" class="link" id="samp-reset">Back to default</button>` : ""}</p>`;
+  const save = () => {
+    const s = { sampler: $("#samp-sampler").value, scheduler: $("#samp-scheduler").value };
+    if (s.sampler || s.scheduler) state.sampling[eng] = s; else delete state.sampling[eng];
+    renderSampling(); renderSteps?.(); scheduleSave();
+  };
+  $("#samp-sampler").onchange = save; $("#samp-scheduler").onchange = save;
+  const r = $("#samp-reset"); if (r) r.onclick = () => { delete state.sampling[eng]; renderSampling(); scheduleSave(); };
 }
 
 function pickModel(key) {
@@ -198,7 +233,7 @@ function renderSummary() {
       ${step ? ` <button type="button" class="jump" data-goto="${step}">Edit</button>` : ""}</span></div>`;
   $("#summary").innerHTML = [
     row("Project", esc(state.project ? state.project.name : "Experiment (not saved)"), "project"),
-    row("Model", `${esc(card?.name || eng)} · ${ms.label}${state.unet[eng] && unetFor(eng) === state.unet[eng] ? ` · ${esc(state.unet[eng].split(/[\\/]/).pop())}` : ""}`, "model", ms.cls !== "ok"),
+    row("Model", `${esc(card?.name || eng)} · ${ms.label}${state.unet[eng] && unetFor(eng) === state.unet[eng] ? ` · ${esc(state.unet[eng].split(/[\\/]/).pop())}` : ""}${state.sampling[eng] ? ` · ${esc([state.sampling[eng].sampler, state.sampling[eng].scheduler].filter(Boolean).join(" / "))}` : ""}`, "model", ms.cls !== "ok"),
     inputs !== null ? row("Inputs", esc(inputs || "add at least one picture"), "inputs", !inputs) : "",
     row("Prompt", prompt ? `<div class="pv">${esc(prompt.length > 400 ? prompt.slice(0, 400) + "…" : prompt)}</div>` : "empty", "prompt", !prompt),
     row("Settings", esc([dims, length, extras].filter(Boolean).join(" · ") || "defaults"), "settings"),
@@ -218,6 +253,7 @@ function collectSettings() {
     audios: state.arefs.map(pickRef), clean_audio: $("#clean-audio").checked,
     loras: state.loras.map(l => ({ name: l.name, strength: l.strength })),
     unet: { ...state.unet },
+    sampling: structuredClone(state.sampling),
     shots: state.shots ? structuredClone(state.shots) : null,
   };
 }
@@ -235,6 +271,9 @@ function applySettings(s) {
     $("#clean-audio").checked = s.clean_audio !== false;
     state.loras = (s.loras || []).filter(l => l && l.name).map(l => ({ name: l.name, strength: +l.strength || 1 }));
     state.unet = s.unet && typeof s.unet === "object" ? Object.fromEntries(Object.entries(s.unet).filter(([, v]) => typeof v === "string" && v)) : {};
+    state.sampling = s.sampling && typeof s.sampling === "object"
+      ? Object.fromEntries(Object.entries(s.sampling).filter(([, v]) => v && typeof v === "object" && (v.sampler || v.scheduler))
+          .map(([k, v]) => [k, { sampler: String(v.sampler || ""), scheduler: String(v.scheduler || "") }])) : {};
     state.shots = s.shots && Array.isArray(s.shots.list) ? structuredClone(s.shots) : null;
     // A hand-edited or partial file may lack shot fields; the Shots step expects all of them.
     if (state.shots) state.shots.list = state.shots.list.filter(x => x && typeof x === "object").map(x => ({

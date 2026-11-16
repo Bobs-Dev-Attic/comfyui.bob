@@ -99,6 +99,7 @@ const state = {
   refs: [],  // [{ref, url}] for H3 Reference
   loras: [],  // [{name, strength}] LoRAs on the model (loras.js)
   unet: {},  // engine -> diffusion model file picked in the Model step (none = the engine's default)
+  sampling: {},  // engine -> {sampler, scheduler} picked in the Model step (missing = the engine's own)
   shots: null,  // the Shots step (shots.js)
   arefs: [],  // [{ref, url, name}] reference sounds (voices to clone) for H3 Reference
   items: new Map(),
@@ -293,6 +294,8 @@ function collectRequest() {
     max_fidelity: eng === "h3ref" && $("#fidelity").checked,
     loras: Loras.forRequest(),
     unet: state.unet[eng] || null,
+    sampler: state.sampling[eng]?.sampler || null,
+    scheduler: state.sampling[eng]?.scheduler || null,
     enhance_after: (kind === "video" || kind === "image") ? Enhance.after() : null,
     project: state.project?.id ?? null,
   };
@@ -301,6 +304,8 @@ function collectRequest() {
 function applyParams(p) {
   state.kind = p.kind; state.engine[p.kind] = p.engine;
   if (p.unet) state.unet[p.engine] = p.unet; else delete state.unet[p.engine];
+  if (p.sampler || p.scheduler) state.sampling[p.engine] = { sampler: p.sampler || "", scheduler: p.scheduler || "" };
+  else delete state.sampling[p.engine];
   renderForm();
   $("#prompt").value = p.prompt || "";
   $("#lyrics").value = p.lyrics || "";

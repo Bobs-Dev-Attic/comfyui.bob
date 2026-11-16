@@ -32,6 +32,8 @@ class ComfyService:
         self._proxy_proc: subprocess.Popen | None = None
         self._models_cache: tuple[float, dict[str, list[str]]] | None = None
         self._node_types: set[str] | None = None
+        self.samplers: list[str] = []    # KSampler's sampler and scheduler names (filled by node_types)
+        self.schedulers: list[str] = []
 
     # ------------------------------------------------------------------ lifecycle
     async def start(self) -> None:
@@ -124,7 +126,12 @@ class ComfyService:
         if self._node_types is None:
             r = await self.http.get(f"{config.COMFYUI_URL}/object_info", timeout=60.0)
             r.raise_for_status()
-            self._node_types = set(r.json().keys())
+            info = r.json()
+            self._node_types = set(info.keys())
+            # The sampler and scheduler names this ComfyUI offers (KSampler's own lists).
+            req = (info.get("KSampler") or {}).get("input", {}).get("required", {})
+            pick = lambda k: list(req.get(k, [[]])[0]) if req.get(k) and isinstance(req[k][0], list) else []  # noqa: E731
+            self.samplers, self.schedulers = pick("sampler_name"), pick("scheduler")
         return self._node_types
 
     async def free_vram(self) -> bool:
