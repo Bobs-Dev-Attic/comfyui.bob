@@ -61,6 +61,7 @@ class GenerateRequest(BaseModel):
     references: list[str] = Field(default_factory=list, max_length=9)  # H3 reference-to-video pictures
     ref_audios: list[str] = Field(default_factory=list, max_length=3)  # H3 reference sounds: voices to clone (<Audio N>)
     loras: list[LoraUse] = Field(default_factory=list, max_length=8)  # LoRAs on the model, in order
+    unet: str | None = Field(None, max_length=500)  # a diffusion model to use instead of the engine's default
     source: str | None = Field(None, max_length=2000)  # enhance: the picture or video to improve (a media ref)
     enhance_opts: EnhanceOpts | None = None  # engine "enhance": the chain
     enhance_of: str | None = Field(None, max_length=64)  # enhance: the studio item it came from
@@ -329,6 +330,16 @@ class JobManager:
             resolved = {"files": files}
         else:
             resolved = {"files": files if req.engine == "reshoot" else files[sets[0].key]}
+            if req.unet and req.engine != "reshoot":
+                # The user's own pick from the Model step's "Diffusion model" list.
+                known = {n.replace("\\", "/").lower(): n for n in installed.get("diffusion_models", [])}
+                pick = known.get(req.unet.replace("\\", "/").lower())
+                if not pick:
+                    raise ValueError(f"Diffusion model not found in ComfyUI: {req.unet}")
+                if "unet" not in resolved["files"]:
+                    raise ValueError(f"{sets[0].title} has no diffusion model to replace")
+                resolved = {"files": {**resolved["files"], "unet": pick}}
+                req.unet = pick
         self._validate(req)
         if req.loras:
             from . import loras as lora_mod

@@ -192,6 +192,7 @@ async def capabilities(refresh: bool = False):
         missing_nodes = sorted(REQUIRED_NODES[key] - nodes) if nodes else []
         r["missing_nodes"] = missing_nodes
         r["ready"] = r["ready"] and not missing_nodes
+        r["unet_choices"] = models.unet_choices(mset, installed)
         engines[key] = r
     return {
         "engines": engines,

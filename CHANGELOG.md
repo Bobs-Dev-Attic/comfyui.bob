@@ -5,6 +5,20 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.26.0] - 2026-11-15
+
+### Added
+- **Choose the diffusion model.** The Model step has a **Diffusion model** list for the selected engine.
+  - **Default** keeps the file the app picks. **Made for <engine>** lists files that match the engine,
+    including fine-tunes found by name (for example any "krea" file for Krea 2). **Other diffusion models**
+    lists the rest, with a warning that they may not work.
+  - The text encoder, VAE and graph stay the same; only the diffusion model is swapped.
+  - The choice is kept per engine, saved with the project, shown on the model card and in the Generate
+    summary, and stored with each result, so "use these settings" brings it back.
+  - Generation requests take `unet`. The server checks that ComfyUI has the file and resolves its exact name
+    (forward or back slashes both work). It rejects an unknown file with a clear error.
+  - `/api/capabilities` lists each engine's `unet_choices`.
+
 ## [0.25.1] - 2026-11-15
 
 ### Changed
