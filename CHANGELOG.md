@@ -5,6 +5,13 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.29.1] - 2026-11-16
+
+### Changed
+- **Side step tabs.** The open step's tab now has an accent-tinted background, with a slim accent triangle on its
+  edge pointing at the panel it opens, in place of the accent bar. The other tabs have a subtle gray background, and
+  hovering darkens it a little. On narrow screens the triangle points down. It follows every theme and accent.
+
 ## [0.29.0] - 2026-11-16
 
 ### Added
