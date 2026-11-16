@@ -33,6 +33,9 @@ class ModelSet:
     source: str = ""
     notes: str = ""
     extra: dict = field(default_factory=dict)
+    # Words in a diffusion model's file name that mark it as made for this engine (fine-tunes
+    # whose names don't match the slot's candidates), for the "Diffusion model" picker.
+    unet_hints: tuple[str, ...] = ()
 
 
 H3 = ModelSet(
@@ -91,6 +94,7 @@ KREA2 = ModelSet(
     key="krea2",
     title="Krea 2 Turbo",
     source=HF_KREA2,
+    unet_hints=("krea",),
     slots=(
         Slot("unet", "diffusion_models", ("krea2_turbo_fp8*", "krea-2-turbo*", "krea2_turbo*", "krea-2*"),
              label="Krea 2 Turbo diffusion model"),
@@ -159,6 +163,18 @@ def _find(slot: Slot, names) -> str | None:
         if found:
             return found
     return None
+
+
+def unet_choices(model_set: ModelSet, installed: dict[str, list[str]]) -> dict[str, list[str]] | None:
+    """Diffusion models the user may swap in for this engine: those made for it first
+    (they match the slot's candidates or the set's name hints), then every other one."""
+    slot = next((s for s in model_set.slots if s.key == "unet"), None)
+    if not slot:
+        return None
+    names = sorted(installed.get(slot.folder, []), key=str.lower)
+    base = lambda n: n.replace("\\", "/").rsplit("/", 1)[-1].lower()  # noqa: E731
+    fits = [n for n in names if any(_match(c, n) for c in slot.candidates) or any(h in base(n) for h in model_set.unet_hints)]
+    return {"match": fits, "other": [n for n in names if n not in fits]}
 
 
 def resolve(model_set: ModelSet, installed: dict[str, list[str]],

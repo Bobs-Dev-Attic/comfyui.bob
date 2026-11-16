@@ -41,13 +41,46 @@ function renderModels() {
     <div class="model-group"><h4><i style="background:${KIND_COLOR[kind]}"></i>${KIND_LABEL[kind]}</h4>
       ${MODEL_CARDS.filter(m => m.kind === kind).map(m => {
         const st = modelState(m.engine), key = `${m.kind}:${m.engine}`;
-        const file = state.caps?.engines?.[m.engine]?.files?.unet;
+        const file = unetFor(m.engine);
         return `<button type="button" class="model-card${key === sel ? " sel" : ""}" data-model="${key}" aria-pressed="${key === sel}">
           <b>${esc(m.name)}</b><span class="mc-state ${st.cls}">${st.label}</span>
           <span class="mc-note">${esc(ENGINE_NOTES[key] || "")}</span>
           <span class="mc-opts">${m.opts.map(o => `<span>${esc(o)}</span>`).join("")}</span>
-          ${file ? `<span class="mc-file">${esc(file.split(/[\\/]/).pop())}</span>` : ""}</button>`;
+          ${file ? `<span class="mc-file${file !== state.caps?.engines?.[m.engine]?.files?.unet ? " custom" : ""}">${esc(file.split(/[\\/]/).pop())}</span>` : ""}</button>`;
       }).join("")}</div>`).join("");
+  renderUnet();
+}
+
+/* The diffusion model an engine uses: the user's pick (if ComfyUI still has it) or the default. */
+function unetFor(engine) {
+  const cap = state.caps?.engines?.[engine], pick = state.unet[engine];
+  const all = cap?.unet_choices ? [...cap.unet_choices.match, ...cap.unet_choices.other] : [];
+  return pick && all.includes(pick) ? pick : cap?.files?.unet || null;
+}
+function renderUnet() {
+  const box = $("#unet-field");
+  if (!box) return;
+  const eng = state.engine[state.kind], cap = state.caps?.engines?.[eng], ch = cap?.unet_choices;
+  if (!ch || (!ch.match.length && !ch.other.length)) { box.hidden = true; return; }
+  box.hidden = false;
+  const pick = state.unet[eng], def = cap.files?.unet;
+  const all = [...ch.match, ...ch.other];
+  const cur = pick && all.includes(pick) ? pick : "";
+  const card = MODEL_CARDS.find(m => m.kind === state.kind && m.engine === eng);
+  const opt = n => `<option value="${esc(n)}"${n === cur ? " selected" : ""}>${esc(n.replace(/\\/g, "/"))}</option>`;
+  box.innerHTML = `<label for="unet-pick">Diffusion model <span class="opt">for ${esc(card?.name || eng)}</span></label>
+    <select id="unet-pick">
+      <option value=""${cur ? "" : " selected"}>Default${def ? ` · ${esc(def.replace(/\\/g, "/"))}` : " (not installed)"}</option>
+      ${ch.match.length ? `<optgroup label="Made for ${esc(card?.name || eng)}">${ch.match.map(opt).join("")}</optgroup>` : ""}
+      ${ch.other.length ? `<optgroup label="Other diffusion models (may not work)">${ch.other.map(opt).join("")}</optgroup>` : ""}
+    </select>
+    <p class="hint" id="unet-hint">${cur && ch.other.includes(cur)
+      ? `<span class="warn">⚠ This file isn't known to be made for ${esc(card?.name || eng)}: the run may fail or look wrong.</span>`
+      : "Swap in a fine-tune or another version of the model. The text encoder and VAE stay the same."}</p>`;
+  $("#unet-pick").onchange = e => {
+    if (e.target.value) state.unet[eng] = e.target.value; else delete state.unet[eng];
+    renderModels(); scheduleSave();
+  };
 }
 
 function pickModel(key) {
@@ -164,7 +197,7 @@ function renderSummary() {
       ${step ? ` <button type="button" class="jump" data-goto="${step}">Edit</button>` : ""}</span></div>`;
   $("#summary").innerHTML = [
     row("Project", esc(state.project ? state.project.name : "Experiment (not saved)"), "project"),
-    row("Model", `${esc(card?.name || eng)} · ${ms.label}`, "model", ms.cls !== "ok"),
+    row("Model", `${esc(card?.name || eng)} · ${ms.label}${state.unet[eng] && unetFor(eng) === state.unet[eng] ? ` · ${esc(state.unet[eng].split(/[\\/]/).pop())}` : ""}`, "model", ms.cls !== "ok"),
     inputs !== null ? row("Inputs", esc(inputs || "add at least one picture"), "inputs", !inputs) : "",
     row("Prompt", prompt ? `<div class="pv">${esc(prompt.length > 400 ? prompt.slice(0, 400) + "…" : prompt)}</div>` : "empty", "prompt", !prompt),
     row("Settings", esc([dims, length, extras].filter(Boolean).join(" · ") || "defaults"), "settings"),
@@ -183,6 +216,7 @@ function collectSettings() {
     refs: state.refs.map(pickRef), frames: { first_frame: pickRef(state.frames.first_frame), last_frame: pickRef(state.frames.last_frame) },
     audios: state.arefs.map(pickRef), clean_audio: $("#clean-audio").checked,
     loras: state.loras.map(l => ({ name: l.name, strength: l.strength })),
+    unet: { ...state.unet },
     shots: state.shots ? structuredClone(state.shots) : null,
   };
 }
@@ -199,6 +233,7 @@ function applySettings(s) {
     state.arefs = (s.audios || []).filter(Boolean).map(r => ({ ...r, name: r.ref.split("/").pop() }));
     $("#clean-audio").checked = s.clean_audio !== false;
     state.loras = (s.loras || []).filter(l => l && l.name).map(l => ({ name: l.name, strength: +l.strength || 1 }));
+    state.unet = s.unet && typeof s.unet === "object" ? Object.fromEntries(Object.entries(s.unet).filter(([, v]) => typeof v === "string" && v)) : {};
     state.shots = s.shots && Array.isArray(s.shots.list) ? structuredClone(s.shots) : null;
     // A hand-edited or partial file may lack shot fields; the Shots step expects all of them.
     if (state.shots) state.shots.list = state.shots.list.filter(x => x && typeof x === "object").map(x => ({
