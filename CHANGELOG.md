@@ -5,6 +5,25 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.35.0] - 2026-11-16
+
+### Added
+- **✏ Edit in the Media Library.** Any picture there opens in the image editor: from its right-click menu, its preview
+  window, or the selection bar when one picture is picked. Saves and AI edits become results of the open project; the
+  library file itself isn't changed.
+- **Selection tools in the image editor** (Select + AI): **Rectangle**, **Square**, **Ellipse**, **Circle**, **Lasso**
+  and **Magic wand**, next to AI select, Brush and Eraser.
+  - **Marching ants** outline the selection in every tool but Crop (they stand still with Reduce motion on).
+  - New, **Add**, **Subtract** and **Intersect** choose how a new selection combines with the current one; Shift adds,
+    Alt subtracts and Shift + Alt intersects for one selection.
+  - The magic wand selects the area of similar color around the clicked pixel, with a **Tolerance** (0–255) and a
+    **Contiguous** switch (off: that color anywhere in the picture).
+  - While dragging a shape its size shows next to it; a click without dragging deselects.
+  - Shortcuts: M rectangle, O ellipse, L lasso, W magic wand, Ctrl+A select all, Ctrl+D deselect, Ctrl+Shift+I invert.
+
+### Changed
+- The selection's orange tint is lighter, so the ants read better.
+
 ## [0.34.0] - 2026-11-16
 
 ### Added

@@ -228,6 +228,7 @@ const Media = (() => {
     return `<div class="mg-selbar"><b>${n} selected</b>
       ${all ? "" : `<button type="button" class="btn sm ghost" data-act="select-all" title="Select every item shown (Ctrl+A)">Select all</button>`}
       ${pics ? `<button type="button" class="btn sm primary" data-act="use">Use</button>` : ""}
+      ${n === 1 && pics === 1 ? `<button type="button" class="btn sm" data-act="edit" title="Open the picture in the image editor">✏ Edit</button>` : ""}
       <button type="button" class="btn sm" data-act="tags">🏷 Tags…</button>
       ${inLib < n ? `<button type="button" class="btn sm" data-act="add">＋ Library</button>` : ""}
       ${inLib ? `<button type="button" class="btn sm" data-act="remove" title="Take it out of this project's library; the file stays">Remove</button>` : ""}
@@ -348,12 +349,21 @@ const Media = (() => {
         <span>${m.tags.length ? m.tags.map(t => `<i class="mg-tag on" style="--c:${tagColor(t)}">${esc(t)}</i>`).join(" ") : "No tags"}</span></div>`;
     const foot = document.createElement("div");
     const canUse = m.kind === "image" && state.kind === "video";
-    foot.innerHTML = `<span class="wm-foot-gap"></span><button type="button" class="btn sm" data-a="tags">🏷 Tags…</button>
+    foot.innerHTML = `<span class="wm-foot-gap"></span>${m.kind === "image" ? `<button type="button" class="btn sm" data-a="edit">✏ Edit</button>` : ""}<button type="button" class="btn sm" data-a="tags">🏷 Tags…</button>
       ${canUse ? `<button type="button" class="btn sm primary" data-a="use">Use</button>` : ""}<button type="button" class="btn sm" data-a="close">Close</button>`;
     const w = WM.open({ id: "media-preview", title: m.name, content: box, footer: foot, width: 760, height: 560, minWidth: 360, minHeight: 280 });
     foot.querySelector('[data-a="close"]').onclick = () => w.close();
     foot.querySelector('[data-a="tags"]').onclick = () => { w.close(); tagsDialog([m]); };
+    foot.querySelector('[data-a="edit"]')?.addEventListener("click", () => { w.close(); editItem(m); });
     foot.querySelector('[data-a="use"]')?.addEventListener("click", () => { w.close(); useItems([m]); });
+  }
+
+  /* Open a library picture in the image editor. Its saves and AI edits become results of the
+     open project; the file itself is left as it is. */
+  function editItem(m) {
+    if (m.kind !== "image" || m.exists === false || typeof Editor === "undefined") return;
+    if (win && document.contains(win.el)) win.close();  // the editor fills the stage behind this window
+    Editor.open({ kind: "image", project: state.project?.id ?? null, files: [{ url: m.url, path: m.ref, name: m.name }] });
   }
 
   /* ------------------------------------------------------------------ dialogs */
@@ -550,6 +560,7 @@ const Media = (() => {
     const eng = state.engine[state.kind], video = state.kind === "video";
     const entries = [
       one && ["Open", () => preview(one)],
+      one && one.kind === "image" && one.exists !== false && ["✏ Edit", () => editItem(one)],
       one && one.kind === "image" && typeof Angles !== "undefined" && ["🔄 Angles… (other camera angles)", () => Angles.dialog({ ref: one.ref, url: one.url, name: one.name })],
       pics.length && video && eng === "h3" && ["Use as first frame", () => useItems(pics, "first_frame")],
       pics.length && video && eng === "h3" && ["Use as last frame", () => useItems(pics, "last_frame")],
@@ -601,6 +612,7 @@ const Media = (() => {
         if (act === "dir") { st.view.descending = !st.view.descending; saveView(); return renderAll(); }
         if (act === "deselect") { st.selected.clear(); return renderAll(); }
         if (act === "use") return useItems(selectedItems(root));
+        if (act === "edit") return editItem(selectedItems(root)[0]);
         if (act === "tags") return tagsDialog(selectedItems(root));
         if (act === "add") return addToLibrary([...st.selected]);
         if (act === "remove") return removeFromLibrary([...st.selected]);

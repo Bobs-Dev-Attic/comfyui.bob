@@ -60,10 +60,14 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
     timeline, media library and results if you choose. Experiment can be copied into a new project the same way.
     Files aren't duplicated; both projects use the same uploads and results.
 
-- **✏ Edit** (any finished picture: the viewer's button): an image editor over the stage (the timeline hides). The toolbar
+- **✏ Edit** (any finished picture: the viewer's button; any picture in the media library: its menu, preview or the
+  selection bar): an image editor over the stage (the timeline hides). The toolbar
   has **Crop** (free or a ratio), **Resize** (plus rotate and flip), **Adjust** (brightness, contrast, saturation, hue,
-  grayscale, sepia) and **Select + AI**. Select by hand with a brush, with **AI select** (paint over an object and SAM 3.1
-  selects all of it), or by typing what to select. Then **Erase** it, **Replace it with…** something you describe, or
+  grayscale, sepia) and **Select + AI**. Select with **Rectangle**, **Square**, **Ellipse**, **Circle**, **Lasso** or the
+  **Magic wand** (tolerance, contiguous or not); Shift adds to the selection, Alt subtracts, both intersect (or pick
+  New, Add, Subtract or Intersect), and marching ants outline it. Or select by hand with a brush, with **AI select**
+  (paint over an object and SAM 3.1 selects all of it), or by typing what to select. Ctrl+A selects all, Ctrl+D
+  deselects, Ctrl+Shift+I inverts. Then **Erase** it, **Replace it with…** something you describe, or
   **Change it with a prompt** (Krea 2, with a strength). **Edit the whole picture** takes an instruction ("make it
   night time") with no selection. Erase, Replace and whole-picture edits use the **Edit model** you pick: Qwen Image
   Edit 2511 (4 steps, fast) or MiniMax H3 Image (6 steps; needs its diffusion model and VAE from

@@ -3,8 +3,10 @@
    Toolbar: Move · Crop · Resize · Adjust · Select, with Undo / Redo, Fit / 100 %, and
    "Save as new result". Crop, resize, rotate, flip and the color adjustments (brightness,
    contrast, saturation, hue, grayscale, sepia) run here on a canvas. The Select tool paints a
-   selection: Brush and Eraser by hand, or AI select, where SAM 3.1 (POST /api/edit/select) turns
-   a stroke (or words) into the object's outline. With a selection, the AI edits run as studio
+   selection: Rectangle, Square, Ellipse, Circle, Lasso and Magic wand (Shift adds, Alt subtracts,
+   both intersect), Brush and Eraser by hand, or AI select, where SAM 3.1 (POST /api/edit/select)
+   turns a stroke (or words) into the object's outline. The selection shows as marching ants on an
+   overlay canvas. With a selection, the AI edits run as studio
    jobs (engine "imgedit", app/workflows.build_imgedit):
      Erase                   Qwen Image Edit 2511 fills it with the background
      Replace with…           Qwen Image Edit 2511 puts something else there
@@ -20,6 +22,32 @@ const Editor = (() => {
   const ADJ = [["brightness", "Brightness", 0, 200, 100, "%"], ["contrast", "Contrast", 0, 200, 100, "%"],
     ["saturate", "Saturation", 0, 300, 100, "%"], ["hue", "Hue", -180, 180, 0, "°"],
     ["grayscale", "Grayscale", 0, 100, 0, "%"], ["sepia", "Sepia", 0, 100, 0, "%"]];
+  const svg = d => `<svg viewBox="0 0 16 16" aria-hidden="true">${d}</svg>`;
+  // [mode, icon, label, tooltip]
+  const SEL_MODES = [
+    ["rect", svg('<rect x="1.5" y="3.5" width="13" height="9"/>'), "Rectangle", "Drag a rectangle (M)"],
+    ["square", svg('<rect x="3" y="3" width="10" height="10"/>'), "Square", "Drag a square"],
+    ["lasso", svg('<path d="M8 2.8c3.6 0 6.2 1.6 6.2 3.7S11.6 10 8.4 10C5 10 1.8 8.7 1.8 6.5 1.8 4.4 4.5 2.8 8 2.8zM5.2 9.6c-.9 1.3-.6 2.7.9 3.6"/>'), "Lasso", "Draw around an area freehand (L)"],
+    ["ellipse", svg('<ellipse cx="8" cy="8" rx="6.5" ry="4.3"/>'), "Ellipse", "Drag an ellipse (O)"],
+    ["circle", svg('<circle cx="8" cy="8" r="5.6"/>'), "Circle", "Drag a circle"],
+    ["wand", "🪄", "Magic wand", "Click a color: selects the area of similar color (W)"],
+    ["ai", "✨", "AI select", "Paint over an object: AI selects all of it"],
+    ["brush", "🖌", "Brush", "Paint the selection by hand (B)"],
+    ["erase", "⌫", "Eraser", "Take away from the selection by hand (E)"],
+  ];
+  const SHAPES = new Set(["rect", "square", "ellipse", "circle"]);
+  const COMBINING = new Set([...SHAPES, "lasso", "wand"]);
+  const COMBINES = [["new", "New", "Replace the selection"], ["add", "Add", "Add to the selection (or hold Shift)"],
+    ["sub", "Subtract", "Take away from the selection (or hold Alt)"], ["int", "Intersect", "Keep only the overlap (or hold Shift + Alt)"]];
+  const SEL_HINTS = {
+    ai: ["Paint a stroke over the object. Alt + stroke takes it away from the selection.", "Paint over an object · Alt subtracts"],
+    brush: ["Paint the area to change. [ and ] change the brush size.", "Paint the selection"],
+    erase: ["Paint over the selection to take parts away. [ and ] change the brush size.", "Erase from the selection"],
+    shape: ["Drag over the picture. Shift + drag adds, Alt + drag subtracts. A click without dragging deselects (so does Ctrl+D).", "Drag · Shift adds · Alt subtracts"],
+    lasso: ["Hold the button and draw around the area; it closes itself when you let go. Shift adds, Alt subtracts.", "Draw around the area · Shift adds · Alt subtracts"],
+    wand: ["Click a color to select the area of similar color. A higher tolerance takes in more shades; Contiguous keeps to the touching area. Shift + click adds, Alt + click subtracts.", "Click a color · Shift adds · Alt subtracts"],
+  };
+  const selHint = m => SEL_HINTS[SHAPES.has(m) ? "shape" : m] || SEL_HINTS.ai;
   let ed = null;  // the open editor's state
 
   /* ---------------------------------------------------------------- helpers */
@@ -58,6 +86,7 @@ const Editor = (() => {
       mask: mk(base.width, base.height), maskOn: false,
       hist: [], redo: [], tool: "select", zoom: 1, panX: 0, panY: 0,
       crop: null, aspect: "free", adj: adjDefault(), brush: 40, mode: "ai", stroke: null, busy: null,
+      combine: "new", tol: 32, contiguous: true, shape: null, maskVer: 0, antsPhase: -1, raf: 0,
       fields: { bg: "transparent" },  // the side panel's text boxes and choices, kept across redraws
       ops: [],  // what was done, for the saved result's note
     };
@@ -66,6 +95,7 @@ const Editor = (() => {
     root.hidden = false;
     bind();
     requestAnimationFrame(() => { fit(); setTool("select"); });
+    ed.raf = requestAnimationFrame(antsLoop);
   }
   function close(force = false) {
     if (!ed) return;
@@ -75,7 +105,8 @@ const Editor = (() => {
     ed.stage.classList.remove("editing");
     window.removeEventListener("keydown", onKey, true);
     window.removeEventListener("resize", draw);
-    ed = null;
+    cancelAnimationFrame(ed.raf);
+    ed = null; pixCache = null; edgeKey = "";
   }
 
   function template(it) {
@@ -86,10 +117,10 @@ const Editor = (() => {
         <span class="ed-title" title="${esc(it.files[0].name)}">✏ Edit picture</span>
         <span class="ed-sep"></span>
         ${tool("move", "✋", "Move", "Pan and zoom (wheel zooms anywhere)")}
-        ${tool("crop", "⬚", "Crop", "Crop to an area or an aspect ratio")}
+        ${tool("crop", "✂", "Crop", "Crop to an area or an aspect ratio")}
         ${tool("resize", "⤢", "Resize", "Change the size, rotate or flip")}
         ${tool("adjust", "🎨", "Adjust", "Brightness, contrast, saturation, hue")}
-        ${tool("select", "🖌", "Select + AI", "Select an area by hand or with AI, then erase, replace or change it")}
+        ${tool("select", "⬚", "Select + AI", "Select an area (rectangle, ellipse, lasso, magic wand, brush or AI), then erase, replace or change it")}
         <span class="ed-sep"></span>
         <button type="button" class="ex-btn" data-ed="undo" title="Undo (Ctrl+Z)">↶</button>
         <button type="button" class="ex-btn" data-ed="redo" title="Redo (Ctrl+Y)">↷</button>
@@ -99,7 +130,7 @@ const Editor = (() => {
         <button type="button" class="btn sm primary" data-ed="save" title="Save the picture as a new result in the gallery (Ctrl+S)">💾 Save as new result</button>
       </div>
       <div class="ed-body">
-        <div class="ed-wrap"><canvas class="ed-view"></canvas>
+        <div class="ed-wrap"><canvas class="ed-view"></canvas><canvas class="ed-over" aria-hidden="true"></canvas>
           <div class="ed-busy" hidden><div class="ed-busy-box"><b class="ed-busy-label"></b>
             <div class="bar"><i></i></div><button type="button" class="btn sm" data-ed="cancel-ai">Cancel</button></div></div>
         </div>
@@ -132,9 +163,9 @@ const Editor = (() => {
     const m = ed.mask, t = tint && tint.width === m.width && tint.height === m.height ? tint : (tint = mk(m.width, m.height));
     const g = t.getContext("2d");
     g.globalCompositeOperation = "copy"; g.drawImage(m, 0, 0);
-    g.globalCompositeOperation = "source-in"; g.fillStyle = "rgba(255, 122, 69, .5)"; g.fillRect(0, 0, t.width, t.height);
+    g.globalCompositeOperation = "source-in"; g.fillStyle = "rgba(255, 122, 69, .32)"; g.fillRect(0, 0, t.width, t.height);
     g.globalCompositeOperation = "source-over";
-    ed.maskOn = hasMask();
+    ed.maskOn = hasMask(); ed.maskVer++;
     renderSide(); draw();
   }
   function hasMask() {
@@ -177,7 +208,7 @@ const Editor = (() => {
     }
     g.restore();
     if (ed.tool === "crop" && ed.crop) drawCrop(g);
-    if (ed.tool === "select" && ed.cursor && ed.mode !== "ai") {
+    if (ed.tool === "select" && ed.cursor && (ed.mode === "brush" || ed.mode === "erase")) {
       g.strokeStyle = "rgba(255,255,255,.85)"; g.lineWidth = 1;
       g.beginPath(); g.arc(ed.cursor[0], ed.cursor[1], ed.brush * ed.zoom / 2, 0, Math.PI * 2); g.stroke();
     }
@@ -185,6 +216,78 @@ const Editor = (() => {
     $e(".ed-zoom").textContent = `${Math.round(ed.zoom * 100)}%`;
     $e('[data-ed="undo"]').disabled = !ed.hist.length || !!ed.busy;
     $e('[data-ed="redo"]').disabled = !ed.redo.length || !!ed.busy;
+    drawOverlay();
+  }
+
+  /* ---------------------------------------------------------------- marching ants
+     The selection's outline, on a canvas over the picture: the mask drawn at screen size, minus
+     itself shrunk by a pixel, leaves the edge; a moving diagonal black-and-white pattern fills it. */
+  let edgeKey = "", edgeS = null, edgeI = null, antsTile = null;
+  const stillAnts = () => document.documentElement.dataset.motion === "reduce" || matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function antsPattern() {
+    if (antsTile) return antsTile;
+    antsTile = mk(8, 8);
+    const g = antsTile.getContext("2d"), d = g.createImageData(8, 8);
+    for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
+      const i = (y * 8 + x) * 4, v = (x + y) % 8 < 4 ? 255 : 0;
+      d.data[i] = d.data[i + 1] = d.data[i + 2] = v; d.data[i + 3] = 255;
+    }
+    g.putImageData(d, 0, 0);
+    return antsTile;
+  }
+  function edges(W, H, dpr) {
+    const key = `${ed.maskVer}|${ed.zoom}|${ed.panX}|${ed.panY}|${W}|${H}`;
+    if (key === edgeKey && edgeS) return edgeS;
+    edgeKey = key;
+    for (const c of [edgeS ||= mk(W, H), edgeI ||= mk(W, H)]) if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+    const sg = edgeS.getContext("2d"), ig = edgeI.getContext("2d");
+    sg.setTransform(1, 0, 0, 1, 0, 0); sg.globalCompositeOperation = "source-over"; sg.clearRect(0, 0, W, H);
+    sg.imageSmoothingEnabled = false;
+    sg.setTransform(dpr * ed.zoom, 0, 0, dpr * ed.zoom, dpr * ed.panX, dpr * ed.panY);
+    sg.drawImage(ed.mask, 0, 0);
+    sg.setTransform(1, 0, 0, 1, 0, 0);
+    ig.globalCompositeOperation = "copy"; ig.drawImage(edgeS, 0, 0);
+    ig.globalCompositeOperation = "destination-in";
+    const k = Math.max(1, Math.round(dpr));
+    for (const [dx, dy] of [[k, 0], [-k, 0], [0, k], [0, -k]]) ig.drawImage(edgeS, dx, dy);
+    sg.globalCompositeOperation = "destination-out"; sg.drawImage(edgeI, 0, 0);
+    sg.globalCompositeOperation = "source-over";
+    return edgeS;
+  }
+  const antsNow = () => stillAnts() ? 0 : Math.floor(performance.now() / 110) % 8;
+  function drawOverlay() {
+    if (!ed) return;
+    const ov = $e(".ed-over"), [vw, vh] = viewSize(), dpr = devicePixelRatio || 1;
+    const W = Math.round(vw * dpr), H = Math.round(vh * dpr);
+    if (ov.width !== W || ov.height !== H) { ov.width = W; ov.height = H; ov.style.width = vw + "px"; ov.style.height = vh + "px"; }
+    const g = ov.getContext("2d"), t = ed.antsPhase = antsNow();
+    g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, W, H);
+    if (ed.maskOn && ed.tool !== "crop") {
+      g.drawImage(edges(W, H, dpr), 0, 0);
+      const pat = g.createPattern(antsPattern(), "repeat");
+      pat.setTransform(new DOMMatrix([1, 0, 0, 1, t, 0]));
+      g.globalCompositeOperation = "source-in"; g.fillStyle = pat; g.fillRect(0, 0, W, H);
+      g.globalCompositeOperation = "source-over";
+    }
+    if (ed.shape) {  // the shape being drawn
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      tracePath(g, ed.shape, ([x, y]) => [ed.panX + x * ed.zoom, ed.panY + y * ed.zoom]);
+      g.lineWidth = 1; g.strokeStyle = "#000"; g.setLineDash([]); g.stroke();
+      g.strokeStyle = "#fff"; g.setLineDash([4, 4]); g.lineDashOffset = -t; g.stroke(); g.setLineDash([]);
+      if (ed.shape.mode !== "lasso") {
+        const b = shapeBox(ed.shape), [sx, sy] = [ed.panX + (b.x + b.w) * ed.zoom, ed.panY + (b.y + b.h) * ed.zoom];
+        const label = `${Math.round(b.w)} × ${Math.round(b.h)}`;
+        g.font = "11px system-ui, sans-serif";
+        const tw = g.measureText(label).width;
+        g.fillStyle = "rgba(0,0,0,.7)"; g.fillRect(sx + 6, sy + 6, tw + 10, 18);
+        g.fillStyle = "#fff"; g.fillText(label, sx + 11, sy + 19);
+      }
+    }
+  }
+  function antsLoop() {
+    if (!ed) return;
+    if ((ed.maskOn || ed.shape) && antsNow() !== ed.antsPhase) drawOverlay();
+    ed.raf = requestAnimationFrame(antsLoop);
   }
 
   /* ---------------------------------------------------------------- history */
@@ -217,7 +320,7 @@ const Editor = (() => {
     if (t === "crop" && !ed.crop) ed.crop = { x: 0, y: 0, w: ed.base.width, h: ed.base.height };
     if (t !== "adjust") ed.adj = adjDefault();
     renderSide(); draw();
-    $e(".ed-view").style.cursor = t === "move" ? "grab" : t === "select" ? (ed.mode === "ai" ? "crosshair" : "none") : "default";
+    $e(".ed-view").style.cursor = t === "move" ? "grab" : t === "select" ? (ed.mode === "brush" || ed.mode === "erase" ? "none" : "crosshair") : "default";
   }
 
   function renderSide() {
@@ -259,17 +362,20 @@ const Editor = (() => {
       const whole = !!caps[model], sel = whole && caps.crop;
       const dis = (ok, why) => ok ? "" : ` disabled title="${why}"`;
       side.innerHTML = `<h4>Select</h4>
-        <div class="seg sm ed-modes">
-          <button type="button" data-mode="ai" class="${m === "ai" ? "active" : ""}"${dis(caps.select, "Needs a SAM 3 checkpoint")} title="Paint over an object: AI selects all of it">✨ AI select</button>
-          <button type="button" data-mode="brush" class="${m === "brush" ? "active" : ""}" title="Paint the selection by hand (B)">🖌 Brush</button>
-          <button type="button" data-mode="erase" class="${m === "erase" ? "active" : ""}" title="Remove from the selection (E)">⌫ Eraser</button>
-        </div>
-        <label class="ed-l ed-slider">Brush size <span class="ed-v">${ed.brush}px</span><input type="range" min="4" max="400" value="${ed.brush}" data-k="brush"></label>
+        <div class="ed-selmodes" role="group" aria-label="Selection tool">${SEL_MODES.map(([k, ico, l, tip]) => {
+          const off = k === "ai" && !caps.select;
+          return `<button type="button" data-mode="${k}" class="${m === k ? "on" : ""}" aria-pressed="${m === k}"${off ? " disabled" : ""} title="${off ? "Needs a SAM 3 checkpoint" : tip}"><span>${ico}</span>${l}</button>`;
+        }).join("")}</div>
+        ${COMBINING.has(m) ? `<div class="seg sm ed-combine" role="group" aria-label="How a new selection combines with the current one">${COMBINES.map(([k, l, tip]) =>
+          `<button type="button" data-combine="${k}" class="${ed.combine === k ? "active" : ""}" title="${tip}">${l}</button>`).join("")}</div>` : ""}
+        ${m === "wand" ? `<label class="ed-l ed-slider">Tolerance <span class="ed-v">${ed.tol}</span><input type="range" min="0" max="255" value="${ed.tol}" data-k="tol"></label>
+          <label class="ed-chk"><input type="checkbox" data-k="contig"${ed.contiguous ? " checked" : ""}> Contiguous (only the touching area)</label>` : ""}
+        ${["ai", "brush", "erase"].includes(m) ? `<label class="ed-l ed-slider">Brush size <span class="ed-v">${ed.brush}px</span><input type="range" min="4" max="400" value="${ed.brush}" data-k="brush"></label>` : ""}
         <div class="ed-row"><input type="text" data-k="find" value="${fv("find")}" placeholder="…or type what to select" aria-label="Select by words"${dis(caps.select, "Needs a SAM 3 checkpoint")}>
           <button type="button" class="btn sm" data-ed="find"${dis(caps.select, "Needs a SAM 3 checkpoint")}>Find</button></div>
         <div class="ed-row wrap"><button type="button" class="btn sm" data-ed="mask-clear"${dis(on, "Nothing selected")}>Clear</button>
           <button type="button" class="btn sm" data-ed="mask-invert">Invert</button><button type="button" class="btn sm" data-ed="mask-all">All</button></div>
-        <p class="hint">${m === "ai" ? "Paint a stroke over the object. Alt + stroke takes it away from the selection." : "Paint the area to change. [ and ] change the brush size."}</p>
+        <p class="hint">${selHint(m)[0]}</p>
 
         <h4>AI edit ${on ? "" : `<span class="hint inline">(select an area first)</span>`}</h4>
         <label class="ed-l">Edit model<select data-k="edit-model" aria-label="Model for Erase, Replace and whole-picture edits">${EDIT_MODELS.map(([v, l]) =>
@@ -291,7 +397,7 @@ const Editor = (() => {
         <h4>Background</h4>
         <div class="ed-row"><button type="button" class="btn sm" data-ai="remove_bg"${dis(caps.remove_bg && !busy, "Needs a background remover in ComfyUI")} title="Uses ${esc(caps.remover || "u2net")}">✂ Remove background</button>
           <select data-k="bg" aria-label="New background">${[["transparent", "Transparent"], ["white", "White"], ["black", "Black"]].map(([v, l]) => `<option value="${v}"${ed.fields.bg === v ? " selected" : ""}>${l}</option>`).join("")}</select></div>`;
-      hint(m === "ai" ? "Paint over an object · Alt subtracts" : m === "brush" ? "Paint the selection" : "Erase from the selection");
+      hint(selHint(m)[1]);
     }
   }
 
@@ -412,6 +518,90 @@ const Editor = (() => {
     g.restore();
   }
   function setMask(fn) { ed.hist.push(snapshot()); ed.redo = []; fn(ed.mask.getContext("2d")); maskChanged(); }
+  const MASK_OPS = {
+    clear: () => setMask(g => g.clearRect(0, 0, ed.mask.width, ed.mask.height)),
+    all: () => setMask(g => { g.fillStyle = "#fff"; g.fillRect(0, 0, ed.mask.width, ed.mask.height); }),
+    invert: () => setMask(g => { g.save(); g.globalCompositeOperation = "xor"; g.fillStyle = "#fff"; g.fillRect(0, 0, ed.mask.width, ed.mask.height); g.restore(); }),
+  };
+  // Modifier keys pick how a new selection combines: Shift adds, Alt subtracts, both intersect.
+  const opFrom = e => e.shiftKey && e.altKey ? "int" : e.shiftKey ? "add" : e.altKey ? "sub" : ed.combine;
+  // Put a new selection (white on transparent, picture size) together with the current one.
+  function combineMask(c, op) {
+    setMask(g => {
+      g.save();
+      if (op === "new") g.clearRect(0, 0, ed.mask.width, ed.mask.height);
+      g.globalCompositeOperation = op === "sub" ? "destination-out" : op === "int" ? "destination-in" : "source-over";
+      g.drawImage(c, 0, 0);
+      g.restore();
+    });
+  }
+
+  /* Rectangle, square, ellipse, circle (a box from a to b; square and circle keep it even) and lasso. */
+  function shapeBox(s) {
+    let [x0, y0] = s.a, [x1, y1] = s.b;
+    if (s.mode === "square" || s.mode === "circle") {
+      const d = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));
+      x1 = x0 + (x1 < x0 ? -d : d); y1 = y0 + (y1 < y0 ? -d : d);
+    }
+    return { x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) };
+  }
+  function tracePath(g, s, f) {
+    g.beginPath();
+    if (s.mode === "lasso") { s.pts.forEach((p, i) => { const [x, y] = f(p); i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.closePath(); return; }
+    const b = shapeBox(s), [x0, y0] = f([b.x, b.y]), [x1, y1] = f([b.x + b.w, b.y + b.h]);
+    if (SHAPES.has(s.mode) && (s.mode === "rect" || s.mode === "square")) g.rect(x0, y0, x1 - x0, y1 - y0);
+    else g.ellipse((x0 + x1) / 2, (y0 + y1) / 2, Math.abs(x1 - x0) / 2, Math.abs(y1 - y0) / 2, 0, 0, Math.PI * 2);
+  }
+  function finishShape(op) {
+    const s = ed.shape; ed.shape = null;
+    if (!s) return;
+    const b = shapeBox(s);
+    const tiny = s.mode === "lasso" ? s.pts.length < 3 : b.w * ed.zoom < 3 || b.h * ed.zoom < 3;
+    if (tiny) {  // a click: deselect, as in other editors
+      if (op === "new" && ed.maskOn) MASK_OPS.clear(); else drawOverlay();
+      return;
+    }
+    const c = mk(ed.base.width, ed.base.height), g = c.getContext("2d");
+    g.fillStyle = "#fff"; tracePath(g, s, p => p); g.fill();
+    combineMask(c, op);
+  }
+
+  /* Magic wand: the pixels whose color is within the tolerance of the clicked one (each channel),
+     either the area touching it (a scanline flood fill) or anywhere in the picture. */
+  let pixCache = null;
+  function wand([fx, fy], op) {
+    const W = ed.base.width, H = ed.base.height, x0 = Math.floor(fx), y0 = Math.floor(fy);
+    if (x0 < 0 || y0 < 0 || x0 >= W || y0 >= H) return;
+    if (pixCache?.base !== ed.base) pixCache = { base: ed.base, data: ed.base.getContext("2d").getImageData(0, 0, W, H).data };
+    const d = pixCache.data, tol = ed.tol, s = (y0 * W + x0) * 4;
+    const r = d[s], gr = d[s + 1], b = d[s + 2], a = d[s + 3];
+    const near = p => { const i = p * 4; return Math.abs(d[i] - r) <= tol && Math.abs(d[i + 1] - gr) <= tol && Math.abs(d[i + 2] - b) <= tol && Math.abs(d[i + 3] - a) <= tol; };
+    const out = new ImageData(W, H), o = new Uint32Array(out.data.buffer), ON = 0xffffffff;
+    if (ed.contiguous) {
+      const seen = new Uint8Array(W * H), stack = [x0, y0];
+      while (stack.length) {
+        const y = stack.pop(), x = stack.pop(), row = y * W;
+        if (seen[row + x] || !near(row + x)) continue;
+        let l = x, rr = x;
+        while (l > 0 && !seen[row + l - 1] && near(row + l - 1)) l--;
+        while (rr < W - 1 && !seen[row + rr + 1] && near(row + rr + 1)) rr++;
+        for (let i = l; i <= rr; i++) { seen[row + i] = 1; o[row + i] = ON; }
+        for (const ny of [y - 1, y + 1]) {
+          if (ny < 0 || ny >= H) continue;
+          const nrow = ny * W;
+          let open = false;
+          for (let i = l; i <= rr; i++) {
+            const ok = !seen[nrow + i] && near(nrow + i);
+            if (ok && !open) { stack.push(i, ny); open = true; } else if (!ok) open = false;
+          }
+        }
+      }
+    } else {
+      for (let p = 0, n = W * H; p < n; p++) if (near(p)) o[p] = ON;
+    }
+    const c = mk(W, H); c.getContext("2d").putImageData(out, 0, 0);
+    combineMask(c, op);
+  }
 
   // The server needs this exact picture: upload it unless it already has a copy.
   async function sourceRef() {
@@ -514,7 +704,7 @@ const Editor = (() => {
   /* ---------------------------------------------------------------- save */
   async function save() {
     if (ed.busy) return;
-    if (!ed.dirty) { Media.toast("This picture is already in your results."); return; }
+    if (!ed.dirty) { Media.toast(ed.item?.id ? "This picture is already in your results." : "Nothing to save yet: edit the picture first."); return; }
     try {
       const fd = new FormData();
       fd.append("file", await canvasBlob(ed.base), "edit.png");
@@ -536,8 +726,9 @@ const Editor = (() => {
     root.addEventListener("click", e => {
       const a = e.target.closest("[data-ed]")?.dataset.ed, t = e.target.closest("[data-tool]")?.dataset.tool;
       const mode = e.target.closest("[data-mode]")?.dataset.mode, ai = e.target.closest("[data-ai]")?.dataset.ai;
-      const pct = e.target.closest("[data-pct]")?.dataset.pct;
+      const pct = e.target.closest("[data-pct]")?.dataset.pct, comb = e.target.closest("[data-combine]")?.dataset.combine;
       if (t) return setTool(t);
+      if (comb) { ed.combine = comb; renderSide(); return; }
       if (mode) { ed.mode = mode; renderSide(); setTool("select"); return; }
       if (ai) return runAi(ai);
       if (pct) { $e('[data-k="rw"]').value = Math.round(ed.base.width * pct / 100); $e('[data-k="rh"]').value = Math.round(ed.base.height * pct / 100); return; }
@@ -547,9 +738,7 @@ const Editor = (() => {
         "resize-apply": applyResize, "rot-l": () => transform("rot-l"), "rot-r": () => transform("rot-r"),
         "flip-h": () => transform("flip-h"), "flip-v": () => transform("flip-v"),
         "adj-apply": applyAdjust, "adj-reset": () => { ed.adj = adjDefault(); renderSide(); draw(); },
-        "mask-clear": () => setMask(g => g.clearRect(0, 0, ed.mask.width, ed.mask.height)),
-        "mask-all": () => setMask(g => { g.fillStyle = "#fff"; g.fillRect(0, 0, ed.mask.width, ed.mask.height); }),
-        "mask-invert": () => setMask(g => { g.save(); g.globalCompositeOperation = "xor"; g.fillStyle = "#fff"; g.fillRect(0, 0, ed.mask.width, ed.mask.height); g.restore(); }),
+        "mask-clear": MASK_OPS.clear, "mask-all": MASK_OPS.all, "mask-invert": MASK_OPS.invert,
         find: () => { const q = String(ed.fields.find || "").trim(); if (q) selectWith({ text: q }); else Media.toast("Type what to select, e.g. “the cup”."); },
         "cancel-ai": () => { if (ed.busy?.id) cancel(ed.busy.id); },
       })[a]?.();
@@ -565,12 +754,14 @@ const Editor = (() => {
       }
       if (["find", "erase-hint", "replace", "prompt", "instruct"].includes(k)) ed.fields[k] = e.target.value;
       if (k === "brush") { ed.brush = +e.target.value; e.target.previousElementSibling.textContent = `${ed.brush}px`; draw(); }
+      if (k === "tol") { ed.tol = +e.target.value; e.target.previousElementSibling.textContent = ed.tol; }
       if (k === "strength") { ed.strength = +e.target.value / 100; e.target.previousElementSibling.textContent = `${e.target.value}%`; }
       if (k === "rw" && $e('[data-k="lock"]').checked) $e('[data-k="rh"]').value = Math.round(+e.target.value * ed.base.height / ed.base.width);
       if (k === "rh" && $e('[data-k="lock"]').checked) $e('[data-k="rw"]').value = Math.round(+e.target.value * ed.base.width / ed.base.height);
     });
     root.addEventListener("change", e => {
       if (e.target.dataset.k === "bg") ed.fields.bg = e.target.value;
+      if (e.target.dataset.k === "contig") ed.contiguous = e.target.checked;
       if (e.target.dataset.k === "edit-model") {
         ed.fields["edit-model"] = e.target.value;
         Settings.set({ editor: { edit_model: e.target.value } });
@@ -606,6 +797,8 @@ const Editor = (() => {
       }
       if (ed.tool === "select") {
         const p = toImg(sx, sy);
+        if (SHAPES.has(ed.mode) || ed.mode === "lasso") { ed.shape = { mode: ed.mode, a: p, b: p, pts: [p] }; drag = { kind: "shape", op: opFrom(e) }; drawOverlay(); return; }
+        if (ed.mode === "wand") { wand(p, opFrom(e)); return; }
         if (ed.mode === "ai") { ed.stroke = [p]; drag = { kind: "ai", alt: e.altKey }; draw(); }
         else { ed.hist.push(snapshot()); ed.redo = []; ed.stroke = [p]; paint(ed.stroke, ed.mode === "erase"); drag = { kind: "paint" }; maskChanged(); }
       }
@@ -614,10 +807,16 @@ const Editor = (() => {
       if (!ed) return;
       const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top;
       ed.cursor = [sx, sy];
-      if (!drag) { if (ed.tool === "select" && ed.mode !== "ai") draw(); if (ed.tool === "crop") cv.style.cursor = cropCursor(sx, sy); return; }
+      if (!drag) { if (ed.tool === "select" && (ed.mode === "brush" || ed.mode === "erase")) draw(); if (ed.tool === "crop") cv.style.cursor = cropCursor(sx, sy); return; }
       if (drag.kind === "pan") { ed.panX = drag.px + sx - drag.sx; ed.panY = drag.py + sy - drag.sy; draw(); }
       else if (drag.kind === "crop") { cropDrag(drag.what, (sx - drag.sx) / ed.zoom, (sy - drag.sy) / ed.zoom, drag.start); renderSide(); draw(); }
       else if (drag.kind === "ai") { ed.stroke.push(toImg(sx, sy)); draw(); }
+      else if (drag.kind === "shape") {
+        const p = toImg(sx, sy), s = ed.shape, last = s.pts.at(-1);
+        s.b = p;
+        if (s.mode === "lasso" && Math.hypot(p[0] - last[0], p[1] - last[1]) * ed.zoom >= 2) s.pts.push(p);
+        drawOverlay();
+      }
       else if (drag.kind === "paint") {
         const p = toImg(sx, sy);
         paint([ed.stroke.at(-1), p], ed.mode === "erase"); ed.stroke.push(p); maskChanged();
@@ -629,6 +828,7 @@ const Editor = (() => {
       if (d.kind === "pan") cv.style.cursor = ed.tool === "move" ? "grab" : "";
       if (d.kind === "ai") { const pts = ed.stroke; ed.stroke = null; draw(); aiSelect(pts, d.alt); }
       if (d.kind === "paint") { ed.stroke = null; }
+      if (d.kind === "shape") finishShape(d.op);
     };
     cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", up);
     cv.addEventListener("pointerleave", () => { if (ed) { ed.cursor = null; if (ed.tool === "select") draw(); } });
@@ -654,6 +854,11 @@ const Editor = (() => {
     // The studio's own shortcuts (Enter adds to the timeline, F fits it, Space plays…) don't
     // apply while the editor covers the stage.
     e.stopPropagation();
+    const k = e.key.toLowerCase();
+    if (ctrl && k === "a") { e.preventDefault(); return MASK_OPS.all(); }
+    if (ctrl && k === "d") { e.preventDefault(); return MASK_OPS.clear(); }
+    if (ctrl && e.shiftKey && k === "i") { e.preventDefault(); return MASK_OPS.invert(); }
+    if (ctrl || e.altKey) return;
     if (e.key === "Escape") return close();
     if (e.code === "Space") { space = true; e.preventDefault(); return; }
     if (e.key === "Enter" && ed.tool === "crop") { e.preventDefault(); return applyCrop(); }
@@ -662,6 +867,8 @@ const Editor = (() => {
     if (e.key === "1") return actual();
     if (e.key.toLowerCase() === "b") { ed.mode = "brush"; setTool("select"); }
     if (e.key.toLowerCase() === "e") { ed.mode = "erase"; setTool("select"); }
+    const modeKey = { m: "rect", o: "ellipse", l: "lasso", w: "wand" }[k];
+    if (modeKey) { ed.mode = modeKey; setTool("select"); }
   }
 
   return { open, close, isOpen: () => !!ed };
