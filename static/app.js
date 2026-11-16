@@ -507,7 +507,7 @@ async function uploadArefs(files) {
 function initArefs() {
   const input = $("#aref-input");
   input.addEventListener("change", () => { uploadArefs([...input.files]); input.value = ""; });
-  $("#btn-use-h3ref").onclick = () => { state.engine.video = "h3ref"; renderForm(); scheduleSave(); };
+  $("#btn-use-h3ref").onclick = () => { const prev = state.engine[state.kind]; state.engine.video = "h3ref"; renderForm(); scheduleSave(); Loras.checkFit(prev); };
   $("#clean-audio").addEventListener("change", () => scheduleSave());
   const field = $("#f-arefs");
   field.addEventListener("dragover", e => { e.preventDefault(); field.classList.add("over"); });
@@ -940,13 +940,17 @@ async function action(a, it) {
   if (a === "workflow") return workflowDialog(it);
   if (a === "angles") { const f = it.files[0]; return Angles.dialog({ ref: f.path, url: f.url, name: f.name }); }
   if (a === "ref") {
+    const prev = state.engine[state.kind];
     state.kind = "video"; state.engine.video = "h3ref";
+    if (prev !== "h3ref") Loras.checkFit(prev);
     addRef(it.files[0].path, it.files[0].url); renderForm();
     showStep("inputs");
     return;
   }
   if (a === "first" || a === "last") {
+    const prev = state.engine[state.kind];
     state.kind = "video"; state.engine.video = "h3"; renderForm();
+    if (prev !== "h3") Loras.checkFit(prev);
     setFrame(a === "first" ? "first_frame" : "last_frame", it.files[0].path, it.files[0].url);
     showStep("inputs");
     return;

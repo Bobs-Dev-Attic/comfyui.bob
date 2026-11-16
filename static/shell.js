@@ -121,9 +121,11 @@ function renderSampling() {
 
 function pickModel(key) {
   const [kind, engine] = key.split(":");
+  const prev = state.engine[state.kind];
   state.kind = kind; state.engine[kind] = engine;
   renderForm();
   scheduleSave();
+  if (engine !== prev) Loras.checkFit(prev);  // LoRAs made for the old model may not fit the new one
 }
 
 /* ------------------------------------------------------------------ steps */
@@ -236,6 +238,10 @@ function renderSummary() {
     row("Model", `${esc(card?.name || eng)} · ${ms.label}${state.unet[eng] && unetFor(eng) === state.unet[eng] ? ` · ${esc(state.unet[eng].split(/[\\/]/).pop())}` : ""}${state.sampling[eng] ? ` · ${esc([state.sampling[eng].sampler, state.sampling[eng].scheduler].filter(Boolean).join(" / "))}` : ""}`, "model", ms.cls !== "ok"),
     inputs !== null ? row("Inputs", esc(inputs || "add at least one picture"), "inputs", !inputs) : "",
     row("Prompt", prompt ? `<div class="pv">${esc(prompt.length > 400 ? prompt.slice(0, 400) + "…" : prompt)}</div>` : "empty", "prompt", !prompt),
+    state.loras.length ? (() => {
+      const bad = Loras.mismatched();
+      return row("LoRAs", `${state.loras.length} LoRA${state.loras.length === 1 ? "" : "s"}${bad.length ? ` · ⚠ ${bad.length} made for another model` : ""}`, "loras", bad.length > 0);
+    })() : "",
     row("Settings", esc([dims, length, extras].filter(Boolean).join(" · ") || "defaults"), "settings"),
   ].join("");
 }

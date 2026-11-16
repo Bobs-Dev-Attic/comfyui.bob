@@ -5,6 +5,17 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.34.0] - 2026-11-16
+
+### Added
+- **LoRA check when the model changes.** Switching to another model shows a window when that leaves LoRAs made for a
+  different model, for example H3 LoRAs on Krea 2. It lists each one (what it's for, its strength) and offers **Remove
+  them** or **Keep them**.
+  - It asks only when the change creates a new mismatch: not again when the LoRAs didn't fit the previous model
+    either, and not for LoRAs whose model can't be told from the file.
+  - It also runs when **→ Reference**, **→ First/Last frame** or **Switch to H3 Reference** change the model.
+  - The Generate step's summary has a **LoRAs** row that flags mismatches ("⚠ 2 made for another model").
+
 ## [0.33.0] - 2026-11-16
 
 ### Added

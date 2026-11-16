@@ -463,5 +463,49 @@ const Loras = (() => {
   }
 
   function forRequest() { return state.loras.map(l => ({ name: l.name, strength: l.strength })); }
-  return { load, render, browse, initStep, add, replace, details, forRequest, fits: name => fits(byName(name)) };
+
+  /* LoRAs on the list made for another model than the selected one. Only LoRAs whose model family is
+     known count: an unknown one may fit, so it isn't flagged. */
+  function mismatched(eng = engine()) {
+    const want = data?.engine_families?.[eng] || [];
+    if (!data || !want.length) return [];
+    return state.loras.map((l, i) => ({ ...l, i, r: byName(l.name) }))
+      .filter(x => x.r && x.r.family && x.r.family !== "unknown" && !want.includes(x.r.family));
+  }
+
+  /* After the model changes: if that leaves LoRAs that don't fit (and they did fit, or weren't
+     there, before), say which and offer to take them off. prevEngine = the engine before the change. */
+  async function checkFit(prevEngine) {
+    if (!state.loras.length) return;
+    try { await load(); } catch { return; }
+    const bad = mismatched();
+    if (!bad.length) return;
+    const before = new Set(prevEngine ? mismatched(prevEngine).map(x => x.name) : []);
+    if (bad.every(x => before.has(x.name))) return;  // nothing new: they didn't fit the last model either
+    const name = modelName();
+    const box = document.createElement("div");
+    box.className = "wm-form lora-fit";
+    box.innerHTML = `<p>${bad.length === 1 ? "This LoRA was" : `These ${bad.length} LoRAs were`} made for another model than <b>${esc(name)}</b>.
+      On ${esc(name)} ${bad.length === 1 ? "it" : "they"} may do nothing, fail to load, or spoil the result.</p>
+      <ul class="lora-fit-list">${bad.map(x => `<li>${icon(x.r)}<span class="lf-txt"><b title="${esc(fullPath(x.r, x.name))}">${esc(label(x.r))}</b><small>Made for ${esc(x.r.family_label || x.r.family)} · strength ${x.strength}</small></span></li>`).join("")}</ul>
+      <p class="hint">Removed LoRAs can be added back from the LoRAs step (Browse LoRAs…).</p>`;
+    const foot = document.createElement("div");
+    foot.innerHTML = `<span class="wm-foot-gap"></span><button type="button" class="btn sm" data-a="keep">Keep them</button>
+      <button type="button" class="btn sm primary" data-a="remove">Remove ${bad.length === 1 ? "it" : `all ${bad.length}`}</button>`;
+    const w = WM.open({ id: "lora-fit", title: `LoRAs that don't fit ${name}`, content: box, footer: foot,
+      width: 540, height: Math.min(560, 250 + bad.length * 52), minWidth: 360, minHeight: 220 });
+    foot.addEventListener("click", e => {
+      const a = e.target.closest("[data-a]")?.dataset.a;
+      if (!a) return;
+      if (a === "remove") {
+        const drop = new Set(bad.map(x => x.name));
+        state.loras = state.loras.filter(l => !drop.has(l.name));
+        render(); scheduleSave(); renderSteps?.();
+        Media.toast(`Removed ${bad.length} LoRA${bad.length === 1 ? "" : "s"} made for another model.`);
+      }
+      w.close();
+    });
+  }
+
+  return { load, render, browse, initStep, add, replace, details, forRequest, fits: name => fits(byName(name)), mismatched, checkFit };
 })();
