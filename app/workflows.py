@@ -1,7 +1,7 @@
 """API-format graph builders.
 
 The graphs mirror the official ComfyUI templates (``video_minimax_h3_t2v``,
-``video_minimax_h3_i2v``, ``image_flux3_klein_distilled_t2i`` and
+``video_minimax_h3_i2v``, ``image_flux3_klein_distilled_t2i``, the "Text to Image (Krea-2 Turbo)" blueprint and
 ``audio_minimax_music_3``) with their subgraphs flattened, so they run on the
 local models through the plain API format the comfy-sdk submits.
 
@@ -32,6 +32,7 @@ ASPECTS: dict[str, tuple[int, int]] = {
 H3_QUALITY = {"draft": 0.4, "standard": 0.6, "full": 0.98}
 H3_AUDIO_ONLY_MP = 0.2  # sound-only runs don't need pixels; keep the latent small
 KLEIN_QUALITY = {"draft": 0.5, "standard": 1.0, "high": 2.0}
+KREA2_QUALITY = {"draft": 0.5, "standard": 1.0, "high": 2.0}
 
 
 def dims_for(aspect: tuple[float, float], megapixels: float, multiple: int = 32) -> tuple[int, int]:
@@ -373,6 +374,74 @@ def build_klein(
     save = g.add("SaveImage", images=o(decoded), filename_prefix=prefix)
     return Built(graph=g.nodes, outputs=[save],
                  info={"width": width, "height": height, "steps": steps, "enhanced": use_enhance})
+
+
+# ------------------------------------------------------------------ Krea 2 Turbo
+
+# The prompt expander of ComfyUI's "Text to Image (Krea-2 Turbo)" blueprint: the Krea 2 text
+# encoder (Qwen3-VL 4B) rewrites the request, and the user's words follow this text.
+KREA2_ENHANCE_PROMPT = (
+    "You are an expert prompt engineer for text-to-image models. Your task is to expand the user's prompt into a "
+    "highly effective image-generation prompt.\n\n"
+    "Follow these rules strictly:\n"
+    "1. Faithfulness First: Preserve all original subjects, actions, colors, and spatial relationships. Do not add "
+    "new objects, props, characters, or animals unless the user clearly implies them.\n"
+    "2. Practical T2I Structure: Group subjects with their own attributes and actions. Use grounded phrasing for "
+    "poses, interactions, and spatial layout.\n"
+    "3. Text Rendering: If the user requests visible text, specify the exact text and wrap requested words in quotes.\n"
+    "4. Avoid Over-Specification: Do not invent highly specific clothing, colors, materials, or scene details unless "
+    "the input supports them.\n"
+    "5. Structure: Write one cohesive paragraph. No bullets, JSON, markdown, or planning notes.\n"
+    "6. Respect Existing Detail: If the prompt is already detailed, lightly polish rather than heavily expand.\n"
+    "7. Preserve User Medium: When the user names a medium (photo, illustration, painting, 3D render), honor it.\n\n"
+    "User's Input:\n\n"
+)
+
+
+def build_krea2(
+    files: dict[str, str | None],
+    *,
+    prompt: str,
+    width: int,
+    height: int,
+    seed: int,
+    steps: int = 8,
+    enhance: bool = False,
+    prefix: str = "bob/krea2",
+    loras: list[tuple[str, float]] | None = None,
+) -> Built:
+    """Krea 2 Turbo text-to-image: 8 steps, cfg 1, euler/simple, zeroed negative (blueprint defaults)."""
+    g = Graph()
+    o = Graph.out
+    unet = g.add("UNETLoader", unet_name=files["unet"], weight_dtype="default")
+    clip = g.add("CLIPLoader", clip_name=files["clip"], type="krea2", device="default")
+    vae = g.add("VAELoader", vae_name=files["vae"])
+
+    text: Any = prompt
+    if enhance:
+        text = o(g.add(
+            "TextGenerate",
+            clip=o(clip),
+            prompt=KREA2_ENHANCE_PROMPT + prompt,
+            max_length=512,
+            sampling_mode="on",  # a dynamic combo: its sub-inputs go in flat as "sampling_mode.<name>"
+            **{f"sampling_mode.{k}": v for k, v in (("temperature", 0.7), ("top_k", 64), ("top_p", 0.95), ("min_p", 0.05),
+                                                    ("repetition_penalty", 1.05), ("seed", int(seed) % (2**63)))},
+            thinking=False,
+            use_default_template=True,
+        ))
+    pos = g.add("CLIPTextEncode", clip=o(clip), text=text)
+    neg = g.add("ConditioningZeroOut", conditioning=o(pos))
+    empty = g.add("EmptyLatentImage", width=width, height=height, batch_size=1)
+    sampled = g.add(
+        "KSampler",
+        model=o(chain_loras(g, unet, loras)), seed=int(seed), steps=int(steps), cfg=1.0, sampler_name="euler", scheduler="simple",
+        positive=o(pos), negative=o(neg), latent_image=o(empty), denoise=1.0,
+    )
+    decoded = g.add("VAEDecode", samples=o(sampled), vae=o(vae))
+    save = g.add("SaveImage", images=o(decoded), filename_prefix=prefix)
+    return Built(graph=g.nodes, outputs=[save],
+                 info={"width": width, "height": height, "steps": steps, "enhanced": enhance})
 
 
 # ------------------------------------------------------------------- Angles (Qwen Image Edit 2511)

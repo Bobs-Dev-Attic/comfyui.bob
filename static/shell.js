@@ -18,6 +18,7 @@ const MODEL_CARDS = [
   { kind: "video", engine: "h3ref", name: "H3 Reference", opts: ["1–9 reference pictures", "<Picture N> tags", "2–15 s", "Native stereo sound", "Turbo 4 steps"] },
   { kind: "image", engine: "h3", name: "H3 still", opts: ["One frame", "768p canvas", "8 aspect ratios"] },
   { kind: "image", engine: "klein", name: "FLUX 3 Klein", opts: ["Up to 2 MP", "Prompt upsampler", "Fast"] },
+  { kind: "image", engine: "krea2", name: "Krea 2", opts: ["Up to 2 MP", "Photoreal", "Turbo 8 steps", "Prompt expander"] },
   { kind: "audio", engine: "h3", name: "H3 sound", opts: ["Ambience and effects", "2–15 s", "MP3"] },
   { kind: "audio", engine: "music3", name: "Music 3", opts: ["Songs with vocals", "Tagged lyrics", "10–300 s", "MP3"] },
 ];

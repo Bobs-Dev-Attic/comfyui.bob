@@ -23,7 +23,7 @@ from .comfy import ComfyService
 log = logging.getLogger("bob.jobs")
 
 Kind = Literal["video", "image", "audio"]
-Engine = Literal["h3", "h3ref", "klein", "music3", "reshoot", "enhance", "angles"]
+Engine = Literal["h3", "h3ref", "klein", "krea2", "music3", "reshoot", "enhance", "angles"]
 
 
 class LoraUse(BaseModel):
@@ -69,7 +69,7 @@ class GenerateRequest(BaseModel):
     white_bg: bool = False  # angles: make the plain backdrop pure white (imaging.whiten_backdrop)
     clean_audio: bool = True  # clean them and keep the best 6-10 s of speech (H3RefAudioPrep, when installed)
     max_fidelity: bool = False  # reference pictures at 2048px instead of the output's size
-    enhance: bool = False  # Klein prompt upsampler
+    enhance: bool = False  # Klein prompt upsampler / Krea 2 prompt expander
     lyrics: str = Field("", max_length=20000)  # Music 3
     batch: int = Field(1, ge=1, le=4)  # number of takes (seeds seed, seed+1, ...)
     project: str | None = Field(None, max_length=64)  # project id; None = Experiment
@@ -377,6 +377,8 @@ class JobManager:
                 raise ValueError("Add at least one reference picture or reference sound")
         if req.engine == "klein" and req.kind != "image":
             raise ValueError("FLUX 3 Klein only makes images")
+        if req.engine == "krea2" and req.kind != "image":
+            raise ValueError("Krea 2 only makes images")
         if req.engine == "music3" and req.kind != "audio":
             raise ValueError("Music 3 only makes audio")
         if req.engine == "reshoot":
@@ -487,6 +489,13 @@ class JobManager:
             return workflows.build_klein(
                 files, prompt=req.prompt, width=w, height=h, seed=seed, steps=req.steps or 16,
                 enhance=req.enhance, aspect_label=req.aspect, prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras],
+            )
+        if req.engine == "krea2":
+            mp = workflows.KREA2_QUALITY.get(req.quality, 1.0)
+            w, h = workflows.dims_for(aspect, mp, multiple=16)
+            return workflows.build_krea2(
+                files, prompt=req.prompt, width=w, height=h, seed=seed, steps=req.steps or 8,
+                enhance=req.enhance, prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras],
             )
         return workflows.build_music3(
             files, caption=req.prompt, lyrics=req.lyrics or "[Instrumental]", seconds=req.seconds, seed=seed,

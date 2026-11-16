@@ -6,7 +6,7 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 
 const ENGINES = {
   video: [{ key: "h3", label: "MiniMax H3" }, { key: "h3ref", label: "H3 Reference" }],
-  image: [{ key: "h3", label: "H3 still" }, { key: "klein", label: "FLUX 3 Klein" }],
+  image: [{ key: "h3", label: "H3 still" }, { key: "klein", label: "FLUX 3 Klein" }, { key: "krea2", label: "Krea 2" }],
   audio: [{ key: "h3", label: "H3 sound" }, { key: "music3", label: "Music 3" }],
 };
 
@@ -15,6 +15,7 @@ const ENGINE_NOTES = {
   "video:h3ref": "Reference-to-video: put people, objects or places from your pictures into a new scene, with sound.",
   "image:h3": "One frame rendered by the H3 video model at its native 768p canvas.",
   "image:klein": "Dedicated image model: fast and sharp, up to 2 MP.",
+  "image:krea2": "Krea 2 Turbo: photoreal pictures in 8 steps, up to 2 MP.",
   "audio:h3": "H3 generates audio jointly with a tiny video, then keeps only the soundtrack (MP3).",
   "audio:music3": "Full songs with vocals from a style caption and tagged lyrics.",
 };
@@ -40,6 +41,8 @@ non_diegetic_music: <score style, or N/A>`,
 `<medium and style>, <subject with concrete colors and materials>, <setting>, <lighting>. The camera holds a static shot.`,
   "image:klein":
 `<medium: e.g. Studio photograph / Watercolor illustration>, <subject>, <setting>, <lighting and camera>, <colors and materials>.`,
+  "image:krea2":
+`<medium: e.g. Candid photograph / Oil painting>, <subject and action>, <setting>, <lighting and camera>, <colors and materials>.`,
   "audio:h3":
 `overall_soundscape: <describe the sounds, their order and timing — e.g. rain on a tin roof, thunder building to a close crack at 3 seconds>
 non_diegetic_music: <music style, or N/A>`,
@@ -70,6 +73,11 @@ const TIPS = {
     <li>Lead with the medium and style, then scene, lighting, camera, then subjects with concrete colors and materials.</li>
     <li>Put any text to render in double quotes.</li>
     <li>Short prompt? Turn on <b>Enhance prompt</b>.</li></ul>`,
+  krea2: `<ul>
+    <li>Write plain sentences: subject and action first, then setting, lighting and camera.</li>
+    <li>Name the medium (“photo of”, “illustration of”) when you want one; it defaults to photoreal.</li>
+    <li>Put any text to render in double quotes.</li>
+    <li>Short prompt? Turn on <b>Enhance prompt</b>: Krea 2's text encoder expands it.</li></ul>`,
   music3: `<ul>
     <li>Caption in three parts: Global Metadata → Vocal Details → Arrangement.</li>
     <li>Lyrics tags (<code>[Intro] [Verse] [Chorus] [Bridge] [Outro] [Instrumental]</code>) control structure.</li></ul>`,
@@ -138,7 +146,7 @@ function renderForm() {
   renderModels();  // the Model step (shell.js)
 
   const isRef = eng === "h3ref";
-  const isH3 = eng === "h3" || isRef, isKlein = eng === "klein", isMusic = eng === "music3";
+  const isH3 = eng === "h3" || isRef, isKlein = eng === "klein" || eng === "krea2", isMusic = eng === "music3";
   $("#f-frames").hidden = !(kind === "video") || isRef;
   $("#f-refs").hidden = !isRef;
   $("#f-arefs").hidden = !(kind === "video" && isH3);
@@ -150,6 +158,7 @@ function renderForm() {
   $("#f-seconds").hidden = kind === "image";
   $("#f-turbo").hidden = !isH3;
   $("#f-enhance").hidden = !isKlein;
+  $("#enhance-hint").textContent = eng === "krea2" ? "Krea 2's text encoder expands short prompts" : "Qwen3.5 upsampler expands short prompts";
   $("#prompt-label").textContent = isMusic ? "Style caption" : kind === "audio" ? "Sound description" : "Prompt";
   $("#prompt").placeholder = {
     video: "Describe the shots, camera moves, and the sound…",
@@ -192,14 +201,14 @@ function updateDerived() {
   }
   let dims = "";
   if (kind !== "audio") {
-    const mpTable = eng === "klein" ? { draft: 0.5, standard: 1, high: 2 } : { draft: 0.4, standard: 0.6, full: 0.98 };
+    const mpTable = eng === "klein" || eng === "krea2" ? { draft: 0.5, standard: 1, high: 2 } : { draft: 0.4, standard: 0.6, full: 0.98 };
     const mp = mpTable[$("#quality").value] ?? 0.4;
     const kf = state.frames.first_frame || state.frames.last_frame;
     if (kind === "video" && eng === "h3" && kf?.w) {
       const [w, h] = dimsFor([kf.w, kf.h], mp);
       dims = `${w} × ${h} (from keyframe)`;
     } else {
-      const [w, h] = dimsFor(ASPECT[$("#aspect").value] || [16, 9], mp, eng === "klein" ? 16 : 32);
+      const [w, h] = dimsFor(ASPECT[$("#aspect").value] || [16, 9], mp, eng === "klein" || eng === "krea2" ? 16 : 32);
       dims = `${w} × ${h}`;
     }
   }
@@ -209,7 +218,7 @@ function updateDerived() {
   const turbo = $("#turbo").checked;
   const refLora = state.caps?.engines?.h3ref?.files?.turbo_lora || "";
   const refTurboSteps = /8step/i.test(refLora) ? 8 : 4;
-  const autoSteps = eng === "h3" ? (turbo ? 8 : 20) : eng === "h3ref" ? (turbo && refLora ? refTurboSteps : 20) : eng === "klein" ? 16 : 30;
+  const autoSteps = eng === "h3" ? (turbo ? 8 : 20) : eng === "h3ref" ? (turbo && refLora ? refTurboSteps : 20) : eng === "klein" ? 16 : eng === "krea2" ? 8 : 30;
   $("#steps-hint").textContent = `auto = ${autoSteps}`;
   postContext();
   scheduleSave();

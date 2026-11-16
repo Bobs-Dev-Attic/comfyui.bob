@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 HF_H3 = "https://huggingface.co/Comfy-Org/MiniMax-H3"
 HF_KLEIN = "https://huggingface.co/Comfy-Org"
+HF_KREA2 = "https://huggingface.co/Comfy-Org/Krea-2"
 HF_MUSIC3 = "https://huggingface.co/Comfy-Org/MiniMax-Music-3"
 HF_QWEN_EDIT = "https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI"
 
@@ -84,6 +85,20 @@ KLEIN = ModelSet(
     ),
 )
 
+# Krea 2 Turbo, as ComfyUI's "Text to Image (Krea-2 Turbo)" blueprint runs it: the fp8 file first,
+# then the bf16 original. The Qwen3-VL 4B text encoder is shared with Klein.
+KREA2 = ModelSet(
+    key="krea2",
+    title="Krea 2 Turbo",
+    source=HF_KREA2,
+    slots=(
+        Slot("unet", "diffusion_models", ("krea2_turbo_fp8*", "krea-2-turbo*", "krea2_turbo*", "krea-2*"),
+             label="Krea 2 Turbo diffusion model"),
+        Slot("clip", "text_encoders", ("qwen3vl_4b*",), label="Qwen3-VL 4B text encoder"),
+        Slot("vae", "vae", ("qwen_image_vae*",), label="Qwen Image VAE"),
+    ),
+)
+
 MUSIC3 = ModelSet(
     key="music3",
     title="MiniMax Music 3",
@@ -115,7 +130,7 @@ ANGLES = ModelSet(
     ),
 )
 
-ALL_SETS = {s.key: s for s in (H3, H3REF, KLEIN, MUSIC3, ANGLES)}
+ALL_SETS = {s.key: s for s in (H3, H3REF, KLEIN, KREA2, MUSIC3, ANGLES)}
 
 
 def _match(pattern: str, filename: str) -> bool:
