@@ -382,7 +382,8 @@ class AnglesReq(BaseModel):
     prompt: str = Field("", max_length=4000)  # added after the pose: background, lighting, what to keep
     seed: int = -1
     project: str | None = Field(None, max_length=64)
-    enhance_after: dict | None = None  # Enhance chain to run on each result (the page runs it)
+    enhance_after: dict | None = None  # Enhance chain to run on each result (the server runs it when each is done)
+    white_bg: bool = False  # make the plain backdrop pure white before enhancing
 
 
 @app.get("/api/angles/options")
@@ -402,7 +403,7 @@ async def angles(req: AnglesReq):
         for pose in req.poses:
             items += await jobs.generate(GenerateRequest(kind="image", engine="angles", references=[req.ref], pose=pose,
                                                          prompt=req.prompt, seed=seed, project=req.project,
-                                                         enhance_after=req.enhance_after))
+                                                         enhance_after=req.enhance_after, white_bg=req.white_bg))
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return {"items": items}

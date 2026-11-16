@@ -1,7 +1,8 @@
 /* Angles: re-shoot one picture from many camera angles with Qwen Image Edit 2511 and fal's
    multiple-angles LoRA (app/workflows.py build_angles). Opens from a picture's 🔄 Angles… (viewer,
    results menu, media library). Pick poses on an 8 directions × 4 heights grid (or a preset, e.g.
-   24 head angles), add what the background and light should be, optionally enhance each result
+   24 head angles), add what the background and light should be, optionally make a plain backdrop
+   pure white (done by the server, app/imaging.py) and enhance each result
    with SeedVR2 (the Enhance chain, run as each picture finishes), and put them in this project or
    a new one. The last choices are remembered (localStorage). */
 "use strict";
@@ -20,7 +21,7 @@ const Angles = (() => {
   };
   const DEF_PROMPT = "Plain pure white studio background, even soft lighting, same person, same face, hair and clothing.";
   const DEF = { cells: PRESETS.head24.el.flatMap(e => AZ.map((_, a) => `${e}:${a}`)), dist: "close-up", prompt: DEF_PROMPT,
-    enhance: true, res: 1080, where: "new" };
+    white: true, enhance: true, res: 1080, where: "new" };
   const load = () => { try { return { ...DEF, ...(JSON.parse(localStorage.getItem(KEY) || "{}") || {}) }; } catch { return { ...DEF }; } };
   const store = o => { try { localStorage.setItem(KEY, JSON.stringify(o)); } catch {} };
   const fmt = s => s < 90 ? `${Math.max(5, Math.round(s / 5) * 5)} s` : `${Math.round(s / 60)} min`;
@@ -50,6 +51,9 @@ const Angles = (() => {
         <div class="field grow"><label for="ang-prompt">Also ask for</label><textarea id="ang-prompt" rows="2">${esc(o.prompt)}</textarea></div>
       </div>
       <div class="ang-row">
+        <label class="check" title="Floods the plain backdrop from the picture's edges and makes it pure white (the model alone keeps the reference's backdrop tone)"><input type="checkbox" id="ang-white"${o.white ? " checked" : ""}> Make a plain background pure white</label>
+      </div>
+      <div class="ang-row">
         <label class="check"><input type="checkbox" id="ang-enh"${o.enhance ? " checked" : ""}> Enhance each with SeedVR2 to</label>
         <select id="ang-res">${[1080, 1440, 2160].map(v => `<option value="${v}"${+o.res === v ? " selected" : ""}>${v}p</option>`).join("")}</select>
       </div>
@@ -67,7 +71,7 @@ const Angles = (() => {
     const $f = s => form.querySelector(s);
     const cells = () => [...form.querySelectorAll("[data-cell]:checked")].map(c => c.dataset.cell);
     const poses = () => cells().map(c => { const [e, a] = c.split(":").map(Number); return `${AZ[a][0]} ${EL[e][0]} ${$f("#ang-dist").value}`; });
-    const read = () => ({ cells: cells(), dist: $f("#ang-dist").value, prompt: $f("#ang-prompt").value, enhance: $f("#ang-enh").checked,
+    const read = () => ({ cells: cells(), dist: $f("#ang-dist").value, prompt: $f("#ang-prompt").value, white: $f("#ang-white").checked, enhance: $f("#ang-enh").checked,
       res: +$f("#ang-res").value, where: form.querySelector('input[name="ang-where"]:checked').value });
     const enhOpts = v => v.enhance ? { facerefine: false, dlss: false, upscaler: "seedvr2", seedvr2_model: "", seedvr2_res: v.res } : null;
     const show = () => {
@@ -99,7 +103,7 @@ const Angles = (() => {
           await api(`/api/projects/${p.id}/library/add`, { method: "POST", body: JSON.stringify({ refs: [src.ref], tags: ["reference"] }) }).catch(() => {});
           await openProject(p.id);
         }
-        const { items } = await api("/api/angles", { method: "POST", body: JSON.stringify({ ref: src.ref, poses: poses(), prompt: v.prompt, project, enhance_after: enhOpts(v) }) });
+        const { items } = await api("/api/angles", { method: "POST", body: JSON.stringify({ ref: src.ref, poses: poses(), prompt: v.prompt, project, white_bg: v.white, enhance_after: enhOpts(v) }) });
         store(v);
         w.close();
         for (const x of items) { state.items.set(x.id, x); Activity.onEvent({ type: "item", item: x }); }

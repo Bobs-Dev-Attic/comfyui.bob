@@ -51,8 +51,8 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
     Files aren't duplicated; both projects use the same uploads and results.
 
 - **🔄 Angles** (any picture: viewer, results menu or media library): re-shoot it from other camera angles with Qwen Image
-  Edit 2511 and the multiple-angles LoRA. Pick directions × heights on a grid or a preset such as **24 head angles**, ask for
-  a plain white background, upscale each with SeedVR2, and put them in a new project. Needs `qwen_image_edit_2511` (bf16,
+  Edit 2511 and the multiple-angles LoRA. Pick directions × heights on a grid or a preset such as **24 head angles**, make a
+  plain backdrop pure white, upscale each with SeedVR2, and put them in a new project. Needs `qwen_image_edit_2511` (bf16,
   fp8mixed, or a lightx2v fp8 file converted with `scripts/convert_lightx2v_fp8.py`), `qwen_2.5_vl_7b`, `qwen_image_vae`,
   `qwen-image-edit-2511-multiple-angles-lora` and, for 4-step speed, the 2511 Lightning LoRA.
 - **✨ Enhance** (any finished picture or video: the viewer's button or the results menu): improve it with a chain, in order:

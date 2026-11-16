@@ -17,7 +17,7 @@ from typing import Any, Literal
 from PIL import Image
 from pydantic import BaseModel, Field
 
-from . import config, media, models, workflows
+from . import config, imaging, media, models, workflows
 from .comfy import ComfyService
 
 log = logging.getLogger("bob.jobs")
@@ -66,6 +66,7 @@ class GenerateRequest(BaseModel):
     enhance_of: str | None = Field(None, max_length=64)  # enhance: the studio item it came from
     enhance_after: dict[str, Any] | None = None  # set by the page: enhance this result when it's done (Settings)
     pose: str | None = Field(None, max_length=200)  # angles: "<azimuth> <elevation> <distance>" (workflows.ANGLE_*)
+    white_bg: bool = False  # angles: make the plain backdrop pure white (imaging.whiten_backdrop)
     clean_audio: bool = True  # clean them and keep the best 6-10 s of speech (H3RefAudioPrep, when installed)
     max_fidelity: bool = False  # reference pictures at 2048px instead of the output's size
     enhance: bool = False  # Klein prompt upsampler
@@ -587,6 +588,8 @@ class JobManager:
 
             self.log(item, "Downloading the results")
             saved = await self._download(item, done, built.outputs)
+            if req.white_bg and req.engine == "angles":
+                await self._whiten(item, saved)
             self.log(item, f"Done in {time.time() - t_start:.1f} s: " + ", ".join(f"{f['name']} ({f['size'] / 2**20:.1f} MB)" for f in saved))
             self._update(item, status="done", files=saved, progress=1.0, finished=time.time())
             if req.enhance_after and req.engine != "enhance" and saved:
@@ -612,6 +615,20 @@ class JobManager:
         finally:
             self._handles.pop(item["id"], None)
             self._tasks.pop(item["id"], None)
+
+    async def _whiten(self, item: dict[str, Any], saved: list[dict[str, Any]]) -> None:
+        for f in saved:
+            if not (f.get("content_type") or "").startswith("image/"):
+                continue
+            p = config.ROOT / f["path"]
+            try:
+                share = await asyncio.to_thread(imaging.whiten_backdrop, p)
+            except Exception as exc:  # noqa: BLE001 - keep the picture as it came
+                self.log(item, f"Couldn't whiten the background: {_short_error(exc)}", "warn")
+                continue
+            f["size"] = p.stat().st_size
+            self.log(item, f"Background made pure white ({share:.0%} of the picture)" if share
+                     else "No plain light background to whiten, left as it is")
 
     async def _download(self, item: dict[str, Any], job: Any, output_nodes: list[str]) -> list[dict[str, Any]]:
         day = datetime.now().strftime("%Y-%m-%d")
