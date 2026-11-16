@@ -109,7 +109,7 @@ class ComfyService:
         now = time.monotonic()
         if not refresh and self._models_cache and now - self._models_cache[0] < 30:
             return self._models_cache[1]
-        folders = ("diffusion_models", "checkpoints", "text_encoders", "vae", "loras")
+        folders = ("diffusion_models", "checkpoints", "text_encoders", "vae", "loras", "background_removal")
         results = await asyncio.gather(
             *(self.http.get(f"{config.COMFYUI_URL}/models/{f}", timeout=10.0) for f in folders),
             return_exceptions=True,

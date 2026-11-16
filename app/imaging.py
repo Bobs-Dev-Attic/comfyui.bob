@@ -43,3 +43,18 @@ def _pnginfo(im: Image.Image):
     for k, v in (getattr(im, "text", None) or {}).items():
         info.add_text(k, v)
     return info
+
+
+def mask_rect(mask: Path, out: Path, *, pad: int = 8) -> Path:
+    """A white rectangle over the bounding box of the white area of ``mask`` (a little padded),
+    the same size as the mask: the image editor marks this for Erase and Replace."""
+    with Image.open(mask) as m0:
+        m = m0.convert("L").point(lambda v: 255 if v > 127 else 0)
+    box = m.getbbox()
+    rect = Image.new("L", m.size, 0)
+    if box:
+        x0, y0, x1, y1 = box
+        ImageDraw.Draw(rect).rectangle((max(0, x0 - pad), max(0, y0 - pad), min(m.width, x1 + pad) - 1,
+                                        min(m.height, y1 + pad) - 1), fill=255)
+    rect.convert("RGB").save(out)
+    return out
