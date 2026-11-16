@@ -33,6 +33,8 @@ H3_QUALITY = {"draft": 0.4, "standard": 0.6, "full": 0.98}
 H3_AUDIO_ONLY_MP = 0.2  # sound-only runs don't need pixels; keep the latent small
 KLEIN_QUALITY = {"draft": 0.5, "standard": 1.0, "high": 2.0}
 KREA2_QUALITY = {"draft": 0.5, "standard": 1.0, "high": 2.0}
+# MiniMax H3 Image is tuned for about 4 MP (2048 x 2048 of area).
+H3_IMAGE_QUALITY = {"draft": 1.0, "standard": 2.0, "high": 4.0}
 
 
 def dims_for(aspect: tuple[float, float], megapixels: float, multiple: int = 32) -> tuple[int, int]:
@@ -442,6 +444,43 @@ def build_krea2(
     save = g.add("SaveImage", images=o(decoded), filename_prefix=prefix)
     return Built(graph=g.nodes, outputs=[save],
                  info={"width": width, "height": height, "steps": steps, "enhanced": enhance})
+
+
+def build_h3_image(
+    files: dict[str, str | None],
+    *,
+    prompt: str,
+    width: int,
+    height: int,
+    seed: int,
+    references: int = 0,
+    prefix: str = "bob/h3image",
+    loras: list[tuple[str, float]] | None = None,
+) -> Built:
+    """MiniMax H3 Image text-to-image, as ComfyUI's "MiniMax-H3-Image: Text to Image" template runs it:
+    MiniMaxH3ImageConditioning, 6 distilled steps (the checkpoint's PDD grid), cfg 1, euler/simple.
+    References (image_inputs ref_0..) are <Picture 1>, <Picture 2>... in the prompt.
+    """
+    g = Graph()
+    o = Graph.out
+    unet = g.add("UNETLoader", unet_name=files["unet"], weight_dtype="default")
+    clip = g.add("CLIPLoader", clip_name=files["clip"], type="minimax", device="default")
+    vae = g.add("VAELoader", vae_name=files["vae"])
+    inputs: dict[str, str] = {}
+    images: dict[str, Any] = {}
+    for i in range(references):
+        load = g.add("LoadImage", image="")
+        inputs[f"ref_{i}"] = load
+        images[f"images.image_{i + 1}"] = o(load)
+    cond = g.add("MiniMaxH3ImageConditioning", clip=o(clip), vae=o(vae), prompt=prompt, width=int(width), height=int(height), **images)
+    neg = g.add("ConditioningZeroOut", conditioning=o(cond, 0))
+    steps = 6
+    sampled = g.add("KSampler", model=o(chain_loras(g, unet, loras)), seed=int(seed), steps=steps, cfg=1.0, sampler_name="euler",
+                    scheduler="simple", positive=o(cond, 0), negative=o(neg), latent_image=o(cond, 1), denoise=1.0)
+    decoded = g.add("VAEDecode", samples=o(sampled), vae=o(vae))
+    save = g.add("SaveImage", images=o(decoded), filename_prefix=prefix)
+    return Built(graph=g.nodes, outputs=[save], image_inputs=inputs,
+                 info={"width": width, "height": height, "steps": steps, "references": references})
 
 
 # ------------------------------------------------------------------- Angles (Qwen Image Edit 2511)

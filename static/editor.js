@@ -300,8 +300,7 @@ const Editor = (() => {
                        ["h3image", "MiniMax H3 Image", "H3 Image"]];
   // The picked edit model, else the remembered one, else the first installed.
   function editModel(caps) {
-    let v = ed.fields["edit-model"];
-    if (!v) { try { v = localStorage.getItem("bob.editModel"); } catch { v = null; } }
+    let v = ed.fields["edit-model"] || Settings.get("editor.edit_model");
     if (!caps[v]) v = EDIT_MODELS.find(([k]) => caps[k])?.[0] || "qwen";
     return ed.fields["edit-model"] = v;
   }
@@ -574,7 +573,7 @@ const Editor = (() => {
       if (e.target.dataset.k === "bg") ed.fields.bg = e.target.value;
       if (e.target.dataset.k === "edit-model") {
         ed.fields["edit-model"] = e.target.value;
-        try { localStorage.setItem("bob.editModel", e.target.value); } catch { /* private window */ }
+        Settings.set({ editor: { edit_model: e.target.value } });
         renderSide();
       }
       if (e.target.dataset.k === "aspect") { ed.aspect = e.target.value; fitAspect(); renderSide(); draw(); } });

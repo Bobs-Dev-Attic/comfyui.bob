@@ -146,12 +146,13 @@ QWEN_EDIT = ModelSet(
     + (Slot("describer", "text_encoders", ("qwen3vl_4b*",), optional=True, label="Qwen3-VL 4B (names the background)"),),
 )
 
-# MiniMax H3 Image: MiniMax's image model (6 distilled steps, edits guided by the picture), as the
+# MiniMax H3 Image: MiniMax's image model (6 distilled steps), as a text-to-image engine and as the
 # image editor's other edit model. It shares H3's Qwen3-VL 32B text encoder; its VAE is its own.
 H3_IMAGE = ModelSet(
     key="h3image",
     title="MiniMax H3 Image",
     source=HF_H3_IMAGE,
+    unet_hints=("h3_image", "h3-image"),
     slots=(
         Slot("unet", "diffusion_models", ("minimax_h3_image_pruned_int8*", "minimax_h3_image_pruned_w4a8*",
                                           "minimax_h3_image_pruned_bf16*", "minimax_h3_image*"), label="H3 Image diffusion model"),
@@ -161,7 +162,7 @@ H3_IMAGE = ModelSet(
     ),
 )
 
-ALL_SETS = {s.key: s for s in (H3, H3REF, KLEIN, KREA2, MUSIC3, ANGLES)}
+ALL_SETS = {s.key: s for s in (H3, H3REF, KLEIN, KREA2, H3_IMAGE, MUSIC3, ANGLES)}
 
 
 def _match(pattern: str, filename: str) -> bool:

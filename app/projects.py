@@ -12,6 +12,8 @@ Deleting moves things into ``PROJECTS_DIR/.trash`` instead of erasing them.
 """
 from __future__ import annotations
 
+import json
+import os
 import re
 import shutil
 import time
@@ -97,38 +99,99 @@ def load_file(p: Path) -> ProjectFile:
 
 
 HISTORY_DIR = ".history"
-HISTORY_KEEP = 30          # versions kept per project
-HISTORY_EVERY = 60.0       # seconds between versions (autosave runs much more often)
+LABELS_FILE = "labels.json"  # <project>/.history/labels.json: {version file: name}; named versions are never pruned
 
 
-def backup(p: Path, *, force: bool = False, tag: str = "") -> Path | None:
+def _limits() -> tuple[int, float]:
+    """(versions kept, seconds between automatic versions), from the app settings."""
+    from . import appsettings
+    s = appsettings.get().projects
+    return s.versions_keep, s.version_minutes * 60.0
+
+
+def _labels(hist: Path) -> dict[str, str]:
+    try:
+        data = json.loads((hist / LABELS_FILE).read_text("utf-8"))
+        return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_labels(hist: Path, labels: dict[str, str]) -> None:
+    hist.mkdir(exist_ok=True)
+    live = {k: v for k, v in labels.items() if (hist / k).is_file()}
+    (hist / LABELS_FILE).write_text(json.dumps(live, indent=2), "utf-8")
+
+
+_VERSION_NAME = re.compile(r"project-(\d{8}-\d{6})(?:-(.*?))?(?:-(\d+))?$")
+
+
+def _version_parts(f: Path) -> tuple[str, str, int]:
+    """project-YYYYMMDD-HHMMSS[-tag][-n].json -> (time, tag, n); n counts versions kept in the same second."""
+    m = _VERSION_NAME.match(f.stem)
+    if not m:
+        return ("", "", 0)
+    tag, n = m.group(2) or "", int(m.group(3) or 1)
+    if tag.isdigit() and not m.group(3):  # project-..-HHMMSS-2: a counter, not a tag
+        tag, n = "", int(tag)
+    return (m.group(1), tag, n)
+
+
+def _versions(hist: Path) -> list[Path]:
+    """Version files, oldest first: by when each was kept, then the same-second counter in the name."""
+    return sorted(hist.glob("project-*.json"), key=lambda f: (f.stat().st_mtime_ns, _version_parts(f)[0], _version_parts(f)[2]))
+
+
+def _prune(hist: Path) -> None:
+    keep, _ = _limits()
+    labels = _labels(hist)
+    auto = [f for f in _versions(hist) if f.name not in labels]
+    for old in auto[: max(0, len(auto) - keep)]:
+        old.unlink(missing_ok=True)
+
+
+def backup(p: Path, *, force: bool = False, tag: str = "", label: str = "") -> Path | None:
     """Keep the current project.json in <project>/.history before it's overwritten.
 
-    Normal saves are rate-limited to one version a minute; force (startup) always copies,
-    unless the file is identical to the newest version. Keeps the last HISTORY_KEEP versions."""
+    Automatic versions are rate-limited (Settings > Projects: one every N minutes) and the last
+    N are kept; force (startup, a named version) always copies, unless the file is identical to
+    the newest version. A label makes it a named version, which is never pruned."""
     src = p / PROJECT_FILE
     if not src.is_file():
         return None
     hist = p / HISTORY_DIR
     hist.mkdir(exist_ok=True)
-    versions = sorted(hist.glob("project-*.json"), key=lambda f: f.stat().st_mtime)
-    if versions:
-        if not force and time.time() - versions[-1].stat().st_mtime < HISTORY_EVERY:
+    versions = _versions(hist)
+    _, every = _limits()
+    if versions and not label:
+        if not force and time.time() - versions[-1].stat().st_mtime < every:
             return None
         if versions[-1].read_bytes() == src.read_bytes():
             return None  # nothing changed since the last version
     stem = f"project-{time.strftime('%Y%m%d-%H%M%S')}{'-' + tag if tag else ''}"
-    dst, n = hist / f"{stem}.json", 2
-    while dst.exists():  # two versions in the same second
-        dst, n = hist / f"{stem}-{n}.json", n + 1
-    shutil.copy(src, dst)  # copy (not copy2): the version's time is when it was kept
-    for old in versions[: max(0, len(versions) + 1 - HISTORY_KEEP)]:
-        old.unlink(missing_ok=True)
+    # Two versions in the same second: number them past every one already there (never reuse a
+    # pruned name, or the newer version would sort as the older one).
+    same = [v for v in versions if v.stem == stem or (v.stem.startswith(stem + "-") and v.stem[len(stem) + 1:].isdigit())]
+    n = max((_version_parts(v)[2] for v in same), default=0)
+    dst = hist / (f"{stem}.json" if not same and not (hist / f"{stem}.json").exists() else f"{stem}-{max(n, 1) + 1}.json")
+    while dst.exists():
+        n = max(n, 1) + 1
+        dst = hist / f"{stem}-{n + 1}.json"
+    shutil.copy(src, dst)
+    os.utime(dst)  # the version's time is when it was kept (Windows' copy keeps the source's time)
+    if label:
+        labels = _labels(hist)
+        labels[dst.name] = label.strip()[:120]
+        _save_labels(hist, labels)
+    _prune(hist)
     return dst
 
 
 def backup_all(tag: str = "startup") -> dict[str, int]:
-    """Back up every project (and Experiment) once, e.g. when the app starts."""
+    """Back up every project (and Experiment) once, e.g. when the app starts (Settings > Projects can turn it off)."""
+    from . import appsettings
+    if not appsettings.get().projects.version_on_start:
+        return {"backed_up": 0, "unchanged": 0, "failed": 0, "off": 1}
     done = skipped = failed = 0
     dirs = [f.parent for f in root().rglob(PROJECT_FILE) if TRASH not in f.relative_to(root()).parts]
     exp = config.DATA_DIR / "experiment"
@@ -145,27 +208,132 @@ def backup_all(tag: str = "startup") -> dict[str, int]:
     return {"backed_up": done, "unchanged": skipped, "failed": failed}
 
 
-def history(project_id: str) -> list[dict[str, Any]]:
-    p = find(project_id)
-    out = []
-    for f in sorted((p / HISTORY_DIR).glob("project-*.json"), key=lambda f: f.stat().st_mtime, reverse=True):
-        try:
-            pf = pfile.load(f)
-            out.append({"file": f.name, "saved": f.stat().st_mtime, "clips": len(pf.timeline.clips),
-                        "media": len(pf.library.media), "prompt": (pf.settings.prompt or "")[:80]})
-        except (OSError, ValueError, ValidationError):
-            continue
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def changes(old: ProjectFile, new: ProjectFile) -> list[str]:
+    """What changed from one version to the next, in a few short phrases."""
+    out: list[str] = []
+    so, sn = old.settings, new.settings
+    if so.prompt != sn.prompt:
+        out.append("prompt edited")
+    if sn.kind and (so.kind, so.engine.get(so.kind or "")) != (sn.kind, sn.engine.get(sn.kind)):
+        eng = sn.engine.get(sn.kind, "")
+        out.append(f"model: {sn.kind}{' · ' + eng if eng else ''}")
+    other = [k for k in ("aspect", "quality", "seconds", "seed", "steps", "batch", "turbo", "enhance", "lyrics")
+             if getattr(so, k) != getattr(sn, k)]
+    if [r.ref for r in so.refs] != [r.ref for r in sn.refs]:
+        other.append("reference pictures")
+    if so.loras != sn.loras:
+        other.append("LoRAs")
+    if other:
+        out.append("settings: " + ", ".join(other))
+    co, cn = {c.id: c for c in old.timeline.clips}, {c.id: c for c in new.timeline.clips}
+    added, removed = len(cn.keys() - co.keys()), len(co.keys() - cn.keys())
+    moved = sum(1 for k in cn.keys() & co.keys() if cn[k] != co[k])
+    if added:
+        out.append(f"+{_plural(added, 'clip')}")
+    if removed:
+        out.append(f"-{_plural(removed, 'clip')}")
+    if moved:
+        out.append(f"{_plural(moved, 'clip')} changed")
+    if len(old.timeline.tracks) != len(new.timeline.tracks):
+        out.append(_plural(len(new.timeline.tracks), "track"))
+    if old.timeline.transitions != new.timeline.transitions or old.timeline.markers != new.timeline.markers:
+        out.append("transitions or markers")
+    mo, mn = {m.id for m in old.library.media}, {m.id for m in new.library.media}
+    if mn - mo:
+        out.append(f"+{_plural(len(mn - mo), 'library item')}")
+    if mo - mn:
+        out.append(f"-{_plural(len(mo - mn), 'library item')}")
+    kept_old = [(m.id, m.tags, m.rating, m.note) for m in old.library.media if m.id in mn]
+    kept_new = [(m.id, m.tags, m.rating, m.note) for m in new.library.media if m.id in mo]
+    if sorted(kept_old) != sorted(kept_new):
+        out.append("tags or ratings")
+    if old.notes != new.notes:
+        out.append("notes")
+    if old.name != new.name:
+        out.append(f"renamed to {new.name}")
+    if old.config != new.config:
+        out.append("project settings")
     return out
 
 
+def history(project_id: str) -> list[dict[str, Any]]:
+    """Versions, newest first, each with what changed since the version before it. The first row
+    (file None) is the current state, with what changed since the newest version."""
+    p = find(project_id)
+    hist = p / HISTORY_DIR
+    labels = _labels(hist)
+    loaded: list[tuple[Path, ProjectFile]] = []
+    for f in _versions(hist):
+        try:
+            loaded.append((f, pfile.load(f)))
+        except (OSError, ValueError, ValidationError):
+            continue
+    rows = []
+    for i, (f, pf) in enumerate(loaded):
+        rows.append({"file": f.name, "saved": f.stat().st_mtime, "label": labels.get(f.name, ""),
+                     "tag": _version_parts(f)[1], "clips": len(pf.timeline.clips), "media": len(pf.library.media),
+                     "prompt": (pf.settings.prompt or "")[:80],
+                     "changes": changes(loaded[i - 1][1], pf) if i else ["the oldest version kept"]})
+    try:
+        cur = load_file(p)
+        rows.append({"file": None, "saved": cur.modified, "label": "", "tag": "current", "clips": len(cur.timeline.clips),
+                     "media": len(cur.library.media), "prompt": (cur.settings.prompt or "")[:80],
+                     "changes": changes(loaded[-1][1], cur) if loaded else []})
+    except ProjectError:
+        pass
+    return rows[::-1]
+
+
+def save_version(project_id: str, label: str) -> dict[str, Any]:
+    """Keep the current state now as a named version (kept until deleted)."""
+    p = find(project_id)
+    label = (label or "").strip() or time.strftime("Saved %b %d, %H:%M")
+    dst = backup(p, force=True, label=label)
+    if not dst:
+        raise ProjectError("Nothing to keep yet: the project hasn't been saved")
+    return {"file": dst.name, "label": label}
+
+
+def label_version(project_id: str, name: str, label: str) -> dict[str, Any]:
+    """Name a version (it's then never pruned), or clear its name (it becomes automatic again)."""
+    hist = find(project_id) / HISTORY_DIR
+    f = hist / Path(name).name
+    if not f.is_file() or not f.name.startswith("project-"):
+        raise ProjectError("That version doesn't exist")
+    labels = _labels(hist)
+    if label.strip():
+        labels[f.name] = label.strip()[:120]
+    else:
+        labels.pop(f.name, None)
+    _save_labels(hist, labels)
+    return {"file": f.name, "label": labels.get(f.name, "")}
+
+
+def delete_version(project_id: str, name: str) -> dict[str, Any]:
+    hist = find(project_id) / HISTORY_DIR
+    f = hist / Path(name).name
+    if not f.is_file() or not f.name.startswith("project-"):
+        raise ProjectError("That version doesn't exist")
+    f.unlink()
+    labels = _labels(hist)
+    if labels.pop(f.name, None) is not None:
+        _save_labels(hist, labels)
+    return {"deleted": f.name}
+
+
 def restore(project_id: str, name: str) -> dict[str, Any]:
-    """Bring back an earlier version (the current one is kept in the history first)."""
+    """Bring back an earlier version (the current one is kept as a named version first, so it can come back)."""
     p = find(project_id)
     f = p / HISTORY_DIR / Path(name).name
     if not f.is_file() or not f.name.startswith("project-"):
         raise ProjectError("That version doesn't exist")
     old = pfile.load(f)
-    shutil.copy2(p / PROJECT_FILE, p / HISTORY_DIR / f"project-{time.strftime('%Y%m%d-%H%M%S')}-before-restore.json")
+    when = _labels(p / HISTORY_DIR).get(f.name) or time.strftime("%b %d, %H:%M", time.localtime(f.stat().st_mtime))
+    backup(p, force=True, tag="before-restore", label=f"Before going back to {when}")
     old.id = load_file(p).id  # keep the identity (results point to it)
     save_file(p, old, keep_version=False)  # the current state was just kept above
     return as_dict(p, old)

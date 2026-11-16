@@ -5,6 +5,39 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.29.0] - 2026-11-16
+
+### Added
+- **MiniMax H3 Image engine** (Image tab). MiniMax's image model makes pictures from text in 6 distilled steps at
+  1, 2 or 4 MP (Draft, Standard, High). It can take up to 9 reference pictures, named `<Picture 1>`, `<Picture 2>`…
+  in the prompt. It runs the way ComfyUI's "MiniMax-H3-Image: Text to Image" template does, uses the H3 Image
+  diffusion model and VAE plus H3's Qwen3-VL 32B text encoder, and takes H3 LoRAs. Steps are locked at 6.
+- **☰ Menu** left of "Bob Studio": Settings, theme and colors, project versions, project settings, a new project, and
+  About.
+- **Settings window** (the menu, or Ctrl+,): a modal with sections for Appearance, Projects, Generation, Image editor,
+  Settings file and About. Changes apply at once and are saved to `data/settings.json`. The file is validated (a bad
+  value is refused with a message), and the window can edit the JSON directly, export it, import it or reset it.
+  - **Color themes:** System, Dark, Light, Midnight, Graphite, Forest, Paper and High contrast, plus 8 accent colors
+    (the favicon follows the accent), text size and reduce motion. The page starts in the saved theme, with no flash.
+  - **Projects:** versions to keep (5–500, default 30), how often an automatic version is kept (15 s to 1 h, default 1
+    minute), a version of every project at startup, and reopening the last project.
+  - **Generation:** a chime and/or a desktop notification when a job finishes, and asking before deleting a result.
+  - **Image editor:** the default edit model. The editor's picker now saves it here instead of in the browser.
+- **Project versions with tracked changes.** The Versions window (formerly "Earlier versions") lists each version
+  with what changed since the one before: the prompt, the model, settings, clips added, removed or changed, library
+  items, tags, notes, and project settings. The top row shows what changed since the last version.
+  - **Save a version** keeps the current state under a name, such as "Before the new ending". Named versions are
+    never pruned.
+  - Any version can be named, renamed, deleted or restored. A restore first keeps the current state as a named
+    version ("Before going back to …").
+  - API: `POST /api/projects/{id}/versions` with a `label`, `PUT` or `DELETE /api/projects/{id}/versions/{file}`, and
+    `GET`, `PUT`, `POST …/import` and `POST …/reset` on `/api/settings`.
+
+### Fixed
+- Versions are ordered by when they were kept. On Windows the copy kept the project file's own modified time.
+- Restoring a version whose settings were empty (a new project's first version) left the current form on screen,
+  where autosave could write it back over the restore.
+
 ## [0.28.0] - 2026-11-16
 
 ### Added

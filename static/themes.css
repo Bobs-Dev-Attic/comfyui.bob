@@ -1,0 +1,57 @@
+/* Color themes, accents, text size and motion: Settings > Appearance (static/settings.js sets
+   data-theme, data-accent, data-text and data-motion on <html>). "system" follows the OS, using the
+   dark tokens in styles.css and its prefers-color-scheme: light block. */
+
+:root[data-theme="dark"] { color-scheme: dark; }
+
+:root[data-theme="light"] {
+  --bg: #f4f4f6; --panel: #ffffff; --panel-2: #f1f2f5; --line: #e2e4ea;
+  --text: #17181c; --muted: #5b6270; --faint: #8a90a0; --accent-ink: #fff;
+  --shadow: 0 10px 30px rgba(20, 20, 40, .08);
+  color-scheme: light;
+}
+:root[data-theme="midnight"] {
+  --bg: #0a0e1a; --panel: #111729; --panel-2: #172036; --line: #243049;
+  --text: #e6ebf5; --muted: #8f9bb3; --faint: #64708a;
+  --shadow: 0 10px 30px rgba(0, 4, 20, .5);
+  color-scheme: dark;
+}
+:root[data-theme="graphite"] {
+  --bg: #1b1c1f; --panel: #232428; --panel-2: #2b2d32; --line: #3a3c42;
+  --text: #ececee; --muted: #a1a3aa; --faint: #75777e;
+  color-scheme: dark;
+}
+:root[data-theme="forest"] {
+  --bg: #0d1410; --panel: #131c17; --panel-2: #19251e; --line: #26362c;
+  --text: #e5eee8; --muted: #8fa397; --faint: #66796d;
+  color-scheme: dark;
+}
+:root[data-theme="paper"] {
+  --bg: #f3efe7; --panel: #fbf8f2; --panel-2: #efe9de; --line: #ddd4c4;
+  --text: #2a251d; --muted: #6e6556; --faint: #9a9080; --accent-ink: #fff;
+  --shadow: 0 10px 30px rgba(60, 40, 10, .1);
+  color-scheme: light;
+}
+:root[data-theme="high-contrast"] {
+  --bg: #000; --panel: #0a0a0a; --panel-2: #161616; --line: #7a7a7a;
+  --text: #fff; --muted: #d6d6d6; --faint: #ababab;
+  --ok: #4dff9e; --warn: #ffd23f; --bad: #ff6b78;
+  color-scheme: dark;
+}
+
+/* Accents: the accent, its lighter partner (gradients) and the ink drawn on it. */
+:root[data-accent="orange"] { --accent: #ff7a45; --accent-2: #ffb36b; --accent-ink: #1a0d06; }
+:root[data-accent="blue"]   { --accent: #4f8cff; --accent-2: #8fb6ff; --accent-ink: #06101f; }
+:root[data-accent="violet"] { --accent: #9b7bff; --accent-2: #c4b0ff; --accent-ink: #120a24; }
+:root[data-accent="green"]  { --accent: #2fbf71; --accent-2: #7fe0a8; --accent-ink: #04140b; }
+:root[data-accent="pink"]   { --accent: #ff5fa2; --accent-2: #ff9ccb; --accent-ink: #22040f; }
+:root[data-accent="teal"]   { --accent: #22b8c8; --accent-2: #7fe3ec; --accent-ink: #031417; }
+:root[data-accent="gold"]   { --accent: #e5b52e; --accent-2: #ffd877; --accent-ink: #1f1602; }
+:root[data-accent="red"]    { --accent: #ef4444; --accent-2: #ff8a8a; --accent-ink: #1f0404; }
+
+:root[data-text="small"] body { font-size: 13px; }
+:root[data-text="large"] body { font-size: 15.5px; }
+
+:root[data-motion="reduce"] *, :root[data-motion="reduce"] *::before, :root[data-motion="reduce"] *::after {
+  transition-duration: 0s !important; animation-duration: 0s !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important;
+}
