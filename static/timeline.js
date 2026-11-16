@@ -2613,7 +2613,9 @@ const TL = (() => {
   }
 
   return {
-    mount, setProject, add, play, pause, toggle, seek, render, saveNow, showShortcuts, onKey, mixer, setLinkAudio, soundDialog: id => soundDialog(clip(id)),
+    mount, setProject, add, play, pause, toggle, seek, render, saveNow, showShortcuts,
+    // The project was deleted: forget it without saving (setProject would flush a pending save into the trash).
+    detach: () => { clearTimeout(saveTimer); saveTimer = null; pause(); clearTimeout(saveTimer); saveTimer = null; tl = null; }, onKey, mixer, setLinkAudio, soundDialog: id => soundDialog(clip(id)),
     cameraDialog: id => cameraDialog(clip(id)), addCameraMove, onItem,
     fxDialog: id => fxDialog(clip(id)),
     get playing() { return playing; }, get model() { return tl; }, setZoom, fit,

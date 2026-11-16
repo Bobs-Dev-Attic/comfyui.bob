@@ -50,6 +50,8 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
     minutes, keeping the last N (both in Settings › Projects). Each version lists what changed since the one before
     (prompt, model, settings, clips, library, notes). **Save a version** keeps a named one, which is never pruned;
     any version can be named, renamed, deleted or restored, and a restore keeps the current state first.
+  - **✎ Rename…** and **🗑 Delete…** (project card or ☰ menu; also right-click in the Explorer) rename the open project
+    and its folder, or move it to the projects trash (`projects/.trash`). Its results stay in the gallery.
   - **⧉ Duplicate…** (project card, or right-click in the Explorer) copies a project: settings always, and the
     timeline, media library and results if you choose. Experiment can be copied into a new project the same way.
     Files aren't duplicated; both projects use the same uploads and results.

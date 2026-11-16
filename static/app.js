@@ -1075,9 +1075,13 @@ function openMainMenu() {
   Media.menu(r.left, r.bottom + 6, [
     ["⚙  Settings…   Ctrl+,", () => Settings.open("appearance")],
     ["🎨  Theme and colors…", () => Settings.open("appearance")],
+    ["＋  New project…", () => newProjectDialog()],
     ["🕘  Project versions…", () => historyDialog(proj())],
     ["🗂  Project settings…", () => projectSettingsDialog()],
-    ["＋  New project…", () => newProjectDialog()],
+    ...(state.project ? [
+      [`✎  Rename “${state.project.name}”…`, () => renameProjectDialog()],
+      [`🗑  Delete “${state.project.name}”…`, () => deleteProjectDialog()],
+    ] : []),
     ["ℹ  About Bob Studio", () => Settings.open("about")],
   ]);
   const m = document.querySelector(".ex-menu");

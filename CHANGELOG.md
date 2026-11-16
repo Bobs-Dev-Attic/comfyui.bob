@@ -5,6 +5,19 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.30.0] - 2026-11-16
+
+### Added
+- **Rename and delete the open project** from the project card (**✎ Rename…** and **🗑 Delete…**) or the ☰ menu.
+  - **Rename** saves pending changes, then renames both the project and its folder.
+  - **Delete** asks first, then moves the project's folder (settings, timeline, library and versions) to the projects
+    trash (`projects\.trash`), where it can be recovered by hand. Its generated results stay in the gallery under
+    **All**. The studio then switches to Experiment.
+
+### Fixed
+- Deleting the open project (here, or from the Explorer) no longer tries to save pending settings or timeline
+  changes into the deleted project.
+
 ## [0.29.1] - 2026-11-16
 
 ### Changed
