@@ -56,6 +56,12 @@
 .mg-check { position: absolute; top: 5px; left: 5px; width: 18px; height: 18px; border-radius: 50%; display: none; place-items: center;
   font-size: 11px; font-weight: 700; background: var(--accent); color: var(--accent-ink); }
 .mg-tile.sel .mg-check { display: grid; }
+/* Every tile shows its check on hover (or while anything is selected), to pick several without keys. */
+.mg-tile:not(.mg-folder):hover .mg-check, .mg-grid:has(.mg-tile.sel) .mg-tile:not(.mg-folder) .mg-check { display: grid; cursor: pointer; }
+.mg-tile:not(.sel) .mg-check { background: rgba(0, 0, 0, .45); color: transparent; box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, .85); }
+.mg-tile:not(.sel) .mg-check:hover { color: rgba(255, 255, 255, .9); }
+.mg-status .link { font-size: inherit; }
+.mg-hint { color: var(--faint); }
 .mg-name { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 2px; }
 .mg-dots { display: flex; gap: 3px; padding: 0 2px; }
 .mg-dots i { width: 7px; height: 7px; border-radius: 50%; }

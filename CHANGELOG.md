@@ -5,6 +5,20 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.31.0] - 2026-11-16
+
+### Added
+- **Media library: select several items, and delete.**
+  - **Selecting:** every tile has a check circle, shown on hover and on all tiles once anything is selected. Click it
+    to add or remove that item. **Select all** is in the status bar and the selection bar. Ctrl+click, Shift+click and
+    Ctrl+A still work.
+  - **🗑 Delete…** (selection bar, right-click menu, Shift+Delete, or Delete outside the Library view) moves the
+    selected files to the **Windows Recycle Bin**, where they can be restored. Results made from them leave the
+    gallery, and they leave this project's library. Other projects that use them show them as missing. Delete in the
+    Library view still only removes items from the library (Remove); the files stay.
+  - API: `POST /api/media/delete` `{refs, project}`. Without a Recycle Bin (not on Windows), only the studio's own
+    uploads and results can be deleted.
+
 ## [0.30.0] - 2026-11-16
 
 ### Added
