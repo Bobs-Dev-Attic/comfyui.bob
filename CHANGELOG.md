@@ -5,6 +5,12 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.32.1] - 2026-11-16
+
+### Changed
+- **Model tab:** the selected model's card now has a light accent-tinted background, like the open step tab, so it
+  stands out more. It follows every theme and accent.
+
 ## [0.32.0] - 2026-11-16
 
 ### Added
