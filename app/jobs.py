@@ -63,6 +63,9 @@ class GenerateRequest(BaseModel):
     ref_audios: list[str] = Field(default_factory=list, max_length=3)  # H3 reference sounds: voices to clone (<Audio N>)
     loras: list[LoraUse] = Field(default_factory=list, max_length=8)  # LoRAs on the model, in order
     unet: str | None = Field(None, max_length=500)  # a diffusion model to use instead of the engine's default
+    # The Model step's sampler and scheduler (None = the engine's own, workflows.SAMPLING_DEFAULTS).
+    sampler: str | None = Field(None, max_length=80)
+    scheduler: str | None = Field(None, max_length=80)
     # Image editor (engine "imgedit", static/editor.js): the op, the selection mask (a media ref,
     # white = selected), how much the prompt op may change, and remove_bg's new background.
     edit_op: EditOp | None = None
@@ -357,6 +360,15 @@ class JobManager:
                 resolved = {"files": {**resolved["files"], "unet": pick}}
                 req.unet = pick
         self._validate(req)
+        if req.sampler or req.scheduler:
+            if req.engine not in workflows.SAMPLING_DEFAULTS:
+                req.sampler = req.scheduler = None  # editor, enhance, angles…: their own tuned sampling
+            else:
+                await self.comfy.node_types()
+                if req.sampler and self.comfy.samplers and req.sampler not in self.comfy.samplers:
+                    raise ValueError(f"ComfyUI has no sampler named {req.sampler}")
+                if req.scheduler and self.comfy.schedulers and req.scheduler not in self.comfy.schedulers:
+                    raise ValueError(f"ComfyUI has no scheduler named {req.scheduler}")
         if req.loras:
             from . import loras as lora_mod
             known = {n.replace("\\", "/"): n for n in installed.get("loras", [])}
@@ -563,6 +575,8 @@ class JobManager:
         try:
             t_start = time.time()
             built = self._build(item, req, files)
+            if req.engine in workflows.SAMPLING_DEFAULTS and (req.sampler or req.scheduler):
+                built.info = {**(built.info or {}), **workflows.apply_sampling(built.graph, req.sampler, req.scheduler)}
             item["info"] = built.info
             self.log(item, f"Built the {req.engine} workflow: {len(built.graph)} nodes"
                      + "".join(f", {k} {v}" for k, v in (built.info or {}).items() if isinstance(v, (int, float, str)) and len(str(v)) < 40))

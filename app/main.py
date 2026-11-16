@@ -269,6 +269,8 @@ async def capabilities(refresh: bool = False):
         "klein_quality": workflows.KLEIN_QUALITY,
         "krea2_quality": workflows.KREA2_QUALITY,
         "h3image_quality": workflows.H3_IMAGE_QUALITY,
+        "samplers": comfy.samplers, "schedulers": comfy.schedulers,
+        "sampling_defaults": {k: {"sampler": a, "scheduler": b} for k, (a, b) in workflows.SAMPLING_DEFAULTS.items()},
         "fps": workflows.FPS,
         "model_paths": [str(p) for p in modelpaths.yaml_files()],
         "comfyui_paths_config": syscheck.comfy_paths_config(await comfy.system_stats()),

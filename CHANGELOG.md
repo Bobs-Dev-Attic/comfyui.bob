@@ -5,6 +5,20 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.32.0] - 2026-11-16
+
+### Added
+- **Sampler and scheduler on the Model tab.** Below the Diffusion model picker, **Sampling** has a Sampler and a
+  Scheduler list. Both use ComfyUI's own names (KSampler's lists, so custom samplers show up too).
+  - **Default** keeps what the model's ComfyUI template uses: res_multistep with simple for H3; simple with turbo and
+    beta without for H3 Reference; euler with simple for Klein, Krea 2, H3 Image and Music 3.
+  - The choice is kept per engine, saved with the project, shown in the Generate summary, and restored by Reuse.
+  - Picking something else on a distilled model (H3 turbo, Krea 2 Turbo, H3 Image) shows a warning, because those
+    models are tuned for their own schedule.
+  - API: generation requests take `sampler` and `scheduler`. An unknown name is refused, and other engines ignore
+    them (editor, enhance, angles and reshoot keep their tuned sampling). `/api/capabilities` lists `samplers`,
+    `schedulers` and `sampling_defaults`, and a result's info records what it used.
+
 ## [0.31.0] - 2026-11-16
 
 ### Added

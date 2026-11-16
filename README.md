@@ -40,6 +40,9 @@ port 8189 by itself if nothing is listening there.
 | Image | H3 still (one frame on H3's 768p canvas), FLUX 3 Klein (with optional prompt upsampler), Krea 2, or MiniMax H3 Image (6 steps, up to 4 MP, optional reference pictures tagged `<Picture N>`; files from [Comfy-Org/MiniMax-H3-Image](https://huggingface.co/Comfy-Org/MiniMax-H3-Image)) | PNG |
 | Audio | H3 sound (generates sound jointly with a tiny video and keeps only the audio) or MiniMax Music 3 | MP3 |
 
+The Model step can also swap the diffusion model and pick the **sampler and scheduler** (Default = the model's
+ComfyUI template).
+
 The side panel walks through a generation in steps: **1 Project → 2 Model → 3 Inputs → 4 Prompt → 5 Settings →
 6 Generate**. Drag its edge to make it wider or narrower.
 
