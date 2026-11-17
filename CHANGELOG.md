@@ -5,6 +5,16 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.43.2] - 2026-11-16
+
+### Fixed
+- **Every job with an input file failed with “Prompt outputs failed validation”** (H3 Reference pictures and voices,
+  keyframes, enhance, editor edits) since 0.33.0. Saving the workflow for “View workflow” renamed each input in the
+  same graph the ComfyUI SDK sends, replacing the upload with a bare file name that ComfyUI never received. The saved
+  copy is now a separate one.
+- A workflow ComfyUI refuses now says which node failed and why (e.g. “LoadImage #7: Invalid image file …”), and the
+  full details go to the server log, instead of only “Prompt outputs failed validation”.
+
 ## [0.43.1] - 2026-11-16
 
 ### Fixed

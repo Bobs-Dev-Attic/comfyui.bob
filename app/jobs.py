@@ -596,6 +596,10 @@ class JobManager:
             item["info"] = built.info
             self.log(item, f"Built the {req.engine} workflow: {len(built.graph)} nodes"
                      + "".join(f", {k} {v}" for k, v in (built.info or {}).items() if isinstance(v, (int, float, str)) and len(str(v)) < 40))
+            # The SDK works on the dict it's given (set_input puts the upload handle in it), so the copy saved
+            # for "View workflow" is a separate one: editing the shared dict sent ComfyUI a plain file name
+            # that was never uploaded ("Invalid image file").
+            saved = copy.deepcopy(built.graph)
             wf = client.workflows.from_json(built.graph)
             for role, node_id in built.image_inputs.items():
                 field = "image"
@@ -618,11 +622,11 @@ class JobManager:
                     ref = getattr(req, role)
                 self.log(item, f"Input {role}: {ref}")
                 wf.set_input(node_id, field, client.assets.from_file(media_path(ref)))
-                sent = built.graph.get(str(node_id))
+                sent = saved.get(str(node_id))
                 if sent:  # the saved copy names the file (ComfyUI needs it in its input folder to load it)
                     sent["inputs"][field] = Path(ref).name
                     sent.setdefault("_meta", {})["title"] = f"{role}: {ref}"
-            save_workflow(item["id"], built.graph)
+            save_workflow(item["id"], saved)
 
             # No `metadata=`: comfy-api-proxy 0.1.6 rejects the SDK's mapping form.
             job = await client.submit(wf)
@@ -712,6 +716,8 @@ class JobManager:
             self._update(item, status=status, error=_short_error(exc), finished=time.time())
         except Exception as exc:  # network errors, invalid workflow, etc.
             log.exception("job %s failed", item["id"])
+            if getattr(exc, "details", None):
+                log.error("job %s details: %.3000r", item["id"], exc.details)
             status = "cancelled" if type(exc).__name__ in ("Cancelled", "CancelledError") else "failed"
             self.log(item, f"{status.title()}: {_short_error(exc)[:400]}", "error")
             self._update(item, status=status, error=_short_error(exc), finished=time.time())
@@ -830,6 +836,26 @@ def media_path(ref: str) -> Path:
         raise ValueError(str(exc)) from exc
 
 
+def _node_errors(details) -> str:
+    """ComfyUI's per-node validation errors ({node_id: {class_type, errors: [{message, details}]}}) in a line each."""
+    if not isinstance(details, dict):
+        return str(details)[:600] if details else ""
+    nodes = details.get("node_errors", details)
+    lines = []
+    for nid, n in (nodes.items() if isinstance(nodes, dict) else []):
+        if not isinstance(n, dict):
+            continue
+        for e in n.get("errors") or []:
+            if isinstance(e, dict):
+                lines.append(f"{n.get('class_type', '?')} #{nid}: {e.get('message', '')}"
+                             f"{(' (' + str(e.get('details')) + ')') if e.get('details') else ''}")
+    return "; ".join(lines)
+
+
 def _short_error(exc: Exception) -> str:
     text = str(exc) or type(exc).__name__
+    # A workflow ComfyUI refused: say which node and why, not only "Prompt outputs failed validation".
+    extra = _node_errors(getattr(exc, "details", None) or getattr(getattr(exc, "__cause__", None), "details", None))
+    if extra and extra not in text:
+        text = f"{text}: {extra}"
     return text if len(text) < 1500 else text[:1500] + "…"
