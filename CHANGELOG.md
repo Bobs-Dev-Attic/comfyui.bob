@@ -5,6 +5,23 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.53.0] - 2026-11-17
+
+### Added
+- **A ⋯ menu on each reference picture** (Inputs) in place of its ×:
+  - **Open**: the picture in a large window, with its description.
+  - **Edit…**: the image editor; saving swaps the edited copy in as that picture (it's also kept in your results).
+  - **Describe with AI…**: a vision model (the Prompt writer's LLM, e.g. qwen3-vl; with Auto, the first that can see
+    pictures) writes a detailed description: the subject, face, hair, clothes and pose, or an object's materials and
+    colours, then light and camera view. Edit it, **Copy** it, **Insert in prompt** (pictures and sound) or **Add to
+    shot** (video) as `<Picture N>: …`. It's kept with the picture (a ✨ on the tile; saved in the project).
+  - **Remove**.
+- **A ⋯ menu on each reference sound** with **Audio tools…** and Remove. Audio tools: **Remove music** (keep only the
+  voice, with Demucs in ComfyUI; done once per file, about 8 s for a short clip), **Reduce background noise** (0–100%),
+  **Remove rumble** (below 80 Hz), **Even out loudness**, **Volume** (±12 dB) and **Trim silence**. Every change plays
+  back within a moment, keeping your place; **Processed / Original** compares the two. **Save** replaces the sound
+  with the cleaned copy; the original file is kept.
+
 ## [0.52.0] - 2026-11-17
 
 ### Changed

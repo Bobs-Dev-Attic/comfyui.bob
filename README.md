@@ -89,6 +89,13 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   super-resolution). Settings › **Post-Processing** can run it on every new result (each step has its own Off). Needs the ComfyUI-H3-FaceRefine,
   ComfyUI-DLSS5-Enhancer and SeedVR2 custom nodes, and the RelayVSR model files; missing ones are greyed out. The window,
   Post-Processing and the Activity console estimate how long it takes, learning from your own runs.
+- **Inputs** › reference pictures and sounds each have a **⋯** menu. Pictures: **Open** (a large view), **Edit…** (the
+  image editor; saving swaps in the edited copy), **Describe with AI…** (a vision LLM, e.g. qwen3-vl, writes a detailed
+  description, kept with the picture and marked ✨, which you can insert in the prompt or add to a shot as
+  `<Picture N>: …`), **Remove**. Sounds: **Audio tools…** (remove music with Demucs, reduce background noise, remove
+  rumble, even out loudness, volume, trim silence; every change plays back at once, with a Processed / Original
+  switch, and **Save** swaps in the cleaned copy while the original file stays), **Remove**. Removing music needs the
+  comfyui-demucs-voice-isolate nodes; the rest uses ffmpeg.
 - **Shots** (video, after Inputs): every H3 and H3 Reference video is planned here, shot by shot (video has no Prompt
   step). The shots are compact blocks: drag one to reorder, **⋯** for Edit, Move up/down, Duplicate and Delete, or
   double-click to edit. **Edit** opens a large window with the shot's length, framing, angle, camera position and move,

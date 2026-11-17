@@ -43,6 +43,7 @@ class PictureRef(BaseModel):
     """A picture used as an input: `ref` is what the server reads, `url` what the browser shows."""
     ref: str
     url: str = ""
+    desc: str = Field("", description="Describe with AI: a detailed description of the picture, for prompts")
 
 
 class Frames(BaseModel):
