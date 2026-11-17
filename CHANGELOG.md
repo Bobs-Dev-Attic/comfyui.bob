@@ -5,6 +5,14 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.48.1] - 2026-11-17
+
+### Fixed
+- **Moving Creativity in the Prompt tab now changes the rewrite.** Before, the slider only took effect on the next
+  ✨ Rewrite or the next edit to the prompt, so the suggestion on screen stayed the same. Now, when you let go of the
+  slider, the prompt is rewritten again at the new value (with Live on, or while a suggestion is showing), and the
+  suggestion says which creativity wrote it (e.g. "· 100% Wild").
+
 ## [0.48.0] - 2026-11-17
 
 ### Added

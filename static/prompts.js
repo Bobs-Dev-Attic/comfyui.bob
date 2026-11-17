@@ -349,7 +349,7 @@ const Prompts = (() => {
           <span class="pl-creat-val">${S.creativity}% · ${creatName(S.creativity)}</span></div>` : ""}
       ${notes.length ? `<ul class="pl-notes">${notes.map(([t, k, , dur]) => `<li class="pl-${k}">${k === "fix" ? "✓" : k === "warn" ? "⚠" : "💡"} ${esc(t)}${dur ? ` <button type="button" class="link" data-pl="dur" data-s="${dur}" title="Set Duration (Settings) to ${dur} s">Use ${dur} s</button>` : ""}</li>`).join("")}</ul>` : ""}
       ${sug ? `<div class="pl-sug${sug.done ? "" : " busy"}${sug.error ? " err" : ""}" aria-live="polite">
-          <div class="pl-sug-head">${sug.error ? "⚠ Live rewrite" : sug.done ? `✨ ${esc(modelLabel(sug.model))} version` : `✨ Rewriting for ${esc(modelLabel(sug.model))}…`}
+          <div class="pl-sug-head">${sug.error ? "⚠ Live rewrite" : sug.done ? `✨ ${esc(modelLabel(sug.model))} version · ${sug.creat}% ${creatName(sug.creat)}` : `✨ Rewriting for ${esc(modelLabel(sug.model))} at ${sug.creat}% ${creatName(sug.creat)}…`}
             ${sug.done && !sug.error ? `<span class="pl-keys"><kbd>Tab</kbd> accept · <kbd>Esc</kbd> dismiss</span>` : ""}</div>
           ${sug.total && !sug.error ? `<p class="pl-fixing">${sug.done
             ? (sug.left?.length ? `Fixes ${Math.max(0, sug.total - sug.left.length)} of ${sug.total} flagged problem${sug.total === 1 ? "" : "s"}; still: ${sug.left.map(esc).join(" · ")}`
@@ -400,7 +400,7 @@ const Prompts = (() => {
     // What the live model view flags (not what Tidy already put right) goes along, so the rewrite fixes it.
     const flagged = (from ? shape(resolve(from), prof) : shape(resolve(raw), prof)).notes.filter(([, k, fix]) => k !== "fix" && fix !== null);
     const problems = flagged.map(([t, , fix]) => fix || t);
-    const sug = S.sug = { for: raw, text: "", done: false, model: modelKey(), markers, problems, manual: manual || !!prev?.manual,
+    const sug = S.sug = { for: raw, text: "", done: false, model: modelKey(), creat: S.creativity, markers, problems, manual: manual || !!prev?.manual,
       total: prev?.total ?? problems.length, round: prev ? prev.round + 1 : 1 };
     renderLive();
     try {
@@ -758,6 +758,11 @@ const Prompts = (() => {
     $("#prompt-live").addEventListener("change", e => {
       const a = e.target.dataset.pl;
       if (a === "tidy") { S.tidy = e.target.checked; lsSet(TIDY_KEY, S.tidy); renderLive(); }
+      // Creativity let go: rewrite again at the new value, so the suggestion shows what it does (Live on, or one is showing).
+      if (a === "creat" && (S.live || S.sug) && words(ta().value) >= 3 && S.sug?.creat !== S.creativity) {
+        const manual = !S.live || !!S.sug?.manual;
+        clearTimeout(S.timer); dismiss(false); S.lastAsked = ""; ask(true, null, null, manual);
+      }
       if (a === "live") { S.live = e.target.checked; lsSet(LIVE_KEY, S.live); if (!S.live) dismiss(); else { S.lastAsked = ""; onInput(); } }
       if (a === "model") {
         S.liveModel = e.target.value; S.usedModel = ""; S.warmAt = 0;
