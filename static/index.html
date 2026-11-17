@@ -150,9 +150,9 @@
             </details>
             <details class="shots-all shots-subjects" id="shots-subjects" open hidden>
               <summary>Subjects <span class="opt">who or what each reference picture is</span><span class="subj-sum"></span></summary>
-              <label class="subj-on"><input type="checkbox" id="subjects-on" checked> Define the subjects at the top of every shot's prompt</label>
-              <p class="hint">A detailed definition per picture keeps faces, hair, bodies and clothes accurate in every shot. Generate
-                has the vision model write any that are missing; edit them as you like.
+              <label class="subj-on"><input type="checkbox" id="subjects-on" checked> Use these detailed definitions in the prompt's <code>subject_definitions</code></label>
+              <p class="hint">Each picture is <code>&lt;Subject N&gt;</code> in the prompt. A detailed definition keeps faces, hair, bodies and
+                clothes accurate in every shot. Generate has the vision model write any that are missing; edit them as you like.
                 <button type="button" class="btn sm" data-subj-act="all">✨ Describe the missing ones</button></p>
               <div class="subj-list"></div>
               <p class="hint" id="subjects-status" aria-live="polite"></p>

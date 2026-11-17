@@ -94,10 +94,30 @@ const Shots = (() => {
     const m = /^<Picture (\d+)>$/.exec(speakerOf(s));
     return m && +m[1] <= state.arefs.length ? `<Audio ${m[1]}>` : "";
   }
-  function shotText(s, k, start, n) {
+  /* The prompt follows MiniMax's Video Prompt Writing Guide (a copy ships with ComfyUI-Fantastic-MiniMaxH3-PromptBuilder):
+     - H3 (text / keyframes): integrated_multimodal_description: [Shot 1] <style> <shot> [Shot 2] At …, then
+       overall_soundscape: and non_diegetic_music: (the server adds the keyframe line in front, workflows.h3_frame_alignment);
+     - H3 Reference (full-reference mode): six sections, subject_definitions, summary, retention_analysis,
+       detailed_description, overall_soundscape, non_diegetic_music. Each reference picture is a <Subject N> (the
+       picture defines a person, object or place; it isn't a frame), each voice recording an <Audio N> voice-timbre
+       reference, and whoever speaks gets a stable speaker ID (S1), (S2)… in order of first speaking.
+     In a shot's fields people are tagged as <Picture N>; in reference mode those become <Subject N>. */
+  const subj = t => isRef() ? String(t || "").replace(/<Picture (\d+)>/g, "<Subject $1>") : String(t || "");
+  // Speaker IDs in order of first speaking: a picked speaker (one subject) keeps one ID; an unnamed one gets its own per shot.
+  function speakerIds() {
+    const ids = new Map();
+    state.shots.list.forEach((s, k) => {
+      if (s.rawOn || !(s.dialogue || "").trim()) return;
+      const key = speakerOf(s) || `shot${k}`;
+      if (!ids.has(key)) ids.set(key, ids.size + 1);
+    });
+    return ids;
+  }
+  const speakerKey = (s, k) => speakerOf(s) || `shot${k}`;
+  function shotText(s, k, start, n, ids = speakerIds()) {
     const H = P();
     if (s.rawOn && s.raw.trim()) {  // its own prompt, as one shot's description inside the multi-shot format
-      const body = s.raw.trim().replace(/\s*\n+\s*/g, " ");
+      const body = subj(s.raw.trim().replace(/\s*\n+\s*/g, " "));
       return k > 0 && n > 1 ? `At ${fmtT(start)}, ${body}` : body;
     }
     // "Low-angle wide shot." and "The camera is behind her at shoulder height and tracks her": a stated angle and
@@ -105,49 +125,97 @@ const Shots = (() => {
     const framing = H.shotHead(s.angle, (s.framing || "medium shot").trim());
     const head = k > 0 && n > 1 ? `At ${fmtT(start)}, ${framing}` : framing[0].toUpperCase() + framing.slice(1);
     const parts = [`${head}.`];
-    if (s.setting.trim()) parts.push(H.sentence(s.setting));
-    if (s.action.trim()) parts.push(H.sentence(s.action));
+    if (s.setting.trim()) parts.push(H.sentence(subj(s.setting)));
+    if (s.action.trim()) parts.push(H.sentence(subj(s.action)));
     const line = H.cleanDialogue(s.dialogue || "", H.dialogueBudget(+s.seconds || 3));
     if (line) {
-      const v = voiceFor(s);
-      parts.push(`${speakerOf(s) ? `The person from ${s.speaker} says` : "They say"}${v ? `, in the voice of ${v}` : ""}: <d>[English] ${line}</d>`);
+      const sid = ids.get(speakerKey(s, k)), v = voiceFor(s);
+      const who = speakerOf(s) ? subj(s.speaker) : "The speaker";
+      const voice = v ? (isRef() ? `, using the voice timbre referenced from ${v}` : `, in the voice of ${v}`) : "";
+      parts.push(`${who}${sid ? ` (S${sid})` : ""} says${voice}: <d>[English] ${line}</d>`);
     }
     const pos = H.positionText(s.position);
     parts.push(`The camera ${pos ? `is ${pos} and ` : ""}${H.cameraText(s.camera || "holds a static shot")}.`);
     return parts.join(" ");
   }
-  function tail() {
+  // The two audio fields; `sep` is what follows each label (" " in base mode, a new line in full-reference mode).
+  function audioFields(sep = " ") {
     const sh = state.shots, H = P();
-    return `\n\noverall_soundscape: ${H.sentence(sh.soundscape || "") || "Natural ambient sound of the scene."}\nnon_diegetic_music: ${(sh.music || "").trim() || "N/A"}`;
+    return `overall_soundscape:${sep}${H.sentence(sh.soundscape || "") || "Natural ambient sound of the scene."}\n\nnon_diegetic_music:${sep}${(sh.music || "").trim() || "N/A"}`;
   }
-  /* Subject definitions (H3 Reference): who or what each reference picture is, in detail, so H3 keeps them
-     accurate in every shot. One line per picture, "<Picture N>: …", from the picture's description (Describe with
-     AI, kept as refs[].desc). They go after the style line, before the shots. */
+  /* Subject definitions: each reference picture's subject, in detail (Describe with AI, kept as refs[].desc), so H3
+     keeps it accurate in every shot. */
   const subjectsWanted = () => isRef() && state.shots?.subjectsOn !== false && state.refs.length > 0;
-  function subjectBlock() {
-    if (!subjectsWanted()) return "";
-    return state.refs.map((r, k) => (r.desc || "").trim() ? `<Picture ${k + 1}>: ${r.desc.trim().replace(/\s*\n+\s*/g, " ")}` : "")
-      .filter(Boolean).join("\n");
-  }
   const missingSubjects = () => subjectsWanted() ? state.refs.map((r, k) => (r.desc || "").trim() ? -1 : k).filter(k => k >= 0) : [];
+  const oneLine = t => String(t || "").trim().replace(/\s*\n+\s*/g, " ").replace(/\.\s*$/, "");
+  // The shots (indexes into `list`) that show <Subject N> (tagged in the text, or speaking). When no shot tags any
+  // subject, every subject is taken to be in every shot; when others are tagged and this one isn't, it's in none.
+  const shotTags = s => [s.setting, s.action, s.speaker, s.rawOn ? s.raw : ""].join(" ");
+  function appearsIn(n, list) {
+    const tag = new RegExp(`<(?:Picture|Subject) ${n}>`);
+    const hits = list.map((s, k) => [s, k]).filter(([s]) => tag.test(shotTags(s))).map(([, k]) => k);
+    if (hits.length) return hits;
+    return list.some(s => /<(?:Picture|Subject) \d+>/.test(shotTags(s))) ? [] : list.map((_, k) => k);
+  }
+  /* The full-reference prompt for `list` (the shots in this video: one, or all of them in a multi-shot video); shot
+     numbers and speaker IDs follow that video. */
+  function refPrompt(list, style) {
+    const H = P(), ids = new Map();
+    list.forEach((s, k) => { if (!s.rawOn && (s.dialogue || "").trim() && !ids.has(speakerKey(s, k))) ids.set(speakerKey(s, k), ids.size + 1); });
+    const n = list.length, T = list.reduce((a, s) => a + (+s.seconds || 0), 0);
+    const pics = state.refs.map((r, k) => k + 1), voices = state.arefs.map((a, k) => k + 1);
+    // subject_definitions
+    const defs = pics.map(p => {
+      const d = subjectsWanted() ? oneLine(state.refs[p - 1].desc) : "";
+      return d ? `<Subject ${p}> is the subject of <Picture ${p}>: ${d.charAt(0).toLowerCase() + d.slice(1)}.`
+        : `<Subject ${p}> is the main subject of <Picture ${p}>, kept exactly as it appears there.`;
+    });
+    for (const a of voices) {
+      const sid = a <= pics.length ? ids.get(`<Picture ${a}>`) : null;
+      defs.push(a <= pics.length ? `<Audio ${a}> is the voice-timbre reference for <Subject ${a}>${sid ? ` (S${sid})` : ""}.`
+        : `<Audio ${a}> is a voice-timbre reference.`);
+    }
+    // summary
+    const tasks = ["reference generation", ...(voices.length ? ["audio reference"] : [])];
+    const who = pics.map(p => `<Subject ${p}>`);
+    const whoText = who.length > 1 ? `${who.slice(0, -1).join(", ")} and ${who.at(-1)}` : who[0] || "the subject";
+    const opening = list[0] && !list[0].rawOn ? oneLine(subj(list[0].action)).split(/\s+/).slice(0, 40).join(" ") : "";
+    const voiceRoles = voices.filter(a => a <= pics.length).map(a => `<Audio ${a}> as the voice-timbre reference for <Subject ${a}>`);
+    const summary = `[${tasks.join(" + ")}] The target video is ${n === 1 ? "a single" : `a ${n}-shot`} ${T.toFixed(1)}-second scene with ${whoText}`
+      + (voiceRoles.length ? `, using ${voiceRoles.join(" and ")}` : "") + "." + (opening ? ` It opens as ${opening.charAt(0).toLowerCase() + opening.slice(1)}.` : "");
+    // retention_analysis
+    const retention = [
+      ...pics.map(p => [p, appearsIn(p, list)]).filter(([, at]) => at.length).map(([p, at]) =>
+        `<Subject ${p}> (appears in ${at.map(k => `[Shot ${k + 1}]`).join(", ")}): fully_preserved - the identity, face, hair, build and appearance from <Picture ${p}> are retained.`),
+      ...voices.map(a => `<Audio ${a}>: reference - its voice timbre ${a <= pics.length ? `guides the delivery of <Subject ${a}>` : "guides the spoken delivery"} without copying the original signal.`),
+    ];
+    // detailed_description
+    let t = 0;
+    const body = list.map((s, k) => { const txt = `[Shot ${k + 1}] ${shotText(s, k, t, n, ids)}`; t += +s.seconds || 0; return txt; }).join("\n");
+    const look = oneLine(style);
+    return [`subject_definitions:\n${defs.join("\n")}`, `summary:\n${summary}`, `retention_analysis:\n${retention.join("\n")}`,
+      `detailed_description:\nThe target video's look: ${look.charAt(0).toLowerCase() + look.slice(1)}.\n${body}`, audioFields("\n")].join("\n\n");
+  }
+  function basePrompt(list, style) {
+    let t = 0;
+    const ids = new Map();
+    list.forEach((s, k) => { if (!s.rawOn && (s.dialogue || "").trim() && !ids.has(speakerKey(s, k))) ids.set(speakerKey(s, k), ids.size + 1); });
+    const body = list.map((s, k) => {
+      const txt = `[Shot ${k + 1}] ${k === 0 ? `${style} ` : ""}${shotText(s, k, t, list.length, ids)}`;
+      t += +s.seconds || 0; return txt;
+    }).join("\n");
+    return `integrated_multimodal_description: ${body}\n\n${audioFields()}`;
+  }
   // One shot's own prompt (one video per shot), or the whole multi-shot prompt (only = null).
   function prompt(only = null) {
     const sh = state.shots, H = P();
     const style = H.sentence(sh.style || "") || "Cinematic live-action, natural light.";
-    const subj = subjectBlock(), head = subj ? `${style}\n\n${subj}` : style;
     if (only != null) {
       const s = sh.list[only];
-      if (s.rawOn && s.raw.trim()) {  // its own prompt: tags and {a|b} resolved, tidied; subjects after its first paragraph
-        const own = Prompts.final(s.raw);
-        if (!subj || own.includes(subj)) return own;
-        const cut = own.indexOf("\n\n");
-        return cut > 0 ? `${own.slice(0, cut)}\n\n${subj}${own.slice(cut)}` : `${subj}\n\n${own}`;
-      }
-      return `${head}\n\n[Shot 1] ${shotText(s, 0, 0, 1)}${tail()}`;
+      if (s.rawOn && s.raw.trim()) return Prompts.final(s.raw);  // its own prompt: tags and {a|b} resolved, tidied
     }
-    let t = 0;
-    const body = sh.list.map((s, k) => { const txt = `[Shot ${k + 1}] ${shotText(s, k, t, sh.list.length)}`; t += +s.seconds || 0; return txt; }).join("\n");
-    return `${head}\n\n${body}${tail()}`;
+    const list = only != null ? [sh.list[only]] : sh.list;
+    return isRef() ? refPrompt(list, style) : basePrompt(list, style);
   }
   // Describe with AI every reference picture that has no definition yet (for Generate and the Subjects section).
   async function describeMissing(onEach = () => {}) {
@@ -335,7 +403,8 @@ const Shots = (() => {
     const brief = (s.brief || "").trim() || [s.action, s.setting].filter(x => x.trim()).join(". ");
     if (!enhance && !brief) return Media.toast("Write in a line what happens in this shot first.");
     let idea = brief;
-    if (subjectBlock()) idea += `\n\n(Who is who, for reference only: ${subjectBlock().replace(/\n/g, " ")})`;
+    const who = subjectsWanted() ? state.refs.map((r, k) => oneLine(r.desc) ? `<Picture ${k + 1}> is ${oneLine(r.desc)}` : "").filter(Boolean).join("; ") : "";
+    if (who) idea += `\n\n(Who is who, for reference only: ${who}.)`;
     if (speakerOf(s)) idea += `\n\n(The spoken line is said by the person in ${s.speaker}.)`;
     if (prev && hasContent(prev)) idea += `\n\n(For continuity only, don't film it: the shot before this one is ${summary(prev).slice(0, 300)})`;
     const f = framesOf(i);
