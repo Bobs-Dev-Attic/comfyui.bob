@@ -86,6 +86,9 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
 - **🎯 Track an object** (a video's menu in the results): click an object (or name it) on any frame and SAM 3.1
   follows it for up to 15 s; misdetections are dropped, gaps filled and the path smoothed into a few keys. Save the
   path, then in Animate objects any object can **Use a tracked path** to move the same way. Needs the SAM 3.1 checkpoint.
+- **Objects in motion in a shot** (Shots › a shot's Edit window, One video per shot): give the shot a picture from the Inputs
+  step and its objects' paths (the Animate objects window, in a "Use for this shot" mode). That shot then renders from the
+  picture with the objects on their paths, with the shot's own text, length and settings; it can take a tracked path too.
 - **🔄 Angles** (any picture: viewer, results menu or media library): re-shoot it from other camera angles with Qwen Image
   Edit 2511 and the multiple-angles LoRA. Pick directions × heights on a grid or a preset such as **24 head angles**, make a
   plain backdrop pure white, upscale each with SeedVR2, and put them in a new project. Needs `qwen_image_edit_2511` (bf16,

@@ -48,6 +48,8 @@ const Shots = (() => {
     s.framing ||= "medium shot"; s.camera ||= "holds a static shot";
     s.rawOn = !!s.rawOn;
     s.join = s.join === "continue" ? "continue" : "cut";  // from the shot before: a cut, or the same shot carrying on
+    // Objects in motion (static/motion.js): {picture: {ref, url, name}, plate, hold, layers: [{name, mask, keys}]}
+    s.motion = s.motion && typeof s.motion === "object" && s.motion.picture?.ref && Array.isArray(s.motion.layers) ? s.motion : null;
     // Shots no longer carry their own frames, picture choice or settings (the Inputs and Settings steps hold them).
     for (const k of ["first_frame", "last_frame", "refs", "over"]) delete s[k];
     return s;
@@ -297,6 +299,7 @@ const Shots = (() => {
       if (s.rawOn && s.raw.trim()) return Prompts.final(s.raw);  // its own prompt: tags and {a|b} resolved, tidied
     }
     const all = resolveShots(sh.list), list = only != null ? [all[only]] : all;
+    if (only != null && motionOn(only)) return motionPrompt(list, style);
     if (!isRef()) return basePrompt(list, style);
     const cont = withCont && only != null && carries(only) ? { pic: contPic(), prev: all[only - 1], setting: carriedSetting(all, only), seamless: joins(only) } : null;
     return refPrompt(list, style, cont);
@@ -304,12 +307,34 @@ const Shots = (() => {
   /* Continuity between the videos of "One video per shot" (H3 Reference, two or more shots, on by default): the shots
      render one after another, each with the last frame of the one before as a hidden reference picture. A shot with
      its own prompt doesn't take it (its text can't cite it), nor does any shot once the Inputs hold all 9 pictures. */
+  /* Objects in motion (one video per shot): a shot with a motion plan renders from the plan's picture with its objects
+     moving along their paths (engine "motion": H3 image-to-video with Time-to-Move, app/motion.py). Its own text,
+     length and settings still make the video; it doesn't take reference pictures, voices or the last frame of the shot
+     before (it starts from its own picture, so it comes after a cut). */
+  const motionOn = i => state.shots?.mode === "each" && !!state.shots.list[i]?.motion && !(state.shots.list[i].rawOn && state.shots.list[i].raw.trim());
+  function motionPictures() {
+    const out = state.refs.map((r, k) => ({ ref: r.ref, url: r.url, name: `Picture ${k + 1}` }));
+    const f = state.frames?.first_frame;
+    if (f?.ref) out.push({ ref: f.ref, url: f.url, name: "The first frame" });
+    return out;
+  }
+  // <Picture N> in a motion shot's text: the motion model has no reference pictures, so it gets that subject in words.
+  function subjectWords(k) {
+    const d = oneLine(state.refs[k]?.desc || "");
+    if (!d) return "the subject";
+    const w = d.split(/[,;:]/)[0].split(/\s+/).slice(0, 10).join(" ");
+    return w.charAt(0).toLowerCase() + w.slice(1);
+  }
+  const motionPrompt = (list, style) => basePrompt(list, style)
+    .replace(/,\s*(?:in the voice of|using the voice timbre referenced from) <Audio \d+>/g, "")
+    .replace(/<(?:Picture|Subject) (\d+)>/g, (_, n) => subjectWords(+n - 1))
+    .replace(/(\. |\] )([a-z])/g, (_, a, c) => a + c.toUpperCase());  // "… light. a red cube" -> "… light. A red cube"
   // A shot set to "Continue without a cut" (from the shot before) always waits for that shot and carries it on.
-  const joins = i => isRef() && state.shots?.mode === "each" && i > 0 && state.shots.list[i]?.join === "continue";
+  const joins = i => isRef() && state.shots?.mode === "each" && i > 0 && state.shots.list[i]?.join === "continue" && !motionOn(i);
   const chainOn = () => isRef() && state.shots?.mode === "each" && state.shots.list.length > 1
     && (state.shots.continuity !== false || state.shots.list.some((_, i) => joins(i)));
   const contPic = () => state.refs.length + 1;
-  const carries = i => chainOn() && i > 0 && state.refs.length < 9 && !(state.shots.list[i].rawOn && state.shots.list[i].raw.trim())
+  const carries = i => chainOn() && i > 0 && state.refs.length < 9 && !(state.shots.list[i].rawOn && state.shots.list[i].raw.trim()) && !motionOn(i)
     && (state.shots.continuity !== false || joins(i));
   // A shot with no Where of its own keeps the last place written before it: the place in words is what H3 follows most.
   function carriedSetting(all, i) {
@@ -385,7 +410,8 @@ const Shots = (() => {
       const t0 = t; t += +s.seconds || 0;
       const thumb = thumbOf(s, i), text = summary(s);
       const meta = s.rawOn && s.raw.trim() ? ["own prompt"] : [s.framing, s.angle, s.camera].filter(Boolean);
-      const badges = [joins(i) ? `<span class="sb-badge" title="Continues shot ${i} without a cut">↪</span>` : "", s.dialogue.trim() && !s.rawOn ? `<span class="sb-badge" title="${esc(speakerOf(s) ? `${s.speaker} says` : "Spoken line")}: ${esc(s.dialogue)}">🗣</span>` : "",
+      const badges = [motionOn(i) ? `<span class="sb-badge" title="Objects in motion: ${esc(s.motion.layers.map(l => l.name).join(", "))}, from ${esc(s.motion.picture.name || "a picture")}">🎬</span>` : "",
+        joins(i) ? `<span class="sb-badge" title="Continues shot ${i} without a cut">↪</span>` : "", s.dialogue.trim() && !s.rawOn ? `<span class="sb-badge" title="${esc(speakerOf(s) ? `${s.speaker} says` : "Spoken line")}: ${esc(s.dialogue)}">🗣</span>` : "",
         s.notes.trim() ? `<span class="sb-badge" title="${esc(s.notes)}">📝</span>` : ""].join("");
       return `<div class="shot-block${hasContent(s) ? "" : " sb-blank"}" data-i="${i}" ${n > 1 ? 'draggable="true"' : ""} role="listitem" aria-label="Shot ${i + 1}${s.title ? `: ${esc(s.title)}` : ""}">
         <span class="sb-grip" title="${n > 1 ? "Drag to reorder" : ""}" aria-hidden="true">${n > 1 ? "⠿" : ""}</span>
@@ -734,6 +760,21 @@ const Shots = (() => {
               <p class="hint">${multi ? `In one multi-shot video this text becomes Shot ${i + 1}'s description.` : "Tags like <Picture 1> and {a|b} choices work as on the Prompt step."}</p></div>` : ""}
           </section>
 
+          ${!multi ? (() => {
+            const mo = s.motion, pics = motionPictures(), holdName = { loose: "loosely", normal: "normally", tight: "tightly" };
+            return `<section class="sm-motion"><h3>Objects in motion <span class="opt">optional</span></h3>
+            ${mo ? `<div class="sm-mo"><img src="${esc(mo.picture.url)}" alt="">
+                <div><b>${mo.layers.length} object${mo.layers.length === 1 ? "" : "s"}</b>: ${esc(mo.layers.map(l => l.name).join(", "))}, from ${esc(mo.picture.name || "a picture")}, following ${holdName[mo.hold] || "normally"}.
+                  ${mo.plate ? "" : `<span class="warn">⚠ No empty background yet.</span>`}
+                  <div class="sm-mo-acts"><button type="button" class="btn sm" data-sm="motion-edit">🎬 Edit…</button>
+                  <button type="button" class="btn sm ghost" data-sm="motion-off">Remove</button></div></div></div>
+              <p class="hint">This shot renders from that picture with the objects on their paths (H3 with Time-to-Move). Its text, length and settings still apply; reference pictures and voices don't, and it starts with a cut.</p>`
+            : pics.length ? `<div class="mo-find"><select id="sm-mopic" aria-label="Picture to animate">${pics.map((p, k) => `<option value="${k}">${esc(p.name)}</option>`).join("")}</select>
+                <button type="button" class="btn sm" data-sm="motion-new">🎬 Animate objects…</button></div>
+              <p class="hint">Start this shot from a picture and move objects in it along paths.</p>`
+            : `<p class="hint">Add a reference picture or a first frame on the Inputs step to animate objects in it.</p>`}
+            </section>`; })() : ""}
+
           <section>
             <h3>Notes</h3>
             <textarea rows="2" data-sf="notes" placeholder="Anything to remember about this shot (not sent to the model)">${esc(s.notes)}</textarea>
@@ -827,6 +868,16 @@ const Shots = (() => {
     if (a === "delete") return remove(i);
     if (a === "goto-inputs") { closeModal(); return showStep("inputs"); }
     if (a === "new-tag") return Prompts.editTag(null, () => { if (modal) renderModal(); });
+    if (a === "motion-new" || a === "motion-edit") {
+      // The Animate objects window opens in place of this one (it would sit under it) and brings it back after.
+      const id = s.id, pic = a === "motion-edit" ? s.motion.picture : motionPictures()[+modal.root.querySelector("#sm-mopic")?.value || 0];
+      if (!pic) return;
+      syncFromForm(); closeModal();
+      const back = () => { const k = state.shots.list.findIndex(x => x.id === id); if (k >= 0) openModal(k); };
+      return Motion.open(pic, { plan: a === "motion-edit" ? s.motion : null, seconds: +s.seconds || 3, onClose: back,
+        onUse: plan => { const x = state.shots.list.find(y => y.id === id); if (x) { x.motion = plan; changed(); } } });
+    }
+    if (a === "motion-off") { s.motion = null; changed(); return renderModal(); }
     if (a === "rebuild") {
       const diff = syncFromForm();
       const pre = modal.root.querySelector(".sm-prompt"); if (pre) pre.textContent = "";  // force the rebuild and its flash
@@ -987,12 +1038,18 @@ const Shots = (() => {
     }
     const reqFor = i => {
       const s = sh.list[i], f = framesOf(i);
+      if (motionOn(i)) {  // objects in motion: the motion engine, from the plan's picture
+        const p = s.motion, secs = +s.seconds || 3;
+        return { ...base, engine: "motion", prompt: prompt(i), seconds: secs, first_frame: p.picture.ref, last_frame: null, references: [],
+          ref_audios: [], motion_plate: p.plate, motion_layers: Motion.layerFrames(p, secs), motion_hold: p.hold || "normal",
+          loras: [], unet: null, sampler: null, scheduler: null, cfg: null };
+      }
       return { ...base, prompt: prompt(i), seconds: +s.seconds || 3, references: isR ? base.references : [], ref_audios: arefsFor([s]),
         first_frame: !isR ? f.first_frame?.ref ?? null : null, last_frame: !isR ? f.last_frame?.ref ?? null : null };
     };
     if (sh.list.length === 1) {  // one shot: a plain generation (takes allowed), no timeline layout
       const req = reqFor(0);
-      if (isR && !req.references.length && !(req.ref_audios || []).length) { err.textContent = "Add reference pictures on the Inputs step."; return; }
+      if (isR && req.engine !== "motion" && !req.references.length && !(req.ref_audios || []).length) { err.textContent = "Add reference pictures on the Inputs step."; return; }
       return submitOne(req);
     }
     // Every shot of the run draws from one seed: the seed weighs a lot in H3, so the shots look more alike.
@@ -1001,7 +1058,7 @@ const Shots = (() => {
     if (chainOn()) {
       const steps = sh.list.map((s, i) => ({ ...reqFor(i), batch: 1, seed: base.seed,
         cont: carries(i) ? prompt(i) : null, prompt: prompt(i, false), join: joins(i) }));
-      const bad = steps.findIndex(r => isR && !r.references.length && !(r.ref_audios || []).length);
+      const bad = steps.findIndex(r => isR && r.engine !== "motion" && !r.references.length && !(r.ref_audios || []).length);
       if (bad >= 0) { err.textContent = `Shot ${bad + 1} has no reference pictures.`; return; }
       const first = steps.shift(); delete first.cont; delete first.join;
       let items;
@@ -1018,7 +1075,7 @@ const Shots = (() => {
     const ids = [];
     for (let i = 0; i < sh.list.length; i++) {
       const req = { ...reqFor(i), batch: 1, seed: base.seed };
-      if (isR && !req.references.length && !(req.ref_audios || []).length) { err.textContent = `Shot ${i + 1} has no reference pictures.`; return; }
+      if (isR && req.engine !== "motion" && !req.references.length && !(req.ref_audios || []).length) { err.textContent = `Shot ${i + 1} has no reference pictures.`; return; }
       try {
         const { items } = await api("/api/generate", { method: "POST", body: JSON.stringify(req) });
         for (const it of items) { state.items.set(it.id, it); Activity.onEvent({ type: "item", item: it }); }
@@ -1115,7 +1172,7 @@ const Shots = (() => {
   function previewText() {
     const sh = state.shots;
     return sh.mode === "multi" || sh.list.length === 1 ? prompt() : sh.list.map((_, i) =>
-      `── Shot ${i + 1}${joins(i) ? ` · continues shot ${i} without a cut` : ""}${carries(i) ? ` · ${joins(i) ? "its" : `carries on from shot ${i}'s`} last frame is sent as <Picture ${contPic()}>` : ""} ──\n${prompt(i)}`).join("\n\n");
+      `── Shot ${i + 1}${motionOn(i) ? ` · 🎬 objects in motion, from ${state.shots.list[i].motion.picture.name || "a picture"}` : ""}${joins(i) ? ` · continues shot ${i} without a cut` : ""}${carries(i) ? ` · ${joins(i) ? "its" : `carries on from shot ${i}'s`} last frame is sent as <Picture ${contPic()}>` : ""} ──\n${prompt(i)}`).join("\n\n");
   }
   function describe() {
     if (!upgraded()) return { text: "", first: "", empty: 0, prompt: "", missing: 0 };
