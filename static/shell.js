@@ -7,7 +7,7 @@ const UI_KEY = "bob.ui";
 const EXPERIMENT_KEY = "bob.experiment";
 const readUI = () => { try { return JSON.parse(localStorage.getItem(UI_KEY) || "{}") || {}; } catch { return {}; } };
 const writeUI = patch => { try { localStorage.setItem(UI_KEY, JSON.stringify({ ...readUI(), ...patch })); } catch {} };
-const SIDE_DEFAULT = 460, SIDE_MIN = 340;
+const SIDE_DEFAULT = 460, SIDE_MIN = 340, SIDE_WRITER = 760;
 
 const PROJECT_ICON = `<svg viewBox="0 0 48 40" aria-hidden="true"><rect x="3" y="9" width="42" height="28" rx="4" fill="#ff7a45"/><path d="M3 9l6-6h8l-6 6zm14 0l6-6h8l-6 6zm14 0l6-6h7l-6 6z" fill="#ffb36b"/><path d="M20 17l11 6-11 6z" fill="#fff"/></svg>`;
 const EXPERIMENT_ICON = `<svg viewBox="0 0 48 40" aria-hidden="true"><path d="M18 4h12M21 4v12L9 34a3 3 0 0 0 3 4h24a3 3 0 0 0 3-4L27 16V4" fill="none" stroke="#7aa2ff" stroke-width="3" stroke-linejoin="round"/><path d="M13 29h22l3 5H10z" fill="#7aa2ff"/></svg>`;
@@ -204,6 +204,7 @@ function showStep(id) {
   writeUI({ step: id });
   if (id === "project") renderRecent();
   renderSteps();
+  syncSideWidth();  // wider while the Shot writer shows
   $("#form").scrollTop = 0;
 }
 
@@ -788,20 +789,27 @@ function inScope(it) {
   return state.project ? it.project === state.project.id : !it.project;
 }
 
-/* ------------------------------------------------------------------ adjustable side panel */
+/* ------------------------------------------------------------------ adjustable side panel
+   The panel has two widths: the usual one, and a wider one while the Shot writer is open in the Prompt
+   step (it needs the room). Dragging the splitter changes whichever is showing; each is remembered. */
+const writerSide = () => state.step === "prompt" && !!$('.step[data-step="prompt"]')?.classList.contains("writer-mode");
+const sideKey = () => writerSide() ? "writerSideWidth" : "sideWidth";
+const sideDefault = () => writerSide() ? SIDE_WRITER : SIDE_DEFAULT;
 function setSideWidth(w, save = true) {
   const layout = $("#layout");
-  const max = Math.max(SIDE_MIN, Math.min(900, layout.clientWidth - 420));
+  const max = Math.max(SIDE_MIN, Math.min(writerSide() ? 1100 : 900, layout.clientWidth - 420));
   w = Math.round(Math.max(SIDE_MIN, Math.min(max, w)));
   document.documentElement.style.setProperty("--side-w", w + "px");
   $("#splitter").setAttribute("aria-valuenow", w);
-  if (save) writeUI({ sideWidth: w });
+  if (save) writeUI({ [sideKey()]: w });
   return w;
 }
+// The width for what's showing now (called when the step or the Prompt / Shot writer switch changes).
+function syncSideWidth() { setSideWidth(readUI()[sideKey()] || sideDefault(), false); }
 function initSplitter() {
   const sp = $("#splitter"), layout = $("#layout");
   sp.setAttribute("aria-valuemin", SIDE_MIN);
-  setSideWidth(readUI().sideWidth || SIDE_DEFAULT, false);
+  syncSideWidth();
   sp.addEventListener("pointerdown", e => {
     if (e.button !== 0) return;
     e.preventDefault();
@@ -816,14 +824,14 @@ function initSplitter() {
     };
     sp.addEventListener("pointermove", mv); sp.addEventListener("pointerup", up);
   });
-  sp.addEventListener("dblclick", () => setSideWidth(SIDE_DEFAULT));
+  sp.addEventListener("dblclick", () => setSideWidth(sideDefault()));
   sp.addEventListener("keydown", e => {
-    const cur = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--side-w")) || SIDE_DEFAULT;
+    const cur = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--side-w")) || sideDefault();
     if (e.key === "ArrowLeft") { e.preventDefault(); setSideWidth(cur - 20); }
     if (e.key === "ArrowRight") { e.preventDefault(); setSideWidth(cur + 20); }
-    if (e.key === "Home") { e.preventDefault(); setSideWidth(SIDE_DEFAULT); }
+    if (e.key === "Home") { e.preventDefault(); setSideWidth(sideDefault()); }
   });
-  window.addEventListener("resize", () => setSideWidth(readUI().sideWidth || SIDE_DEFAULT, false));
+  window.addEventListener("resize", syncSideWidth);
 }
 
 /* ------------------------------------------------------------------ system check window */

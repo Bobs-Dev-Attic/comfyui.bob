@@ -183,9 +183,12 @@ const Prompts = (() => {
         if (/^\s*\[Shot\s*\d+\]/im.test(s)) s = shotList(s, notes);
         else {
           if (s && !/soundscape|sound|music/i.test(s)) notes.push(["Describe the sound too: H3 renders it with the picture", "tip", "Add the overall_soundscape: and non_diegetic_music: lines at the end."]);
-          const clip = clipSeconds(), said = spoken(s), budget = Math.max(2, Math.floor(clip * 2.5));
-          if (said > budget) notes.push([`${said} spoken words won't fit in ${fmtSec(clip)}: about ${budget} do (2.5 words a second)`, "warn"]);
+          // (Whether the spoken lines fit the clip is part of the duration estimate below.)
         }
+      }
+      if ((prof === "h3video" || prof === "h3ref") && s && words(s) >= 3) {
+        const d = durationNote(s);
+        if (d) notes.push([d[0], d[1], d[1] === "warn" ? "Make it fit the clip: fewer shots, shorter spoken lines, or simpler action." : null, d[2]]);
       }
       if (prof === "h3sound" && s) {
         if (!/^\s*overall_soundscape\s*:/im.test(s)) notes.push(["Start with “overall_soundscape:” and the ambience and effects in order", "tip"]);
@@ -205,6 +208,34 @@ const Prompts = (() => {
   const clipSeconds = () => h3Frames(+$("#seconds").value || 5) / FPS;
   const fmtSec = t => `${Math.round(t * 10) / 10} s`;
   const fmtTime = t => `${String(Math.floor(t / 60)).padStart(2, "0")}:${(t % 60).toFixed(3).padStart(6, "0")}`;
+  /* How long the clip needs to be: each shot needs time to read (about 2 s) and to speak its lines (2.5 words a
+     second, plus a little air); timed shots need what's left after their start. A suggestion in 0.5 s steps. */
+  function neededSeconds(s) {
+    const lines = text => spoken(text);
+    const shotNeed = text => Math.max(2, lines(text) ? lines(text) / 2.5 + 0.8 : 2);
+    if (!/^\s*\[Shot\s*\d+\]/im.test(s)) return Math.max(3, spoken(s) ? spoken(s) / 2.5 + 1 : 3);
+    const bodies = s.split(/^\s*\[Shot\s*\d+\]/im).slice(1).map(b => b.split(/^\s*(overall_soundscape|non_diegetic_music)\s*:/im)[0]);
+    let sum = 0, last = 0;
+    bodies.forEach((b, k) => {
+      const need = shotNeed(b);
+      sum += need;
+      const m = b.match(/^\s*At\s+(?:(\d+):)?(\d+(?:\.\d+)?)/i);
+      if (m) last = Math.max(last, (+m[1] || 0) * 60 + +m[2] + need);
+      else if (k === 0) last = need;
+    });
+    return Math.max(sum, last);
+  }
+  function durationNote(s) {
+    const need = neededSeconds(s), clip = clipSeconds(), set = +$("#seconds").value || 5;
+    const max = +$("#seconds").max || 15, min = +$("#seconds").min || 2;
+    // H3 snaps the length to its frame grid (12.5 s → 12.3 s), so suggest the first setting that still covers it.
+    let suggest = Math.min(max, Math.max(min, Math.ceil(need * 2) / 2));
+    while (suggest < max && h3Frames(suggest) / FPS < need - 0.05) suggest += 0.5;
+    if (need > max + 0.25) return [`This needs about ${fmtSec(need)}, more than H3's ${max} s: split it into two clips or trim it`, "warn", null];
+    if (need > clip + 0.25) return [`May be cut off: it needs about ${fmtSec(need)}, the clip is ${fmtSec(clip)}`, "warn", suggest];
+    if (clip - need >= 4 && suggest < set) return [`About ${fmtSec(need)} is enough; the clip is ${fmtSec(clip)}`, "tip", suggest];
+    return null;
+  }
   const spoken = text => [...text.matchAll(/<d>([\s\S]*?)<\/d>/g)].reduce((n, m) => n + words(m[1].replace(/^\s*\[[^\]]*\]/, "")), 0);
   function shotList(s, notes) {
     const clip = clipSeconds();
@@ -259,7 +290,17 @@ const Prompts = (() => {
   }
 
   /* ------------------------------------------------------------ live panel */
+  // Over the Shot writer: the same duration estimate for the prompt it's filling.
+  function renderWriterDuration() {
+    const el = $("#pw-dur"), prof = profile(), raw = ta().value;
+    if (!el) return;
+    if (!(prof === "h3video" || prof === "h3ref") || words(raw) < 3) { el.innerHTML = ""; return; }
+    const s = shape(resolve(raw), prof).text, d = durationNote(s);
+    el.className = `pw-dur${d?.[1] === "warn" ? " warn" : ""}`;
+    el.innerHTML = `⏱ needs ~${fmtSec(neededSeconds(s))} of ${fmtSec(clipSeconds())}${d ? ` · ${esc(d[1] === "warn" ? (d[2] ? "may be cut off" : d[0]) : "could be shorter")}` : ""}${d?.[2] ? ` <button type="button" class="link" data-pl="dur" data-s="${d[2]}">Use ${d[2]} s</button>` : ""}`;
+  }
   function renderLive() {
+    renderWriterDuration();
     const box = $("#prompt-live");
     if (!box) return;
     const prof = profile(), raw = ta().value;
@@ -273,7 +314,7 @@ const Prompts = (() => {
     box.innerHTML = `
       <div class="pl-head">
         <span class="pl-model" title="The model this prompt is shaped for">${esc(modelLabel(modelKey()))}</span>
-        <span class="pl-count">${words(text)} words</span>
+        <span class="pl-count">${words(text)} words${(prof === "h3video" || prof === "h3ref") && words(text) >= 3 ? ` · ⏱ needs ~${fmtSec(neededSeconds(text))} of ${fmtSec(clipSeconds())}` : ""}</span>
         <span class="pl-gap"></span>
         <label class="pl-tg" title="Tidy the prompt for the model: weights and filler out, dialogue tagged. Generate sends the tidied text."><input type="checkbox" data-pl="tidy"${S.tidy ? " checked" : ""}> Tidy</label>
         <label class="pl-tg" title="${canLive ? "A local LLM rewrites the prompt in this model's format after you pause typing (Tab accepts)" : "No live rewrite for this model"}"><input type="checkbox" data-pl="live"${S.live && canLive ? " checked" : ""}${canLive ? "" : " disabled"}> ✨ Live rewrite</label>
@@ -284,7 +325,7 @@ const Prompts = (() => {
             <option value="">Auto (fastest)${S.usedModel && !S.liveModel ? ` · ${esc(S.usedModel)}` : ""}</option>${names.map(n => `<option value="${esc(n)}"${n === S.liveModel ? " selected" : ""}>${esc(n)}</option>`).join("")}</select>`;
         })() : ""}
       </div>
-      ${notes.length ? `<ul class="pl-notes">${notes.map(([t, k]) => `<li class="pl-${k}">${k === "fix" ? "✓" : k === "warn" ? "⚠" : "💡"} ${esc(t)}</li>`).join("")}</ul>` : ""}
+      ${notes.length ? `<ul class="pl-notes">${notes.map(([t, k, , dur]) => `<li class="pl-${k}">${k === "fix" ? "✓" : k === "warn" ? "⚠" : "💡"} ${esc(t)}${dur ? ` <button type="button" class="link" data-pl="dur" data-s="${dur}" title="Set Duration (Settings) to ${dur} s">Use ${dur} s</button>` : ""}</li>`).join("")}</ul>` : ""}
       ${sug ? `<div class="pl-sug${sug.done ? "" : " busy"}${sug.error ? " err" : ""}" aria-live="polite">
           <div class="pl-sug-head">${sug.error ? "⚠ Live rewrite" : sug.done ? `✨ ${esc(modelLabel(sug.model))} version` : `✨ Rewriting for ${esc(modelLabel(sug.model))}…`}
             ${sug.done && !sug.error ? `<span class="pl-keys"><kbd>Tab</kbd> accept · <kbd>Esc</kbd> dismiss</span>` : ""}</div>
@@ -335,7 +376,7 @@ const Prompts = (() => {
     const ctrl = S.ctrl = new AbortController();
     const { text, markers } = protect(from ?? raw);
     // What the live model view flags (not what Tidy already put right) goes along, so the rewrite fixes it.
-    const flagged = (from ? shape(resolve(from), prof) : shape(resolve(raw), prof)).notes.filter(([, k]) => k !== "fix");
+    const flagged = (from ? shape(resolve(from), prof) : shape(resolve(raw), prof)).notes.filter(([, k, fix]) => k !== "fix" && fix !== null);
     const problems = flagged.map(([t, , fix]) => fix || t);
     const sug = S.sug = { for: raw, text: "", done: false, model: modelKey(), markers, problems,
       total: prev?.total ?? problems.length, round: prev ? prev.round + 1 : 1 };
@@ -673,6 +714,11 @@ const Prompts = (() => {
       if (a === "dismiss") dismiss();
       if (a === "again") { S.lastAsked = ""; ask(true); }
       if (a === "reroll") { e.preventDefault(); S.previewSeed = Math.floor(Math.random() * 1e9); renderLive(); }
+      if (a === "dur") {
+        const sec = $("#seconds"); sec.value = e.target.closest("[data-s]").dataset.s;
+        sec.dispatchEvent(new Event("input", { bubbles: true }));
+        Media.toast(`Duration set to ${sec.value} s.`);
+      }
     });
     $("#prompt-live").addEventListener("change", e => {
       const a = e.target.dataset.pl;
@@ -698,6 +744,13 @@ const Prompts = (() => {
       if (a === "from-catalog") insertSaved();
     });
     $$("#prompt-mode button").forEach(b => b.addEventListener("click", () => setMode(b.dataset.m)));
+    $("#pw-dur").addEventListener("click", e => {
+      const b = e.target.closest('[data-pl="dur"]'); if (!b) return;
+      const sec = $("#seconds"); sec.value = b.dataset.s;
+      sec.dispatchEvent(new Event("input", { bubbles: true }));
+      postContext(true);  // the Shot writer's Duration follows
+      Media.toast(`Duration set to ${sec.value} s.`);
+    });
     $("#btn-catalog").onclick = catalog;
     $("#seconds").addEventListener("input", () => renderLive());  // H3 checks depend on the clip length
     load().then(renderLive).catch(() => {});
@@ -721,6 +774,7 @@ const Prompts = (() => {
       else postContext(true);
     } else renderLive();
     if (persist && writerOk) { try { localStorage.setItem(MODE_KEY, writerOn ? "writer" : "text"); } catch {} }
+    if (typeof syncSideWidth === "function") syncSideWidth();  // the Shot writer gets a wider side panel
   }
   function writerAvailable(ok) {
     writerOk = ok;

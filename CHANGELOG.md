@@ -5,6 +5,22 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.41.0] - 2026-11-16
+
+### Added
+- **Duration suggestion for H3 video and H3 Reference.** The live model view (and the top of the Shot writer) shows
+  how long the prompt needs against the clip, e.g. “⏱ needs ~6.4 s of 5.2 s”: about 2 s per shot, spoken lines at
+  2.5 words a second, and timed shots from their start time.
+  - **May be cut off** when it needs more than the clip, with **Use N s** to set Duration (rounded so H3's frame grid
+    still covers it); a tip when the clip is 4 s or more longer than needed; a warning when it needs more than H3's
+    15 s.
+  - The live rewrite gets the “cut off” warning as a problem to fix (fewer shots, shorter lines).
+
+### Changed
+- **The side panel widens while the Shot writer is open** (760 px by default) and goes back to its usual width on
+  other steps or in ✏ Prompt. Dragging the splitter changes the width that's showing; both are remembered.
+- The “spoken words won't fit” note for prompts without shots is now part of the duration check.
+
 ## [0.40.0] - 2026-11-16
 
 ### Added

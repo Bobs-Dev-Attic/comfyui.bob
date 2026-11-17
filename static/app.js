@@ -555,7 +555,7 @@ function postContext(now = false) {
 studioChannel.onmessage = ({ data: msg }) => {
   if (msg?.type === "hello") postContext(true);
   else if (msg?.type === "set" && typeof msg.seconds === "number") {
-    $("#seconds").value = msg.seconds; updateDerived();
+    $("#seconds").value = msg.seconds; updateDerived(); Prompts.refresh();
   } else if (msg?.type === "use" && typeof msg.prompt === "string" && msg.quiet) {
     // The Shot writer in the Prompt tab keeps the prompt in step as you build the shot list.
     const p = $("#prompt");
