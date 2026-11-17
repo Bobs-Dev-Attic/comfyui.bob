@@ -160,7 +160,7 @@
             <div class="shot-list" id="shot-list" role="list" aria-label="Shots"></div>
             <button type="button" class="shot-add" id="btn-shot-add">＋ Add shot</button>
             <p class="hint" id="shots-hint"></p>
-            <details class="shots-all">
+            <details class="shots-all shots-look">
               <summary>Look, sound and music <span class="opt">for every shot</span></summary>
               <div class="field"><label for="shots-style">Look <span class="opt">style, light, lens</span></label>
                 <input id="shots-style" placeholder="Cinematic live-action, warm tungsten palette, 35mm lens, shallow depth of field"></div>
@@ -168,6 +168,9 @@
                 <div class="field"><label for="shots-sound">Soundscape</label><input id="shots-sound" placeholder="Rain on metal, distant traffic, footsteps in puddles"></div>
                 <div class="field"><label for="shots-music">Music</label><input id="shots-music" placeholder="N/A"></div>
               </div>
+              <label class="subj-on"><input type="checkbox" id="shots-automatch" checked> When these change, ✨ update the shots to match
+                <span class="opt">setting, light, wording and camera; what happens and spoken lines stay</span></label>
+              <p class="hint" id="shots-match-status" aria-live="polite"></p>
             </details>
             <details class="shots-preview"><summary>Prompt preview</summary><pre id="shots-prompt"></pre></details>
             <datalist id="shot-cams"><option value="holds a static shot"><option value="slowly pushes in"><option value="slowly pulls back"><option value="pans left"><option value="pans right"><option value="tilts up"><option value="tilts down"><option value="tracks alongside the subject"><option value="follows the subject from behind"><option value="orbits around the subject"><option value="cranes up"><option value="is handheld and close"><option value="racks focus"></datalist>

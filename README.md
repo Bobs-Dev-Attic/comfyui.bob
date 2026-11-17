@@ -100,6 +100,9 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   eyes, hair, skin, marks, build, clothes), written by the vision model and editable. They go at the top of every shot's
   prompt's `subject_definitions` as `<Subject N>` so H3 keeps the subjects accurate; Generate writes any that are
   missing first.
+- **Look, sound and music** (Shots step): changing one ✨ rewrites the shots to fit it (setting, light, weather,
+  wording, camera) while keeping what happens, who is in it and every spoken line; ↶ Undo puts them back. During a
+  render it waits for the render to finish. A switch under the fields turns it off.
 - **Prompt format**: the Shots step writes prompts in MiniMax's official layout (Video Prompt Writing Guide). H3:
   `integrated_multimodal_description: [Shot 1] …` then `overall_soundscape:` and `non_diegetic_music:`. H3 Reference
   (full-reference mode): `subject_definitions`, `summary`, `retention_analysis`, `integrated_multimodal_description`

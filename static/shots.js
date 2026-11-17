@@ -272,6 +272,7 @@ const Shots = (() => {
       const el = document.getElementById(id); if (el && document.activeElement !== el) el.value = sh[k] || "";
     }
     const ideaN = document.getElementById("shots-idea-n"); if (ideaN) ideaN.value = sh.ideaShots || "";
+    const am = document.getElementById("shots-automatch"); if (am) am.checked = sh.autoMatch !== false;
     const ideaS = document.getElementById("shots-idea-s"); if (ideaS && document.activeElement !== ideaS) ideaS.value = sh.ideaSeconds || 10;
     renderCreat();
     renderSubjects();
@@ -443,6 +444,71 @@ const Shots = (() => {
     return j;
   }
   const undo = new Map();  // shot id → its fields before the last ✨ (not saved)
+
+  /* ---- Match the shots to a new look, sound or music: when one of those changes, the writer rewrites every shot's
+     fields to fit (setting and light, action wording, camera), keeping what happens, who is in it and the spoken
+     lines word for word. Shots with their own prompt are left alone. One ↶ Undo puts the shots back. While a render
+     runs it waits for the render to finish, so the LLM doesn't take the GPU from it. */
+  let matchUndo = null, matchWaiting = false, matchBusy = false, lastMatched = null;
+  const projectKey = () => JSON.stringify([state.shots.style || "", state.shots.soundscape || "", state.shots.music || ""]);
+  const rendering = () => [...(state.items?.values?.() || [])].some(x => ["queued", "running", "submitting"].includes(x.status));
+  function matchStatus(html) { const el = document.getElementById("shots-match-status"); if (el) el.innerHTML = html; }
+  function maybeMatch() {
+    const sh = state.shots;
+    if (sh.autoMatch === false || !isVideo()) return;
+    if (lastMatched === null || projectKey() === lastMatched) return;
+    if (!sh.list.some(s => !s.rawOn && hasContent(s))) { lastMatched = projectKey(); return; }
+    if (rendering()) { matchWaiting = true; matchStatus("The shots will be updated to match once the render finishes."); return; }
+    matchShots();
+  }
+  async function matchShots() {
+    const sh = state.shots;
+    const idx = sh.list.map((s, k) => (!s.rawOn && hasContent(s) ? k : -1)).filter(k => k >= 0);
+    if (!idx.length || matchBusy) return;
+    matchBusy = true; matchWaiting = false;
+    const key = projectKey();
+    matchStatus(`Updating ${idx.length} shot${idx.length === 1 ? "" : "s"} to match the look, sound and music…`);
+    const before = idx.map(k => ({ id: sh.list[k].id, ...shotFields(sh.list[k]) }));
+    const list = idx.map(k => sh.list[k]);
+    // No draft: as a draft the old fields win and keep their old light and weather. The old shots go in as the story
+    // to keep instead, with the new look spelled out, and the writer writes each shot afresh in it.
+    const story = list.map((s, n) => `Shot ${n + 1}: ${[s.action, s.setting].map(x => x.trim()).filter(Boolean).join(". In: ")}`).join("\n");
+    const look = [sh.style && `Look: ${sh.style}`, sh.soundscape && `Sound: ${sh.soundscape}`, sh.music && `Music: ${sh.music}`].filter(Boolean).join(". ");
+    const idea = `${look}.\n\nRe-imagine these ${list.length} shots in that look. Keep what happens in each shot, who is in it and the order of the `
+      + "shots, but rewrite the place's light, time of day, weather and colours, the wording of the action and the camera so everything "
+      + "fits the look; drop any old light or weather that clashes with it (no sunshine in a night scene).\n\n" + story;
+    const locked = { ...projectLocks(), shots: list.map(s => (s.dialogue.trim() ? { dialogue: s.dialogue } : {})) };
+    const draft = {};
+    const f = framesOf(0);
+    const body = { ...aiBase(), idea, seconds: Math.min(15, Math.max(2, list.reduce((a, s) => a + (+s.seconds || 0), 0))), shots: list.length,
+      dialogue: list.some(s => s.dialogue.trim()), first_frame: !isRef() ? f.first_frame?.ref ?? null : null, last_frame: null,
+      references: isRef() ? state.refs.map(r => r.ref) : [], locked, draft };
+    try {
+      const j = await api("/api/prompt/write", { method: "POST", body: JSON.stringify(body) });
+      const got = j.fields?.shots || [];
+      let changedN = 0;
+      list.forEach((s, n) => {
+        const g = got[n]; if (!g || !sh.list.includes(s)) return;
+        for (const k of FIELDS) if (k !== "dialogue" && typeof g[k] === "string" && g[k].trim()) s[k] = g[k].trim();
+        changedN++;
+      });
+      matchUndo = before; lastMatched = key;
+      changed();
+      matchStatus(`Updated ${changedN} shot${changedN === 1 ? "" : "s"} to match (${esc(j.model)}, ${j.seconds}s). `
+        + `<button type="button" class="link" data-match="undo">↶ Undo</button>`);
+    } catch (e) {
+      matchStatus(`⚠ Couldn't update the shots: ${esc(e.message)} <button type="button" class="link" data-match="now">Try again</button>`);
+    } finally {
+      matchBusy = false;
+      if (projectKey() !== key && state.shots.autoMatch !== false) maybeMatch();  // changed again meanwhile
+    }
+  }
+  function undoMatch() {
+    if (!matchUndo) return;
+    for (const b of matchUndo) { const s = state.shots.list.find(x => x.id === b.id); if (s) for (const k of FIELDS) s[k] = b[k]; }
+    matchUndo = null; changed();
+    matchStatus("The shots are back as they were.");
+  }
 
   /* ---------------------------------------------------------------- the Edit window */
   let modal = null;  // {root, i}
@@ -647,6 +713,7 @@ const Shots = (() => {
       const sh = state.shots, id = e.target.id;
       // A checkbox fires input before change, and the form's input handler redraws the step: take it here, first.
       if (id === "subjects-on") { sh.subjectsOn = e.target.checked; return changed(); }
+      if (id === "shots-automatch") { sh.autoMatch = e.target.checked; return scheduleSave(); }
       const map = { "shots-style": "style", "shots-sound": "soundscape", "shots-music": "music", "shots-idea": "idea" };
       if (map[id]) { sh[map[id]] = e.target.value; scheduleSave(); if (id !== "shots-idea") document.getElementById("shots-prompt").textContent = sh.mode === "multi" ? prompt() : sh.list.map((_, i) => `── Shot ${i + 1} ──\n${prompt(i)}`).join("\n\n"); return; }
       if (id === "shots-creat") { sh.creativity = +e.target.value; renderCreat(); scheduleSave(); }
@@ -660,6 +727,7 @@ const Shots = (() => {
     });
     step.addEventListener("change", e => {
       if (e.target.dataset.subj != null) { renderRefs(); renderSubjects(); }
+      if (["shots-style", "shots-sound", "shots-music"].includes(e.target.id)) maybeMatch();
       if (e.target.id === "shots-idea-n") { state.shots.ideaShots = e.target.value; scheduleSave(); }
     });
     step.addEventListener("click", async e => {
@@ -667,6 +735,9 @@ const Shots = (() => {
       const m = e.target.closest("#shots-mode button")?.dataset.m;
       if (m) { sh.mode = m; return changed(); }
       if (e.target.closest("#btn-shot-add")) return openModal(add());
+      const mt = e.target.closest("[data-match]")?.dataset.match;
+      if (mt === "undo") return undoMatch();
+      if (mt === "now") { lastMatched = null; return matchShots(); }
       const sa = e.target.closest("[data-subj-act]");
       if (sa) {
         const st = document.getElementById("subjects-status"); sa.disabled = true;
@@ -695,6 +766,9 @@ const Shots = (() => {
       const i = +block.dataset.i, a = e.target.closest("[data-shot-act]")?.dataset.shotAct;
       if (a === "menu") return menu(i, e.target.closest(".sb-more"));
       if (a === "edit" || e.target.closest(".sb-thumb")) return openModal(i);
+    });
+    step.addEventListener("focusin", e => {
+      if (["shots-style", "shots-sound", "shots-music"].includes(e.target.id) && !matchBusy && !matchWaiting) lastMatched = projectKey();
     });
     step.addEventListener("dblclick", e => { const b = e.target.closest(".shot-block"); if (b && !e.target.closest(".sb-more")) openModal(+b.dataset.i); });
     step.addEventListener("keydown", e => {
@@ -782,6 +856,7 @@ const Shots = (() => {
   }
   // Called for every studio item update: when a whole batch is done, lay it out on the timeline.
   async function onItem(it) {
+    if (matchWaiting && !rendering()) setTimeout(() => { if (matchWaiting && !rendering()) matchShots(); }, 500);
     for (const [key, b] of pending) {
       if (!b.ids.includes(it.id)) continue;
       // `it` is newer than state.items here (the studio stores it after telling us)
