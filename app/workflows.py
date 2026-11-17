@@ -243,8 +243,15 @@ def h3_reference_lead(count: int) -> str:
     return f"Use {_listed(tags)} as reference{'s' if count > 1 else ''} for the characters, objects and style."
 
 
-def h3_audio_lead(count: int) -> str:
-    """Default sentence naming the reference sounds, used when the prompt has no <Audio> tags."""
+def h3_audio_lead(count: int, pictures: int = 0) -> str:
+    """Default sentence naming the reference sounds, used when the prompt has no <Audio> tags. With
+    reference pictures, voice N belongs to the person in picture N."""
+    paired = min(count, pictures)
+    if paired:
+        pairs = [f"<Audio {i}> is the voice of the person in <Picture {i}>" for i in range(1, paired + 1)]
+        rest = [f"<Audio {i}>" for i in range(paired + 1, count + 1)]
+        extra = f" Use {_listed(rest)} as {'another voice' if len(rest) == 1 else 'other voices'} for whoever else speaks." if rest else ""
+        return (f"{'; '.join(pairs)}: when that person speaks, keep their voice's timbre, accent and delivery.{extra}")
     tags = [f"<Audio {i}>" for i in range(1, count + 1)]
     return (f"Use {_listed(tags)} as the voice reference{'s' if count > 1 else ''}: whoever speaks keeps "
             f"{'that voice' if count == 1 else 'the matching voice'}, its timbre, accent and delivery.")
@@ -301,7 +308,7 @@ def build_h3_ref(
     if references and "<Picture" not in prompt:
         leads.append(h3_reference_lead(references))
     if audios and "<Audio" not in prompt:
-        leads.append(h3_audio_lead(audios))
+        leads.append(h3_audio_lead(audios, references))
     if leads:
         prompt = " ".join(leads) + f"\n\n{prompt}"
     length = h3_length(seconds)
@@ -745,7 +752,7 @@ def build_enhance(
         if references and "<Picture" not in prompt:
             lead.append(h3_reference_lead(references))
         if audios and "<Audio" not in prompt:
-            lead.append(h3_audio_lead(audios))
+            lead.append(h3_audio_lead(audios, references))
         text = (" ".join(lead) + "\n\n" + prompt) if lead else prompt
         cond_inputs: dict[str, Any] = dict(clip=o(clip), vae=o(vae), audio_vae=o(avae), prompt=text or "A person.", width=o(track, 4),
                                            height=o(track, 5), length=o(track, 6), ref_image_size="match")

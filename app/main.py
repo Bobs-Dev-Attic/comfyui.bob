@@ -354,6 +354,7 @@ class WritePromptRequest(BaseModel):
     first_frame: str | None = None
     last_frame: str | None = None
     references: list[str] = Field(default_factory=list, max_length=9)
+    voices: int = Field(0, ge=0, le=9)  # H3 Reference voice recordings, paired with the pictures by number
     dialogue: bool = False
     backend: str | None = None
     url: str | None = None
@@ -381,6 +382,7 @@ async def write_prompt(req: WritePromptRequest):
         result = await llm.write_prompt(llm.WriteRequest(
             mode=mode, idea=req.idea, seconds=req.seconds, shots=req.shots, aspect=req.aspect, images=images,
             first_frame=bool(req.first_frame), last_frame=bool(req.last_frame), dialogue=req.dialogue,
+            voices=req.voices if mode == "ref" else 0,
             backend=req.backend, url=req.url, model=req.model or None, locked=req.locked or {},
         ))
     except (llm.LLMError, ValueError) as exc:

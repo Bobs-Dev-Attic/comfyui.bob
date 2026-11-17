@@ -155,7 +155,7 @@ function renderPreview() {
   const out = $("#w-prompt");
   if (!m) { out.textContent = ""; $("#w-warnings").innerHTML = ""; $("#w-count").textContent = ""; return; }
   const n = nShots(), d = data();
-  const segs = H.assemble(d, m, n, frames());
+  const segs = H.assemble(d, m, n, frames(), voiceCount());
   out.innerHTML = segs.map(s => {
     if (!s.key) return `<span class="tpl">${esc(s.text)}</span>`;
     if (s.hole) return `<span class="hole" data-key="${s.key}">${esc(s.text)}</span>`;
@@ -189,7 +189,8 @@ function autoSend(text) {
   }, 250);
 }
 
-function currentText() { const m = mode(); return m ? H.toText(H.assemble(data(), m, nShots(), frames())) : ""; }
+function currentText() { const m = mode(); return m ? H.toText(H.assemble(data(), m, nShots(), frames(), voiceCount())) : ""; }
+function voiceCount() { return mode() === "ref" ? ctx().voices || 0 : 0; }
 
 /* ------------------------------------------------------------------ LLM */
 let ideaTimer = null;
@@ -222,6 +223,7 @@ async function write() {
     first_frame: m === "i2v" ? c.first_frame?.ref ?? null : null,
     last_frame: m === "i2v" ? c.last_frame?.ref ?? null : null,
     references: m === "ref" ? c.references.map(r => r.ref) : [],
+    voices: voiceCount(),
     backend: s.backend || null, url: s.urls?.[s.backend] || null, model: s.model || null,
     locked: lockedPayload(),
   };

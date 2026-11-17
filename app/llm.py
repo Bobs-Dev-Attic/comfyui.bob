@@ -243,6 +243,7 @@ class WriteRequest:
     images: list[Path] = field(default_factory=list)  # keyframes (i2v) or references (ref)
     first_frame: bool = False
     last_frame: bool = False
+    voices: int = 0  # H3 Reference voice recordings: <Audio N> is the voice of the person in <Picture N>
     dialogue: bool = True
     backend: str | None = None  # "ollama" | "openai"; None = config default
     url: str | None = None  # server URL; None = backend default
@@ -361,6 +362,10 @@ def _user_message(req: WriteRequest, n: int, frames: int) -> str:
         lines += ["", f"The attached pictures are references, tagged in order as {tags}. In the action and setting "
                   "fields, refer to people, objects and places from them by tag, e.g. \"the woman from <Picture 1>\", "
                   "instead of describing their looks. Use every tag at least once. Use only these tags."]
+        if req.voices:
+            pairs = ", ".join(f"<Audio {i}> is the voice of the person in <Picture {i}>" for i in range(1, req.voices + 1))
+            lines += [f"Voices: {pairs}. In a shot with a spoken line, start the action with the person who speaks, "
+                      "by their picture tag, so the right voice is used."]
     if not req.dialogue:
         lines += ["Nobody speaks: dialogue is \"\" in every shot."]
     fixed = locked_items(req.locked)
@@ -515,6 +520,14 @@ def _camera(s: str) -> str:
     return f"The camera {s}."
 
 
+def voice_of(action: str, voices: int) -> str:
+    """ ", in the voice of <Audio N>" for the first person tagged in the action who has a voice recording."""
+    for m in TAG.finditer(action or ""):
+        if 1 <= int(m.group(1)) <= voices:
+            return f", in the voice of <Audio {m.group(1)}>"
+    return ""
+
+
 def assemble(data: dict[str, Any], req: WriteRequest, n: int, frames: int) -> str:
     if req.mode == "sound":
         return (f"overall_soundscape: {_sentence(data['soundscape'])}\n"
@@ -531,7 +544,7 @@ def assemble(data: dict[str, Any], req: WriteRequest, n: int, frames: int) -> st
         body = f"{when}{s['framing']}. {_sentence(s['setting'])} {_sentence(s['action'])}"
         line = clean_dialogue(s.get("dialogue") or "", dialogue_budget(times[k + 1] - times[k]))
         if line:
-            body += f" They say: <d>[English] {line}</d>"
+            body += f" They say{voice_of(s.get('action', ''), req.voices if req.mode == 'ref' else 0)}: <d>[English] {line}</d>"
         out.append(f"[Shot {k + 1}] {body[0].upper() + body[1:]} {_camera(s['camera'])}")
     music = data.get("music", "").strip() or "N/A"
     out += ["", f"overall_soundscape: {_sentence(data['soundscape'])}", f"non_diegetic_music: {music}"]

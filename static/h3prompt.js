@@ -63,7 +63,12 @@
   /* Build the prompt as segments {text, key}. key is null for H3 template text, or the
      field it came from ("style", "shots.2.action", ...). A segment with hole:true marks an
      empty field: shown in the preview, left out of the text. */
-  function assemble(data, mode, n, frames) {
+  // ", in the voice of <Audio N>": the first person tagged in the action who has a voice recording.
+  function voiceOf(action, voices) {
+    for (const m of String(action || "").matchAll(/<Picture (\d+)>/g)) if (+m[1] >= 1 && +m[1] <= voices) return `, in the voice of <Audio ${m[1]}>`;
+    return "";
+  }
+  function assemble(data, mode, n, frames, voices = 0) {
     const seg = [];
     const tpl = text => seg.push({ text, key: null });
     const fld = (key, text) => text ? seg.push({ text, key }) : seg.push({ text: `‹${key.split(".").pop()}›`, key, hole: true });
@@ -94,7 +99,7 @@
       fld(`shots.${i}.setting`, sentence(s.setting)); tpl(" ");
       fld(`shots.${i}.action`, sentence(s.action));
       const line = cleanDialogue(s.dialogue || "", dialogueBudget(times[k + 1] - times[k]));
-      if (line) { tpl(" They say: <d>[English] "); fld(`shots.${i}.dialogue`, line); tpl("</d>"); }
+      if (line) { tpl(` They say${mode === "ref" ? voiceOf(s.action, voices) : ""}: <d>[English] `); fld(`shots.${i}.dialogue`, line); tpl("</d>"); }
       tpl(" The camera "); fld(`shots.${i}.camera`, cameraText(s.camera)); tpl(".");
     });
     tpl("\n\noverall_soundscape: "); fld("soundscape", sentence(data.soundscape));
