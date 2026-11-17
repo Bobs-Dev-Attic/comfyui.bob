@@ -60,12 +60,13 @@ const Shots = (() => {
       if (!checked.has(old.list)) {
         old.list = old.list.filter(x => x && typeof x === "object").map(normShot);
         old.mode = old.mode === "multi" ? "multi" : "each";
+        if (typeof old.subjectsOn !== "boolean") old.subjectsOn = true;
         checked.add(old.list);
       }
       if (!old.list.length) old.list.push(blank(settingsSeconds()));
       return old;
     }
-    const sh = { v: V, mode: "each", style: "", soundscape: "", music: "", idea: "", ideaShots: "", ideaSeconds: 10, creativity: 50, list: [] };
+    const sh = { v: V, mode: "each", style: "", soundscape: "", music: "", idea: "", ideaShots: "", ideaSeconds: 10, creativity: 50, subjectsOn: true, list: [] };
     if (old && Array.isArray(old.list) && old.on) {
       Object.assign(sh, { mode: old.mode === "multi" ? "multi" : "each", style: old.style || "", soundscape: old.soundscape || "", music: old.music || "" });
       sh.list = old.list.map(normShot);
@@ -119,18 +120,63 @@ const Shots = (() => {
     const sh = state.shots, H = P();
     return `\n\noverall_soundscape: ${H.sentence(sh.soundscape || "") || "Natural ambient sound of the scene."}\nnon_diegetic_music: ${(sh.music || "").trim() || "N/A"}`;
   }
+  /* Subject definitions (H3 Reference): who or what each reference picture is, in detail, so H3 keeps them
+     accurate in every shot. One line per picture, "<Picture N>: …", from the picture's description (Describe with
+     AI, kept as refs[].desc). They go after the style line, before the shots. */
+  const subjectsWanted = () => isRef() && state.shots?.subjectsOn !== false && state.refs.length > 0;
+  function subjectBlock() {
+    if (!subjectsWanted()) return "";
+    return state.refs.map((r, k) => (r.desc || "").trim() ? `<Picture ${k + 1}>: ${r.desc.trim().replace(/\s*\n+\s*/g, " ")}` : "")
+      .filter(Boolean).join("\n");
+  }
+  const missingSubjects = () => subjectsWanted() ? state.refs.map((r, k) => (r.desc || "").trim() ? -1 : k).filter(k => k >= 0) : [];
   // One shot's own prompt (one video per shot), or the whole multi-shot prompt (only = null).
   function prompt(only = null) {
     const sh = state.shots, H = P();
     const style = H.sentence(sh.style || "") || "Cinematic live-action, natural light.";
+    const subj = subjectBlock(), head = subj ? `${style}\n\n${subj}` : style;
     if (only != null) {
       const s = sh.list[only];
-      if (s.rawOn && s.raw.trim()) return Prompts.final(s.raw);  // its own prompt: tags and {a|b} resolved, tidied
-      return `${style}\n\n[Shot 1] ${shotText(s, 0, 0, 1)}${tail()}`;
+      if (s.rawOn && s.raw.trim()) {  // its own prompt: tags and {a|b} resolved, tidied; subjects after its first paragraph
+        const own = Prompts.final(s.raw);
+        if (!subj || own.includes(subj)) return own;
+        const cut = own.indexOf("\n\n");
+        return cut > 0 ? `${own.slice(0, cut)}\n\n${subj}${own.slice(cut)}` : `${subj}\n\n${own}`;
+      }
+      return `${head}\n\n[Shot 1] ${shotText(s, 0, 0, 1)}${tail()}`;
     }
     let t = 0;
     const body = sh.list.map((s, k) => { const txt = `[Shot ${k + 1}] ${shotText(s, k, t, sh.list.length)}`; t += +s.seconds || 0; return txt; }).join("\n");
-    return `${style}\n\n${body}${tail()}`;
+    return `${head}\n\n${body}${tail()}`;
+  }
+  // Describe with AI every reference picture that has no definition yet (for Generate and the Subjects section).
+  async function describeMissing(onEach = () => {}) {
+    const v = id => document.getElementById(id)?.value ?? "";
+    const llm = { backend: v("llm-backend") || null, url: v("llm-url").trim() || null, model: v("llm-model") || null };
+    for (const k of missingSubjects()) {
+      const r = state.refs[k]; if (!r) continue;
+      onEach(k);
+      const j = await api("/api/describe", { method: "POST", body: JSON.stringify({ ref: r.ref, ...llm }) });
+      if (state.refs[k] === r) r.desc = j.text;
+    }
+    renderRefs(); render();
+  }
+  function renderSubjects() {
+    const box = document.getElementById("shots-subjects"); if (!box) return;
+    box.hidden = !isRef() || !state.refs.length;
+    if (box.hidden) return;
+    const sh = state.shots, miss = missingSubjects().length;
+    const sum = box.querySelector(".subj-sum");
+    if (sum) sum.textContent = sh.subjectsOn === false ? "Off" : miss ? `${miss} not defined yet` : `${state.refs.length} defined`;
+    const list = box.querySelector(".subj-list");
+    const focused = document.activeElement && list.contains(document.activeElement) ? document.activeElement.dataset.subj : null;
+    if (focused == null) list.innerHTML = state.refs.map((r, k) => `<div class="subj">
+        <img src="${esc(r.url)}" alt="Picture ${k + 1}">
+        <div class="subj-main"><div class="subj-h"><b>&lt;Picture ${k + 1}&gt;</b>
+          <button type="button" class="btn sm ghost" data-subj-act="describe" data-k="${k}">${(r.desc || "").trim() ? "↻ Describe again" : "✨ Describe"}</button></div>
+          <textarea rows="3" data-subj="${k}" placeholder="Not defined yet: ✨ Describe, or Generate does it for you.">${esc(r.desc || "")}</textarea></div></div>`).join("");
+    box.querySelector("#subjects-on").checked = sh.subjectsOn !== false;
+    box.querySelector('[data-subj-act="all"]').disabled = !miss;
   }
   // The Inputs step's frames: the first frame starts shot 1, the last frame ends the last shot.
   function framesOf(i) {
@@ -160,6 +206,7 @@ const Shots = (() => {
     const ideaN = document.getElementById("shots-idea-n"); if (ideaN) ideaN.value = sh.ideaShots || "";
     const ideaS = document.getElementById("shots-idea-s"); if (ideaS && document.activeElement !== ideaS) ideaS.value = sh.ideaSeconds || 10;
     renderCreat();
+    renderSubjects();
     const T = total(), n = sh.list.length;
     document.getElementById("shots-total").textContent = `${n} shot${n === 1 ? "" : "s"} · ${T.toFixed(1)} s`;
     let t = 0;
@@ -288,6 +335,7 @@ const Shots = (() => {
     const brief = (s.brief || "").trim() || [s.action, s.setting].filter(x => x.trim()).join(". ");
     if (!enhance && !brief) return Media.toast("Write in a line what happens in this shot first.");
     let idea = brief;
+    if (subjectBlock()) idea += `\n\n(Who is who, for reference only: ${subjectBlock().replace(/\n/g, " ")})`;
     if (speakerOf(s)) idea += `\n\n(The spoken line is said by the person in ${s.speaker}.)`;
     if (prev && hasContent(prev)) idea += `\n\n(For continuity only, don't film it: the shot before this one is ${summary(prev).slice(0, 300)})`;
     const f = framesOf(i);
@@ -528,12 +576,21 @@ const Shots = (() => {
     const step = document.querySelector('.step[data-step="shots"]');
     step.addEventListener("input", e => {
       const sh = state.shots, id = e.target.id;
+      // A checkbox fires input before change, and the form's input handler redraws the step: take it here, first.
+      if (id === "subjects-on") { sh.subjectsOn = e.target.checked; return changed(); }
       const map = { "shots-style": "style", "shots-sound": "soundscape", "shots-music": "music", "shots-idea": "idea" };
       if (map[id]) { sh[map[id]] = e.target.value; scheduleSave(); if (id !== "shots-idea") document.getElementById("shots-prompt").textContent = sh.mode === "multi" ? prompt() : sh.list.map((_, i) => `── Shot ${i + 1} ──\n${prompt(i)}`).join("\n\n"); return; }
       if (id === "shots-creat") { sh.creativity = +e.target.value; renderCreat(); scheduleSave(); }
       if (id === "shots-idea-s") { sh.ideaSeconds = Math.max(2, Math.min(60, +e.target.value || 10)); scheduleSave(); }
+      if (e.target.dataset.subj != null) {
+        const r = state.refs[+e.target.dataset.subj]; if (!r) return;
+        if (e.target.value.trim()) r.desc = e.target.value; else delete r.desc;
+        scheduleSave();
+        document.getElementById("shots-prompt").textContent = sh.mode === "multi" ? prompt() : sh.list.map((_, i) => `── Shot ${i + 1} ──\n${prompt(i)}`).join("\n\n");
+      }
     });
     step.addEventListener("change", e => {
+      if (e.target.dataset.subj != null) { renderRefs(); renderSubjects(); }
       if (e.target.id === "shots-idea-n") { state.shots.ideaShots = e.target.value; scheduleSave(); }
     });
     step.addEventListener("click", async e => {
@@ -541,6 +598,22 @@ const Shots = (() => {
       const m = e.target.closest("#shots-mode button")?.dataset.m;
       if (m) { sh.mode = m; return changed(); }
       if (e.target.closest("#btn-shot-add")) return openModal(add());
+      const sa = e.target.closest("[data-subj-act]");
+      if (sa) {
+        const st = document.getElementById("subjects-status"); sa.disabled = true;
+        try {
+          if (sa.dataset.subjAct === "all") await describeMissing(k => { st.textContent = `Describing <Picture ${k + 1}>…`; });
+          else {
+            const k = +sa.dataset.k; st.textContent = `Describing <Picture ${k + 1}>…`;
+            const r = state.refs[k], v = id => document.getElementById(id)?.value ?? "";
+            const j = await api("/api/describe", { method: "POST", body: JSON.stringify({ ref: r.ref, backend: v("llm-backend") || null, url: v("llm-url").trim() || null, model: v("llm-model") || null }) });
+            r.desc = j.text; renderRefs(); render();
+          }
+          st.textContent = "Done. Edit any definition; the prompt uses it as written.";
+        } catch (err2) { st.textContent = `⚠ ${err2.message}`; }
+        finally { sa.disabled = false; }
+        return;
+      }
       if (e.target.closest("#btn-shots-write")) {
         const b = e.target.closest("#btn-shots-write"), st = document.getElementById("shots-idea-status");
         b.disabled = true; st.textContent = `Writing the shots at ${sh.creativity ?? 50}% creativity…`;
@@ -601,6 +674,10 @@ const Shots = (() => {
     if (empty >= 0) {
       err.textContent = `Shot ${empty + 1} is empty: describe it (Shots step › Edit), or write it with ✨.`;
       Media.toast(err.textContent); showStep("shots"); return;
+    }
+    if (isR && missingSubjects().length) {  // the prompt defines every subject: have the vision model write the missing ones
+      try { await describeMissing(k => Media.toast(`Defining <Picture ${k + 1}> for the prompt…`)); base = { ...base }; }
+      catch (e) { Media.toast(`Couldn't define the subjects (${e.message}); generating without them.`); }
     }
     if (sh.mode === "multi") {
       const first = framesOf(0).first_frame, last = framesOf(sh.list.length - 1).last_frame;
@@ -674,5 +751,5 @@ const Shots = (() => {
     return only ? 0 : sh.list.length - 1;
   }
 
-  return { init, render, renderBanner, prompt, on, ready, generate, onItem, ensure, describe, openModal, reuse };
+  return { init, render, renderBanner, prompt, on, ready, generate, onItem, ensure, describe, openModal, reuse, describeMissing };
 })();

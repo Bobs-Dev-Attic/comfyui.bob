@@ -148,6 +148,15 @@
               </div>
               <p class="hint" id="shots-idea-status" aria-live="polite">Uses the LLM set up for the Prompt writer. Replaces the shots below; then edit any of them.</p>
             </details>
+            <details class="shots-all shots-subjects" id="shots-subjects" open hidden>
+              <summary>Subjects <span class="opt">who or what each reference picture is</span><span class="subj-sum"></span></summary>
+              <label class="subj-on"><input type="checkbox" id="subjects-on" checked> Define the subjects at the top of every shot's prompt</label>
+              <p class="hint">A detailed definition per picture keeps faces, hair, bodies and clothes accurate in every shot. Generate
+                has the vision model write any that are missing; edit them as you like.
+                <button type="button" class="btn sm" data-subj-act="all">✨ Describe the missing ones</button></p>
+              <div class="subj-list"></div>
+              <p class="hint" id="subjects-status" aria-live="polite"></p>
+            </details>
             <div class="shot-list" id="shot-list" role="list" aria-label="Shots"></div>
             <button type="button" class="shot-add" id="btn-shot-add">＋ Add shot</button>
             <p class="hint" id="shots-hint"></p>

@@ -246,12 +246,16 @@ class DescribeReq(BaseModel):
 
 
 DESCRIBE_SYSTEM = (
-    "You describe a reference picture so a video or image model can recreate what is in it from text alone. "
-    "Write one detailed paragraph, 60-120 words, in plain present-tense English. Start with the main subject. "
-    "For a person: apparent age, build, face, hair (colour, length, style), skin tone, expression, clothing with colours "
-    "and materials, accessories and pose. For an object or place: shape, materials, colours, condition and surroundings. "
-    "Then the light, colour palette and camera view. Describe only what is visible; no guesses about names, story or "
-    "feelings, no lists, no 'the image shows'.")
+    "You define the subject of a reference picture so a video model can show it accurately, the same in every shot, "
+    "from text alone. Use as much detail as that needs: 70-170 words, one paragraph of plain present-tense English, "
+    "starting with what the subject is (e.g. 'a woman in her late twenties', 'a black Labrador', 'a red 1960s convertible'). "
+    "For a person: apparent age, build, face shape, eyes (colour, shape), eyebrows, nose, lips, skin tone and texture, "
+    "distinctive marks (freckles, moles, tattoos, scars, piercings), hair (colour, length, texture, style), and what they "
+    "wear with colours and materials, or that they wear nothing; then accessories. For an animal or object: kind, size, "
+    "shape, materials, colours, markings and condition. Leave out the photo's background, light, pose and camera, which "
+    "each shot sets itself; but if the picture is mainly a place or a visual style, describe that instead, with its "
+    "light and palette. Describe only what is visible: no names, no guesses about story or feelings, no lists, "
+    "no 'the image shows'.")
 
 
 @app.post("/api/describe")
@@ -273,7 +277,7 @@ async def describe_picture(req: DescribeReq):
         t0 = asyncio.get_running_loop().time()
         raw = await b.chat(model, [{"role": "system", "content": DESCRIBE_SYSTEM},
                                    {"role": "user", "content": "Describe this picture.", "images": [llm._image_b64(path, 1024)]}],
-                           {"type": "object", "properties": {"description": {"type": "string", "maxLength": 1400}},
+                           {"type": "object", "properties": {"description": {"type": "string", "maxLength": 1800}},
                             "required": ["description"]}, temperature=0.3)
         text = str(json.loads(raw).get("description", "")).strip()
     except llm.LLMError as exc:
