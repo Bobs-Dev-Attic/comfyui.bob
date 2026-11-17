@@ -336,6 +336,13 @@ function applyParams(p) {
   updateDerived();
 }
 
+/* Tell the server log what the page did: Generate presses and script errors, for when something "does nothing". */
+function clientLog(msg) {
+  try { fetch("/api/client-log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ msg: String(msg).slice(0, 1900) }), keepalive: true }); } catch {}
+}
+window.addEventListener("error", e => clientLog(`Script error: ${e.message} at ${e.filename?.split("/").pop()}:${e.lineno}`));
+window.addEventListener("unhandledrejection", e => clientLog(`Unhandled: ${e.reason?.stack || e.reason}`));
+
 async function submit(req) {
   $("#form-error").textContent = "";
   const btn = $("#btn-generate");
@@ -347,7 +354,8 @@ async function submit(req) {
     renderGallery(); renderQueue();
   } catch (e) {
     $("#form-error").textContent = e.message;
-    Media.toast(`Generate: ${e.message}`);  // the error line is on the Generate step; Generate can be pressed from anywhere
+    Media.toast(`Generate: ${e.message}`);
+    clientLog(`Generate refused: ${e.message}`);  // the error line is on the Generate step; Generate can be pressed from anywhere
   } finally {
     renderMissing();
   }
@@ -1075,9 +1083,16 @@ function init() {
   };
   $("#form").addEventListener("submit", e => {
     e.preventDefault();
-    if (Shots.on()) { Shots.generate(collectRequest()); return; }
-    if (!Prompts.readyToGenerate()) return;
-    submit(collectRequest());
+    try {
+      const where = `${state.kind}:${state.engine[state.kind]} step=${state.step} prompt=${$("#prompt").value.length} chars`;
+      if (Shots.on()) { clientLog(`Generate → Shots (${where})`); Shots.generate(collectRequest()); return; }
+      if (!Prompts.readyToGenerate()) { clientLog(`Generate stopped before sending (${where})`); return; }
+      clientLog(`Generate → sending (${where})`);
+      submit(collectRequest());
+    } catch (err) {
+      clientLog(`Generate failed in the page: ${err?.stack || err}`);
+      Media.toast(`Generate: ${err?.message || err}`);
+    }
   });
   $("#prompt").addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $("#form").requestSubmit(); } });
   initDrops();

@@ -284,6 +284,17 @@ async def h3_length(seconds: float):
     return {"frames": frames, "seconds": round(frames / workflows.FPS, 2)}
 
 
+class ClientLog(BaseModel):
+    msg: str = Field(..., max_length=2000)
+
+
+@app.post("/api/client-log")
+async def client_log(entry: ClientLog):
+    """Browser-side events worth keeping (Generate presses, script errors) in the server log."""
+    logging.getLogger("bob.client").warning("%s", entry.msg.replace("\n", " | ")[:2000])
+    return {"ok": True}
+
+
 @app.post("/api/generate")
 async def generate(req: GenerateRequest):
     asyncio.create_task(prompts.release())  # a live-rewrite LLM must not hold VRAM during the render
