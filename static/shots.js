@@ -291,6 +291,7 @@ const Shots = (() => {
     }
     const ideaN = document.getElementById("shots-idea-n"); if (ideaN) ideaN.value = sh.ideaShots || "";
     const am = document.getElementById("shots-automatch"); if (am) am.checked = sh.autoMatch !== false;
+    const atl = document.getElementById("shots-autotl"); if (atl) atl.checked = sh.autoTimeline !== false;
     const ideaS = document.getElementById("shots-idea-s"); if (ideaS && document.activeElement !== ideaS) ideaS.value = sh.ideaSeconds || 10;
     renderCreat();
     renderSubjects();
@@ -322,7 +323,7 @@ const Shots = (() => {
     if (empty.length) warn.push(`Shot${empty.length > 1 ? "s" : ""} ${empty.join(", ")} ${empty.length > 1 ? "are" : "is"} empty.`);
     document.getElementById("shots-hint").innerHTML = `${sh.mode === "multi"
       ? `Generate makes <b>one ${T.toFixed(1)} s video</b> from these shots.`
-      : n > 1 ? `Generate makes <b>${n} videos</b>, one per shot, and puts them on the timeline in order.` : "Generate makes <b>one video</b> from this shot."} ${warn.map(w => `<span class="warn">⚠ ${esc(w)}</span>`).join(" ")}`;
+      : n > 1 ? `Generate makes <b>${n} videos</b>, one per shot${sh.autoTimeline !== false ? ", and puts them on the timeline in order" : ""}.` : "Generate makes <b>one video</b> from this shot."}${sh.autoTimeline !== false && (sh.mode === "multi" || n === 1) ? " It goes on the timeline when it's done." : ""} ${warn.map(w => `<span class="warn">⚠ ${esc(w)}</span>`).join(" ")}`;
     document.getElementById("shots-prompt").textContent = previewText();
   }
   function renderBanner() {
@@ -771,6 +772,7 @@ const Shots = (() => {
       // A checkbox fires input before change, and the form's input handler redraws the step: take it here, first.
       if (id === "subjects-on") { sh.subjectsOn = e.target.checked; return changed(); }
       if (id === "shots-automatch") { sh.autoMatch = e.target.checked; return scheduleSave(); }
+      if (id === "shots-autotl") { sh.autoTimeline = e.target.checked; return changed(); }
       const map = { "shots-style": "style", "shots-sound": "soundscape", "shots-music": "music", "shots-idea": "idea" };
       if (map[id]) { sh[map[id]] = e.target.value; scheduleSave(); if (id !== "shots-idea") document.getElementById("shots-prompt").textContent = previewText(); return; }
       if (id === "shots-creat") { sh.creativity = +e.target.value; renderCreat(); scheduleSave(); }
@@ -883,9 +885,15 @@ const Shots = (() => {
       try { await describeMissing(k => Media.toast(`Defining <Picture ${k + 1}> for the prompt…`)); base = { ...base }; }
       catch (e) { Media.toast(`Couldn't define the subjects (${e.message}); generating without them.`); }
     }
+    const autoTl = sh.autoTimeline !== false;
+    // One generation (takes allowed): with "Add to timeline when done", the first good take goes on the timeline.
+    const submitOne = async req => {
+      const items = await submit(req);
+      if (autoTl && items?.length) { pending.set(items[0].id, { ids: items.map(x => x.id), project: state.project?.id ?? "experiment", one: true }); savePending(); }
+    };
     if (sh.mode === "multi") {
       const first = framesOf(0).first_frame, last = framesOf(sh.list.length - 1).last_frame;
-      return submit({ ...base, prompt: prompt(), seconds: Math.min(300, total()),
+      return submitOne({ ...base, prompt: prompt(), seconds: Math.min(300, total()),
         first_frame: !isR ? first?.ref ?? null : null, last_frame: !isR ? last?.ref ?? null : null });
     }
     const reqFor = i => {
@@ -896,7 +904,7 @@ const Shots = (() => {
     if (sh.list.length === 1) {  // one shot: a plain generation (takes allowed), no timeline layout
       const req = reqFor(0);
       if (isR && !req.references.length && !(base.ref_audios || []).length) { err.textContent = "Add reference pictures on the Inputs step."; return; }
-      return submit(req);
+      return submitOne(req);
     }
     // one per shot: submit them in order, then place the results on the timeline in order
     const ids = [];
@@ -910,10 +918,9 @@ const Shots = (() => {
       } catch (e) { err.textContent = `Shot ${i + 1}: ${e.message}`; break; }
     }
     if (!ids.length) return;
-    pending.set(ids[0], { ids, project: state.project?.id ?? "experiment" });
-    savePending();
+    if (autoTl) { pending.set(ids[0], { ids, project: state.project?.id ?? "experiment" }); savePending(); }
     renderGallery(); renderQueue(); select(ids[0]);
-    Media.toast(`${ids.length} shots queued: they go on the timeline in order when all are done.`);
+    Media.toast(autoTl ? `${ids.length} shots queued: they go on the timeline in order when all are done.` : `${ids.length} shots queued.`);
   }
   // Called for every studio item update: when a whole batch is done, lay it out on the timeline.
   async function onItem(it) {
@@ -925,16 +932,18 @@ const Shots = (() => {
       if (all.some(x => !x || !["done", "failed", "cancelled"].includes(x.status))) return;
       pending.delete(key);
       savePending();
-      const okItems = all.filter(x => x.status === "done" && x.files?.length);
+      let okItems = all.filter(x => x.status === "done" && x.files?.length);
+      if (b.one) okItems = okItems.slice(0, 1);  // takes of one video: only the first good one
       if ((state.project?.id ?? "experiment") !== b.project || !TL.model || !okItems.length) return;
       const v1 = TL.model.tracks.find(t => t.kind === "video");
       let at = Math.max(0, ...TL.model.clips.filter(c => c.track === v1?.id).map(c => c.start + c.trim_out - c.trim_in));
       for (const x of okItems) {
         const f = x.files.find(f => /^video\//.test(f.content_type || "")) || x.files[0];
-        const c = await TL.add({ ref: f.path, kind: "video", name: (x.params?.prompt || "").split("\n").find(l => l.startsWith("[Shot"))?.slice(9, 60) || "Shot", job: x.id }, { track: v1?.id, at });
+        const c = await TL.add({ ref: f.path, kind: "video", name: (promptLabel(x.params?.prompt) || "Shot").slice(0, 40), job: x.id }, { track: v1?.id, at });
         if (c) at = c.start + c.trim_out - c.trim_in;
       }
-      Media.toast(`The ${okItems.length} shots are on the timeline in order${okItems.length < all.length ? ` (${all.length - okItems.length} failed)` : ""}.`);
+      Media.toast(b.one ? `The video is on the timeline${all.length > 1 ? " (the first good take)" : ""}.`
+        : `The ${okItems.length} shots are on the timeline in order${okItems.length < all.length ? ` (${all.length - okItems.length} failed)` : ""}.`);
       return;
     }
   }

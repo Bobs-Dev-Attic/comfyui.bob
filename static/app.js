@@ -355,6 +355,7 @@ async function submit(req) {
     for (const it of items) state.items.set(it.id, it);
     select(items[0].id);
     renderGallery(); renderQueue();
+    return items;
   } catch (e) {
     $("#form-error").textContent = e.message;
     Media.toast(`Generate: ${e.message}`);

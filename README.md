@@ -118,7 +118,8 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   first frame starts shot 1 and its last frame ends the last shot. **✨ Write the shots from an idea** fills the whole list. A new
   project starts with one shot; Generate makes **One video per shot** (several shots go on the timeline in order) or
   **One multi-shot video** (H3's `[Shot 1] … [Shot 2] At 00:03.000, …` format). Older projects that used the Prompt step
-  open with that prompt as shot 1's own prompt.
+  open with that prompt as shot 1's own prompt. **Add to timeline when done** (beside the mode buttons, on by default)
+  puts each finished video at the end of the timeline; with takes, the first good take.
 - **LoRAs** (every model): add LoRAs with a strength, reorder them, and click trigger words into the prompt. **📂 Browse
   LoRAs…** opens a Windows Explorer style browser over every LoRA ComfyUI can load: folder tree, address bar, search,
   details or large icons, and a details pane (what model it's for, base, rank, size, trigger words, description, preview
