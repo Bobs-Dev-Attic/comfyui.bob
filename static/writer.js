@@ -129,10 +129,16 @@ function autoGrow(ta) { ta.style.height = "auto"; ta.style.height = ta.scrollHei
 function renderPictures() {
   const c = ctx(), m = mode(), box = $("#w-pictures");
   let items = [];
-  if (m === "ref") items = c.references.map((r, i) => ({ url: r.url, tag: `<Picture ${i + 1}>`, label: `Picture ${i + 1}` }));
+  if (m === "ref") items = c.references.map((r, i) => ({ url: r.url, tag: `<Picture ${i + 1}>`, label: `Picture ${i + 1}`,
+    voice: i < (c.voices || 0) ? { tag: `<Audio ${i + 1}>`, name: (c.voice_names || [])[i] || "" } : null }));
   if (m === "i2v") items = [c.first_frame && { url: c.first_frame.url, label: "First frame" }, c.last_frame && { url: c.last_frame.url, label: "Last frame" }].filter(Boolean);
   box.hidden = !items.length;
-  box.innerHTML = items.map(p => `<button type="button" class="w-pic" ${p.tag ? `data-tag="${esc(p.tag)}" title="Insert ${esc(p.tag)}"` : `title="${esc(p.label)}"`}><img src="${esc(p.url)}" alt=""><span>${esc(p.label)}</span></button>`).join("");
+  // H3 Reference: <Audio N> is the voice of the person in <Picture N>; each picture says which voice it has.
+  const ref = m === "ref";
+  box.innerHTML = items.map(p => `<div class="w-pic-col"><button type="button" class="w-pic" ${p.tag ? `data-tag="${esc(p.tag)}" title="Insert ${esc(p.tag)}"` : `title="${esc(p.label)}"`}><img src="${esc(p.url)}" alt=""><span>${esc(p.label)}</span></button>
+    ${ref ? (p.voice ? `<button type="button" class="w-voice" data-tag="${esc(p.voice.tag)}" title="Voice of the person in ${esc(p.tag)}: ${esc(p.voice.name || p.voice.tag)}. Click to insert ${esc(p.voice.tag)}">🔊 ${esc(p.voice.tag.replace(/[<>]/g, ""))}${p.voice.name ? `<small>${esc(p.voice.name)}</small>` : ""}</button>`
+      : `<span class="w-voice none" title="No voice recording for ${esc(p.tag)}: add one in the Inputs step (voice ${esc(p.label.replace("Picture", "Audio"))} goes with this picture)">no voice</span>`) : ""}</div>`).join("")
+    + (ref && (c.voices || 0) > items.length ? `<p class="hint w-voice-extra">${(c.voices || 0) - items.length} more voice${(c.voices || 0) - items.length === 1 ? "" : "s"} without a picture: for whoever else speaks.</p>` : "");
 }
 
 function renderMeta() {
@@ -191,6 +197,11 @@ function autoSend(text) {
 
 function currentText() { const m = mode(); return m ? H.toText(H.assemble(data(), m, nShots(), frames(), voiceCount())) : ""; }
 function voiceCount() { return mode() === "ref" ? ctx().voices || 0 : 0; }
+// For the studio's Generate (same origin): the shot list as text, and how many fields are still empty.
+window.shotWriter = {
+  text: () => currentText(),
+  holes: () => { const m = mode(); return m ? H.assemble(data(), m, nShots(), frames(), voiceCount()).filter(s => s.hole).length : 0; },
+};
 
 /* ------------------------------------------------------------------ LLM */
 let ideaTimer = null;
