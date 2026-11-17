@@ -1246,6 +1246,7 @@ function init() {
     Activity.load(items.slice(0, 40));
     renderGallery(); renderQueue();
     if (state.shellReady) selectInScope();  // otherwise initShell does it once the project is open
+    Shots.resume();  // a chain of shots that was waiting when the page closed
   });
   connectEvents();
   pollStatus();

@@ -5,6 +5,26 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.66.0] - 2026-11-17
+
+### Added
+- **Carry each shot into the next** (Shots step, H3 Reference, One video per shot with two or more shots; on by
+  default). The shots render one after another instead of all at once; from shot 2 on, the last frame of the shot
+  before goes to H3 as a hidden reference picture (after the Inputs' pictures, so <Picture 1>, <Picture 2>… keep
+  their numbers). The prompt defines it as the place of the previous shot (location, set dressing, light, time of
+  day, colour grade, and the people's clothes, hair and props), cites it in the shot so H3 actually uses it, and says
+  in the summary what happened in the previous shot. A failed shot hands on no frame; cancelling one stops the
+  rest. A run waiting when the page closes carries on when it opens again. The Shots preview shows exactly this.
+- A shot with no **Where** of its own keeps the place written in the shot before it, in words (H3 follows the
+  written place more than a picture).
+
+### Changed
+- **One seed for all the shots of a run** (One video per shot): when the seed is random, one is picked and used for
+  every shot, since the seed weighs a lot in what H3 makes.
+
+Approach informed by EDITS-WITH-AI (the last frame as the last reference picture, its measured notes on H3) and
+ComfyUI-Sonder-Editor (scene pictures as environment references with what to preserve).
+
 ## [0.65.0] - 2026-11-17
 
 ### Changed

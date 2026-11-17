@@ -136,6 +136,7 @@
                 <button type="button" data-m="multi" title="One generation, H3's multi-shot prompt ([Shot 1] … [Shot 2] …)">One multi-shot video</button>
               </div>
               <label class="check shots-autotl" title="When the video is done, put it at the end of the timeline's first video track (several shots go on in order; with takes, the first good take)"><input type="checkbox" id="shots-autotl" checked> Add to timeline when done</label>
+              <label class="check shots-autotl" hidden title="H3 Reference: make the shots one after another, each with the last frame of the shot before as a hidden reference picture (same place, light and clothes), and with one seed for all of them"><input type="checkbox" id="shots-cont" checked> Carry each shot into the next</label>
               <span class="shots-total" id="shots-total"></span>
             </div>
             <details class="shots-idea">
