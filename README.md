@@ -96,6 +96,9 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   rumble, even out loudness, volume, trim silence; every change plays back at once, with a Processed / Original
   switch, and **Save** swaps in the cleaned copy while the original file stays), **Remove**. Removing music needs the
   comfyui-demucs-voice-isolate nodes; the rest uses ffmpeg.
+- **Subjects** (Shots step, H3 Reference): a detailed definition of who or what each reference picture is (face,
+  eyes, hair, skin, marks, build, clothes), written by the vision model and editable. They go at the top of every shot's
+  prompt as `<Picture N>: …` so H3 keeps the subjects accurate; Generate writes any that are missing first.
 - **Shots** (video, after Inputs): every H3 and H3 Reference video is planned here, shot by shot (video has no Prompt
   step). The shots are compact blocks: drag one to reorder, **⋯** for Edit, Move up/down, Duplicate and Delete, or
   double-click to edit. **Edit** opens a large window with the shot's length, framing, angle, camera position and move,

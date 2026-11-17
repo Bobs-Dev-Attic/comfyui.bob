@@ -5,6 +5,24 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.55.0] - 2026-11-17
+
+### Added
+- **Subject definitions in H3 Reference prompts.** Shot prompts now define each reference picture's subject after the
+  style line, one line each: `<Picture 1>: a woman in her late twenties, …`. A new **Subjects** section on the Shots
+  step shows each picture with its definition (edit it freely), **✨ Describe** per picture, **✨ Describe the missing
+  ones**, and a switch to leave them out. **Generate defines any missing subject first** with the vision model, so a
+  prompt never goes out without them (if it can't, it says so and generates without). A shot with its own prompt gets
+  the definitions after its first paragraph.
+- ✨ Write for a shot is told who is who, so it keeps people and their clothes straight.
+
+### Changed
+- **Describe with AI writes subject definitions**: as much detail as an accurate video needs (about 70–170 words):
+  apparent age, build, face shape, eyes, eyebrows, nose, lips, skin tone and texture, distinctive marks, hair, and what
+  they wear (or that they wear nothing), or an animal's or object's kind, materials, colours and markings. It leaves out
+  the photo's own background, light, pose and camera, which each shot sets; a picture of a place or a style is still
+  described as one, with its light and palette.
+
 ## [0.54.0] - 2026-11-17
 
 ### Added
