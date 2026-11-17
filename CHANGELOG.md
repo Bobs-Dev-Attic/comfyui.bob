@@ -5,6 +5,15 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.50.0] - 2026-11-17
+
+### Added
+- **Speaker for a shot's spoken line** (H3 Reference): in the shot's Edit window, pick which reference picture's
+  person says the line. The prompt then reads “The person from <Picture 2> says, in the voice of <Audio 2>: …”.
+  With Voice left on its default, the speaker's own recording is used (<Audio N> goes with <Picture N>, shown as
+  “Speaker's · <Audio N>”); pick another voice to override it. ✨ Write is told who speaks, and the shot block's 🗣
+  shows who says the line.
+
 ## [0.49.1] - 2026-11-17
 
 ### Fixed

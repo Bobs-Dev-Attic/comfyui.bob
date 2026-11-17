@@ -92,7 +92,7 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
 - **Shots** (video, after Inputs): every H3 and H3 Reference video is planned here, shot by shot (video has no Prompt
   step). The shots are compact blocks: drag one to reorder, **⋯** for Edit, Move up/down, Duplicate and Delete, or
   double-click to edit. **Edit** opens a large window with the shot's length, framing, angle, camera position and move,
-  where, what happens, a spoken line and voice, its first/last frame (H3; shot 1 and the last shot fall back to the Inputs
+  where, what happens, a spoken line with who says it (a reference picture) and a voice, its first/last frame (H3; shot 1 and the last shot fall back to the Inputs
   step's frames) or reference pictures (H3 Reference), **✨ Write / 🪄 Enhance** for this shot from a one-line brief at a
   Creativity level, its own settings (quality, aspect, turbo, seed, steps; blank = the project's), a title and notes,
   *Write the prompt myself*, and the exact prompt it sends. **✨ Write the shots from an idea** fills the whole list. A new
