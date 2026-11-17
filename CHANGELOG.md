@@ -5,6 +5,16 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.57.0] - 2026-11-17
+
+### Added
+- **The shots follow the look, sound and music.** When you change Look, Soundscape or Music on the Shots step (on
+  leaving the field), the prompt writer rewrites every shot to fit: the place's light, time of day, weather and colours,
+  the wording of the action and the camera. What happens, who is in it, the order and every spoken line stay as they
+  are; shots with their own prompt are left alone. **↶ Undo** puts the shots back. If a render is running it waits for
+  it to finish, so the LLM doesn't take the GPU. A switch under the fields turns it off (saved with the project).
+  Example: two sunny-park shots became a rainy, neon-lit alley at night with the same girl, dog, ball and line, in 11 s.
+
 ## [0.56.1] - 2026-11-17
 
 ### Changed
