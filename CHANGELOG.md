@@ -5,6 +5,17 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.45.0] - 2026-11-17
+
+### Added
+- **Zoom control on the result viewer** (top right, for pictures and videos): − / **Fit** / +. Click **Fit** to switch
+  to actual size (100%) and back. In Fit the result scales with the viewer; a fixed zoom keeps its size and scrolls
+  (drag to move). The mouse wheel zooms at the pointer for videos now too. The choice is kept for the next result.
+
+### Fixed
+- **A result video didn't shrink when the bar above the timeline was dragged up**: it kept its height and was cut
+  off. It now fits the viewer at any size, like pictures.
+
 ## [0.44.0] - 2026-11-17
 
 ### Changed
