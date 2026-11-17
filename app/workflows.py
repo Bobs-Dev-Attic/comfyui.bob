@@ -47,6 +47,9 @@ def dims_for(aspect: tuple[float, float], megapixels: float, multiple: int = 32)
     return snap(w), snap(h)
 
 
+H3_OVERLAPS = (22, 39, 56)  # frames of the previous video a continuation sees (17j+5; 39 fits the audio grid exactly)
+
+
 def h3_length(seconds: float) -> int:
     """Seconds -> frame count on H3's 17k+5 grid at 24 fps (template formula)."""
     a = max(5, round(seconds * FPS))
@@ -273,6 +276,7 @@ def build_h3_ref(
     clean_audio: bool = True,
     prefix: str = "bob/h3ref",
     loras: list[tuple[str, float]] | None = None,
+    continue_overlap: int = 0,
 ) -> Built:
     """Reference-to-video (template ``video_minimax_h3_r2v``): 0-9 reference pictures and
     0-3 reference sounds (voices to clone), at least one of either.
@@ -285,6 +289,8 @@ def build_h3_ref(
     """
     if not 0 <= references <= H3_MAX_REFS or not 0 <= audios <= 3 or references + audios == 0:
         raise ValueError(f"Reference-to-video takes 1 to {H3_MAX_REFS} pictures and/or 1 to 3 sounds")
+    if continue_overlap and continue_overlap not in H3_OVERLAPS:
+        raise ValueError(f"The overlap must be one of {', '.join(map(str, H3_OVERLAPS))} frames")
     g = Graph()
     o = Graph.out
 
@@ -312,6 +318,8 @@ def build_h3_ref(
     if leads:
         prompt = " ".join(leads) + f"\n\n{prompt}"
     length = h3_length(seconds)
+    if continue_overlap:  # the overlap takes the head of the window: both are on the 17k+5 grid, so is the sum less 5
+        length += continue_overlap - 5
     cond_inputs: dict[str, Any] = dict(
         clip=o(clip), vae=o(vae), audio_vae=o(audio_vae), prompt=prompt, width=width, height=height,
         length=length, ref_image_size="max" if max_fidelity else "match",
@@ -330,6 +338,18 @@ def build_h3_ref(
                           max_seconds=10.0, max_pause_seconds=0.8, fade_ms=25, normalize_peak_db=-3.0, snap_to_latent_grid=True))
         cond_inputs[f"ref_audios.ref_audio_{i}"] = src
     cond = g.add("MiniMaxH3ReferenceToVideo", **cond_inputs)
+    start_latent, ext = o(cond, 1), None
+    if continue_overlap:
+        # Continue without a cut (the method of EDITS-WITH-AI's extender, with ComfyUI-NKD-Basic-Tools): the last
+        # `continue_overlap` frames of the previous video, with their sound, are planted at the head of the new
+        # window and masked "keep", so H3 carries on their motion and sound; the overlap is dropped after decoding.
+        tail = g.add("LoadVideo", file="")  # the previous video's tail at this size, made by the caller
+        image_inputs["tail"] = tail
+        parts = g.add("GetVideoComponents", video=o(tail))
+        prev = g.add("NKDAVLatent", images=o(parts, 0), audio=o(parts, 1), video_vae=o(vae), audio_vae=o(audio_vae),
+                     audio_mode="keep", fps=float(FPS), ramp_ticks=0, ramp_out_ticks=0, ramp_shape="cosine")
+        ext = g.add("NKDAVLatentExtend", previous=o(prev), new_latent=o(cond, 1), overlap_chunks=(continue_overlap - 5) // 17 + 1)
+        start_latent = o(ext, 0)
 
     noise = g.add("RandomNoise", noise_seed=int(seed))
     sampler = g.add("KSamplerSelect", sampler_name="res_multistep")
@@ -341,20 +361,24 @@ def build_h3_ref(
     guider = g.add("BasicGuider", model=o(model), conditioning=o(cond, 0))
     latent = g.add(
         "SamplerCustomAdvanced",
-        noise=o(noise), guider=o(guider), sampler=o(sampler), sigmas=o(sigmas), latent_image=o(cond, 1),
+        noise=o(noise), guider=o(guider), sampler=o(sampler), sigmas=o(sigmas), latent_image=start_latent,
     )
-    audio = g.add("VAEDecodeAudio", samples=o(latent), vae=o(audio_vae))
-    frames = g.add("VAEDecode", samples=o(latent), vae=o(vae))
-    video = g.add("CreateVideo", images=o(frames), audio=o(audio), fps=float(FPS))
+    audio = o(g.add("VAEDecodeAudio", samples=o(latent), vae=o(audio_vae)))
+    frames = o(g.add("VAEDecode", samples=o(latent), vae=o(vae)))
+    if ext:  # only what comes after the overlap: on the timeline it follows the previous video seamlessly
+        frames = o(g.add("ImageFromBatch", image=frames, batch_index=continue_overlap, length=4096))
+        audio = o(g.add("TrimAudioDuration", audio=audio, start_index=o(ext, 2), duration=3600.0))
+    video = g.add("CreateVideo", images=frames, audio=audio, fps=float(FPS))
     save = g.add("SaveVideo", video=o(video), filename_prefix=prefix, format="auto", codec="auto")
+    new = length - continue_overlap if continue_overlap else length
     return Built(
         graph=g.nodes,
         outputs=[save],
         image_inputs=image_inputs,
-        info={"width": width, "height": height, "frames": length, "steps": n_steps, "turbo": use_turbo,
+        info={"width": width, "height": height, "frames": new, "steps": n_steps, "turbo": use_turbo,
               "references": references, "audios": audios, "clean_audio": bool(audios and clean_audio),
               "max_fidelity": max_fidelity, "scheduler": scheduler, "final_prompt": prompt,
-              "seconds": round(length / FPS, 2)},
+              "seconds": round(new / FPS, 2), **({"continues": True, "overlap": continue_overlap} if continue_overlap else {})},
     )
 
 

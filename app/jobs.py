@@ -112,6 +112,10 @@ class GenerateRequest(BaseModel):
     clean_audio: bool = True  # clean them and keep the best 6-10 s of speech (H3RefAudioPrep, when installed)
     preview: Literal["off", "fast"] = "off"  # live preview while sampling (Settings > Advanced)
     max_fidelity: bool = False  # reference pictures at 2048px instead of the output's size
+    # H3 Reference: continue this video without a cut (its last `overlap` frames and sound are kept and carried on;
+    # the result is only what comes after them). Needs ComfyUI-NKD-Basic-Tools (NKDAVLatentExtend).
+    continue_from: str | None = Field(None, max_length=2000)
+    overlap: Literal[22, 39, 56] = 39
     enhance: bool = False  # Klein prompt upsampler / Krea 2 prompt expander
     lyrics: str = Field("", max_length=20000)  # Music 3
     batch: int = Field(1, ge=1, le=4)  # number of takes (seeds seed, seed+1, ...)
@@ -459,6 +463,14 @@ class JobManager:
                 raise ValueError("H3 Reference only makes video")
             if not req.references and not req.ref_audios:
                 raise ValueError("Add at least one reference picture or reference sound")
+        if req.continue_from:
+            if req.engine != "h3ref":
+                raise ValueError("Continuing a video without a cut needs H3 Reference")
+            if media.kind_of(req.continue_from) != "video":
+                raise ValueError(f"Can only continue a video: {req.continue_from}")
+            if not (self.has_node("NKDAVLatentExtend") and self.has_node("NKDAVLatent")):
+                raise ValueError("Continuing without a cut needs ComfyUI-NKD-Basic-Tools (NKD AV Latent Extend) in ComfyUI")
+            media_path(req.continue_from)
         if req.engine == "klein" and req.kind != "image":
             raise ValueError("FLUX 3 Klein only makes images")
         if req.engine == "krea2" and req.kind != "image":
@@ -583,6 +595,7 @@ class JobManager:
                 references=len(req.references), turbo=req.turbo, steps=req.steps,
                 max_fidelity=req.max_fidelity, audios=len(req.ref_audios),
                 clean_audio=req.clean_audio and self.has_node("H3RefAudioPrep"), prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras],
+                continue_overlap=req.overlap if req.continue_from else 0,
             )
         if req.engine == "imgedit":
             return workflows.build_imgedit(
@@ -636,6 +649,17 @@ class JobManager:
                     rect = config.UPLOAD_DIR / f"{item['id']}_rect.png"
                     await asyncio.to_thread(imaging.mask_rect, media_path(req.edit_mask), rect)
                     wf.set_input(node_id, field, client.assets.from_file(rect))
+                    continue
+                if role == "tail":  # continuing without a cut: the previous video's last frames at this size
+                    tail = config.UPLOAD_DIR / f"{item['id']}_tail.mp4"
+                    await asyncio.to_thread(media.tail_clip, req.continue_from, req.overlap,
+                                            int(built.info["width"]), int(built.info["height"]), tail)
+                    self.log(item, f"Continues {req.continue_from} without a cut ({req.overlap} frames of overlap)")
+                    wf.set_input(node_id, "file", client.assets.from_file(tail))
+                    sent = saved.get(str(node_id))
+                    if sent:
+                        sent["inputs"]["file"] = tail.name
+                        sent.setdefault("_meta", {})["title"] = f"tail: {req.continue_from}"
                     continue
                 if role == "source":
                     ref, field = req.source, ("file" if media.kind_of(req.source or "") == "video" else "image")

@@ -47,6 +47,7 @@ const Shots = (() => {
     for (const k of ["title", "notes", "brief", "raw", ...FIELDS, "voice", "speaker"]) s[k] = typeof s[k] === "string" ? s[k] : "";
     s.framing ||= "medium shot"; s.camera ||= "holds a static shot";
     s.rawOn = !!s.rawOn;
+    s.join = s.join === "continue" ? "continue" : "cut";  // from the shot before: a cut, or the same shot carrying on
     // Shots no longer carry their own frames, picture choice or settings (the Inputs and Settings steps hold them).
     for (const k of ["first_frame", "last_frame", "refs", "over"]) delete s[k];
     return s;
@@ -214,8 +215,10 @@ const Shots = (() => {
       return d ? `<Subject ${p}> is the subject of <Picture ${p}>: ${d.charAt(0).toLowerCase() + d.slice(1)}.`
         : `<Subject ${p}> is the main subject of <Picture ${p}>, kept exactly as it appears there.`;
     });
-    const K = cont?.pic;
-    if (K) defs.push(`<Subject ${K}> is the place in <Picture ${K}>, the last frame of the previous shot: the same location, set dressing, `
+    const K = cont?.pic, seamless = !!(K && cont.seamless);
+    if (seamless) defs.push(`<Picture ${K}> is the first frame of [Shot 1]: the last frame of the shot so far, which carries on here without a cut, `
+      + "with the same people in the same clothes, in the same place and light, and the same camera and framing.");
+    else if (K) defs.push(`<Subject ${K}> is the place in <Picture ${K}>, the last frame of the previous shot: the same location, set dressing, `
       + "lighting, time of day and colour grade carry on in this shot, and the people keep the clothes, hair, make-up and props they have there.");
     // Whose voice each recording is: the subject who speaks with it in this video (a voice picked on the line),
     // else the subject with the same number.
@@ -231,7 +234,7 @@ const Shots = (() => {
         : `<Audio ${a}> is a voice-timbre reference.`);
     }
     // summary
-    const tasks = ["reference generation", ...(voices.length ? ["audio reference"] : [])];
+    const tasks = ["reference generation", ...(seamless ? ["keyframe completion"] : []), ...(voices.length ? ["audio reference"] : [])];
     const who = pics.map(p => `<Subject ${p}>`);
     const whoText = who.length > 1 ? `${who.slice(0, -1).join(", ")} and ${who.at(-1)}` : who[0] || "the subject";
     const opening = list[0] && !list[0].rawOn ? oneLine(subj(resolveText(list[0].action))).split(/\s+/).slice(0, 40).join(" ") : "";
@@ -239,19 +242,22 @@ const Shots = (() => {
     const voiceRoles = voices.filter(a => ownerOf(a)).map(a => `<Audio ${a}> as the voice-timbre reference for <Subject ${ownerOf(a)}>`);
     const summary = `[${tasks.join(" + ")}] The target video is ${n === 1 ? "a single" : `a ${n}-shot`} ${T.toFixed(1)}-second scene with ${whoText}`
       + (voiceRoles.length ? `, using ${voiceRoles.join(" and ")}` : "") + "." + (opening ? ` It opens as ${opening.charAt(0).toLowerCase() + opening.slice(1)}.` : "")
-      + (K ? ` It follows straight on from the previous shot${prevAction ? `, in which ${prevAction.charAt(0).toLowerCase() + prevAction.slice(1)}` : ""}; <Picture ${K}> is that shot's last frame.` : "");
+      + (seamless ? ` It is the same shot carrying on without a cut from <Picture ${K}>${prevAction ? `, after ${prevAction.charAt(0).toLowerCase() + prevAction.slice(1)}` : ""}.`
+        : K ? ` It follows straight on from the previous shot${prevAction ? `, in which ${prevAction.charAt(0).toLowerCase() + prevAction.slice(1)}` : ""}; <Picture ${K}> is that shot's last frame.` : "");
     // retention_analysis
     const retention = [
       ...pics.map(p => [p, appearsIn(p, list)]).filter(([, at]) => at.length).map(([p, at]) =>
         `<Subject ${p}> (appears in ${at.map(k => `[Shot ${k + 1}]`).join(", ")}): fully_preserved - the identity, face, hair, build and appearance from <Picture ${p}> are retained.`),
-      ...(K ? [`<Subject ${K}> (appears in [Shot 1]): partially_preserved - the location, lighting, time of day, colour grade and the people's clothes continue from <Picture ${K}>; the framing, camera angle and action follow this shot.`] : []),
+      ...(seamless ? [`<Picture ${K}> ([Shot 1] first frame): fully_preserved - the shot picks up exactly where <Picture ${K}> leaves off, with the same people, clothes, place, light and framing.`]
+        : K ? [`<Subject ${K}> (appears in [Shot 1]): partially_preserved - the location, lighting, time of day, colour grade and the people's clothes continue from <Picture ${K}>; the framing, camera angle and action follow this shot.`] : []),
       ...voices.map(a => `<Audio ${a}>: reference - its voice timbre ${ownerOf(a) ? `guides the delivery of <Subject ${ownerOf(a)}>` : "guides the spoken delivery"} without copying the original signal.`),
     ];
     // the main field: integrated_multimodal_description (the guide calls it detailed_description in reference mode; this studio uses the base name, by choice)
     let t = 0;
     let body = list.map((s, k) => { const txt = `[Shot ${k + 1}] ${shotText(s, k, t, n, ids)}`; t += +s.seconds || 0; return txt; }).join("\n");
     // after the framing: the text has to ask for the place, or H3 leaves the reference out
-    if (K) body = body.replace(/^(\[Shot 1\] [^.]*\.)/, `$1 It is the same place as <Subject ${K}>, in the same light, a moment later.`);
+    if (seamless) body = body.replace(/^\[Shot 1\] [^.]*\./, `[Shot 1] The same shot carries on without a cut from <Picture ${K}>.`);
+    else if (K) body = body.replace(/^(\[Shot 1\] [^.]*\.)/, `$1 It is the same place as <Subject ${K}>, in the same light, a moment later.`);
     const look = oneLine(style);
     const out = [`subject_definitions:\n${defs.join("\n")}`, `summary:\n${summary}`, `retention_analysis:\n${retention.join("\n")}`,
       `integrated_multimodal_description:\nThe target video's look: ${look.charAt(0).toLowerCase() + look.slice(1)}.\n${body}`, audioFields("\n")].join("\n\n");
@@ -279,15 +285,19 @@ const Shots = (() => {
     }
     const all = resolveShots(sh.list), list = only != null ? [all[only]] : all;
     if (!isRef()) return basePrompt(list, style);
-    const cont = withCont && only != null && carries(only) ? { pic: contPic(), prev: all[only - 1], setting: carriedSetting(all, only) } : null;
+    const cont = withCont && only != null && carries(only) ? { pic: contPic(), prev: all[only - 1], setting: carriedSetting(all, only), seamless: joins(only) } : null;
     return refPrompt(list, style, cont);
   }
   /* Continuity between the videos of "One video per shot" (H3 Reference, two or more shots, on by default): the shots
      render one after another, each with the last frame of the one before as a hidden reference picture. A shot with
      its own prompt doesn't take it (its text can't cite it), nor does any shot once the Inputs hold all 9 pictures. */
-  const chainOn = () => isRef() && state.shots?.mode === "each" && state.shots.list.length > 1 && state.shots.continuity !== false;
+  // A shot set to "Continue without a cut" (from the shot before) always waits for that shot and carries it on.
+  const joins = i => isRef() && state.shots?.mode === "each" && i > 0 && state.shots.list[i]?.join === "continue";
+  const chainOn = () => isRef() && state.shots?.mode === "each" && state.shots.list.length > 1
+    && (state.shots.continuity !== false || state.shots.list.some((_, i) => joins(i)));
   const contPic = () => state.refs.length + 1;
-  const carries = i => chainOn() && i > 0 && state.refs.length < 9 && !(state.shots.list[i].rawOn && state.shots.list[i].raw.trim());
+  const carries = i => chainOn() && i > 0 && state.refs.length < 9 && !(state.shots.list[i].rawOn && state.shots.list[i].raw.trim())
+    && (state.shots.continuity !== false || joins(i));
   // A shot with no Where of its own keeps the last place written before it: the place in words is what H3 follows most.
   function carriedSetting(all, i) {
     for (let k = i - 1; k >= 0; k--) if (!all[k].rawOn && (all[k].setting || "").trim()) return all[k].setting.trim();
@@ -362,7 +372,7 @@ const Shots = (() => {
       const t0 = t; t += +s.seconds || 0;
       const thumb = thumbOf(s, i), text = summary(s);
       const meta = s.rawOn && s.raw.trim() ? ["own prompt"] : [s.framing, s.angle, s.camera].filter(Boolean);
-      const badges = [s.dialogue.trim() && !s.rawOn ? `<span class="sb-badge" title="${esc(speakerOf(s) ? `${s.speaker} says` : "Spoken line")}: ${esc(s.dialogue)}">🗣</span>` : "",
+      const badges = [joins(i) ? `<span class="sb-badge" title="Continues shot ${i} without a cut">↪</span>` : "", s.dialogue.trim() && !s.rawOn ? `<span class="sb-badge" title="${esc(speakerOf(s) ? `${s.speaker} says` : "Spoken line")}: ${esc(s.dialogue)}">🗣</span>` : "",
         s.notes.trim() ? `<span class="sb-badge" title="${esc(s.notes)}">📝</span>` : ""].join("");
       return `<div class="shot-block${hasContent(s) ? "" : " sb-blank"}" data-i="${i}" ${n > 1 ? 'draggable="true"' : ""} role="listitem" aria-label="Shot ${i + 1}${s.title ? `: ${esc(s.title)}` : ""}">
         <span class="sb-grip" title="${n > 1 ? "Drag to reorder" : ""}" aria-hidden="true">${n > 1 ? "⠿" : ""}</span>
@@ -683,6 +693,9 @@ const Shots = (() => {
 
           <section>
             <h3>Shot</h3>
+            ${i > 0 && !multi && isRef() ? `<div class="field sm-join"><label for="sm-join">From shot ${i}</label>
+              <select id="sm-join" data-sf="join" title="Continue without a cut: H3 carries on from the last moments of shot ${i} (its picture, motion and sound), so the two play as one shot">
+                ${opt("cut", "Cut to a new shot", s.join)}${opt("continue", "Continue without a cut", s.join)}</select></div>` : ""}
             <div class="sm-grid">
               <div class="field"><label for="sm-sec">Length</label><div class="sm-sec"><input type="number" id="sm-sec" data-sf="seconds" min="1" max="15" step="0.5" value="${s.seconds}"> s</div></div>
               <div class="field"><label>Framing</label><select data-sf="framing">${framings.map(f => opt(f, f, s.framing)).join("")}</select></div>
@@ -974,10 +987,10 @@ const Shots = (() => {
     // Continuity: shot 1 now, each next one when the one before is done, with its last frame (onItem → advance).
     if (chainOn()) {
       const steps = sh.list.map((s, i) => ({ ...reqFor(i), batch: 1, seed: base.seed,
-        cont: carries(i) ? prompt(i) : null, prompt: prompt(i, false) }));
+        cont: carries(i) ? prompt(i) : null, prompt: prompt(i, false), join: joins(i) }));
       const bad = steps.findIndex(r => isR && !r.references.length && !(r.ref_audios || []).length);
       if (bad >= 0) { err.textContent = `Shot ${bad + 1} has no reference pictures.`; return; }
-      const first = steps.shift(); delete first.cont;
+      const first = steps.shift(); delete first.cont; delete first.join;
       let items;
       try { ({ items } = await api("/api/generate", { method: "POST", body: JSON.stringify(first) })); }
       catch (e) { err.textContent = `Shot 1: ${e.message}`; return; }
@@ -1018,7 +1031,7 @@ const Shots = (() => {
         b.steps = []; return;
       }
       const step = b.steps[0], k = b.ids.length + 1;
-      let req = { ...step }; delete req.cont;
+      let req = { ...step }; delete req.cont; delete req.join;
       const f = videoOf(last);
       if (step.cont && f) {
         try {
@@ -1026,11 +1039,14 @@ const Shots = (() => {
           req = { ...req, prompt: step.cont, references: [...(req.references || []), fr.ref] };
         } catch (e) { Media.toast(`Couldn't take shot ${k - 1}'s last frame (${e.message}); shot ${k} goes without it.`); }
       }
+      // Continue without a cut: H3 carries on the last moments of the shot before (a failed one leaves a plain cut).
+      if (step.join && f) req.continue_from = f.path;
+      else if (step.join) Media.toast(`Shot ${k - 1} didn't finish, so shot ${k} starts with a cut instead of continuing it.`);
       const { items } = await api("/api/generate", { method: "POST", body: JSON.stringify(req) });
       for (const x of items) { state.items.set(x.id, x); Activity.onEvent({ type: "item", item: x }); }
       b.steps.shift(); b.ids.push(items[0].id);
       renderGallery(); renderQueue();
-      Media.toast(`Shot ${k} of ${b.total} queued${req.prompt === step.cont ? `, carrying on from shot ${k - 1}'s last frame` : ""}.`);
+      Media.toast(`Shot ${k} of ${b.total} queued${req.continue_from ? `, continuing shot ${k - 1} without a cut` : req.prompt === step.cont ? `, carrying on from shot ${k - 1}'s last frame` : ""}.`);
     } catch (e) {
       Media.toast(`Shot ${b.ids.length + 1} couldn't be queued: ${e.message}. The rest of the run stopped.`);
       b.steps = [];
@@ -1086,7 +1102,7 @@ const Shots = (() => {
   function previewText() {
     const sh = state.shots;
     return sh.mode === "multi" || sh.list.length === 1 ? prompt() : sh.list.map((_, i) =>
-      `── Shot ${i + 1}${carries(i) ? ` · carries on from shot ${i}'s last frame (sent as <Picture ${contPic()}>)` : ""} ──\n${prompt(i)}`).join("\n\n");
+      `── Shot ${i + 1}${joins(i) ? ` · continues shot ${i} without a cut` : ""}${carries(i) ? ` · ${joins(i) ? "its" : `carries on from shot ${i}'s`} last frame is sent as <Picture ${contPic()}>` : ""} ──\n${prompt(i)}`).join("\n\n");
   }
   function describe() {
     if (!upgraded()) return { text: "", first: "", empty: 0, prompt: "", missing: 0 };
