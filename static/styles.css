@@ -651,6 +651,10 @@ div.rt-row { grid-template-columns: minmax(0, 1fr) 160px 56px; cursor: default; 
 .sm-prompt { flex: 1; min-height: 0; overflow: auto; margin: 0; white-space: pre-wrap; word-break: break-word; font: 12px/1.6 ui-monospace, Consolas, monospace;
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
 .sm-side .hint { margin: 0; }
+.sm-side-acts { display: inline-flex; gap: 12px; }
+.sm-prompt.flash { animation: sm-flash .6s ease-out; }
+@keyframes sm-flash { from { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .sm-prompt.flash { animation: none; } }
 .sm-foot { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); }
 .sm-foot .sm-gap { flex: 1; }
 .sm-foot .hint { margin: 0; }

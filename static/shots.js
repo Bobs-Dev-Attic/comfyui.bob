@@ -544,6 +544,7 @@ const Shots = (() => {
       if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); go(e.key === "ArrowLeft" ? -1 : 1); }
     });
     root.addEventListener("input", onModalInput);
+    for (const ev of ["input", "change", "paste", "cut", "drop", "keyup"]) root.addEventListener(ev, e => { if (e.target.closest?.(".sm-form")) syncSoon(); });
     root.addEventListener("change", onModalChange);
     root.addEventListener("click", onModalClick);
     renderModal(true);
@@ -653,7 +654,8 @@ const Shots = (() => {
         </div>
         <aside class="sm-side">
           <div class="label-row"><h3>Prompt ${multi ? "<span class=\"opt\">the whole multi-shot video</span>" : "<span class=\"opt\">this shot's video</span>"}</h3>
-            <button type="button" class="link" data-sm="copy" title="Copy the prompt">Copy</button></div>
+            <span class="sm-side-acts"><button type="button" class="link" data-sm="rebuild" title="Read every field again and rebuild the prompt">↻ Rebuild</button>
+            <button type="button" class="link" data-sm="copy" title="Copy the prompt">Copy</button></span></div>
           <pre class="sm-prompt">${esc(preview)}</pre>
           <p class="hint">${preview.split(/\s+/).filter(Boolean).length} words · updates as you edit.</p>
         </aside>
@@ -678,9 +680,30 @@ const Shots = (() => {
   function refreshPreview() {
     if (!modal) return;
     const multi = state.shots.mode === "multi", text = multi ? prompt() : prompt(modal.i);
-    const pre = modal.root.querySelector(".sm-prompt"); if (pre) pre.textContent = text;
+    const pre = modal.root.querySelector(".sm-prompt");
+    if (pre && pre.textContent !== text) {
+      pre.textContent = text;
+      pre.classList.remove("flash"); void pre.offsetWidth; pre.classList.add("flash");  // a brief sign it was rebuilt
+    }
     const w = modal.root.querySelector(".sm-side .hint"); if (w) w.textContent = `${text.split(/\s+/).filter(Boolean).length} words · updates as you edit.`;
   }
+  /* The safety net: read every field of the window back into the shot (whatever the edit was: typing, paste from a
+     menu, drag and drop, autofill, a chip), then rebuild the prompt. Runs shortly after any edit, and on ↻ Rebuild. */
+  function syncFromForm() {
+    if (!modal) return false;
+    const s = state.shots.list[modal.i]; if (!s) return false;
+    let diff = false;
+    for (const el of modal.root.querySelectorAll("[data-sf]")) {
+      const k = el.dataset.sf;
+      const v = k === "rawOn" ? el.checked : k === "seconds" ? clampSec(el.value) : el.value;
+      if (k === "rawOn") continue;  // switching it rebuilds the window (onModalChange)
+      if (s[k] !== v) { s[k] = v; diff = true; }
+    }
+    if (diff) scheduleSave();
+    return diff;
+  }
+  let syncTimer = 0;
+  const syncSoon = () => { clearTimeout(syncTimer); syncTimer = setTimeout(() => { syncFromForm(); refreshPreview(); }, 120); };
   function onModalInput(e) {
     const s = state.shots.list[modal.i], f = e.target.dataset.sf;
     if (e.target.id === "sm-creat") { state.shots.creativity = +e.target.value; renderCreat(); scheduleSave(); return; }
@@ -717,6 +740,13 @@ const Shots = (() => {
     if (a === "delete") return remove(i);
     if (a === "goto-inputs") { closeModal(); return showStep("inputs"); }
     if (a === "new-tag") return Prompts.editTag(null, () => { if (modal) renderModal(); });
+    if (a === "rebuild") {
+      const diff = syncFromForm();
+      const pre = modal.root.querySelector(".sm-prompt"); if (pre) pre.textContent = "";  // force the rebuild and its flash
+      refreshPreview(); render();
+      Media.toast(diff ? "Picked up changes the prompt had missed, and rebuilt it." : "Prompt rebuilt: it was already up to date.");
+      return;
+    }
     if (a === "copy") { try { await navigator.clipboard.writeText(modal.root.querySelector(".sm-prompt").textContent); Media.toast("Prompt copied."); } catch {} return; }
     if (a === "ai-undo") { const u = undo.get(s.id); if (u) { Object.assign(s, u); undo.delete(s.id); changed(); } return; }
     if (a === "ai-write" || a === "ai-enhance") {

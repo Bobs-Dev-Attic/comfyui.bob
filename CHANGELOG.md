@@ -5,6 +5,17 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.60.0] - 2026-11-17
+
+### Added
+- **↻ Rebuild** beside the prompt in a shot's Edit window: reads every field again and rebuilds the prompt, in case an
+  edit wasn't picked up; it says whether it found anything the prompt had missed.
+
+### Changed
+- The prompt in a shot's Edit window follows every kind of edit, not only typing: shortly after any input, change,
+  paste, cut, drop or key, the window reads all its fields back into the shot and rebuilds the prompt (so a paste from
+  the right-click menu, drag and drop or autofill can't leave it stale). A brief highlight shows when it changes.
+
 ## [0.59.0] - 2026-11-17
 
 ### Fixed
