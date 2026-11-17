@@ -494,6 +494,9 @@ const TL = (() => {
       if (ctx?.state === "suspended") ctx.resume().catch(() => {});
       applyMaster();
     }
+    // The output device can change while the studio is open (headphones, Bluetooth): follow the default.
+    try { navigator.mediaDevices?.addEventListener?.("devicechange", () => { if (ctx?.setSinkId) ctx.setSinkId("").catch(() => {}); }); } catch {}
+    const info = () => ({ ctx: ctx ? ctx.state : "none", rate: ctx?.sampleRate, sink: ctx ? (ctx.sinkId === "" ? "default" : typeof ctx.sinkId === "string" ? "chosen" : "n/a") : "" });
     function applyMaster() {
       if (!ctx || !tl) return;
       const m = tl.master || {};
@@ -503,7 +506,9 @@ const TL = (() => {
       limiter.attack.value = 0.002; limiter.release.value = 0.08;
     }
     function route(el) {
-      if (!ctx) return null;
+      // Only through Web Audio while the context really runs: an element routed into a stopped
+      // context is silent for good (a media element can't be un-routed), so play it plainly instead.
+      if (!ctx || ctx.state !== "running") return routes.get(el) || null;
       let n = routes.get(el);
       if (n) return n;
       try {
@@ -526,7 +531,7 @@ const TL = (() => {
       let m = 0; for (const v of buf) m = Math.max(m, Math.abs(v));
       return m > 0 ? 20 * Math.log10(m) : -Infinity;
     }
-    return { start, applyMaster, out, peak, get live() { return !!ctx; } };
+    return { start, applyMaster, out, peak, info, routed: el => routes.has(el), get live() { return !!ctx; } };
   })();
 
   /* ------------------------------------------------------------------ playback (program monitor) */
@@ -557,6 +562,39 @@ const TL = (() => {
     Monitor.show("timeline");
     root.classList.add("playing");
     tick();
+    checkSound();
+  }
+  /* Two seconds into playback: if clips that should be heard gave no sound at all, say why when we can
+     (a soloed track, muted tracks, a stopped audio device) and write what the browser reports to the
+     studio log, so silent playback can be diagnosed. */
+  let soundPeak = -Infinity, soundTimer = null;
+  function checkSound() {
+    clearTimeout(soundTimer); soundPeak = -Infinity;
+    const t0 = tl.playhead;
+    soundTimer = setTimeout(() => {
+      if (!playing || !tl) return;
+      const t = tl.playhead, here = tl.clips.filter(c => c.kind !== "image" && c.start <= t && end(c) > t && !(track(c.track)?.kind === "video" && c.audio_off));
+      if (!here.length) return;
+      const loud = here.filter(c => soundGain(c, t) > 0);
+      const solo = tl.tracks.filter(x => x.solo).map(x => x.name);
+      if (!loud.length) {
+        if (solo.length) toast(`No sound here: ${solo.join(", ")} ${solo.length > 1 ? "are" : "is"} soloed (S), which silences the other tracks.`);
+        else toast("No sound here: the tracks or clips under the playhead are muted or at zero volume.");
+        return;
+      }
+      if (!((tl.master?.volume ?? 1) > 0)) return toast("No sound: the Master volume in the mixer is all the way down.");
+      if (soundPeak > -90) return;  // something was heard
+      const elOf = c => track(c.track)?.kind === "audio" ? audioEls.get(c.id) : $("#prog-video");
+      // Not through Web Audio (no meter to read): fine as long as the elements play unmuted.
+      if (Mix.info().ctx !== "running" && loud.every(c => { const el = elOf(c); return el && !Mix.routed(el) && !el.paused && !el.muted && el.readyState >= 2; })) return;
+      const els = loud.map(c => {
+        const el = elOf(c);
+        return el ? `${track(c.track)?.name}: ${el.paused ? "paused" : "playing"} rs=${el.readyState} err=${el.error?.code ?? "-"} muted=${el.muted} vol=${el.volume.toFixed(2)} routed=${Mix.routed(el)} gain=${soundGain(c, t).toFixed(2)}` : `${track(c.track)?.name}: no element`;
+      });
+      const i = Mix.info();
+      clientLog?.(`Timeline silent at ${t0.toFixed(2)}–${t.toFixed(2)}s: audio ${i.ctx} ${i.rate || ""}Hz sink=${i.sink}; ${els.join("; ")}; ${navigator.userAgent}`);
+      if (i.ctx !== "running") toast(`No sound: the browser's audio is ${i.ctx}. Click Play again; if it stays silent, reload the page.`);
+    }, 2000);
   }
   function pause() {
     playing = false; cancelAnimationFrame(raf);
@@ -575,6 +613,7 @@ const TL = (() => {
       if (loop && tl.range_in != null && tl.range_out != null) { clock = { wall: performance.now(), t: tl.range_in }; tl.playhead = tl.range_in; }
       else { tl.playhead = q(stop); drawPlayhead(); syncProgram(false); return pause(); }
     } else tl.playhead = t;
+    soundPeak = Math.max(soundPeak, Mix.peak());
     drawPlayhead();
     revealTime(tl.playhead);
     syncProgram(true);

@@ -5,6 +5,19 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.62.0] - 2026-11-17
+
+### Fixed
+- **Silent timeline playback is safer and explains itself.** Sound only goes through the browser's audio mixer while
+  that mixer is actually running; otherwise clips play directly, so a stopped audio device can no longer silence
+  every track for the rest of the session. The preview also follows the system's default output when the device
+  changes (headphones, Bluetooth).
+
+### Added
+- Two seconds into timeline playback, if clips that should be heard are silent, a note says why when it can: a
+  soloed track (S) silencing the others, muted tracks or clips, the Master volume all the way down, or the
+  browser's audio being stopped. Unexplained silence is written to the studio log with what the browser reports.
+
 ## [0.61.0] - 2026-11-17
 
 ### Added
