@@ -5,6 +5,22 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.51.0] - 2026-11-17
+
+### Added
+- **Picture previews in a shot's Edit window**: hover a **Picture N** chip by *What happens* to see that reference
+  picture; click the preview to go to the Inputs step. Clicking the chip still inserts the tag.
+
+### Changed
+- **The shot's Edit window no longer has Inputs or Settings sections.** Pictures, frames and settings live on the Inputs
+  and Settings steps and apply to every shot: the Inputs step's first frame starts shot 1 and its last frame ends the
+  last shot, every H3 Reference shot uses all the reference pictures, and quality, aspect, turbo, seed and steps come from
+  Settings. Frames, picture choices or settings a shot had of its own are dropped when a project opens.
+- A shot block's thumbnail is the first picture its action mentions (H3 Reference).
+
+### Fixed
+- Clicking the *What happens* heading no longer inserts a Picture tag (the chips were inside its label).
+
 ## [0.50.0] - 2026-11-17
 
 ### Added

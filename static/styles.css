@@ -581,6 +581,16 @@ details.writer .field + .field, details.writer .row2 + .field, details.writer .f
 .sm-form textarea { width: 100%; }
 .sm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
 .sm-over[inert] { opacity: .45; }
+.sm-lbl { font-size: 12px; font-weight: 600; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+/* Picture N chips: hover (or focus) shows the picture; clicking it opens the Inputs step. */
+.pic-chip { position: relative; display: inline-flex; }
+.pic-pop { position: absolute; left: 50%; top: 100%; transform: translateX(-50%); padding-top: 6px; z-index: 5; display: none; }
+.pic-chip:hover .pic-pop, .pic-chip:focus-within .pic-pop { display: block; }
+.pic-pop button { display: grid; gap: 4px; padding: 5px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .45); cursor: pointer; color: var(--text); font: 11px/1.2 inherit; }
+.pic-pop button:hover, .pic-pop button:focus-visible { border-color: var(--accent); outline: none; }
+.pic-pop img { width: 150px; height: 150px; object-fit: cover; border-radius: 7px; display: block; background: var(--panel-2); }
+.pic-pop span { white-space: nowrap; color: var(--muted); }
 .sm-say { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
 .sm-sec { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
 .sm-sec input { width: 80px; }
