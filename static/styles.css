@@ -621,6 +621,9 @@ div.rt-row { grid-template-columns: minmax(0, 1fr) 160px 56px; cursor: default; 
 .sm-form textarea { width: 100%; }
 .sm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
 .sm-over[inert] { opacity: .45; }
+.shot-tags .chip-btn.own { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.shot-tags .chip-btn.add { border-style: dashed; color: var(--muted); }
+.sm-syntax { margin: 0; font-size: 11.5px; }
 .sm-lbl { font-size: 12px; font-weight: 600; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
 /* Picture N chips: hover (or focus) shows the picture; clicking it opens the Inputs step. */
 .pic-chip { position: relative; display: inline-flex; }

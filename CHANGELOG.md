@@ -5,6 +5,20 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.59.0] - 2026-11-17
+
+### Fixed
+- **Prompt tags and { } choices now work in a shot's fields.** Where, What happens and Spoken line were sent exactly as
+  typed, so `<hero>`, `{dawn|dusk}`, `<list>` and `<maybe>` reached H3 literally (only a shot with its own prompt was
+  resolved). Now all three are filled in when the prompt is built, as on the Prompt step: the preview shows one roll,
+  and each Generate rolls afresh, once for the whole video, so a tag picks the same thing in every shot and line while
+  each { } choice is rolled on its own. `<Picture N>`, `<Audio N>` and `<Subject N>` pass through for H3.
+
+### Changed
+- **A larger Spoken line** in the shot's Edit window (a three-line box), with **Speaker** and **Voice** below it.
+- What happens and Spoken line have chips for the reference pictures and your own tags, plus **＋ Tag** to make one
+  (the tag editor from the Prompt step, which video no longer shows).
+
 ## [0.58.0] - 2026-11-17
 
 ### Added
