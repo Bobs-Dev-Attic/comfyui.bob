@@ -165,7 +165,7 @@ function renderForm() {
   $("#f-lyrics").hidden = !isMusic;
   $("#f-aspect").hidden = kind === "audio";
   $("#f-quality").hidden = kind === "audio";
-  $("#f-seconds").hidden = kind === "image";
+  $("#f-seconds").hidden = kind !== "audio";  // video: each shot has its own length (Shots step)
   $("#f-turbo").hidden = !isH3;
   $("#f-enhance").hidden = !isKlein;
   $("#enhance-hint").textContent = eng === "krea2" ? "Krea 2's text encoder expands short prompts" : "Qwen3.5 upsampler expands short prompts";
@@ -1038,7 +1038,12 @@ async function action(a, it) {
   if (a === "cancel") return cancel(it.id);
   if (a === "timeline") return Bin.toTimeline(it);
   if (a === "tags") return Bin.tags(it);
-  if (a === "reuse") { applyParams(it.params); $("#seed").value = it.seed; scheduleSave(); showStep("prompt"); return; }
+  if (a === "reuse") {
+    applyParams(it.params); $("#seed").value = it.seed;
+    // Video: the result's prompt comes back as a new shot with its own prompt, so the shot list isn't replaced.
+    if (it.params?.kind === "video" && it.params.prompt) { const i = Shots.reuse(it.params.prompt, it.params.seconds); scheduleSave(); showStep("shots"); Shots.openModal(i); return; }
+    scheduleSave(); showStep("prompt"); return;
+  }
   if (a === "reroll") return submit({ ...it.params, seed: -1, batch: 1 });
   if (a === "enhance") return Enhance.dialog(it);
   if (a === "edit") return Editor.open(it);

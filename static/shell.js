@@ -133,7 +133,7 @@ const STEPS = {
   project: { title: "Project", sub: "Start a new project, open a saved one, or just experiment." },
   model: { title: "Model", sub: "Choose what to make and the model that makes it." },
   inputs: { title: "Inputs", sub: "" },
-  shots: { title: "Shots", sub: "Plan the video shot by shot: each with its length, framing, action, camera, line and inputs." },
+  shots: { title: "Shots", sub: "Plan the video shot by shot. Drag to reorder; ⋯ or double-click a shot to edit its framing, camera, action, inputs and settings." },
   loras: { title: "LoRAs", sub: "Add LoRAs to the model: styles, characters, motions." },
   prompt: { title: "Prompt", sub: "Describe what you want. For H3, the Shot writer builds a full shot list from a short idea." },
   settings: { title: "Settings", sub: "Size, length, speed and variations." },
@@ -141,7 +141,8 @@ const STEPS = {
 };
 const ORDER = Object.keys(STEPS);
 
-function stepApplies(id) { return !["inputs", "shots"].includes(id) || state.kind === "video"; }
+// Video (H3, H3 Reference) is described shot by shot on the Shots step; pictures and sound use the Prompt step.
+function stepApplies(id) { return id === "prompt" ? state.kind !== "video" : !["inputs", "shots"].includes(id) || state.kind === "video"; }
 function visibleSteps() { return ORDER.filter(stepApplies); }
 function stepDone(id) {
   const eng = state.engine[state.kind];
@@ -149,8 +150,8 @@ function stepDone(id) {
     case "project": return state.projectChosen;
     case "model": return !!state.caps?.engines?.[eng]?.ready;
     case "inputs": return eng === "h3ref" ? state.refs.length > 0 : !!(state.frames.first_frame || state.frames.last_frame);
-    case "prompt": return !!$("#prompt").value.trim() || (typeof Shots !== "undefined" && Shots.on());
-    case "shots": return typeof Shots !== "undefined" && Shots.on();
+    case "prompt": return !!$("#prompt").value.trim();
+    case "shots": return typeof Shots !== "undefined" && Shots.ready();
     case "loras": return state.loras.length > 0;
     case "settings": return state.settingsVisited;
     default: return false;
@@ -169,7 +170,7 @@ function renderSteps() {
     t.setAttribute("aria-selected", id === state.step);
     t.title = `${i + 1}. ${STEPS[id].title}${stepDone(id) ? " ✓" : ""}`;
   });
-  if (!stepApplies(state.step)) return showStep(["inputs", "shots"].includes(state.step) ? "prompt" : "project");
+  if (!stepApplies(state.step)) return showStep(["inputs", "shots"].includes(state.step) ? "prompt" : state.step === "prompt" ? "shots" : "project");
   const i = vis.indexOf(state.step);
   $("#btn-back").disabled = i <= 0;
   $("#btn-next").hidden = i >= vis.length - 1;
@@ -194,7 +195,7 @@ function renderInputsHead() {
 }
 
 function showStep(id) {
-  if (!STEPS[id] || !stepApplies(id)) id = "project";
+  if (!STEPS[id] || !stepApplies(id)) id = id === "prompt" && state.kind === "video" ? "shots" : "project";
   if (state.step === "settings" && id !== "settings") state.settingsVisited = true;
   state.step = id;
   $$(".step").forEach(s => { s.hidden = s.dataset.step !== id; });
@@ -238,7 +239,11 @@ function renderSummary() {
     row("Project", esc(state.project ? state.project.name : "Experiment (not saved)"), "project"),
     row("Model", `${esc(card?.name || eng)} · ${ms.label}${state.unet[eng] && unetFor(eng) === state.unet[eng] ? ` · ${esc(state.unet[eng].split(/[\\/]/).pop())}` : ""}${state.sampling[eng] ? ` · ${esc([state.sampling[eng].sampler, state.sampling[eng].scheduler].filter(Boolean).join(" / "))}` : ""}`, "model", ms.cls !== "ok"),
     inputs !== null ? row("Inputs", esc(inputs || "add at least one picture"), "inputs", !inputs) : "",
-    row("Prompt", prompt ? `<div class="pv">${esc(prompt.length > 400 ? prompt.slice(0, 400) + "…" : prompt)}</div>` : "empty", "prompt", !prompt),
+    kind === "video" ? (() => {
+      const d = Shots.describe();
+      return row("Shots", `${esc(d.text)}${d.empty ? ` · ⚠ ${d.empty} empty` : ""}${d.first ? `<div class="pv">${esc(d.first.length > 300 ? d.first.slice(0, 300) + "…" : d.first)}</div>` : ""}`, "shots", d.empty > 0);
+    })()
+    : row("Prompt", prompt ? `<div class="pv">${esc(prompt.length > 400 ? prompt.slice(0, 400) + "…" : prompt)}</div>` : "empty", "prompt", !prompt),
     state.loras.length ? (() => {
       const bad = Loras.mismatched();
       return row("LoRAs", `${state.loras.length} LoRA${state.loras.length === 1 ? "" : "s"}${bad.length ? ` · ⚠ ${bad.length} made for another model` : ""}`, "loras", bad.length > 0);
@@ -269,7 +274,7 @@ function collectSettings() {
 function applySettings(s) {
   state.loading = true;
   try {
-    if (!s) { renderForm(); return; }
+    if (!s) { state.shots = null; renderForm(); Shots.ensure(""); return; }
     if (s.kind) state.kind = s.kind;  // settings without a model choice keep the current one
     Object.assign(state.engine, s.engine || {});
     state.batch = s.batch || 1;
@@ -282,11 +287,8 @@ function applySettings(s) {
     state.sampling = s.sampling && typeof s.sampling === "object"
       ? Object.fromEntries(Object.entries(s.sampling).filter(([, v]) => v && typeof v === "object" && (v.sampler || v.scheduler))
           .map(([k, v]) => [k, { sampler: String(v.sampler || ""), scheduler: String(v.scheduler || "") }])) : {};
+    // Shots.ensure() (below, once the prompt and length are in) fills missing fields and upgrades older lists.
     state.shots = s.shots && Array.isArray(s.shots.list) ? structuredClone(s.shots) : null;
-    // A hand-edited or partial file may lack shot fields; the Shots step expects all of them.
-    if (state.shots) state.shots.list = state.shots.list.filter(x => x && typeof x === "object").map(x => ({
-      id: Math.random().toString(16).slice(2, 10), seconds: 3, framing: "medium shot", setting: "", action: "", camera: "holds a static shot",
-      dialogue: "", voice: "", first_frame: null, last_frame: null, refs: [], ...x }));
     state.promptTags = s.promptTags && typeof s.promptTags === "object" && !Array.isArray(s.promptTags) ? structuredClone(s.promptTags) : {};
     renderForm();
     $("#prompt").value = s.prompt || "";
@@ -307,6 +309,7 @@ function applySettings(s) {
     }
     renderRefs();
     renderArefs();
+    Shots.ensure(s.prompt || "");
     Loras.render(); Shots.render();
     updateDerived();
   } finally {

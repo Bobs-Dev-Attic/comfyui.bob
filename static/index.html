@@ -145,23 +145,35 @@
           <!-- Shots (video) -->
           <section class="step" data-step="shots" role="tabpanel" hidden>
             <div class="shots-head">
-              <div class="field toggle-row"><label class="switch"><input type="checkbox" id="shots-on"><span></span></label><div><strong>Use shots</strong>
-                <span class="hint inline">build the video from this shot list instead of the Prompt step</span></div></div>
               <div class="seg sm" id="shots-mode" role="group" aria-label="How shots become video">
-                <button type="button" data-m="multi" title="One generation, H3's multi-shot prompt ([Shot 1] … [Shot 2] …)">One video · multi-shot</button>
-                <button type="button" data-m="each" title="One generation per shot; the results go on the timeline in order">One video per shot</button>
+                <button type="button" data-m="each" title="One generation per shot; with several shots the results go on the timeline in order">One video per shot</button>
+                <button type="button" data-m="multi" title="One generation, H3's multi-shot prompt ([Shot 1] … [Shot 2] …)">One multi-shot video</button>
               </div>
               <span class="shots-total" id="shots-total"></span>
             </div>
-            <div class="field"><label for="shots-style">Look <span class="opt">style, light, lens: for every shot</span></label>
-              <input id="shots-style" placeholder="Cinematic live-action, warm tungsten palette, 35mm lens, shallow depth of field"></div>
-            <div class="shot-list" id="shot-list"></div>
+            <details class="shots-idea">
+              <summary>✨ Write the shots from an idea</summary>
+              <textarea id="shots-idea" rows="2" placeholder="A woman walks her dog in a park at sunset; the dog runs off and she laughs"></textarea>
+              <div class="shots-idea-row">
+                <label>Shots <select id="shots-idea-n"><option value="">Auto</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></label>
+                <label>Length <input type="number" id="shots-idea-s" min="2" max="60" step="1" value="10"> s</label>
+                <label for="shots-creat">Creativity</label><input type="range" id="shots-creat" min="0" max="100" step="5" value="50"><span class="shots-creat-val"></span>
+                <button type="button" class="btn sm primary" id="btn-shots-write">✨ Write shots</button>
+              </div>
+              <p class="hint" id="shots-idea-status" aria-live="polite">Uses the LLM set up for the Prompt writer. Replaces the shots below; then edit any of them.</p>
+            </details>
+            <div class="shot-list" id="shot-list" role="list" aria-label="Shots"></div>
             <button type="button" class="shot-add" id="btn-shot-add">＋ Add shot</button>
-            <div class="row2">
-              <div class="field"><label for="shots-sound">Soundscape</label><input id="shots-sound" placeholder="Rain on metal, distant traffic, footsteps in puddles"></div>
-              <div class="field"><label for="shots-music">Music</label><input id="shots-music" placeholder="N/A"></div>
-            </div>
             <p class="hint" id="shots-hint"></p>
+            <details class="shots-all">
+              <summary>Look, sound and music <span class="opt">for every shot</span></summary>
+              <div class="field"><label for="shots-style">Look <span class="opt">style, light, lens</span></label>
+                <input id="shots-style" placeholder="Cinematic live-action, warm tungsten palette, 35mm lens, shallow depth of field"></div>
+              <div class="row2">
+                <div class="field"><label for="shots-sound">Soundscape</label><input id="shots-sound" placeholder="Rain on metal, distant traffic, footsteps in puddles"></div>
+                <div class="field"><label for="shots-music">Music</label><input id="shots-music" placeholder="N/A"></div>
+              </div>
+            </details>
             <details class="shots-preview"><summary>Prompt preview</summary><pre id="shots-prompt"></pre></details>
             <datalist id="shot-cams"><option value="holds a static shot"><option value="slowly pushes in"><option value="slowly pulls back"><option value="pans left"><option value="pans right"><option value="tilts up"><option value="tilts down"><option value="tracks alongside the subject"><option value="follows the subject from behind"><option value="orbits around the subject"><option value="cranes up"><option value="is handheld and close"><option value="racks focus"></datalist>
           </section>
