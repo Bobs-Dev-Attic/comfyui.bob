@@ -5,6 +5,20 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.74.0] - 2026-11-17
+
+### Added
+- **Keyframes in 3D scenes**: a timeline under the view with play (Space), a scrubber and the scene's length (1 to
+  10 s, on the H3 frame grid at 24 fps, as in Animate objects).
+  - **Objects**: moving, turning or sizing one at the playhead keys it there (before it has keys, at 0 s this just
+    places it). It moves along a smooth curve through its keys, with turn and size changing in a straight line; its path
+    shows in yellow when selected. Its keys are listed to jump to or remove.
+  - **Camera**: **◆ Key the camera** keeps the current view at the playhead; two or more keys make a camera move
+    (an orbit about a point, eased through the keys). Looking around doesn't change the path: when the view is off it,
+    the path shows in blue with the camera at the playhead, and moving the playhead puts the view back on it. Clear its
+    keys to free it.
+  - Keys, the camera path and the length are saved with the scene (`objects[].keys`, `camera_keys`, `seconds`).
+
 ## [0.73.0] - 2026-11-17
 
 ### Added

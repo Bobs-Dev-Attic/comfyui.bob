@@ -6,7 +6,12 @@
    at the origin looking down -Z (Y up), its field of view read from the mesh. An object is placed by its mask: its
    foot (the bottom middle of the mask) stands on the background just below it, and its height in the picture sets
    its size. Drag an object to move it over the ground, Shift+drag to raise it; drag elsewhere to orbit, right-drag
-   to pan, wheel to zoom; 🎥 goes back to the picture's camera. */
+   to pan, wheel to zoom; 🎥 goes back to the picture's camera.
+
+   Keyframes (as in Animate objects: the H3 frame grid at 24 fps): moving, turning or sizing an object at the playhead
+   keys it there, and its path runs through its keys (position on a smooth curve, turn and size in a straight line).
+   The camera is keyed on purpose (◆ Key the camera): orbiting to look around doesn't change its path; scrubbing or
+   playing puts the view back on it. */
 "use strict";
 
 const Scene3D = (() => {
@@ -17,6 +22,47 @@ const Scene3D = (() => {
   let models = [];     // /api/models3d, refreshed while any is being made
 
   const uid = () => Math.random().toString(36).slice(2, 10);
+  const FPS = 24;
+  const dur = () => ((window.H3Prompt?.h3Length?.(+s.seconds || 5) ?? Math.round((+s.seconds || 5) * FPS) + 1) - 1) / FPS;
+  const near = (a, b) => Math.abs(a - b) < 0.5 / FPS;
+
+  /* ---------------------------------------------------------------- keys */
+  const cr = (q0, q1, q2, q3, u) => 0.5 * ((2 * q1) + (-q0 + q2) * u + (2 * q0 - 5 * q1 + 4 * q2 - q3) * u * u + (-q0 + 3 * q1 - 3 * q2 + q3) * u * u * u);
+  // Between keys K (sorted by t): fields in `smooth` on a Catmull-Rom curve, the rest in a straight line.
+  function interp(K, t, smooth) {
+    if (K.length === 1 || t <= K[0].t) return K[0];
+    if (t >= K.at(-1).t) return K.at(-1);
+    let i = 0; while (K[i + 1].t < t) i++;
+    const a = K[i], b = K[i + 1], p0 = K[i - 1] || a, p3 = K[i + 2] || b, u = (t - a.t) / Math.max(1e-6, b.t - a.t), out = { t };
+    for (const k of Object.keys(a)) {
+      if (k === "t") continue;
+      if (Array.isArray(a[k])) out[k] = a[k].map((v, j) => smooth.includes(k) ? cr(p0[k][j], v, b[k][j], p3[k][j], u) : v + (b[k][j] - v) * u);
+      else out[k] = smooth.includes(k) ? cr(p0[k], a[k], b[k], p3[k], u) : a[k] + (b[k] - a[k]) * u;
+    }
+    return out;
+  }
+  const baseOf = o => ({ pos: o.pos.slice(), yaw: o.yaw || 0, scale: o.scale });
+  // An object's pose at time t.
+  function poseAt(o, t) { return o.keys?.length ? interp(o.keys, t, ["pos"]) : baseOf(o); }
+  // Change an object at the playhead: before it has keys, at 0 s this is its place; otherwise it's keyed there.
+  function editPose(o, f) {
+    if (!o.keys?.length) {
+      if (near(s.t, 0)) { Object.assign(o, f); return; }
+      o.keys = [{ t: 0, ...baseOf(o) }];
+    }
+    let k = o.keys.find(q => near(q.t, s.t));
+    if (!k) { const p = poseAt(o, s.t); k = { t: s.t, pos: p.pos.slice(), yaw: p.yaw, scale: p.scale }; o.keys.push(k); o.keys.sort((a, b) => a.t - b.t); }
+    Object.assign(k, f);
+    Object.assign(o, { pos: o.keys[0].pos.slice(), yaw: o.keys[0].yaw, scale: o.keys[0].scale });
+  }
+  const camOf = c => ({ yaw: c.yaw, pitch: c.pitch, dist: c.dist, target: c.target.slice() });
+  function camAt(t) { const c = interp(s.camKeys, t, ["yaw", "pitch", "dist", "target"]); return { ...camOf(c), dist: Math.max(s.bg.dmed * 0.02, c.dist) }; }
+  // The playhead moved: the camera goes back on its path.
+  function setTime(t) {
+    s.t = Math.max(0, Math.min(dur(), t));
+    if (s.camKeys.length && s.bg) { s.cam = camAt(s.t); s.camFree = false; }
+    s.dirty = true; renderTime();
+  }
 
   /* ---------------------------------------------------------------- starting one */
   // src: { ref, url, name, plate?, objects?: [{ name, mask, model? }] }
@@ -77,9 +123,9 @@ const Scene3D = (() => {
   const ID = T(0, 0, 0);
 
   // An object's model matrix: its anchor (bottom middle of the model's box) at pos, turned and scaled about it.
-  function matOf(o) {
+  function matOf(o, P = poseAt(o, s.t)) {
     const a = o.mesh.anchor;
-    return mul4(mul4(mul4(T(...o.pos), RY(o.yaw * rad)), S(o.scale)), T(-a[0], -a[1], -a[2]));
+    return mul4(mul4(mul4(T(...P.pos), RY(P.yaw * rad)), S(P.scale)), T(-a[0], -a[1], -a[2]));
   }
 
   /* ---------------------------------------------------------------- the background: rebuilt from UV and depth */
@@ -139,19 +185,20 @@ const Scene3D = (() => {
   }
 
   // Stand an object where its mask is (or, without one, in the middle of the view).
-  async function place(o) {
+  // The pose that stands an object where its mask is (or, without one, in the middle of the view).
+  async function placement(o) {
     const bg = s.bg, m = o.mesh, hgt = Math.max(1e-6, m.hi[1] - m.lo[1]), dep = (m.hi[2] - m.lo[2]);
     let info = null;
     if (o.mask) { try { info = await maskInfo(o.mask); } catch { info = null; } }
     const footUV = info ? [info.foot[0], Math.min(1, info.foot[1] + 0.012)] : [0.5, 0.8];
     const G0 = pointAt(bg, ...footUV), d = Math.max(1e-6, -G0[2]);
     const hPic = info ? (info.y1 - info.y0) : 0.3;
-    o.scale = o.auto_scale = (hPic * 2 * bg.tv * d) / hgt;
+    const scale = (hPic * 2 * bg.tv * d) / hgt;
     // the model's front faces +Z (the camera); push it back so its front edge stands at the foot
     const back = norm([G0[0], 0, G0[2]]);
-    o.pos = addv(G0, mulv(back, dep * o.scale / 2));
-    o.yaw = 0;
+    return { pos: addv(G0, mulv(back, dep * scale / 2)), yaw: 0, scale };
   }
+  async function place(o) { const p = await placement(o); Object.assign(o, p, { auto_scale: p.scale }); }
 
   /* ---------------------------------------------------------------- loading models */
   async function refreshModels() { try { models = (await api("/api/models3d")).models || []; } catch { /* keep the old list */ } }
@@ -189,8 +236,9 @@ const Scene3D = (() => {
   function save() {
     clearTimeout(s.saveT);
     const id = s.id;
-    const objects = s.objs.map(o => ({ id: o.id, name: o.name, model: o.model, mask: o.mask, pos: o.pos, yaw: o.yaw || 0, scale: o.scale, auto_scale: o.auto_scale, hidden: !!o.hidden }));
-    s.saveT = setTimeout(() => api(`/api/scenes/${id}`, { method: "PATCH", body: JSON.stringify({ objects }) }).catch(e => Media.toast(`Couldn't save the scene: ${e.message}`)), 500);
+    const objects = s.objs.map(o => ({ id: o.id, name: o.name, model: o.model, mask: o.mask, pos: o.pos, yaw: o.yaw || 0, scale: o.scale, auto_scale: o.auto_scale, hidden: !!o.hidden, keys: o.keys || [] }));
+    const body = JSON.stringify({ objects, seconds: +s.seconds || 5, camera_keys: s.camKeys });
+    s.saveT = setTimeout(() => api(`/api/scenes/${id}`, { method: "PATCH", body }).catch(e => Media.toast(`Couldn't save the scene: ${e.message}`)), 500);
   }
 
   /* ---------------------------------------------------------------- the window */
@@ -201,14 +249,24 @@ const Scene3D = (() => {
     const root = document.createElement("div");
     root.className = "s3";
     root.innerHTML = `
-      <div class="s3-stage"><canvas class="m3-canvas s3-canvas" tabindex="0" aria-label="The 3D scene: drag an object to move it, drag elsewhere to orbit, wheel to zoom"></canvas>
+      <div class="s3-stage"><div class="s3-box"><canvas class="m3-canvas s3-canvas" tabindex="0" aria-label="The 3D scene: drag an object to move it, drag elsewhere to orbit, wheel to zoom"></canvas>
         <div class="m3-hud hint s3-hud">Making the background…</div></div>
+        <div class="mo-transport">
+          <button type="button" class="btn sm" data-act="play" title="Play (Space)">▶</button>
+          <input type="range" class="mo-scrub s3-scrub" min="0" step="${1 / FPS}" value="0" aria-label="Time">
+          <span class="mo-time s3-time"></span>
+          <label class="s3-len">Length <input type="number" class="s3-sec" min="1" max="10" step="0.5" aria-label="Length in seconds"> s</label></div></div>
       <aside class="mo-side s3-side">
         <section><h3>View</h3>
           <div class="mo-row"><button type="button" class="btn sm" data-act="shot" title="Look through the picture's own camera">🎥 Picture's camera</button></div>
           <label class="check"><input type="checkbox" data-opt="showBg" checked> Background</label>
           <label class="check"><input type="checkbox" data-opt="clay"> Clay (models without colour)</label>
           <p class="hint s3-bgnote"></p></section>
+        <section><h3>Camera</h3>
+          <p class="hint s3-camhint"></p>
+          <div class="mo-row"><button type="button" class="btn sm" data-act="key-cam" title="Keep this view at the playhead">◆ Key the camera</button>
+            <button type="button" class="btn sm ghost" data-act="clear-cam">Clear its keys</button></div>
+          <div class="mo-keys s3-camkeys"></div></section>
         <section><h3>Objects</h3><ul class="mo-layers s3-objs"></ul>
           <div class="mo-find"><select class="s3-add" aria-label="A 3D model to add"></select><button type="button" class="btn sm" data-act="add">Add</button></div></section>
         <section class="s3-sel" hidden><h3 class="s3-sel-h"></h3>
@@ -216,7 +274,8 @@ const Scene3D = (() => {
           <div class="field"><label for="s3-size">Size <span class="s3-size-v"></span></label><input type="range" id="s3-size" min="0.2" max="3" step="0.01"></div>
           <div class="mo-row"><button type="button" class="btn sm" data-act="replace" title="Stand it where it was in the picture again">↺ Put back</button>
             <button type="button" class="btn sm ghost" data-act="hide">Hide</button><button type="button" class="btn sm ghost" data-act="remove">Remove</button></div>
-          <p class="hint">Drag it over the ground; Shift+drag raises or lowers it.</p></section>
+          <p class="hint s3-objhint"></p>
+          <div class="mo-keys s3-objkeys"></div></section>
       </aside>`;
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
@@ -226,7 +285,8 @@ const Scene3D = (() => {
     const cv = root.querySelector(".s3-canvas"), hud = root.querySelector(".s3-hud");
     const gl = cv.getContext("webgl2", { antialias: true, preserveDrawingBuffer: true });
     s = { id: sc.id, sc, win, root, cv, hud, gl, gpu: gl ? G().gpu(gl) : null, objs: (sc.objects || []).map(o => ({ ...o })), sel: -1, dirty: true,
-      cam: { yaw: 0, pitch: 0, dist: 1, target: [0, 0, -1] }, showBg: true, clay: false, bg: null };
+      cam: { yaw: 0, pitch: 0, dist: 1, target: [0, 0, -1] }, showBg: true, clay: false, bg: null,
+      t: 0, seconds: +sc.seconds || 5, camKeys: (sc.camera_keys || []).slice().sort((a, b) => a.t - b.t), camFree: false };
     if (!gl) { hud.textContent = "This browser has no WebGL 2, so the scene can't be shown."; return; }
     s.ro = new ResizeObserver(() => { if (s) s.dirty = true; }); s.ro.observe(cv);
     wire(root, foot);
@@ -248,6 +308,7 @@ const Scene3D = (() => {
     } catch (e) { hud.textContent = `Couldn't show the background: ${e.message}`; return; }
     if (!s) return;
     toShot();
+    setTime(0);
     hud.textContent = `Camera ${Math.round(2 * Math.atan(s.bg.t) / rad)}° wide`;
     root.querySelector(".s3-bgnote").textContent = sc.plate ? "The background is the empty background from Animate objects."
       : "The background is the picture itself, so objects that have a 3D model show twice. Make the empty background in 🎬 Animate objects to avoid that.";
@@ -275,6 +336,25 @@ const Scene3D = (() => {
       s.gpu.draw(o.mesh, { VP, M: matOf(o), eye: e, key, look: s.clay ? 1 : 0, tint: i === s.sel ? [0.06, 0.04, 0.0] : null });
     });
     const o = s.objs[s.sel];
+    s.gl.disable(s.gl.DEPTH_TEST);
+    const path = (fn, color) => {  // a path over the whole length, sampled every frame
+      const pts = [], n = Math.round(dur() * FPS);
+      let prev = fn(0);
+      for (let f = 1; f <= n; f++) { const q = fn(f / FPS); pts.push(...prev, ...q); prev = q; }
+      if (pts.length) s.gpu.lines(pts, VP, color);
+    };
+    if (o?.mesh && o.keys?.length > 1) path(t => poseAt(o, t).pos, [1, 0.77, 0.24, 0.9]);
+    if (s.camKeys.length > 1 && s.camFree) {
+      const eyeOf = c => { const y = c.yaw * rad, p = c.pitch * rad; return [c.target[0] + c.dist * Math.cos(p) * Math.sin(y), c.target[1] + c.dist * Math.sin(p), c.target[2] + c.dist * Math.cos(p) * Math.cos(y)]; };
+      path(t => eyeOf(camAt(t)), [0.48, 0.64, 1, 0.9]);
+      // the camera at the playhead: a small frustum
+      const c = camAt(s.t), ce = eyeOf(c), f = norm(sub(c.target, ce)), r = norm(cross(f, [0, 1, 0])), u = cross(r, f), L = s.bg.dmed * 0.12;
+      const corner = (x, y) => addv(ce, mulv(addv(f, addv(mulv(r, x * s.bg.t), mulv(u, y * s.bg.tv))), L));
+      const cs = [corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)], fr = [];
+      for (let k = 0; k < 4; k++) fr.push(...ce, ...cs[k], ...cs[k], ...cs[(k + 1) % 4]);
+      s.gpu.lines(fr, VP, [0.48, 0.64, 1, 1]);
+    }
+    s.gl.enable(s.gl.DEPTH_TEST);
     if (o?.mesh && o.pos && !o.hidden) {  // the selected object's box
       const M = matOf(o), lo = o.mesh.lo, hi = o.mesh.hi, c = [];
       for (let k = 0; k < 8; k++) c.push([k & 1 ? hi[0] : lo[0], k & 2 ? hi[1] : lo[1], k & 4 ? hi[2] : lo[2]].map((_, j, v) => M[j] * v[0] + M[4 + j] * v[1] + M[8 + j] * v[2] + M[12 + j]));
@@ -297,8 +377,8 @@ const Scene3D = (() => {
     let best = -1, bt = Infinity;
     s.objs.forEach((o, i) => {
       if (!o.mesh || !o.pos || o.hidden) return;
-      const a = o.mesh.anchor, c = Math.cos(-o.yaw * rad), n = Math.sin(-o.yaw * rad);
-      const toLocal = (v, isDir) => { const w = isDir ? v : sub(v, o.pos); const x = c * w[0] - n * w[2], z = n * w[0] + c * w[2]; const k = 1 / o.scale; return isDir ? [x * k, w[1] * k, z * k] : [x * k + a[0], w[1] * k + a[1], z * k + a[2]]; };
+      const P = poseAt(o, s.t), a = o.mesh.anchor, c = Math.cos(-P.yaw * rad), n = Math.sin(-P.yaw * rad);
+      const toLocal = (v, isDir) => { const w = isDir ? v : sub(v, P.pos); const x = c * w[0] - n * w[2], z = n * w[0] + c * w[2]; const k = 1 / P.scale; return isDir ? [x * k, w[1] * k, z * k] : [x * k + a[0], w[1] * k + a[1], z * k + a[2]]; };
       const lo = toLocal(ro, false), ld = toLocal(rd, true);
       let t0 = -Infinity, t1 = Infinity;
       for (let j = 0; j < 3; j++) {
@@ -322,24 +402,25 @@ const Scene3D = (() => {
       const hit = e.button === 0 ? pick(px, py) : -1;
       if (hit >= 0) {
         if (s.sel !== hit) { s.sel = hit; renderSide(); }
-        const o = s.objs[hit], ray = rayAt(px, py), t = (o.pos[1] - ray.o[1]) / (ray.d[1] || 1e-9);
+        if (s.playing) stop();
+        const o = s.objs[hit], P = poseAt(o, s.t), ray = rayAt(px, py), t = (P.pos[1] - ray.o[1]) / (ray.d[1] || 1e-9);
         const at = addv(ray.o, mulv(ray.d, t));
-        drag = { mode: e.shiftKey ? "lift" : "move", y: e.clientY, off: sub(o.pos, at), dist: Math.hypot(...sub(o.pos, eye())) };
-      } else drag = { mode: e.button === 0 && !e.shiftKey ? "orbit" : "pan", x: e.clientX, y: e.clientY };
+        drag = { mode: e.shiftKey ? "lift" : "move", y: e.clientY, off: sub(P.pos, at), dist: Math.hypot(...sub(P.pos, eye())) };
+      } else { drag = { mode: e.button === 0 && !e.shiftKey ? "orbit" : "pan", x: e.clientX, y: e.clientY }; if (s.camKeys.length) { s.camFree = true; renderCam(); } }
       s.dirty = true;
     });
     cv.addEventListener("pointermove", e => {
       if (!drag) return;
       const r = cv.getBoundingClientRect(), o = s.objs[s.sel];
       if (drag.mode === "move" && o) {
-        const ray = rayAt(e.clientX - r.left, e.clientY - r.top);
+        const ray = rayAt(e.clientX - r.left, e.clientY - r.top), P = poseAt(o, s.t);
         if (Math.abs(ray.d[1]) > 1e-4) {
-          const t = (o.pos[1] - ray.o[1]) / ray.d[1];
-          if (t > 0 && t < s.bg.dmed * 40) { const at = addv(ray.o, mulv(ray.d, t)); o.pos = [at[0] + drag.off[0], o.pos[1], at[2] + drag.off[2]]; }
+          const t = (P.pos[1] - ray.o[1]) / ray.d[1];
+          if (t > 0 && t < s.bg.dmed * 40) { const at = addv(ray.o, mulv(ray.d, t)); editPose(o, { pos: [at[0] + drag.off[0], P.pos[1], at[2] + drag.off[2]] }); drag.moved = true; }
         }
       } else if (drag.mode === "lift" && o) {
-        const k = drag.dist * 2 * tanY(cv.clientWidth, cv.clientHeight) / cv.clientHeight;
-        o.pos = [o.pos[0], o.pos[1] - (e.clientY - drag.y) * k, o.pos[2]]; drag.y = e.clientY;
+        const k = drag.dist * 2 * tanY(cv.clientWidth, cv.clientHeight) / cv.clientHeight, P = poseAt(o, s.t);
+        editPose(o, { pos: [P.pos[0], P.pos[1] - (e.clientY - drag.y) * k, P.pos[2]] }); drag.y = e.clientY; drag.moved = true;
       } else if (drag.mode === "orbit") {
         s.cam.yaw -= (e.clientX - drag.x) * 0.3; s.cam.pitch = Math.max(-89, Math.min(89, s.cam.pitch + (e.clientY - drag.y) * 0.3));
         drag.x = e.clientX; drag.y = e.clientY;
@@ -351,12 +432,13 @@ const Scene3D = (() => {
       }
       s.dirty = true;
     });
-    cv.addEventListener("pointerup", () => { if (drag && (drag.mode === "move" || drag.mode === "lift")) save(); drag = null; });
+    cv.addEventListener("pointerup", () => { if (drag?.moved) { save(); renderSide(); } drag = null; });
     cv.addEventListener("wheel", e => { e.preventDefault(); if (!s?.bg) return; s.cam.dist = Math.max(s.bg.dmed * 0.05, Math.min(s.bg.dmed * 20, s.cam.dist * Math.exp(e.deltaY * 0.0012))); s.dirty = true; }, { passive: false });
     cv.addEventListener("keydown", e => {
       const o = s.objs[s.sel];
       if ((e.key === "Delete" || e.key === "Backspace") && o) { e.preventDefault(); removeSel(); }
       else if (e.key === "Escape") { s.sel = -1; renderSide(); s.dirty = true; }
+      else if (e.key === " ") { e.preventDefault(); play(); }
     });
     const all = [root, foot];
     all.forEach(el => el.addEventListener("click", e => {
@@ -365,8 +447,25 @@ const Scene3D = (() => {
       if (a === "shot") { if (s.bg) toShot(); return; }
       if (a === "pic") { draw(); s.cv.toBlob(bl => { const x = document.createElement("a"); x.href = URL.createObjectURL(bl); x.download = `${s.sc.name}_view.png`; x.click(); setTimeout(() => URL.revokeObjectURL(x.href), 4000); }); return; }
       if (a === "add") return addModel();
+      if (a === "play") return play();
+      if (a === "key-cam") {
+        if (!s.bg) return;
+        const k = s.camKeys.find(q => near(q.t, s.t));
+        if (k) Object.assign(k, camOf(s.cam)); else { s.camKeys.push({ t: s.t, ...camOf(s.cam) }); s.camKeys.sort((p, q) => p.t - q.t); }
+        s.camFree = false; save(); renderCam(); s.dirty = true; return;
+      }
+      if (a === "clear-cam") { s.camKeys = []; s.camFree = false; save(); renderCam(); s.dirty = true; return; }
+      if (a === "cam-key") { setTime(s.camKeys[+b.dataset.k].t); renderSide(); return; }
+      if (a === "del-cam-key") { s.camKeys.splice(+b.dataset.k, 1); save(); setTime(s.t); renderCam(); return; }
+      if (a === "obj-key" && o) { setTime(o.keys[+b.dataset.k].t); renderSide(); return; }
+      if (a === "del-obj-key" && o) {
+        o.keys.splice(+b.dataset.k, 1);
+        if (o.keys.length) Object.assign(o, { pos: o.keys[0].pos.slice(), yaw: o.keys[0].yaw, scale: o.keys[0].scale });
+        if (o.keys.length < 2) o.keys = [];
+        save(); renderSide(); s.dirty = true; return;
+      }
       if (a === "make3d") return make3d(+b.dataset.i);
-      if (a === "replace" && o?.mesh) { place(o).then(() => { save(); renderSide(); s.dirty = true; }); return; }
+      if (a === "replace" && o?.mesh) { placement(o).then(p => { o.auto_scale = p.scale; editPose(o, p); save(); renderSide(); s.dirty = true; }); return; }
       if (a === "hide" && o) { o.hidden = !o.hidden; save(); renderSide(); s.dirty = true; return; }
       if (a === "remove") return removeSel();
       if (b.dataset.i != null && !a) { s.sel = +b.dataset.i; renderSide(); s.dirty = true; }
@@ -377,11 +476,18 @@ const Scene3D = (() => {
     });
     root.addEventListener("input", e => {
       const o = s.objs[s.sel]; if (!o) return;
-      if (e.target.id === "s3-yaw") { o.yaw = +e.target.value; root.querySelector(".s3-yaw-v").textContent = `${o.yaw}°`; }
-      if (e.target.id === "s3-size") { o.scale = (o.auto_scale || o.scale) * +e.target.value; root.querySelector(".s3-size-v").textContent = `${Math.round(+e.target.value * 100)}%`; }
+      if (e.target.id === "s3-yaw") { editPose(o, { yaw: +e.target.value }); root.querySelector(".s3-yaw-v").textContent = `${+e.target.value}°`; }
+      if (e.target.id === "s3-size") { editPose(o, { scale: (o.auto_scale || o.scale) * +e.target.value }); root.querySelector(".s3-size-v").textContent = `${Math.round(+e.target.value * 100)}%`; }
       s.dirty = true;
     });
-    root.addEventListener("change", e => { if (e.target.id === "s3-yaw" || e.target.id === "s3-size") save(); });
+    root.addEventListener("change", e => { if (e.target.id === "s3-yaw" || e.target.id === "s3-size") { save(); renderSide(); } });
+    root.querySelector(".s3-scrub").addEventListener("input", e => { if (s.playing) stop(); setTime(+e.target.value); renderSide(); });
+    root.querySelector(".s3-sec").addEventListener("change", e => {
+      s.seconds = Math.max(1, Math.min(10, +e.target.value || 5)); e.target.value = String(s.seconds);
+      const D = dur();  // keys past the new end move to it
+      for (const K of [s.camKeys, ...s.objs.map(o => o.keys || [])]) for (const k of K) if (k.t > D) k.t = D;
+      save(); setTime(Math.min(s.t, D)); renderSide();
+    });
   }
 
   function removeSel() {
@@ -407,6 +513,7 @@ const Scene3D = (() => {
 
   function renderSide() {
     if (!s) return;
+    renderTime(); renderCam();
     const root = s.root;
     const st = o => o.state === "running" ? `<span class="hint">making… </span>` : o.state === "failed" ? `<span class="hint">failed</span>`
       : o.state === "missing" ? `<span class="hint">model deleted</span>` : !o.model ? `<button type="button" class="btn sm" data-act="make3d" data-i="${s.objs.indexOf(o)}">🧊 Make 3D</button>` : o.hidden ? `<span class="hint">hidden</span>` : "";
@@ -421,11 +528,47 @@ const Scene3D = (() => {
     sec.hidden = !o;
     if (o) {
       root.querySelector(".s3-sel-h").textContent = o.name;
-      const yaw = Math.round(o.yaw || 0), size = o.auto_scale && o.scale ? o.scale / o.auto_scale : 1;
+      const P = o.pos ? poseAt(o, s.t) : { yaw: 0, scale: o.scale };
+      const yaw = Math.round(P.yaw || 0), size = o.auto_scale && P.scale ? P.scale / o.auto_scale : 1;
+      const K = o.keys || [];
+      root.querySelector(".s3-objhint").textContent = K.length ? `Moving it, turning it or sizing it keys it at ${s.t.toFixed(2)} s.`
+        : "Drag it over the ground (Shift+drag: up or down). Move the playhead and drag it again to make it move.";
+      root.querySelector(".s3-objkeys").innerHTML = K.map((q, j) => `<button type="button" class="chip-btn${near(q.t, s.t) ? " on" : ""}" data-act="obj-key" data-k="${j}">${q.t.toFixed(2)} s</button><button type="button" class="set-x" data-act="del-obj-key" data-k="${j}" aria-label="Remove the key at ${q.t.toFixed(2)} s">×</button>`).join(" ");
       Object.assign(root.querySelector("#s3-yaw"), { value: String(yaw), disabled: !o.mesh }); root.querySelector(".s3-yaw-v").textContent = `${yaw}°`;
       Object.assign(root.querySelector("#s3-size"), { value: String(size), disabled: !o.mesh }); root.querySelector(".s3-size-v").textContent = `${Math.round(size * 100)}%`;
       root.querySelector('[data-act="hide"]').textContent = o.hidden ? "Show" : "Hide";
     }
+  }
+
+  /* ---------------------------------------------------------------- time */
+  function renderTime() {
+    if (!s) return;
+    const sc = s.root.querySelector(".s3-scrub"), D = dur();
+    sc.max = String(D); sc.value = String(s.t);
+    s.root.querySelector(".s3-time").textContent = `${s.t.toFixed(2)} / ${D.toFixed(2)} s`;
+    const sec = s.root.querySelector(".s3-sec"); if (document.activeElement !== sec) sec.value = String(s.seconds);
+    s.root.querySelector('[data-act="play"]').textContent = s.playing ? "⏸" : "▶";
+  }
+  function renderCam() {
+    if (!s) return;
+    const K = s.camKeys;
+    s.root.querySelector(".s3-camhint").textContent = !K.length ? "Look around, then ◆ key the view at the playhead; key another view later on for a camera move."
+      : s.camFree ? `You've moved the view: ◆ key it at ${s.t.toFixed(2)} s, or move the playhead to go back on the camera's path (blue).`
+      : K.length === 1 ? "One key: the camera holds this view. Key another view at another time to move it." : "The camera moves through its keys.";
+    s.root.querySelector(".s3-camkeys").innerHTML = K.map((q, j) => `<button type="button" class="chip-btn${near(q.t, s.t) ? " on" : ""}" data-act="cam-key" data-k="${j}">${q.t.toFixed(2)} s</button><button type="button" class="set-x" data-act="del-cam-key" data-k="${j}" aria-label="Remove the camera key at ${q.t.toFixed(2)} s">×</button>`).join(" ");
+  }
+  function stop() { s.playing = false; renderTime(); renderSide(); }
+  function play() {
+    if (!s?.bg) return;
+    if (s.playing) return stop();
+    if (s.t >= dur() - 1e-3) s.t = 0;
+    s.playing = true; const t0 = performance.now() - s.t * 1000;
+    const step = now => {
+      if (!s?.playing) return;
+      setTime(Math.min(dur(), (now - t0) / 1000));
+      if (s.t >= dur()) stop(); else requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step); renderTime();
   }
 
   return { create, open, openList, _state: () => s, _draw: () => s && s.bg && draw() };

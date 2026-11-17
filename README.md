@@ -103,6 +103,10 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   (which shows the picture); drag to orbit, right-drag to pan, wheel to zoom; drag an object over the ground,
   Shift+drag to raise it, and turn or size it in the side panel. Scenes live in `data/scenes3d.json`; ☰ › **3D scenes**
   lists them. The camera and depth are estimates: sizes and distances are usually within about 10%.
+  **Keyframes**: a timeline under the view (play, scrub, length up to 10 s on the H3 frame grid). Moving, turning or
+  sizing an object at the playhead keys it there, so it moves along a smooth path through its keys (shown in yellow).
+  The camera is keyed on purpose with **◆ Key the camera**: look around, key the view, move the playhead, key another;
+  orbiting to look around doesn't change its path (shown in blue, with the camera at the playhead).
 - **Objects in motion in a shot** (Shots › a shot's Edit window, One video per shot): give the shot a picture from the Inputs
   step and its objects' paths (the Animate objects window, in a "Use for this shot" mode). That shot then renders from the
   picture with the objects on their paths, with the shot's own text, length and settings; it can take a tracked path too.
