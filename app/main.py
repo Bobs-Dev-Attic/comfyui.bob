@@ -437,6 +437,7 @@ class LiveLLM(BaseModel):
     backend: str | None = Field(None, max_length=20)
     url: str | None = Field(None, max_length=500)
     model: str | None = Field(None, max_length=200)
+    profile: str | None = Field(None, max_length=20)
 
 
 class RewriteRequest(LiveLLM):
@@ -451,7 +452,7 @@ async def prompt_warm(req: LiveLLM):
     if _rendering():
         return {"paused": True}
     try:
-        return await prompts.warm(req.backend, req.url, req.model)
+        return await prompts.warm(req.backend, req.url, req.model, req.profile)
     except llm.LLMError as exc:
         raise HTTPException(400, str(exc)) from exc
 

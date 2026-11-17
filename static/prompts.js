@@ -10,12 +10,14 @@
      in as a suggestion. Tab accepts it, Esc dismisses it. Template parts are swapped for a value they
      can give and put back after, so the rewrite keeps them. The LLM is loaded while you type and unloaded when a render starts. */
 const Prompts = (() => {
-  const LIVE_KEY = "bob.prompt.live", TIDY_KEY = "bob.prompt.tidy";
+  const LIVE_KEY = "bob.prompt.live", TIDY_KEY = "bob.prompt.tidy", MODEL_KEY = "bob.prompt.liveModel";
+  const lsStr = k => { try { return localStorage.getItem(k) || ""; } catch { return ""; } };
   const ls = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : v === "1"; } catch { return d; } };
   const lsSet = (k, v) => { try { localStorage.setItem(k, v ? "1" : "0"); } catch {} };
   const S = {
     entries: [], presets: {}, nodeLib: false, loaded: false,
     live: ls(LIVE_KEY, true), tidy: ls(TIDY_KEY, true),
+    liveModel: lsStr(MODEL_KEY),  // "" = the fastest installed (the server picks)
     previewSeed: Math.floor(Math.random() * 1e9),
     timer: 0, ctrl: null, sug: null,  // sug: {for, text, done, error, markers, missing}
     lastAsked: "", warmAt: 0, paused: false, entryId: null,
@@ -194,6 +196,12 @@ const Prompts = (() => {
         <span class="pl-gap"></span>
         <label class="pl-tg" title="Tidy the prompt for the model: weights and filler out, dialogue tagged. Generate sends the tidied text."><input type="checkbox" data-pl="tidy"${S.tidy ? " checked" : ""}> Tidy</label>
         <label class="pl-tg" title="${canLive ? "A local LLM rewrites the prompt in this model's format after you pause typing (Tab accepts)" : "No live rewrite for this model"}"><input type="checkbox" data-pl="live"${S.live && canLive ? " checked" : ""}${canLive ? "" : " disabled"}> ✨ Live rewrite</label>
+        ${S.live && canLive ? (() => {
+          const names = (typeof writer !== "undefined" && writer.models || []).map(m => m.name);
+          if (S.liveModel && !names.includes(S.liveModel)) names.unshift(S.liveModel);
+          return `<select class="pl-llm" data-pl="model" aria-label="LLM for the live rewrite" title="LLM for the live rewrite. Auto: a small fast model (qwen3:4b-instruct…) for image and music prompts, the Prompt writer's model for H3 shot lists">
+            <option value="">Auto (fastest)${S.usedModel && !S.liveModel ? ` · ${esc(S.usedModel)}` : ""}</option>${names.map(n => `<option value="${esc(n)}"${n === S.liveModel ? " selected" : ""}>${esc(n)}</option>`).join("")}</select>`;
+        })() : ""}
       </div>
       ${notes.length ? `<ul class="pl-notes">${notes.map(([t, k]) => `<li class="pl-${k}">${k === "fix" ? "✓" : k === "warn" ? "⚠" : "💡"} ${esc(t)}</li>`).join("")}</ul>` : ""}
       ${sug ? `<div class="pl-sug${sug.done ? "" : " busy"}${sug.error ? " err" : ""}" aria-live="polite">
@@ -214,20 +222,22 @@ const Prompts = (() => {
     clearTimeout(S.timer);
     if (!S.live || !profile()) return;
     warm();
-    S.timer = setTimeout(ask, 850);
+    S.timer = setTimeout(ask, 600);
   }
 
   async function warm() {
-    if (Date.now() - S.warmAt < 150000) return;
-    S.warmAt = Date.now();
-    const w = llmOpts();
+    // Auto may use another model for another kind of prompt: warm again when that changes.
+    if (Date.now() - S.warmAt < 150000 && S.warmProfile === profile()) return;
+    S.warmAt = Date.now(); S.warmProfile = profile();
+    const w = { ...llmOpts(), profile: profile() };
     try { const r = await api("/api/prompt/warm", { method: "POST", body: JSON.stringify(w) }); S.paused = !!r.paused; if (S.paused) S.warmAt = 0; }
     catch { S.warmAt = 0; }
   }
   function llmOpts() {
     const st = (typeof writer !== "undefined" && writer.settings) || {};
     const backend = st.backend || undefined;
-    return { backend, url: backend ? st.urls?.[backend] || undefined : undefined, model: st.model || undefined };
+    // The live rewrite has its own model (fast by default); the Prompt writer keeps its own choice.
+    return { backend, url: backend ? st.urls?.[backend] || undefined : undefined, model: S.liveModel || undefined };
   }
 
   async function ask(force = false) {
@@ -260,6 +270,7 @@ const Prompts = (() => {
           if (!line.trim()) continue;
           const m = JSON.parse(line);
           if (m.error) throw new Error(m.error);
+          if (m.model && m.model !== S.usedModel) { S.usedModel = m.model; const o = $("#prompt-live .pl-llm option[value='']"); if (o && !S.liveModel) o.textContent = `Auto (fastest) · ${m.model}`; }
           if (m.t) sug.text += m.t;
           if (m.done) { const u = unprotect(m.text, markers); sug.text = u.text; sug.missing = u.missing; sug.done = true; }
         }
@@ -511,6 +522,11 @@ const Prompts = (() => {
       const a = e.target.dataset.pl;
       if (a === "tidy") { S.tidy = e.target.checked; lsSet(TIDY_KEY, S.tidy); renderLive(); }
       if (a === "live") { S.live = e.target.checked; lsSet(LIVE_KEY, S.live); if (!S.live) dismiss(); else { S.lastAsked = ""; onInput(); } }
+      if (a === "model") {
+        S.liveModel = e.target.value; S.usedModel = ""; S.warmAt = 0;
+        try { localStorage.setItem(MODEL_KEY, S.liveModel); } catch {}
+        dismiss(false); S.lastAsked = ""; onInput();
+      }
     });
     $("#prompt-tags").addEventListener("click", e => {
       const a = e.target.closest("[data-pt]")?.dataset.pt, name = e.target.closest("[data-tag]")?.dataset.tag;

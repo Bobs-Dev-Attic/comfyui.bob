@@ -242,7 +242,7 @@ def system_prompt(profile: str, seconds: float, text: str = "", keep: list[str] 
     return out + "\n\n" + rules.replace("{seconds}", f"{seconds:g}")
 
 
-_warm: dict[str, Any] = {}  # {"url", "model", "until"} while an Ollama model is held loaded for typing
+_warm: set[tuple[str, str]] = set()  # (url, model) of Ollama models held loaded for typing
 KEEP = "4m"
 
 
@@ -250,15 +250,42 @@ def _backend(backend: str | None, url: str | None) -> llm.Backend:
     return llm.make_backend(backend, url)
 
 
-async def _model(b: llm.Backend, model: str | None) -> str:
-    default = config.OLLAMA_MODEL if b.name == "ollama" else config.LLM_MODEL
-    return await b.pick(model or None, default)
+# Auto model: for short image and music prompts, the first of these that is installed (a small model
+# is as good there and leaves more VRAM); H3 shot lists keep the Prompt writer's default model, as
+# small models break that format.
+LIVE_PREFERRED = ("qwen3:4b-instruct", "qwen3:4b", "llama3.2:3b", "gemma3:4b", "qwen3:1.7b")
+STRICT_FORMAT = {"h3video", "h3ref", "h3sound", "h3still", "h3image"}
+
+# Asking the server which models it has takes 0.2-0.3 s (the model itself answers in ~0.03 s once
+# loaded), so the choice is remembered for a while.
+_picked: dict[tuple[str, str, str, bool], tuple[float, str]] = {}
+PICK_TTL = 120
 
 
-async def warm(backend: str | None, url: str | None, model: str | None) -> dict[str, Any]:
+async def _model(b: llm.Backend, model: str | None, profile: str | None = None) -> str:
+    small = profile not in STRICT_FORMAT
+    key = (b.name, b.url, model or "", small and not model)
+    hit = _picked.get(key)
+    if hit and time.time() - hit[0] < PICK_TTL:
+        return hit[1]
+    name = ""
+    if not model and small:
+        try:
+            names = [m["name"] for m in await b.models()]
+        except llm.LLMError:
+            names = []
+        name = next((n for pref in LIVE_PREFERRED for n in names if n == pref or n.startswith(pref + "-")), "")
+    if not name:
+        default = config.OLLAMA_MODEL if b.name == "ollama" else config.LLM_MODEL
+        name = await b.pick(model or None, default)
+    _picked[key] = (time.time(), name)
+    return name
+
+
+async def warm(backend: str | None, url: str | None, model: str | None, profile: str | None = None) -> dict[str, Any]:
     """Load the model now (Ollama), so the first rewrite answers quickly."""
     b = _backend(backend, url)
-    name = await _model(b, model)
+    name = await _model(b, model, profile)
     if b.name == "ollama":
         try:
             async with httpx.AsyncClient(timeout=120) as c:
@@ -266,22 +293,21 @@ async def warm(backend: str | None, url: str | None, model: str | None) -> dict[
                 await c.post(f"{b.url}/api/generate", json={"model": name, "keep_alive": KEEP, "options": {"num_ctx": 4096}})
         except httpx.HTTPError as exc:
             raise llm.LLMError(f"Ollama is not reachable at {b.url}") from exc
-        _warm.update(url=b.url, model=name, until=time.time() + 240)
+        _warm.add((b.url, name))
     return {"model": name, "backend": b.name}
 
 
 async def release() -> None:
-    """Unload the warm model (a render is starting). Quiet: never fails the caller."""
-    if not _warm:
-        return
-    url, model = _warm.get("url"), _warm.get("model")
+    """Unload the warm models (a render is starting). Quiet: never fails the caller."""
+    held = list(_warm)
     _warm.clear()
-    try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            await c.post(f"{url}/api/generate", json={"model": model, "keep_alive": 0})
-        log.info("unloaded %s for a render", model)
-    except httpx.HTTPError:
-        pass
+    for url, model in held:
+        try:
+            async with httpx.AsyncClient(timeout=10) as c:
+                await c.post(f"{url}/api/generate", json={"model": model, "keep_alive": 0})
+            log.info("unloaded %s for a render", model)
+        except httpx.HTTPError:
+            pass
 
 
 def _tidy(text: str) -> str:
@@ -297,7 +323,7 @@ async def rewrite(text: str, profile: str, seconds: float, backend: str | None, 
     if profile not in PROFILES:
         raise llm.LLMError(f"No live rewrite for {profile!r}")
     b = _backend(backend, url)
-    name = await _model(b, model)
+    name = await _model(b, model, profile)
     messages = [{"role": "system", "content": system_prompt(profile, seconds, text, keep)},
                 {"role": "user", "content": f"Prompt to rewrite:\n{text.strip()}"}]
     if b.name == "ollama":
@@ -308,7 +334,7 @@ async def rewrite(text: str, profile: str, seconds: float, backend: str | None, 
                 body["think"] = False
         except httpx.HTTPError:
             pass
-        _warm.update(url=b.url, model=name, until=time.time() + 240)
+        _warm.add((b.url, name))
         async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=5)) as c:
             async with c.stream("POST", f"{b.url}/api/chat", json=body) as r:
                 if r.status_code != 200:
@@ -345,6 +371,8 @@ async def rewrite_stream(text: str, profile: str, seconds: float, backend: str |
     """rewrite() as NDJSON lines for the browser: {"t": piece} ... {"done": true, "text": tidy} or {"error"}."""
     out: list[str] = []
     try:
+        model = await _model(_backend(backend, url), model, profile)
+        yield (json.dumps({"model": model}) + "\n").encode()
         async for piece in rewrite(text, profile, seconds, backend, url, model, keep):
             out.append(piece)
             yield (json.dumps({"t": piece}) + "\n").encode()
