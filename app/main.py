@@ -375,6 +375,8 @@ async def capabilities(refresh: bool = False):
         "remover": "BiRefNet" if installed.get("background_removal") else "u2net",
     }
     editor["erase"] = editor["crop"] and (editor["qwen"] or editor["h3image"])
+    # Animate objects (motion layers): AI select, Erase, H3 and ComfyUI-vlo's Time-to-Move.
+    editor["motion"] = editor["select"] and editor["erase"] and engines["h3"]["ready"] and "vloTimeToMove" in nodes
     return {
         "editor": editor,
         "engines": engines,

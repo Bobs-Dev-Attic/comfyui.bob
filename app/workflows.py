@@ -47,6 +47,81 @@ def dims_for(aspect: tuple[float, float], megapixels: float, multiple: int = 32)
     return snap(w), snap(h)
 
 
+def build_motion(
+    files: dict[str, str | None],
+    *,
+    prompt: str,
+    width: int,
+    height: int,
+    seconds: float,
+    seed: int,
+    turbo: bool,
+    steps: int | None = None,
+    hold: str = "normal",
+    edge: int = 0,
+    prefix: str = "bob/motion",
+    loras: list[tuple[str, float]] | None = None,
+) -> Built:
+    """Motion layers (app/motion.py): H3 image-to-video from the original picture, with Time-to-Move
+    (vloTimeToMove from ComfyUI-vlo) holding the moved objects to a rough cut-and-drag animation.
+
+    image_inputs: first_frame (the picture), motion_ref (the rough animation) and motion_mask (white over the
+    objects), both drawn by the caller at width x height with exactly `length` frames. The mask is eroded by
+    `edge` pixels so H3 may redraw the cut edges. `hold`: how long the objects stay held to the path; TTM seeds
+    everything at step 1 and frees the objects at the end step (loose = 2, normal = a third of the steps,
+    tight = half)."""
+    g = Graph()
+    o = Graph.out
+    unet = g.add("UNETLoader", unet_name=files["unet"], weight_dtype="default")
+    model = unet
+    use_turbo = turbo and bool(files.get("turbo_lora"))
+    if use_turbo:
+        model = g.add("LoraLoaderModelOnly", model=o(unet), lora_name=files["turbo_lora"], strength_model=1.0)
+        default_steps = 4 if "4step" in files["turbo_lora"].lower() else 8
+    else:
+        default_steps = 20
+    n_steps = int(steps or default_steps)
+    model = chain_loras(g, model, loras)
+    clip = g.add("CLIPLoader", clip_name=files["clip"], type="minimax", device="default")
+    vae = g.add("VAELoader", vae_name=files["vae"])
+    audio_vae = g.add("VAELoader", vae_name=files["audio_vae"])
+    length = h3_length(seconds)
+
+    first = g.add("LoadImage", image="")
+    scaled = g.add("ImageScale", image=o(first), upscale_method="lanczos", width=width, height=height, crop="center")
+    cond = g.add("MiniMaxH3ImageToVideo", clip=o(clip), vae=o(vae), prompt=prompt, width=width, height=height,
+                 length=length, first_frame=o(scaled))
+
+    ref = g.add("LoadVideo", file="")
+    ref_parts = g.add("GetVideoComponents", video=o(ref))
+    ref_lat = g.add("VAEEncode", pixels=o(ref_parts, 0), vae=o(vae))
+    msk = g.add("LoadVideo", file="")
+    msk_parts = g.add("GetVideoComponents", video=o(msk))
+    mask = o(g.add("ThresholdMask", mask=o(g.add("ImageToMask", image=o(msk_parts, 0), channel="red")), value=0.5))
+    if edge > 0:
+        mask = o(g.add("GrowMask", mask=mask, expand=-int(edge), tapered_corners=True))
+    end = {"loose": 2, "tight": max(3, round(n_steps / 2))}.get(hold, max(2, round(n_steps / 3)))
+    end = max(2, min(end, n_steps))
+    ttm = g.add("vloTimeToMove", model=o(model), reference_latents=o(ref_lat), mask=mask, start_step=1, end_step=end)
+
+    noise = g.add("RandomNoise", noise_seed=int(seed))
+    sampler = g.add("KSamplerSelect", sampler_name="res_multistep")
+    sigmas = g.add("BasicScheduler", model=o(model), scheduler="simple", steps=n_steps, denoise=1.0)
+    guider = g.add("BasicGuider", model=o(ttm), conditioning=o(cond, 0))
+    latent = g.add("SamplerCustomAdvanced", noise=o(noise), guider=o(guider), sampler=o(sampler), sigmas=o(sigmas),
+                   latent_image=o(cond, 1))
+    audio = g.add("VAEDecodeAudio", samples=o(latent), vae=o(audio_vae))
+    frames = g.add("VAEDecode", samples=o(latent), vae=o(vae))
+    video = g.add("CreateVideo", images=o(frames), audio=o(audio), fps=float(FPS))
+    save = g.add("SaveVideo", video=o(video), filename_prefix=prefix, format="auto", codec="auto")
+    return Built(
+        graph=g.nodes, outputs=[save],
+        image_inputs={"first_frame": first, "motion_ref": ref, "motion_mask": msk},
+        info={"width": width, "height": height, "frames": length, "seconds": round(length / FPS, 2), "steps": n_steps,
+              "turbo": use_turbo, "hold_steps": f"1-{end}", "edge": edge, "final_prompt": prompt},
+    )
+
+
 H3_OVERLAPS = (22, 39, 56)  # frames of the previous video a continuation sees (17j+5; 39 fits the audio grid exactly)
 
 

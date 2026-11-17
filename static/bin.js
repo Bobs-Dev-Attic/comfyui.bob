@@ -139,6 +139,7 @@ const Bin = (() => {
       done && vid && ["Continue from the last frame", () => continueFrom(it)],
       done && (vid || img) && ["✨ Enhance… (FaceRefine, DLSS 5, upscale)", () => Enhance.dialog(it)],
       done && img && it.files?.[0] && ["🔄 Angles… (other camera angles)", () => Angles.dialog({ ref: it.files[0].path, url: it.files[0].url, name: it.files[0].name })],
+      done && img && it.files?.[0] && ["🎬 Animate objects… (move them along paths)", () => Motion.open({ ref: it.files[0].path, url: it.files[0].url, name: it.files[0].name })],
       !["enhance", "angles"].includes(it.engine) && ["Reuse settings", () => action("reuse", it)],
       it.engine !== "timeline" && ["Re-roll", () => action("reroll", it)],
       done && ["Download", () => { const a = document.createElement("a"); a.href = it.files[0].url; a.download = it.files[0].name; a.click(); }],
