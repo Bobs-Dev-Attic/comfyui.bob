@@ -5,6 +5,15 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.44.0] - 2026-11-17
+
+### Changed
+- **The selected result's details no longer take space under the viewer.** Its stars, facts (engine, size, steps,
+  seed, time) and the Cancel and ＋ Timeline buttons sit in the viewer's header; the prompt, tags and all the other
+  buttons (Reuse settings, Re-roll, Edit, Download, Workflow, Delete…) drop down over the top of the viewer with
+  **ℹ Details** or **Alt+I** (Esc inside it closes it). The viewer keeps its full height, so the top section can be
+  made smaller to give the timeline more room. Whether the panel is open is remembered.
+
 ## [0.43.2] - 2026-11-16
 
 ### Fixed
