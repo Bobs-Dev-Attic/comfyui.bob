@@ -482,6 +482,7 @@ function renderArefs() {
   const add = $("#aref-add");
   if (add) add.onclick = () => $("#aref-input").click();
   Prompts.renderBar?.();
+  postContext();
 }
 
 function addAref(ref, url, name) {
@@ -542,6 +543,7 @@ function studioContext() {
     kind: state.kind, engine: state.engine[state.kind],
     seconds: +$("#seconds").value, aspect: $("#aspect").value,
     references: state.refs.map(r => ({ ref: r.ref, url: r.url })),
+    voices: state.engine.video === "h3ref" ? state.arefs.length : 0,  // <Audio N> is the voice of <Picture N>
     first_frame: state.engine.video === "h3" ? pic(state.frames.first_frame) : null,
     last_frame: state.engine.video === "h3" ? pic(state.frames.last_frame) : null,
     idea: $("#prompt").value,

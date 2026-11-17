@@ -5,6 +5,21 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.42.0] - 2026-11-16
+
+### Changed
+- **H3 Reference pairs voices with pictures by number: `<Audio N>` is the voice of the person in `<Picture N>`.**
+  - **Shot writer:** the LLM is told the pairs, and a shot's spoken line becomes “They say, in the voice of
+    `<Audio N>`:” for the first person tagged in its action who has a voice.
+  - **Live rewrite:** told the same pairs, and writes lines as “The woman from `<Picture 1>` says, in the voice of
+    `<Audio 1>`: `<d>…</d>`”.
+  - **Live view:** flags a sentence that pairs `<Picture N>` with another number's voice (the rewrite fixes it).
+  - **Generate:** a prompt without `<Audio>` tags gets a lead sentence pairing each voice with its picture (voices
+    beyond the pictures are for whoever else speaks), instead of “the matching voice”.
+
+### Fixed
+- The live rewrite keeps spoken lines (`<d>…</d>`) word for word; it could drop them.
+
 ## [0.41.0] - 2026-11-16
 
 ### Added

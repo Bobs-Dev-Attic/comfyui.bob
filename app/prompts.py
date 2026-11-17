@@ -191,6 +191,7 @@ def presets() -> dict[str, list[str]]:
 # --------------------------------------------------------------------------- live rewrite
 
 COMMON = """You rewrite prompts for {name}. Keep every subject, detail, name, color, number and quoted line the user gave, and add nothing that changes the idea; fill in only what the format needs.
+Keep every spoken line (inside <d>…</d>) word for word, in <d>…</d>.
 Reply with the rewritten prompt only: no title, no notes, no quotes around it, no markdown."""
 # Reference tags the user wrote are named in the instructions (only those: naming others makes models invent them).
 REF_TAG = re.compile(r"<(?:Picture|Audio|Subject|Image|Video) \d+>|<d>")
@@ -245,8 +246,9 @@ def system_prompt(profile: str, seconds: float, text: str = "", keep: list[str] 
         else:
             out += "\nNo reference pictures are added yet: write no <Picture N> tags."
     if arefs and profile == "h3ref":
-        tags = ", ".join(f"<Audio {i}>" for i in range(1, arefs + 1))
-        out += f"\nVoice references {tags}: keep them with the person who speaks with that voice."
+        pairs = ", ".join(f"<Audio {i}> is the voice of the person in <Picture {i}>" for i in range(1, arefs + 1))
+        out += (f"\nVoices: {pairs}. When that person speaks, write it as e.g. \"The woman from <Picture 1> says, in the "
+                f"voice of <Audio 1>: <d>[English] …</d>\"; never give a person another number's voice.")
     if keep:
         out += "\nUse each of these words exactly as written, unchanged and once: " + "; ".join(f'"{k[:80]}"' for k in keep[:30]) + "."
     return out + "\n\n" + rules.replace("{seconds}", f"{seconds:g}")

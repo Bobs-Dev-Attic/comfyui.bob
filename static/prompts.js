@@ -167,6 +167,17 @@ const Prompts = (() => {
           refs ? `Only ${Array.from({ length: refs }, (_, i) => `<Picture ${i + 1}>`).join(", ")} exist. Remove ${bad.map(n => `<Picture ${n}>`).join(", ")}: refer to that person or thing with an existing tag or describe it in plain words instead.`
             : `There are no reference pictures: remove every <Picture N> tag and describe those people or things in plain words.`]);
         if (prof === "h3ref" && refs && !used.length) notes.push(["Refer to the references as <Picture 1>, <Picture 2>…", "tip"]);
+        // Voices go with the picture of the same number: a sentence pairing <Picture 2> with <Audio 1> is likely a slip.
+        if (prof === "h3ref") {
+          const wrong = new Set();
+          for (const sent of s.split(/(?<=[.!?])\s+|\n/)) {
+            const pics = [...new Set([...sent.matchAll(/<Picture (\d+)>/g)].map(m => +m[1]))];
+            const auds = [...new Set([...sent.matchAll(/<Audio (\d+)>/g)].map(m => +m[1]))];
+            if (pics.length === 1 && auds.length === 1 && pics[0] !== auds[0]) wrong.add(`<Picture ${pics[0]}> with <Audio ${auds[0]}>`);
+          }
+          if (wrong.size) notes.push([`Voice mix-up? ${[...wrong].join(", ")}: <Audio N> is the voice of the person in <Picture N>`, "warn",
+            `<Audio N> is the voice of the person in <Picture N>: give each speaker the voice with their own number (${[...wrong].join(", ")} is wrong).`]);
+        }
       }
       if (prof === "h3video" || prof === "h3ref") {
         if (s && !/camera/i.test(s)) notes.push(["Add a camera move (e.g. “The camera pushes in slowly”)", "tip", "End every shot with exactly one camera move, e.g. “The camera pushes in slowly.”"]);
@@ -236,6 +247,8 @@ const Prompts = (() => {
     if (clip - need >= 4 && suggest < set) return [`About ${fmtSec(need)} is enough; the clip is ${fmtSec(clip)}`, "tip", suggest];
     return null;
   }
+  // The words inside each <d>…</d> (without the [Language] tag): a rewrite must keep them word for word.
+  const spokenLines = text => [...String(text).matchAll(/<d>\s*(?:\[[^\]]*\]\s*)?([\s\S]*?)<\/d>/g)].map(m => m[1].trim()).filter(Boolean).slice(0, 10);
   const spoken = text => [...text.matchAll(/<d>([\s\S]*?)<\/d>/g)].reduce((n, m) => n + words(m[1].replace(/^\s*\[[^\]]*\]/, "")), 0);
   function shotList(s, notes) {
     const clip = clipSeconds();
@@ -384,7 +397,7 @@ const Prompts = (() => {
     try {
       const res = await fetch("/api/prompt/rewrite", {
         method: "POST", headers: { "Content-Type": "application/json" }, signal: ctrl.signal,
-        body: JSON.stringify({ text, keep: markers.map(m => m.value), problems, profile: prof, seconds: +$("#seconds").value || 5,
+        body: JSON.stringify({ text, keep: [...markers.map(m => m.value), ...spokenLines(from ?? raw)], problems, profile: prof, seconds: +$("#seconds").value || 5,
           refs: ["h3ref", "h3image"].includes(prof) ? state.refs?.length || 0 : null, arefs: prof === "h3ref" ? state.arefs?.length || 0 : 0, ...llmOpts() }),
       });
       if (res.status === 409) { S.paused = true; S.sug = null; renderLive(); return; }
