@@ -85,7 +85,7 @@ function renderUnet() {
   };
 }
 
-/* Sampler and scheduler for the picked engine (the Model step). Empty = the engine's own, which
+/* Sampler and scheduler for the picked engine (Settings › Advanced). Empty = the engine's own, which
    is what its ComfyUI template uses; the lists are ComfyUI's own (KSampler). */
 const SAMPLING_NOTES = {
   h3image: "H3 Image is distilled for 6 steps on its own sigma grid: keep the simple scheduler and 6 steps, or the picture may come out noisy.",
@@ -136,7 +136,7 @@ const STEPS = {
   shots: { title: "Shots", sub: "Plan the video shot by shot. Drag to reorder; ⋯ or double-click a shot to edit its framing, camera, action, inputs and settings." },
   loras: { title: "LoRAs", sub: "Add LoRAs to the model: styles, characters, motions." },
   prompt: { title: "Prompt", sub: "Describe what you want. For H3, the Shot writer builds a full shot list from a short idea." },
-  settings: { title: "Settings", sub: "Size, length, speed and variations." },
+  settings: { title: "Settings", sub: "Size, length and speed. Advanced has the seed, takes, diffusion model and sampling; Post-Processing enhances each result." },
   generate: { title: "Generate", sub: "Check your choices, then make it." },
 };
 const ORDER = Object.keys(STEPS);
