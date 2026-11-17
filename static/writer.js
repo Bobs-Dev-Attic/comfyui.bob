@@ -12,12 +12,16 @@ const DRAFT_KEY = "bob.writer.draft";
 const SETTINGS_KEY = "bob.writer";  // shared with the studio's Prompt writer panel
 const FALLBACK_CTX = { kind: "video", engine: "h3", seconds: 5, aspect: "16:9", references: [], first_frame: null, last_frame: null, idea: "" };
 
-const SHOT_FIELDS = ["framing", "setting", "action", "camera", "dialogue"];
-const LABELS = { style: "Style", soundscape: "Sound", music: "Music", framing: "Framing", setting: "Setting & light",
-  action: "Action", camera: "Camera", dialogue: "Spoken line" };
+const SHOT_FIELDS = ["framing", "angle", "setting", "action", "position", "camera", "dialogue"];
+const LABELS = { style: "Style", soundscape: "Sound", music: "Music", framing: "Framing", angle: "Camera angle", setting: "Setting & light",
+  action: "Action", position: "Camera position", camera: "Camera move", dialogue: "Spoken line" };
+// Creativity: how far the LLM may go beyond the idea (app/llm.py CREATIVITY has the rule for each band).
+const CREAT_NAMES = [[15, "Literal"], [40, "Faithful"], [65, "Enhanced"], [85, "Bold"], [100, "Wild"]];
+const creatName = p => CREAT_NAMES.find(([top]) => p <= top)[1];
 const PLACEHOLDERS = {
   style: "medium, look, palette, lens, mood", soundscape: "ambience and effects, in order", music: "score style, or N/A",
-  setting: "where, and its light", action: "what happens, concretely", camera: "one move: holds / pushes in / pans…",
+  setting: "where, and its light", action: "what happens, concretely", position: "where the camera stands: behind her at shoulder height…",
+  camera: "one move: holds / pushes in / pans…",
   dialogue: "words spoken (optional)",
 };
 
@@ -26,7 +30,7 @@ const blankShot = () => Object.fromEntries(SHOT_FIELDS.map(k => [k, F()]));
 
 const state = {
   ctx: null, linked: false,
-  idea: "", seconds: 5, shotsSetting: "", dialogue: false, auto: true,
+  idea: "", seconds: 5, shotsSetting: "", dialogue: false, auto: true, creativity: 50,
   f: { style: F(), soundscape: F(), music: F() },
   shots: [blankShot()],
   busy: false, pending: false, version: 0, fresh: new Set(), serverWarnings: [],
@@ -64,21 +68,22 @@ function data() {
   return {
     style: state.f.style.v, soundscape: state.f.soundscape.v, music: state.f.music.v,
     shots: state.shots.slice(0, nShots()).map(s => ({
-      framing: s.framing.v, setting: s.setting.v, action: s.action.v, camera: s.camera.v,
+      framing: s.framing.v, angle: s.angle.v, setting: s.setting.v, action: s.action.v, position: s.position.v, camera: s.camera.v,
       dialogue: state.dialogue ? s.dialogue.v : "",
     })),
   };
 }
 function settings() { try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}") || {}; } catch { return {}; } }
 function saveDraft() {
-  const d = { idea: state.idea, shotsSetting: state.shotsSetting, dialogue: state.dialogue, auto: state.auto, f: state.f, shots: state.shots };
+  const d = { idea: state.idea, shotsSetting: state.shotsSetting, dialogue: state.dialogue, auto: state.auto, creativity: state.creativity, f: state.f, shots: state.shots };
   try { localStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch {}
 }
 function loadDraft() {
   try {
     const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || "null");
     if (!d) return false;
-    Object.assign(state, { idea: d.idea || "", shotsSetting: d.shotsSetting || "", dialogue: !!d.dialogue, auto: d.auto !== false });
+    Object.assign(state, { idea: d.idea || "", shotsSetting: d.shotsSetting || "", dialogue: !!d.dialogue, auto: d.auto !== false,
+      creativity: Number.isFinite(d.creativity) ? Math.max(0, Math.min(100, d.creativity)) : 50 });
     for (const k of Object.keys(state.f)) if (d.f?.[k]) state.f[k] = { ...F(), ...d.f[k] };
     if (Array.isArray(d.shots) && d.shots.length) state.shots = d.shots.map(s => Object.fromEntries(SHOT_FIELDS.map(k => [k, { ...F(), ...(s?.[k] || {}) }])));
     return true;
@@ -89,8 +94,9 @@ function loadDraft() {
 function fieldHTML(key, label) {
   const fd = fieldAt(key);
   const cls = fd.src === "user" ? "user" : fd.src === "llm" ? "llm" : "";
-  const control = key.endsWith(".framing")
-    ? `<select data-key="${key}" aria-label="${esc(label)}"><option value="">—</option>${H.FRAMINGS.map(f => `<option${f === fd.v ? " selected" : ""}>${f}</option>`).join("")}${fd.v && !H.FRAMINGS.includes(fd.v) ? `<option selected>${esc(fd.v)}</option>` : ""}</select>`
+  const list = key.endsWith(".framing") ? H.FRAMINGS : key.endsWith(".angle") ? H.ANGLES : null;
+  const control = list
+    ? `<select data-key="${key}" aria-label="${esc(label)}"><option value="">${key.endsWith(".angle") ? "— (any)" : "—"}</option>${list.map(f => `<option${f === fd.v ? " selected" : ""}>${f}</option>`).join("")}${fd.v && !list.includes(fd.v) ? `<option selected>${esc(fd.v)}</option>` : ""}</select>`
     : `<textarea data-key="${key}" rows="1" aria-label="${esc(label)}" placeholder="${esc(PLACEHOLDERS[key.split(".").pop()] || "")}">${esc(fd.v)}</textarea>`;
   return `<div class="f ${cls}" data-f="${key}"><label>${esc(label)}</label>${control}
     <button type="button" class="lock${fd.lock ? " on" : ""}" data-lock="${key}" title="${fd.lock ? "Locked: the LLM keeps this. Click to let it rewrite." : "Unlocked: the LLM may rewrite this. Click to keep it."}">${fd.lock ? "🔒" : "🔓"}</button></div>`;
@@ -110,7 +116,9 @@ function renderStructure() {
 
   const showShots = m && m !== "sound";
   $("#w-shots-h").hidden = !showShots;
-  const fieldsFor = m === "still" ? ["framing", "setting", "action"] : ["framing", "setting", "action", "camera", ...(state.dialogue ? ["dialogue"] : [])];
+  const fieldsFor = m === "still" ? ["framing", "angle", "setting", "action", "position"]
+    : ["framing", "angle", "setting", "action", "position", "camera", ...(state.dialogue ? ["dialogue"] : [])];
+  $("#w-creat-field").hidden = !m;
   const times = H.shotTimes(frames(), n).concat([frames() / H.FPS]);
   $("#w-shotlist").innerHTML = !showShots ? "" : state.shots.slice(0, n).map((s, k) => `
     <div class="shot"><div class="shot-head"><b>${m === "still" ? "Frame" : `Shot ${k + 1}`}</b>
@@ -122,6 +130,12 @@ function renderStructure() {
   renderPictures();
   renderMeta();
   renderPreview();
+}
+
+function renderCreat() {
+  const p = state.creativity;
+  $("#w-creativity-val").textContent = `${p}% · ${creatName(p)}`;
+  $$("[data-creat]").forEach(b => b.classList.toggle("on", +b.dataset.creat === p));
 }
 
 function autoGrow(ta) { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + 2 + "px"; }
@@ -218,16 +232,26 @@ function lockedPayload() {
   return locked;
 }
 
-async function write() {
+function draftPayload() {
+  // Every field as it is now, for 🪄 Enhance (the server leaves out the locked ones: those are kept as written).
+  const o = {};
+  for (const [k, fd] of Object.entries(state.f)) if (fd.v.trim()) o[k] = fd.v;
+  o.shots = state.shots.slice(0, nShots()).map(s => Object.fromEntries(SHOT_FIELDS.filter(k => s[k].v.trim()).map(k => [k, s[k].v])));
+  return o;
+}
+const hasFields = () => Object.values(state.f).some(fd => fd.v.trim()) || state.shots.slice(0, nShots()).some(s => SHOT_FIELDS.some(k => s[k].v.trim()));
+
+async function write(enhance = false) {
   const m = mode();
   if (!m) return;
   if (!state.idea.trim()) { status(`<span class="warn">Type your idea first.</span>`); return; }
+  if (enhance && !hasFields()) { status(`<span class="warn">Nothing to enhance yet: ✨ Write first.</span>`); return; }
   if (state.busy) { state.pending = true; return; }
   state.busy = true; state.pending = false;
-  $("#w-write").disabled = true;
+  $("#w-write").disabled = $("#w-enhance").disabled = true;
   const startVersion = state.version, c = ctx(), s = settings(), n = nShots();
   const pics = (m === "ref" ? c.references.length : 0) + (m === "i2v" ? (c.first_frame ? 1 : 0) + (c.last_frame ? 1 : 0) : 0);
-  status(`Writing${pics ? ` · looking at ${pics} picture${pics > 1 ? "s" : ""}` : ""}…`, true);
+  status(`${enhance ? "Enhancing" : "Writing"} at ${state.creativity}% creativity${pics ? ` · looking at ${pics} picture${pics > 1 ? "s" : ""}` : ""}…`, true);
   const body = {
     kind: c.kind, engine: c.engine, idea: state.idea, seconds: state.seconds, aspect: c.aspect,
     shots: m === "still" || m === "sound" ? null : n, dialogue: state.dialogue,
@@ -237,6 +261,7 @@ async function write() {
     voices: voiceCount(),
     backend: s.backend || null, url: s.urls?.[s.backend] || null, model: s.model || null,
     locked: lockedPayload(),
+    creativity: state.creativity, draft: enhance ? draftPayload() : {},
   };
   try {
     const res = await fetch("/api/prompt/write", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -245,12 +270,12 @@ async function write() {
     if (state.version !== startVersion) { state.pending = true; return; }  // idea or locks changed meanwhile
     applyFields(j.fields || {});
     state.serverWarnings = j.warnings || [];
-    status(`Written by ${esc(j.model)} in ${j.seconds}s${pics ? (j.vision ? ` · saw ${pics} picture${pics > 1 ? "s" : ""}` : ` · <span class="warn">this model can't see pictures</span>`) : ""}`);
+    status(`${enhance ? "Enhanced" : "Written"} by ${esc(j.model)} at ${j.creativity ?? state.creativity}% creativity in ${j.seconds}s${pics ? (j.vision ? ` · saw ${pics} picture${pics > 1 ? "s" : ""}` : ` · <span class="warn">this model can't see pictures</span>`) : ""}`);
   } catch (e) {
     status(`<span class="warn">${esc(e.message)}</span>`);
   } finally {
     state.busy = false;
-    $("#w-write").disabled = false;
+    $("#w-write").disabled = $("#w-enhance").disabled = false;
     if (state.pending) { state.pending = false; write(); }
   }
 }
@@ -277,6 +302,10 @@ function bindEvents() {
   });
   $("#w-auto").addEventListener("change", e => { state.auto = e.target.checked; saveDraft(); });
   $("#w-write").addEventListener("click", () => { clearTimeout(ideaTimer); write(); });
+  $("#w-enhance").addEventListener("click", () => { clearTimeout(ideaTimer); write(true); });
+  const setCreat = v => { state.creativity = Math.max(0, Math.min(100, Math.round(+v))); $("#w-creativity").value = state.creativity; renderCreat(); saveDraft(); };
+  $("#w-creativity").addEventListener("input", e => setCreat(e.target.value));
+  $$("[data-creat]").forEach(b => b.addEventListener("click", () => setCreat(b.dataset.creat)));
 
   // Field edits: typing locks the field (it's yours now); the preview follows every keystroke.
   document.addEventListener("input", e => {
@@ -387,6 +416,8 @@ function init() {
   $("#w-auto").checked = state.auto;
   $("#w-shots").value = state.shotsSetting;
   $("#w-dialogue").checked = state.dialogue;
+  $("#w-creativity").value = state.creativity;
+  renderCreat();
   bindEvents();
   renderStructure();
   channel.postMessage({ type: "hello" });

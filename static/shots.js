@@ -16,7 +16,7 @@ const Shots = (() => {
   const CAMERAS = ["holds a static shot", "slowly pushes in", "slowly pulls back", "pans left", "pans right", "tilts up", "tilts down",
     "tracks alongside the subject", "follows the subject from behind", "orbits around the subject", "cranes up", "is handheld and close", "racks focus"];
   const uid = () => Math.random().toString(16).slice(2, 10);
-  const blank = (seconds = 3) => ({ id: uid(), seconds, framing: "medium shot", setting: "", action: "", camera: "holds a static shot", dialogue: "", voice: "",
+  const blank = (seconds = 3) => ({ id: uid(), seconds, framing: "medium shot", angle: "", setting: "", action: "", position: "", camera: "holds a static shot", dialogue: "", voice: "",
     first_frame: null, last_frame: null, refs: [] });
   const on = () => state.kind === "video" && state.shots?.on && state.shots.list.length > 0;
   const total = () => state.shots.list.reduce((a, s) => a + (+s.seconds || 0), 0);
@@ -31,14 +31,17 @@ const Shots = (() => {
   /* ---------------------------------------------------------------- prompts */
   function shotText(s, k, start, n) {
     const H = P();
-    let framing = (s.framing || "medium shot").trim();
+    // "Low-angle wide shot." and "The camera is behind her at shoulder height and tracks her": a stated angle and
+    // position steer H3's camera far better than a move alone (both are optional).
+    const framing = H.shotHead(s.angle, (s.framing || "medium shot").trim());
     const head = k > 0 && n > 1 ? `At ${fmtT(start)}, ${framing}` : framing[0].toUpperCase() + framing.slice(1);
     const parts = [`${head}.`];
     if (s.setting.trim()) parts.push(H.sentence(s.setting));
     if (s.action.trim()) parts.push(H.sentence(s.action));
     const line = H.cleanDialogue(s.dialogue || "", H.dialogueBudget(+s.seconds || 3));
     if (line) parts.push(s.voice ? `They say, in the voice of ${s.voice}: <d>[English] ${line}</d>` : `They say: <d>[English] ${line}</d>`);
-    parts.push(`The camera ${H.cameraText(s.camera || "holds a static shot")}.`);
+    const pos = H.positionText(s.position);
+    parts.push(`The camera ${pos ? `is ${pos} and ` : ""}${H.cameraText(s.camera || "holds a static shot")}.`);
     return parts.join(" ");
   }
   function tail() {
@@ -89,7 +92,11 @@ const Shots = (() => {
         </div>
         <div class="row2">
           <div class="field"><label>Framing</label><select data-f="framing">${P().FRAMINGS.map(f => `<option${f === s.framing ? " selected" : ""}>${f}</option>`).join("")}<option value="over-the-shoulder shot"${s.framing === "over-the-shoulder shot" ? " selected" : ""}>over-the-shoulder shot</option><option value="point-of-view shot"${s.framing === "point-of-view shot" ? " selected" : ""}>point-of-view shot</option><option value="insert shot"${s.framing === "insert shot" ? " selected" : ""}>insert shot</option></select></div>
-          <div class="field"><label>Camera</label><input list="shot-cams" data-f="camera" value="${esc(s.camera)}" placeholder="holds a static shot"></div>
+          <div class="field"><label>Angle</label><select data-f="angle" title="The camera's height and angle"><option value="">Any</option>${P().ANGLES.map(a => `<option${a === s.angle ? " selected" : ""}>${a}</option>`).join("")}</select></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>Camera position <span class="opt">optional</span></label><input data-f="position" value="${esc(s.position || "")}" placeholder="behind her at shoulder height" title="Where the camera stands, relative to the subject"></div>
+          <div class="field"><label>Camera move</label><input list="shot-cams" data-f="camera" value="${esc(s.camera)}" placeholder="holds a static shot"></div>
         </div>
         <div class="field"><label>Where</label><input data-f="setting" value="${esc(s.setting)}" placeholder="A rain-soaked back alley at night, neon signs further down"></div>
         <div class="field"><label>What happens ${isRef && state.refs.length ? `<span class="shot-tags">${state.refs.map((_, k) => `<button type="button" class="chip-btn" data-tag="<Picture ${k + 1}>">Picture ${k + 1}</button>`).join("")}</span>` : ""}</label>

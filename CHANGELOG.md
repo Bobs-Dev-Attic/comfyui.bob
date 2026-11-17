@@ -5,6 +5,21 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.46.0] - 2026-11-17
+
+### Added
+- **Creativity for the H3 Shot writer** (0–100%, with Literal, Faithful, Enhanced, Bold and Wild presets). It tells
+  the LLM how far it may go beyond your idea, from "film exactly what it says" to "reinterpret it as a surprising
+  concept", and sets how freely it samples. Your locked fields are always kept as written.
+- **🪄 Enhance** in the Shot writer: improves the shot list as it is now at the chosen creativity, instead of
+  writing it again from the idea.
+- **Camera angle and camera position for each shot** (Shot writer and the Shots step). The prompt now says where the
+  camera is, e.g. “[Shot 1] Low-angle wide shot. … The camera is behind her at shoulder height and tracks her up the
+  stairs.”, which H3 follows far better than a move alone. The LLM picks them, varies them between shots and keeps
+  screen direction consistent. Both are optional: older shot lists build the same prompt as before. The live rewrite
+  for H3 and H3 Reference uses the same format.
+- **Z** switches the result viewer between Fit and 100%.
+
 ## [0.45.0] - 2026-11-17
 
 ### Added

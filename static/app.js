@@ -825,12 +825,13 @@ function select(id) {
    and dragging move around a zoomed picture, double-click goes back to fit. */
 /* Result zoom for pictures and videos. "Fit" (the default) scales the result with the viewer, so dragging the bar
    above the timeline makes it smaller or bigger; a fixed zoom (100%, or −/+ and the mouse wheel) keeps that size and
-   scrolls instead. The choice is remembered for the next result. Double-click a picture to switch Fit / 100%. */
+   scrolls instead. The choice is remembered for the next result. Double-click a picture, or press Z, to switch
+   Fit / 100%. */
 const MediaZoom = (() => {
   const MIN = 0.05, MAX = 16, STEP = 1.2;
   const readUi = () => { try { return JSON.parse(localStorage.getItem("bob.ui") || "{}") || {}; } catch { return {}; } };
   const saveScale = s => { try { localStorage.setItem("bob.ui", JSON.stringify({ ...readUi(), resultZoom: s })); } catch {} };
-  let ro = null;
+  let ro = null, current = null;  // current: the viewer's zoom, for the Z key
   function attach(wrap, ctl) {
     const el = wrap.querySelector("img, video"), video = el.tagName === "VIDEO";
     let scale = typeof readUi().resultZoom === "number" ? readUi().resultZoom : null;  // null = Fit
@@ -845,7 +846,7 @@ const MediaZoom = (() => {
       const lb = ctl.querySelector("[data-z=toggle]");
       lb.textContent = scale == null ? `Fit${pct ? ` · ${pct}` : ""}` : pct;
       lb.setAttribute("aria-pressed", String(scale == null));
-      lb.title = scale == null ? "Fit: the result scales with the viewer. Click for actual size (100%)" : "Fixed zoom: the result keeps this size. Click to fit the viewer";
+      lb.title = scale == null ? "Fit: the result scales with the viewer. Click or press Z for actual size (100%)" : "Fixed zoom: the result keeps this size. Click or press Z to fit the viewer";
     }
     // cx/cy: the screen point that stays put (the pointer, or the viewer's centre).
     function apply(ns, cx, cy, persist = true) {
@@ -867,6 +868,7 @@ const MediaZoom = (() => {
       label();
     }
     const step = dir => apply(shown() * Math.pow(STEP, dir));
+    current = { wrap, toggle: () => apply(scale == null ? 1 : null) };
     el.addEventListener(video ? "loadedmetadata" : "load", () => apply(scale, undefined, undefined, false));
     if (ready()) apply(scale, undefined, undefined, false); else label();
     wrap.addEventListener("wheel", e => {
@@ -903,7 +905,13 @@ const MediaZoom = (() => {
     ro = new ResizeObserver(() => { if (wrap.isConnected) label(); else ro.disconnect(); });
     ro.observe(wrap);
   }
-  return { attach };
+  // Z: Fit <-> 100% for the result in the viewer (when one is showing).
+  function toggle() {
+    if (!current?.wrap.isConnected || current.wrap.closest("[hidden]")) return false;
+    current.toggle();
+    return true;
+  }
+  return { attach, toggle };
 })();
 
 /* The selected result's details: a summary (stars, facts, quick buttons) in the viewer's header, and the prompt,
@@ -1180,6 +1188,9 @@ function init() {
   addEventListener("keydown", e => {
     if (e.altKey && !e.ctrlKey && e.key.toLowerCase() === "i" && !e.target.closest?.("input, textarea, select")) { e.preventDefault(); Info.set(!Info.open); }
     if (e.key === "Escape" && Info.open && e.target.closest?.("#meta")) { Info.set(false); $("#btn-info").focus(); }
+    if ((e.key === "z" || e.key === "Z") && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
+        && !e.target.closest?.("input, textarea, select, [contenteditable], .wm-win") && !document.querySelector(".wm-backdrop")
+        && !(typeof Editor !== "undefined" && Editor.isOpen()) && Monitor.mode !== "timeline" && MediaZoom.toggle()) e.preventDefault();
   });
   $("#pw-pop").onclick = () => { Prompts.setMode("text"); openWriterWindow(); };
   $("#btn-media").onclick = () => Media.openWindow();

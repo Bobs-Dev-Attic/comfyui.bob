@@ -371,6 +371,8 @@ class WritePromptRequest(BaseModel):
     url: str | None = None
     model: str | None = None
     locked: dict = Field(default_factory=dict)
+    creativity: int = Field(50, ge=0, le=100)  # 0 = literal ... 100 = free reinterpretation
+    draft: dict = Field(default_factory=dict)  # Enhance: the current fields, improved rather than rewritten
 
 
 @app.post("/api/prompt/write")
@@ -395,6 +397,7 @@ async def write_prompt(req: WritePromptRequest):
             first_frame=bool(req.first_frame), last_frame=bool(req.last_frame), dialogue=req.dialogue,
             voices=req.voices if mode == "ref" else 0,
             backend=req.backend, url=req.url, model=req.model or None, locked=req.locked or {},
+            creativity=req.creativity, draft=req.draft or {},
         ))
     except (llm.LLMError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc

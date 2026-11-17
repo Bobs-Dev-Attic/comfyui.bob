@@ -213,13 +213,15 @@ PROFILES: dict[str, tuple[str, str]] = {
                 "Refer to things from the reference pictures by their tags (e.g. the woman from <Picture 1>). " + NO_NEG),
     "h3video": ("MiniMax H3, a video model that renders picture and sound from a shot list",
                 "Format:\nLine 1: the style (medium, look, palette, lens, mood).\nA blank line.\nOne line per shot, each starting with its tag [Shot 1], [Shot 2]…: "
-                "\"[Shot 1] <framing>. <setting and light>. <action in present tense>. The camera <one move>.\" "
+                "\"[Shot 1] <camera angle> <framing>. <setting and light>. <action in present tense>. The camera is <where it stands relative to the subject> and <one move>.\" "
+                "e.g. \"[Shot 1] Low-angle wide shot. … The camera is behind her at shoulder height and tracks her up the stairs.\" "
                 "Later shots begin with the start time, e.g. \"[Shot 2] At 00:04.000, close-up. …\". Spoken words go after "
                 "\"They say:\" as <d>[English] the words</d>.\nA blank line.\noverall_soundscape: <ambience and effects in order>\n"
                 "non_diegetic_music: <score style, or N/A>\nUse one shot unless the user describes several; the clip is {seconds} seconds. " + NO_NEG),
     "h3ref": ("MiniMax H3 Reference, a video model that uses reference pictures tagged <Picture 1>, <Picture 2>…",
               "Use the same format as an H3 shot list:\nLine 1: the style.\nA blank line.\n\"[Shot 1] <framing>. <setting and light>. "
-              "<action>. The camera <one move>.\" (later shots begin with their start time, e.g. At 00:04.000,).\nA blank line.\n"
+              "<action>. The camera is <where it stands relative to the subject> and <one move>.\" with the camera angle before the framing, "
+              "e.g. \"Low-angle wide shot\" (later shots begin with their start time, e.g. At 00:04.000,).\nA blank line.\n"
               "overall_soundscape: …\nnon_diegetic_music: …\nRefer to people, objects and places from the references by tag instead of "
               "describing their looks. The clip is {seconds} seconds. " + NO_NEG),
     "h3sound": ("MiniMax H3 making sound only",

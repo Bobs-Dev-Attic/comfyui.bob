@@ -31,6 +31,13 @@ body.writer { min-height: 100%; }
 
 .w-controls { display: grid; grid-template-columns: 1.6fr .8fr 1fr; gap: 12px; align-items: end; }
 .w-controls .toggle-row { padding-bottom: 6px; }
+.w-creat input[type=range] { width: 100%; }
+.w-creat .val { font-variant-numeric: tabular-nums; }
+.w-creat-presets { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.w-creat-presets button { border: 1px solid var(--line); background: var(--panel-2); color: var(--muted); border-radius: 999px;
+  font: inherit; font-size: 11px; padding: 2px 8px; cursor: pointer; }
+.w-creat-presets button:hover { border-color: var(--accent); color: var(--text); }
+.w-creat-presets button.on { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 
 .w-pictures { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-start; }
 .w-pic-col { display: flex; flex-direction: column; align-items: stretch; gap: 4px; width: 72px; }
