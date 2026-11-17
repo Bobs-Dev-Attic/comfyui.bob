@@ -869,10 +869,29 @@ const ImageZoom = (() => {
   return { attach };
 })();
 
+/* The selected result's details: a summary (stars, facts, quick buttons) in the viewer's header, and the prompt,
+   tags and every control in a panel that drops down over the viewer (ℹ Details, Alt+I), so the viewer keeps
+   its whole height and the top section can be made smaller for the timeline. */
+const Info = {
+  open: (() => { try { return !!(JSON.parse(localStorage.getItem("bob.ui") || "{}") || {}).info; } catch { return false; } })(),
+  set(on) {
+    this.open = !!on;
+    try { const u = JSON.parse(localStorage.getItem("bob.ui") || "{}") || {}; u.info = this.open; localStorage.setItem("bob.ui", JSON.stringify(u)); } catch {}
+    this.sync();
+  },
+  sync() {
+    const show = Monitor.mode !== "timeline" && !!state.items.get(state.selected);
+    $("#meta").hidden = !(show && this.open);
+    $("#mon-bar").hidden = !show;
+    $("#btn-info").hidden = !show;
+    $("#btn-info").setAttribute("aria-expanded", String(this.open));
+  },
+};
+
 function renderViewer() {
   const it = state.items.get(state.selected);
   const viewer = $("#viewer"), meta = $("#meta");
-  if (!it) { $("#viewer-empty").hidden = false; [...viewer.children].forEach(c => c.id !== "viewer-empty" && c.remove()); meta.hidden = true; return; }
+  if (!it) { $("#viewer-empty").hidden = false; [...viewer.children].forEach(c => c.id !== "viewer-empty" && c.remove()); Info.sync(); return; }
   $("#viewer-empty").hidden = true;
   [...viewer.children].forEach(c => c.id !== "viewer-empty" && c.remove());
 
@@ -912,8 +931,15 @@ function renderViewer() {
   ].filter(Boolean);
   const canFrame = it.kind === "image" && it.status === "done" && f;
   const bm = Bin.meta(it);
-  const rateRow = it.status === "done" && f ? `<div class="meta-rate">
-      <span class="b-stars big">${[1, 2, 3, 4, 5].map(i => `<button type="button" class="b-star${i <= bm.rating ? " on" : ""}" data-r="${i}" title="${i} star${i > 1 ? "s" : ""} (key ${i})">★</button>`).join("")}</span>
+  const rated = it.status === "done" && f;
+  const bar = $("#mon-bar");
+  bar.innerHTML = `${rated ? `<span class="b-stars">${[1, 2, 3, 4, 5].map(i => `<button type="button" class="b-star${i <= bm.rating ? " on" : ""}" data-r="${i}" title="${i} star${i > 1 ? "s" : ""} (key ${i})">★</button>`).join("")}</span>` : ""}
+    <span class="mb-facts" title="${esc(facts.join(" · "))}">${esc(facts.join(" · "))}</span>
+    ${isBusy(it) ? `<button type="button" class="btn sm danger" data-a="cancel">Cancel</button>` : ""}
+    ${rated ? `<button type="button" class="btn sm primary-soft" data-a="timeline" title="Add to the end of the timeline (Enter)">＋ Timeline</button>` : ""}`;
+  $$("[data-a]", bar).forEach(b => b.onclick = () => action(b.dataset.a, it));
+  $$("[data-r]", bar).forEach(b => b.onclick = () => Bin.rate(it, +b.dataset.r));
+  const rateRow = rated ? `<div class="meta-rate">
       <span class="meta-tags">${bm.tags.map(t => `<i class="mg-tag on" style="--c:${Media.tagColor(t)}">${esc(t)}</i>`).join("")}</span>
       <button type="button" class="link" data-a="tags">🏷 ${bm.tags.length ? "Edit tags" : "Add tags"}</button></div>` : "";
   meta.innerHTML = `
@@ -933,9 +959,8 @@ function renderViewer() {
       ${it.engine !== "timeline" && it.status !== "submitting" ? `<button class="btn" data-a="workflow" title="The exact ComfyUI workflow this was made with: compare it with yours, or load it in ComfyUI">{ } Workflow</button>` : ""}
       <button class="btn ghost danger" data-a="delete">Delete</button>
     </div>`;
-  meta.hidden = Monitor.mode === "timeline";
+  Info.sync();
   $$("[data-a]", meta).forEach(b => b.onclick = () => action(b.dataset.a, it));
-  $$("[data-r]", meta).forEach(b => b.onclick = () => Bin.rate(it, +b.dataset.r));
 }
 
 function updateLive(id) {
@@ -1109,6 +1134,11 @@ function init() {
   Bin.init();
   Layout.init();
   $$("#mon-seg button").forEach(b => b.onclick = () => Monitor.show(b.dataset.m));
+  $("#btn-info").onclick = () => Info.set(!Info.open);
+  addEventListener("keydown", e => {
+    if (e.altKey && !e.ctrlKey && e.key.toLowerCase() === "i" && !e.target.closest?.("input, textarea, select")) { e.preventDefault(); Info.set(!Info.open); }
+    if (e.key === "Escape" && Info.open && e.target.closest?.("#meta")) { Info.set(false); $("#btn-info").focus(); }
+  });
   $("#pw-pop").onclick = () => { Prompts.setMode("text"); openWriterWindow(); };
   $("#btn-media").onclick = () => Media.openWindow();
   $("#prompt").addEventListener("input", () => postContext());

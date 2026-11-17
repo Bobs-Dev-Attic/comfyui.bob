@@ -373,7 +373,10 @@
               <button type="button" data-m="result" class="active" title="The selected result">Result</button>
               <button type="button" data-m="timeline" title="Timeline playback">Timeline</button>
             </div>
+            <div class="mon-bar" id="mon-bar" hidden></div>
+            <button type="button" class="btn sm ghost mon-info" id="btn-info" aria-expanded="false" aria-controls="meta" hidden title="Show or hide the prompt, details and all controls over the viewer (Alt+I)">ℹ Details <span class="chev">▾</span></button>
           </div>
+          <div class="mon-body">
           <div class="viewer" id="viewer">
             <div class="empty" id="viewer-empty">
               <div class="empty-art"></div>
@@ -391,6 +394,7 @@
             <div class="prog-hud"><span id="prog-name"></span><span id="prog-tc">00:00:00</span></div>
           </div>
           <div class="meta" id="meta" hidden></div>
+          </div>
         </div>
       </div>
 
