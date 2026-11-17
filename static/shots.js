@@ -184,7 +184,6 @@ const Shots = (() => {
       ? `Generate makes <b>one ${T.toFixed(1)} s video</b> from these shots.`
       : n > 1 ? `Generate makes <b>${n} videos</b>, one per shot, and puts them on the timeline in order.` : "Generate makes <b>one video</b> from this shot."} ${warn.map(w => `<span class="warn">⚠ ${esc(w)}</span>`).join(" ")}`;
     document.getElementById("shots-prompt").textContent = sh.mode === "multi" ? prompt() : sh.list.map((_, i) => `── Shot ${i + 1} ──\n${prompt(i)}`).join("\n\n");
-    if (modal) renderModal();
   }
   function renderBanner() {
     const b = document.getElementById("prompt-shots-banner");
@@ -199,7 +198,9 @@ const Shots = (() => {
     }
     $$(".shots-creat-val").forEach(el => { el.textContent = `${v}% · ${creatName(v)}`; });
   }
-  function changed() { scheduleSave(); render(); if (typeof renderSteps === "function") renderSteps(); }
+  // A change that alters the shot list: save, redraw the list, and the Edit window if it's open. (Typing in the window
+  // doesn't come here: scheduleSave() redraws the list on every key, and rebuilding the window then would lose the caret.)
+  function changed() { scheduleSave(); render(); if (modal) renderModal(); }
 
   /* ---------------------------------------------------------------- list actions */
   function move(from, to) {
@@ -365,7 +366,11 @@ const Shots = (() => {
     if (modal.i >= n) modal.i = n - 1;
     const i = modal.i, s = sh.list[i], H = P(), multi = sh.mode === "multi";
     const box = modal.root.querySelector(".shot-modal");
-    const keep = document.activeElement && box.contains(document.activeElement) ? document.activeElement.dataset.sf || document.activeElement.id : null;
+    // Keep the focused field, its caret and the scroll position across the rebuild.
+    const ae = document.activeElement && box.contains(document.activeElement) ? document.activeElement : null;
+    const keep = ae ? ae.dataset.sf || ae.dataset.over || ae.id : null;
+    let sel = null; try { if (ae && typeof ae.selectionStart === "number") sel = [ae.selectionStart, ae.selectionEnd]; } catch {}
+    const scroll = focus ? 0 : box.querySelector(".sm-form")?.scrollTop || 0;
     let t0 = 0; for (let k = 0; k < i; k++) t0 += +sh.list[k].seconds || 0;
     const framings = [...H.FRAMINGS, ...EXTRA_FRAMINGS];
     if (s.framing && !framings.includes(s.framing)) framings.push(s.framing);
@@ -477,8 +482,13 @@ const Shots = (() => {
         <button type="button" class="btn sm primary" data-sm="close">Done</button>
       </footer>`;
     renderCreat();
+    const form = box.querySelector(".sm-form"); if (form) form.scrollTop = scroll;
     if (focus) box.querySelector('[data-sf="brief"]')?.focus();
-    else if (keep) (box.querySelector(`[data-sf="${keep}"]`) || box.querySelector(`#${CSS.escape(keep)}`))?.focus();
+    else if (keep) {
+      const el = box.querySelector(`[data-sf="${keep}"]`) || box.querySelector(`[data-over="${keep}"]`) || box.querySelector(`#${CSS.escape(keep)}`);
+      el?.focus({ preventScroll: true });
+      if (el && sel) try { el.setSelectionRange(sel[0], sel[1]); } catch {}
+    }
   }
   function refreshPreview() {
     if (!modal) return;

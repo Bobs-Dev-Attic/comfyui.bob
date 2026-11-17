@@ -5,6 +5,13 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.49.1] - 2026-11-17
+
+### Fixed
+- **Typing in a shot's Edit window works again.** Every key saved the project and rebuilt the window, which put the
+  caret back at the start of the field, so words came out scrambled (most visibly in Camera position). The window now
+  only rebuilds for changes to the shot list, and keeps the caret, the focused field and the scroll position when it does.
+
 ## [0.49.0] - 2026-11-17
 
 ### Changed
