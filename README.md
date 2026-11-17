@@ -163,6 +163,22 @@ Other features:
 - **Live progress:** sampler step progress over server-sent events, with a cancel button.
 - **Gallery:** grouped by day, with reuse settings, re-roll, download, and delete. Use **→ First frame** or **→ Last frame** (or drag) to animate an image.
 - **Keyframe prompts:** H3's keyframe alignment line is added to the prompt automatically. Without it, H3 ignores a last frame.
+- **Live model view** (under the prompt, every model): as you type, the prompt is tidied for the selected model and
+  checked. FLUX and Krea lose weights like `(word:1.2)` and filler such as "masterpiece, 8k"; H3 dialogue gets
+  `[English]`; notes flag negations for H3, `<Picture N>` tags beyond the references you added, a missing camera move
+  or sound, and overlong prompts. **What the model gets** shows the exact text Generate sends (Tidy can be turned off).
+- **✨ Live rewrite:** after a short pause in typing, a local LLM rewrites the prompt in the selected model's own format
+  (a natural-language paragraph for FLUX and Krea, a style line plus `[Shot N]` lines and sound for H3, a style
+  caption for Music 3) and streams it in under the prompt; **Tab** accepts it (Ctrl+Z undoes), **Esc** dismisses it.
+  Template parts survive the rewrite. The LLM (the Prompt writer's choice) loads while you type and is unloaded when a
+  render starts; live rewrites pause while one runs.
+- **Prompt tags and templates:** **+ Tag** adds a named value to the prompt, used as `<name>` or `{{name}}`; several
+  values give one at random each Generate (the same one everywhere in the prompt). `{a|b}`, `{3::a|b}`, `<maybe p="0.3">…</maybe>`
+  and `<list count="2">a, b, c</list>` roll too. **🏷 Presets** inserts ready-made words (hair, outfits, lighting,
+  camera…) or `<category/>` for a random one (`data/tag_presets.json`). Tags are saved with the project.
+- **📚 Catalog:** saved prompts with their tags, grouped by model, with search. Use one, save the current prompt (or
+  update the one you loaded), delete. **Import from the Prompt Explorer node** copies the ComfyUI node's library in
+  once. The catalog is Bob's own (`data/prompt_library.json`).
 - **✨ Write for me:** turns a one-line idea into an H3 shot list with a local LLM. Choose **Ollama** or any
   **OpenAI-compatible server** (llama.cpp `llama-server`, LM Studio, vLLM) under *Prompt writer*. The LLM only fills
   short JSON fields (style, framing, setting, action, camera, optional spoken line, soundscape, music); code assembles

@@ -184,11 +184,14 @@
                 <span class="label-actions">
                   <button type="button" class="link" id="btn-write" title="Turn your idea into an H3 shot list with a local LLM">✨ Write for me</button>
                   <button type="button" class="link" id="btn-writer-window" title="Show the Prompt Writer next to the viewer: your idea and the live H3 prompt side by side (Alt+W)">✍ Prompt Writer</button>
+                  <button type="button" class="link" id="btn-catalog" title="Saved prompts: use one, or save this one">📚 Catalog</button>
                   <button type="button" class="link" id="btn-template">Insert template</button>
                   <button type="button" class="link" id="btn-tips">Tips</button>
                 </span>
               </div>
               <textarea id="prompt" rows="9" placeholder="Describe the shots, camera moves, and the sound…"></textarea>
+              <div class="prompt-tags" id="prompt-tags"></div>
+              <div class="prompt-live" id="prompt-live" hidden></div>
               <div class="tips" id="tips" hidden></div>
               <div class="writer-status" id="writer-status" hidden></div>
               <details class="writer" id="f-writer">
@@ -414,6 +417,7 @@
   <script src="/static/angles.js"></script>
   <script src="/static/editor.js"></script>
   <script src="/static/settings.js"></script>
+  <script src="/static/prompts.js"></script>
   <script src="/static/app.js"></script>
   <script src="/static/shell.js"></script>
 </body>
