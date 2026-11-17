@@ -5,6 +5,18 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.39.0] - 2026-11-16
+
+### Added
+- **H3 shot-list checks in the live model view** (H3 video and H3 Reference), against the clip length in Settings and
+  updated as it changes:
+  - Put right: shots numbered 1, 2, 3… in order; start times written as `00:SS.mmm` on whole frames.
+  - Flagged: a shot with no start time (with a suggested one), start times after the clip's end or not going up,
+    more spoken words than fit a shot (about 2.5 a second), shots under a second, more shots than the clip has room
+    for, and a missing `overall_soundscape:` or `non_diegetic_music:` line.
+  - Without a shot list, spoken words are checked against the whole clip.
+- H3 sound prompts are checked for their `overall_soundscape:` and `non_diegetic_music:` lines.
+
 ## [0.38.0] - 2026-11-16
 
 ### Added
