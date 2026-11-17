@@ -30,6 +30,10 @@
 .set-x { width: 30px; height: 30px; border-radius: 8px; border: 1px solid transparent; background: transparent; color: var(--muted); cursor: pointer; font-size: 15px; }
 .set-x:hover { background: var(--panel-2); color: var(--text); border-color: var(--line); }
 
+.set-update { margin: 12px 0 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); font-size: 13px; }
+.set-update p { margin: 0; }
+.set-update.bad { border-color: var(--warn, #e5a32e); }
+.set-update ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 12px; }
 .set-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 196px 1fr; }
 .set-nav { padding: 10px; border-right: 1px solid var(--line); background: var(--panel-2); display: flex; flex-direction: column; gap: 2px; overflow: auto; }
 .set-nav button {

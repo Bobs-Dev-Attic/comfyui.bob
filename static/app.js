@@ -1102,6 +1102,9 @@ async function pollStatus() {
   try {
     const s = await api("/api/status");
     if (s.version) $("#app-version").textContent = `· v${s.version}`;
+    // The studio updated itself (Settings › Updates) and restarted: this page still runs the old scripts.
+    if (s.version && state.serverVersion && s.version !== state.serverVersion) offerReload(s.version);
+    state.serverVersion ||= s.version;
     $("#st-comfy").className = "chip " + (s.comfyui ? "ok" : "bad");
     $("#st-comfy").lastChild.textContent = s.comfyui ? `ComfyUI ${s.comfyui_version || ""}` : "ComfyUI offline";
     $("#st-proxy").className = "chip " + (s.proxy ? "ok" : "bad");
@@ -1115,6 +1118,16 @@ async function pollStatus() {
   } catch {
     $("#st-comfy").className = "chip bad";
   }
+}
+
+function offerReload(v) {
+  if ($("#update-bar")) return;
+  const bar = document.createElement("div");
+  bar.id = "update-bar"; bar.className = "update-bar"; bar.setAttribute("role", "status");
+  bar.innerHTML = `<span>Bob Studio updated to <b>v${esc(v)}</b>. Reload the page to use it.</span>
+    <button type="button" class="btn sm primary">Reload</button>`;
+  bar.querySelector("button").onclick = () => location.reload();
+  document.body.appendChild(bar);
 }
 
 async function loadCaps(refresh = false) {

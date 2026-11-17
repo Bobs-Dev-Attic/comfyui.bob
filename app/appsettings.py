@@ -48,11 +48,18 @@ class Editor(_Section):
     edit_model: Literal["qwen", "h3image"] = "qwen"  # Erase, Replace and whole-picture edits
 
 
+class Updates(_Section):
+    # auto: install new versions from GitHub when nothing is rendering, then restart; notify: only say so; off: never check
+    mode: Literal["auto", "notify", "off"] = "auto"
+    check_minutes: int = Field(5, ge=1, le=1440)
+
+
 class AppSettings(_Section):
     appearance: Appearance = Field(default_factory=Appearance)
     projects: Projects = Field(default_factory=Projects)
     generation: Generation = Field(default_factory=Generation)
     editor: Editor = Field(default_factory=Editor)
+    updates: Updates = Field(default_factory=Updates)
 
 
 _lock = threading.Lock()

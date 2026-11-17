@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, appsettings, config, llm, media, modelpaths, models, projects, prompts, render, syscheck, workflows
+from . import __version__, appsettings, config, llm, media, modelpaths, models, projects, prompts, render, syscheck, updater, workflows
 from .comfy import ComfyService
 from .jobs import EnhanceOpts, GenerateRequest, JobManager, media_path
 
@@ -47,7 +47,10 @@ async def lifespan(_: FastAPI):
     result = await asyncio.to_thread(projects.backup_all)
     logging.getLogger("bob.projects").info("startup backup: %s", result)
     await comfy.start()
+    # Settings › Updates: check GitHub for a newer version now and then (and install it when idle, if Automatic).
+    update_task = asyncio.create_task(updater.loop(_rendering))
     yield
+    update_task.cancel()
     await comfy.stop()
 
 
@@ -79,6 +82,25 @@ async def status():
         "gpu": gpu,
         "queue": queue,
     }
+
+
+@app.get("/api/update")
+async def update_status():
+    return updater.status()
+
+
+@app.post("/api/update/check")
+async def update_check():
+    return await updater.check()
+
+
+@app.post("/api/update/apply")
+async def update_apply():
+    """Install the newer version from GitHub and restart the studio."""
+    try:
+        return await updater.apply(_rendering)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @app.get("/api/syscheck")

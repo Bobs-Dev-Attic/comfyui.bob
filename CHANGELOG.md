@@ -5,6 +5,16 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.48.0] - 2026-11-17
+
+### Added
+- **The studio keeps itself up to date** (Settings › Updates). Every few minutes it checks GitHub's main branch;
+  when there's a newer version and nothing is rendering, it installs it (and any new Python packages), restarts in a
+  new console window, and the page offers **Reload**. Choose *Install it automatically* (the default), *Tell me; I'll
+  install it* (with an **Update and restart** button), or *Don't check*, and how often to check.
+- It never overwrites anything: a copy on another branch, with edits of its own to the studio's files, or with
+  commits that aren't on GitHub isn't updated, and Settings › Updates says why.
+
 ## [0.47.0] - 2026-11-17
 
 ### Added
