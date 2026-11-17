@@ -47,6 +47,34 @@ class EnhanceOpts(BaseModel):
     relay_detail: float = Field(0.45, ge=0, le=1)
 
 
+# Live preview (ComfyUI's per-prompt extra_data.preview_method; app/proxy_launch.py lets it through the proxy):
+# fast = latent-to-RGB colour projection (no measurable cost). Not "taesd": ComfyUI 0.44 can't load the taeh3 tiny
+# decoder (its VAE() leaves first_stage_model None) and the whole sampler fails.
+PREVIEW_METHODS = {"off": None, "fast": "latent2rgb"}
+
+
+async def submit_job(client: Any, wf: Any, preview_method: str | None) -> Any:
+    """client.submit(wf), with ComfyUI's preview method for this prompt when asked. The SDK has no way to add
+    extra_data, so this does what its submit does (materialize, post_jobs) with it. A proxy that refuses the
+    field (one not started by app/proxy_launch.py) gets the job again without it."""
+    if not preview_method:
+        return await client.submit(wf)
+    from comfy_sdk import _core
+    from comfy_sdk.client import AsyncJob
+    from comfy_sdk.exceptions import to_sdk_error
+    from comfy_low.errors import ApiError
+
+    graph = await client._materialize(wf)
+    try:
+        model = await client._low.post_jobs(graph, idempotency_key=_core.new_idempotency_key(), extra_data={"preview_method": preview_method})
+        return AsyncJob(client._low, model)
+    except ApiError as exc:
+        if "extra_data" not in str(exc) and "extra_data" not in str(to_sdk_error(exc)):
+            raise to_sdk_error(exc) from exc
+        log.warning("the ComfyUI API proxy refused the live-preview setting; restart the studio to restart the proxy")
+        return await client.submit(wf)
+
+
 class GenerateRequest(BaseModel):
     kind: Kind
     engine: Engine = "h3"
@@ -82,6 +110,7 @@ class GenerateRequest(BaseModel):
     pose: str | None = Field(None, max_length=200)  # angles: "<azimuth> <elevation> <distance>" (workflows.ANGLE_*)
     white_bg: bool = False  # angles: make the plain backdrop pure white (imaging.whiten_backdrop)
     clean_audio: bool = True  # clean them and keep the best 6-10 s of speech (H3RefAudioPrep, when installed)
+    preview: Literal["off", "fast"] = "off"  # live preview while sampling (Settings > Advanced)
     max_fidelity: bool = False  # reference pictures at 2048px instead of the output's size
     enhance: bool = False  # Klein prompt upsampler / Krea 2 prompt expander
     lyrics: str = Field("", max_length=20000)  # Music 3
@@ -629,7 +658,7 @@ class JobManager:
             save_workflow(item["id"], saved)
 
             # No `metadata=`: comfy-api-proxy 0.1.6 rejects the SDK's mapping form.
-            job = await client.submit(wf)
+            job = await submit_job(client, wf, PREVIEW_METHODS.get(req.preview))
             self._handles[item["id"]] = job
             self.log(item, f"Sent to ComfyUI (job {job.id})")
             self._update(item, status="queued", comfy_job=job.id, started=None)
