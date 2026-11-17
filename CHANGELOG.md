@@ -5,6 +5,18 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.67.0] - 2026-11-17
+
+### Added
+- **Continue without a cut** (a shot's Edit window › From shot N, H3 Reference, One video per shot). The shot waits
+  for the one before and carries it on as the same shot: the last 39 frames of that video, with their sound, are
+  planted at the start of the new one and kept as they are, so H3 continues their motion and sound (😺NKD AV Latent
+  Extend from ComfyUI-NKD-Basic-Tools, the method of EDITS-WITH-AI's extender). Those frames are dropped from the
+  result, so on the timeline it follows the shot before seamlessly. Its last frame also goes in as the first-frame
+  picture, and the prompt says the same shot carries on. If the shot before failed, it starts with a cut instead.
+  A ↪ on the shot shows it continues; the Shots preview says so too.
+- Generate requests take `continue_from` (a video to continue) and `overlap` (22, 39 or 56 frames).
+
 ## [0.66.0] - 2026-11-17
 
 ### Added

@@ -257,6 +257,37 @@ def ffmpeg() -> str | None:
     return os.environ.get("BOB_FFMPEG") or shutil.which("ffmpeg")
 
 
+def tail_clip(ref: str, frames: int, width: int, height: int, out: Path) -> Path:
+    """The last `frames` frames of a video at 24 fps and width x height (cropped to fill), with its sound (silence
+    when it has none), for continuing it without a cut (workflows.build_h3_ref, continue_overlap)."""
+    src = resolve(ref)
+    exe = ffmpeg()
+    if not exe:
+        raise MediaError("ffmpeg isn't installed")
+    info = probe(ref)
+    dur = float(info.get("duration") or 0)
+    secs = frames / 24.0
+    if dur < secs:
+        raise MediaError(f"{src.name} is {dur:.2f} s long: shorter than the {frames}-frame overlap")
+    start = max(0.0, dur - secs - 0.05)
+    vf = (f"fps=24,scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},setsar=1,"
+          f"trim=start_frame=0,setpts=PTS-STARTPTS")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [exe, "-nostdin", "-v", "error", "-y", "-ss", f"{start:.3f}", "-i", str(src)]
+    if info.get("has_audio"):
+        cmd += ["-map", "0:v:0", "-map", "0:a:0"]
+    else:
+        cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-map", "0:v:0", "-map", "1:a:0"]
+    # the LAST `frames` frames: keep them all, then cut from the end
+    cmd += ["-vf", vf + f",reverse,trim=end_frame={frames},reverse,setpts=PTS-STARTPTS",
+            "-af", f"aresample=48000,areverse,atrim=end={secs:.4f},areverse,asetpts=PTS-STARTPTS",
+            "-c:v", "libx264", "-crf", "10", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-shortest", str(out)]
+    r = subprocess.run(cmd, capture_output=True, timeout=300, creationflags=NO_WINDOW)
+    if r.returncode or not out.is_file():
+        raise MediaError((r.stderr or b"").decode("utf-8", "replace").strip()[-300:] or f"Couldn't cut the end of {src.name}")
+    return out
+
+
 def playable_audio(ref: str) -> Path:
     """The file's sound as Opus in WebM, for browsers that can't decode its own codec (AAC in MP4
     on Chromium builds without proprietary codecs, like Avast Secure Browser). Cached next to the
