@@ -5,6 +5,16 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.67.1] - 2026-11-17
+
+### Fixed
+- **A shot that continues without a cut uses its own framing and angle.** It used to keep the shot before's view
+  ("the same camera and framing"), so a run of continued shots sat on one framing and lost its flow. Now, when the
+  framing or angle differs from the shot before, the prompt has the camera travel there in one smooth, continuous
+  move inside the same take (say from the wide shot to a low-angle close-up), and the shot's own camera line follows
+  once it gets there ("Once it gets there, the camera slowly pushes in"). With the same framing and angle, it says
+  so. The people, clothes, place and light still carry on from the last frame.
+
 ## [0.67.0] - 2026-11-17
 
 ### Added

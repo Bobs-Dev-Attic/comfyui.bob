@@ -216,8 +216,16 @@ const Shots = (() => {
         : `<Subject ${p}> is the main subject of <Picture ${p}>, kept exactly as it appears there.`;
     });
     const K = cont?.pic, seamless = !!(K && cont.seamless);
+    /* Continuing without a cut, the shot's own framing and angle still count: the camera travels to them inside the
+       same take (from the previous shot's framing and angle), so the story keeps moving instead of freezing on the
+       old view. H3 follows a framing over a camera move when the two disagree (EDITS-WITH-AI's notes), so the move
+       is written as reaching that framing. */
+    const headOf = x => P().shotHead(x?.angle, (x?.framing || "medium shot").trim());
+    const toHead = seamless ? headOf(list[0]) : "", fromHead = seamless && cont.prev && !cont.prev.rawOn ? headOf(cont.prev) : "";
+    const reframes = seamless && !!fromHead && fromHead !== toHead;
     if (seamless) defs.push(`<Picture ${K}> is the first frame of [Shot 1]: the last frame of the shot so far, which carries on here without a cut, `
-      + "with the same people in the same clothes, in the same place and light, and the same camera and framing.");
+      + "with the same people in the same clothes, in the same place and light"
+      + (reframes ? `; from that ${fromHead} the camera moves on, in the same take, to a ${toHead}.` : `, seen as the same ${toHead}.`));
     else if (K) defs.push(`<Subject ${K}> is the place in <Picture ${K}>, the last frame of the previous shot: the same location, set dressing, `
       + "lighting, time of day and colour grade carry on in this shot, and the people keep the clothes, hair, make-up and props they have there.");
     // Whose voice each recording is: the subject who speaks with it in this video (a voice picked on the line),
@@ -248,7 +256,7 @@ const Shots = (() => {
     const retention = [
       ...pics.map(p => [p, appearsIn(p, list)]).filter(([, at]) => at.length).map(([p, at]) =>
         `<Subject ${p}> (appears in ${at.map(k => `[Shot ${k + 1}]`).join(", ")}): fully_preserved - the identity, face, hair, build and appearance from <Picture ${p}> are retained.`),
-      ...(seamless ? [`<Picture ${K}> ([Shot 1] first frame): fully_preserved - the shot picks up exactly where <Picture ${K}> leaves off, with the same people, clothes, place, light and framing.`]
+      ...(seamless ? [`<Picture ${K}> ([Shot 1] first frame): ${reframes ? "partially_preserved" : "fully_preserved"} - the shot picks up exactly where <Picture ${K}> leaves off, with the same people, clothes, place and light${reframes ? `; the camera then moves on to this shot's ${toHead}` : ""}.`]
         : K ? [`<Subject ${K}> (appears in [Shot 1]): partially_preserved - the location, lighting, time of day, colour grade and the people's clothes continue from <Picture ${K}>; the framing, camera angle and action follow this shot.`] : []),
       ...voices.map(a => `<Audio ${a}>: reference - its voice timbre ${ownerOf(a) ? `guides the delivery of <Subject ${ownerOf(a)}>` : "guides the spoken delivery"} without copying the original signal.`),
     ];
@@ -256,8 +264,13 @@ const Shots = (() => {
     let t = 0;
     let body = list.map((s, k) => { const txt = `[Shot ${k + 1}] ${shotText(s, k, t, n, ids)}`; t += +s.seconds || 0; return txt; }).join("\n");
     // after the framing: the text has to ask for the place, or H3 leaves the reference out
-    if (seamless) body = body.replace(/^\[Shot 1\] [^.]*\./, `[Shot 1] The same shot carries on without a cut from <Picture ${K}>.`);
-    else if (K) body = body.replace(/^(\[Shot 1\] [^.]*\.)/, `$1 It is the same place as <Subject ${K}>, in the same light, a moment later.`);
+    if (seamless) {
+      body = body.replace(/^\[Shot 1\] [^.]*\./, reframes
+        ? `[Shot 1] The same shot carries on without a cut from <Picture ${K}>: in one smooth, continuous camera move the view goes from the ${fromHead} to a ${toHead}.`
+        : `[Shot 1] The same shot carries on without a cut from <Picture ${K}>, still a ${toHead}.`);
+      // the shot's own camera line comes after the move to the new framing, not instead of it
+      if (reframes) body = body.replace(/ The camera (?=[^\n]*$)/m, " Once it gets there, the camera ");
+    } else if (K) body = body.replace(/^(\[Shot 1\] [^.]*\.)/, `$1 It is the same place as <Subject ${K}>, in the same light, a moment later.`);
     const look = oneLine(style);
     const out = [`subject_definitions:\n${defs.join("\n")}`, `summary:\n${summary}`, `retention_analysis:\n${retention.join("\n")}`,
       `integrated_multimodal_description:\nThe target video's look: ${look.charAt(0).toLowerCase() + look.slice(1)}.\n${body}`, audioFields("\n")].join("\n\n");
