@@ -15,6 +15,7 @@ import asyncio
 import logging
 import os
 import subprocess
+import sys
 import time
 from typing import Any
 
@@ -61,8 +62,9 @@ class ComfyService:
             log.warning("comfy-api-proxy not found; install it with `pip install comfy-api-proxy`")
             return
         port = httpx.URL(config.PROXY_URL).port or 8189
+        # Through app/proxy_launch.py: the installed proxy, letting a job's live-preview setting through to ComfyUI.
         cmd = [
-            exe, "run",
+            sys.executable, "-m", "app.proxy_launch", "run",
             "--comfyui", config.COMFYUI_URL,
             "--port", str(port),
             "--state-dir", str(config.PROXY_STATE_DIR),
@@ -71,7 +73,7 @@ class ComfyService:
         log.info("starting comfy-api-proxy: %s", " ".join(cmd))
         logfile = open(config.DATA_DIR / "proxy.log", "ab")  # noqa: SIM115 - lives as long as the proxy
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-        self._proxy_proc = subprocess.Popen(cmd, stdout=logfile, stderr=subprocess.STDOUT, creationflags=flags)
+        self._proxy_proc = subprocess.Popen(cmd, stdout=logfile, stderr=subprocess.STDOUT, creationflags=flags, cwd=str(config.ROOT))
         for _ in range(60):
             if await self.proxy_alive():
                 log.info("comfy-api-proxy is up at %s", config.PROXY_URL)

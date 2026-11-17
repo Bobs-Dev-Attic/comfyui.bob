@@ -5,6 +5,20 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.54.0] - 2026-11-17
+
+### Added
+- **Live preview** (Settings › Advanced): **On** shows the first frame forming on the running result and in the viewer,
+  once per sampling step, so you can stop a take that's going wrong. It's ComfyUI's latent colour sketch: soft, but
+  you can read the scene. Measured on a 3 s draft H3 video: 28.9 s with or without it, 8 previews. Remembered per browser.
+- The studio now starts its ComfyUI API proxy through `app/proxy_launch.py`, which lets a job's preview setting
+  through to ComfyUI (the proxy otherwise only accepts an API key there). If an older proxy refuses it, the run goes
+  ahead without a preview.
+
+### Notes
+- A sharper preview with the TAEH3 tiny decoder isn't offered: ComfyUI 0.44 can't load `taeh3.safetensors` for
+  previews, and asking for it makes the sampler fail.
+
 ## [0.53.0] - 2026-11-17
 
 ### Added

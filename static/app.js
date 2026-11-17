@@ -300,6 +300,7 @@ function collectRequest() {
     references: eng === "h3ref" || eng === "h3image" ? state.refs.map(r => r.ref) : [],
     ref_audios: eng === "h3ref" && kind === "video" ? state.arefs.map(a => a.ref) : [],
     clean_audio: $("#clean-audio").checked,
+    preview: $("#live-preview")?.value || "off",
     max_fidelity: eng === "h3ref" && $("#fidelity").checked,
     loras: Loras.forRequest(),
     unet: state.unet[eng] || null,
@@ -1198,6 +1199,10 @@ function init() {
   Loras.initStep();
   Shots.init();
   Enhance.initSettings();
+  // Live preview: remembered per browser (bob.livePreview); sent with each run as `preview`.
+  { const lp = $("#live-preview");
+    try { const v = localStorage.getItem("bob.livePreview"); if (v && [...lp.options].some(o => o.value === v)) lp.value = v; } catch {}
+    lp.addEventListener("change", () => { try { localStorage.setItem("bob.livePreview", lp.value); } catch {} }); }
   $("#btn-goto-shots").onclick = () => showStep("shots");
   initArefs();
   initWriter();
