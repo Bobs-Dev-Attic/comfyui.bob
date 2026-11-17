@@ -848,6 +848,12 @@
           "default": "",
           "title": "Url",
           "type": "string"
+        },
+        "desc": {
+          "default": "",
+          "description": "Describe with AI: a detailed description of the picture, for prompts",
+          "title": "Desc",
+          "type": "string"
         }
       },
       "required": [
@@ -1198,11 +1204,12 @@
           "type": "boolean"
         },
         "link_audio_track": {
-          "default": "new",
-          "description": "new = a new audio track for each video; free = the first free audio track",
+          "default": "free",
+          "description": "free = the existing audio tracks (the first one free at that time; a new one only when all overlap); own = an audio track of its own for each video; new = older name, read as free",
           "enum": [
-            "new",
-            "free"
+            "free",
+            "own",
+            "new"
           ],
           "title": "Link Audio Track",
           "type": "string"
@@ -1592,7 +1599,7 @@
       "type": "number"
     },
     "app_version": {
-      "default": "0.20.0",
+      "default": "0.65.0",
       "title": "App Version",
       "type": "string"
     },

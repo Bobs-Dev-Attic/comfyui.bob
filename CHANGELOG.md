@@ -5,6 +5,16 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.65.0] - 2026-11-17
+
+### Changed
+- **A video's sound goes on the existing audio tracks.** Adding a video (by hand or with Add to timeline when done)
+  no longer makes a new audio track for each one: its linked sound goes on the first audio track that's free at
+  that time, so videos added one after another line up on V1 with their sound on A1. A new audio track is made only
+  when every audio track already has sound there. This is now the default for every project, including ones saved
+  with the old setting. Project settings › Sound goes on › "A new audio track for each video" brings back one
+  track per video (stored as `"own"`; the old `"new"` reads as the new default).
+
 ## [0.64.0] - 2026-11-17
 
 ### Fixed

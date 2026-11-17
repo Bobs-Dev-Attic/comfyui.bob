@@ -529,8 +529,8 @@ async function projectSettingsDialog() {
     <div class="field toggle-row"><label class="switch"><input type="checkbox" id="ps-link"${tlm.link_audio !== false ? " checked" : ""}><span></span></label>
       <div><strong>Linked audio</strong> <span class="hint inline">Adding a video with sound puts its sound on an audio track, linked to the clip</span></div></div>
     <div class="field"><label for="ps-where">Sound goes on</label><select id="ps-where">
-      <option value="new"${tlm.link_audio_track !== "free" ? " selected" : ""}>A new audio track for each video (A1, A2, A3…)</option>
-      <option value="free"${tlm.link_audio_track === "free" ? " selected" : ""}>The first free audio track</option></select></div>
+      <option value="free"${tlm.link_audio_track !== "own" ? " selected" : ""}>The existing audio tracks, in line with the video</option>
+      <option value="own"${tlm.link_audio_track === "own" ? " selected" : ""}>A new audio track for each video (A1, A2, A3…)</option></select></div>
     <div class="field"><label>Versions</label><p class="hint">Versions of the project are kept automatically as it changes, and you can save named ones.
       How often and how many: <button type="button" class="link" id="ps-vsettings">Settings › Projects</button>. <button type="button" class="link" id="ps-history">Versions…</button></p></div>`;
   const sync = () => { form.querySelector("#ps-delay").disabled = !form.querySelector("#ps-auto").checked; form.querySelector("#ps-where").disabled = !form.querySelector("#ps-link").checked; };

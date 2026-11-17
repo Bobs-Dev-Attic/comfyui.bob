@@ -159,7 +159,7 @@ Saved as you work (or with Ctrl+S when auto-save is off). Times are seconds on t
                                    // hblur, squeezeh, horzopen. Audio tracks always crossfade.
   }],
   "link_audio": true,              // adding a video with sound also puts its sound on an audio track
-  "link_audio_track": "new",       // new = an audio track of its own per video | free = the first free audio track
+  "link_audio_track": "free",      // free = the existing audio tracks (first free one) | own = an audio track of its own per video ("new", the old default, reads as free)
   "master": { "volume": 1, "loudness": -14, "limiter": true },  // loudness: null or −36…−6 LUFS (two-pass loudnorm)
   "markers": [{ "id": "…", "t": 0.5, "label": "Marker 1", "color": "" }],
   "playhead": 1.21, "zoom": 60,    // pixels per second
@@ -308,7 +308,7 @@ one.
 | `bob.project/2` from 0.14 | No change needed: `vol_keys` is empty and `cam` is `null`. |
 | `bob.project/2` from 0.13 | No change needed: `fx.keys` is empty. |
 | `bob.project/2` from 0.11–0.12 | No change needed: `clips[].fx` is `null` (no effects). |
-| `bob.project/2` from 0.10 | No change needed: mixing fields default to neutral (volume 1, pan 0, no fades, no solo), `master` has no loudness target and the limiter on, `link_audio_track` is `"new"`, and auto-save is on. |
+| `bob.project/2` from 0.10 | No change needed: mixing fields default to neutral (volume 1, pan 0, no fades, no solo), `master` has no loudness target and the limiter on, `link_audio_track` is `"free"`, and auto-save is on. |
 | `bob.project/2` from 0.8–0.9 | No change needed: `transitions` (empty) and `link_audio: true` are added on load. |
 | `bob.project/2` from 0.7.0 | No change needed: `timeline` is added with one video and one audio track the first time the project loads. |
 | `"version": 1` (0.6.0) | `schema` is set, and `config` and `library` are added with defaults. Pictures already used as inputs (`settings.refs` and `settings.frames`) become the first library items. |
