@@ -245,7 +245,7 @@ def start_scene(jobs: Any, *, picture: str, plate: str | None, name: str, projec
     scene_id = uuid.uuid4().hex[:12]
     now = time.time()
     entry = {"id": scene_id, "name": name.strip()[:120] or "3D scene", "project": project, "picture": picture,
-             "plate": plate, "status": "running", "error": None, "bg": None, "objects": objects, "camera": None,
+             "plate": plate, "status": "running", "error": None, "bg": None, "objects": objects, "seconds": 5.0, "camera_keys": [],
              "created": now, "updated": now}
     with _lock:
         items = _read_scenes()

@@ -9,7 +9,7 @@ import subprocess
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
@@ -396,6 +396,8 @@ class SceneObject(BaseModel):
     scale: float | None = None
     auto_scale: float | None = None  # the scale it was placed at (the size slider's 100%)
     hidden: bool = False
+    # its motion: [{t (seconds), pos, yaw, scale}] by time; none = it stays where it is
+    keys: list[dict[str, Any]] = Field(default_factory=list, max_length=500)
 
 
 class SceneNew(BaseModel):
@@ -409,7 +411,9 @@ class SceneNew(BaseModel):
 class ScenePatch(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=120)
     objects: list[SceneObject] | None = Field(None, max_length=64)
-    camera: dict[str, float] | None = None
+    seconds: float | None = Field(None, ge=1, le=20)  # the scene's length
+    # the camera's path: [{t, yaw, pitch, dist, target: [x, y, z]}] (an orbit about target); none = it stays put
+    camera_keys: list[dict[str, Any]] | None = Field(None, max_length=500)
 
 
 @app.post("/api/scenes")

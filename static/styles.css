@@ -828,8 +828,11 @@ details.post-proc > .hint { margin: 0 0 10px; }
 
 /* 3D scenes (scene3d.js) */
 .s3 { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 12px; height: 100%; min-height: 0; }
-.s3-stage { position: relative; min-height: 0; }
+.s3-stage { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 8px; min-height: 0; }
+.s3-box { position: relative; min-height: 0; }
 .s3-canvas { position: absolute; inset: 0; }
+.s3-len { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
+.s3-sec { width: 56px; }
 .s3-side { overflow: auto; }
 .s3-objs li { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .s3-add { flex: 1; min-width: 0; }
