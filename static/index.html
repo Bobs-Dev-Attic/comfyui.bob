@@ -178,19 +178,27 @@
           <!-- 4 · Prompt -->
           <section class="step" data-step="prompt" role="tabpanel">
             <p class="shots-banner" id="prompt-shots-banner" hidden>🎬 Shots are on: Generate builds the video from the <button type="button" class="link" id="btn-goto-shots">Shots step</button>, not this prompt.</p>
-    <div class="field">
+            <div class="seg sm prompt-mode" id="prompt-mode" role="tablist" aria-label="Write the prompt as" hidden>
+              <button type="button" data-m="text" class="active" title="Write the prompt yourself, with live help (Alt+W switches)">✏ Prompt</button>
+              <button type="button" data-m="writer" title="Build an H3 shot list field by field; the LLM fills what you leave open (Alt+W switches)">✍ Shot writer</button>
+            </div>
+            <div class="prompt-writer" id="prompt-writer" hidden>
+              <div class="pw-head"><span class="hint">The shot list fills the prompt as you go; Generate uses it.</span>
+                <button type="button" class="link" id="pw-pop" title="Open the Shot writer in its own window">↗ Pop out</button></div>
+              <iframe id="prompt-writer-frame" title="Shot writer"></iframe>
+            </div>
+    <div class="field prompt-field">
               <div class="label-row">
                 <label for="prompt" id="prompt-label">Prompt</label>
                 <span class="label-actions">
                   <button type="button" class="link" id="btn-write" title="Turn your idea into an H3 shot list with a local LLM">✨ Write for me</button>
-                  <button type="button" class="link" id="btn-writer-window" title="Show the Prompt Writer next to the viewer: your idea and the live H3 prompt side by side (Alt+W)">✍ Prompt Writer</button>
                   <button type="button" class="link" id="btn-catalog" title="Saved prompts: use one, or save this one">📚 Catalog</button>
                   <button type="button" class="link" id="btn-template">Insert template</button>
                   <button type="button" class="link" id="btn-tips">Tips</button>
                 </span>
               </div>
+              <div class="prompt-bar" id="prompt-bar" role="toolbar" aria-label="Insert into the prompt"></div>
               <textarea id="prompt" rows="9" placeholder="Describe the shots, camera moves, and the sound…"></textarea>
-              <div class="prompt-tags" id="prompt-tags"></div>
               <div class="prompt-live" id="prompt-live" hidden></div>
               <div class="tips" id="tips" hidden></div>
               <div class="writer-status" id="writer-status" hidden></div>
@@ -355,19 +363,9 @@
           <div class="gallery" id="gallery"></div>
         </div>
         <div class="vsplit" id="bin-split" role="separator" aria-orientation="vertical" aria-label="Resize the gallery and viewer (double-click to reset)" tabindex="0"></div>
-        <div class="writer-pane" id="writer-pane" hidden aria-label="Prompt Writer">
-          <div class="wp-head">
-            <b>✍ Prompt Writer</b><span class="grow"></span>
-            <button type="button" class="btn sm ghost" id="wp-pop" title="Open the writer in its own window instead">↗ Pop out</button>
-            <button type="button" class="btn sm ghost" id="wp-close" title="Hide the writer (Alt+W)" aria-label="Hide the writer">✕</button>
-          </div>
-          <iframe id="writer-frame" title="Prompt Writer"></iframe>
-        </div>
-        <div class="vsplit" id="writer-split" hidden role="separator" aria-orientation="vertical" aria-label="Resize the writer (double-click to reset)" tabindex="0"></div>
         <div class="monitor" id="monitor">
           <div class="mon-head">
             <button type="button" class="btn sm ghost mon-gal" id="btn-gallery" aria-pressed="true" title="Show or hide the results gallery (Alt+G)">🗂 Gallery</button>
-            <button type="button" class="btn sm ghost mon-gal" id="btn-writer-pane" aria-pressed="false" title="Show or hide the Prompt Writer: your idea and the live H3 prompt side by side (Alt+W)">✍ Writer</button>
             <div class="seg sm" id="mon-seg" role="tablist" aria-label="Viewer shows">
               <button type="button" data-m="result" class="active" title="The selected result">Result</button>
               <button type="button" data-m="timeline" title="Timeline playback">Timeline</button>

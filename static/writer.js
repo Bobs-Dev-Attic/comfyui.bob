@@ -173,6 +173,20 @@ function renderPreview() {
     ? issues.map(i => `<li ${i.key ? `data-key="${i.key}"` : ""}>${esc(i.msg)}</li>`).join("")
     : (text.trim() ? `<li class="ok">Ready for H3</li>` : "");
   saveDraft();
+  // Only a complete shot list (no empty fields) replaces the studio's prompt.
+  if (INLINE && touched && !segs.some(x => x.hole)) autoSend(text);
+}
+
+/* In the Prompt tab (?inline=1) there's no "Use in studio": once you change something here, the shot list
+   goes into the studio's prompt as you work. */
+const INLINE = new URLSearchParams(location.search).has("inline");
+let touched = false, sendTimer = 0;
+function autoSend(text) {
+  clearTimeout(sendTimer);
+  sendTimer = setTimeout(() => {
+    if (!state.linked || !text.trim()) return;
+    channel.postMessage({ type: "use", quiet: true, prompt: text, seconds: mode() === "still" ? undefined : state.seconds });
+  }, 250);
 }
 
 function currentText() { const m = mode(); return m ? H.toText(H.assemble(data(), m, nShots(), frames())) : ""; }
@@ -350,6 +364,11 @@ function useInStudio() {
 function init() {
   // In the studio's Writer pane (an iframe): drop the page's own title bar brand.
   if (new URLSearchParams(location.search).has("embed") || window.self !== window.top) document.body.classList.add("embedded");
+  if (INLINE) {
+    document.body.classList.add("inline");
+    for (const ev of ["input", "change"]) document.addEventListener(ev, () => { touched = true; }, true);
+    document.addEventListener("click", e => { if (e.target.closest("button")) touched = true; }, true);
+  }
   loadDraft();
   $("#w-idea").value = state.idea;
   $("#w-auto").checked = state.auto;

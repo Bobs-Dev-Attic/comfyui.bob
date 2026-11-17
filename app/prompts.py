@@ -211,7 +211,7 @@ PROFILES: dict[str, tuple[str, str]] = {
                 "Line 1: the style in one line.\nThen a blank line.\nThen one paragraph: framing, setting and light, subject and pose. "
                 "Refer to things from the reference pictures by their tags (e.g. the woman from <Picture 1>). " + NO_NEG),
     "h3video": ("MiniMax H3, a video model that renders picture and sound from a shot list",
-                "Format:\nLine 1: the style (medium, look, palette, lens, mood).\nA blank line.\nOne line per shot: "
+                "Format:\nLine 1: the style (medium, look, palette, lens, mood).\nA blank line.\nOne line per shot, each starting with its tag [Shot 1], [Shot 2]…: "
                 "\"[Shot 1] <framing>. <setting and light>. <action in present tense>. The camera <one move>.\" "
                 "Later shots begin with the start time, e.g. \"[Shot 2] At 00:04.000, close-up. …\". Spoken words go after "
                 "\"They say:\" as <d>[English] the words</d>.\nA blank line.\noverall_soundscape: <ambience and effects in order>\n"
@@ -230,13 +230,23 @@ PROFILES: dict[str, tuple[str, str]] = {
 }
 
 
-def system_prompt(profile: str, seconds: float, text: str = "", keep: list[str] | None = None) -> str:
+def system_prompt(profile: str, seconds: float, text: str = "", keep: list[str] | None = None,
+                  refs: int | None = None, arefs: int = 0) -> str:
     name, rules = PROFILES[profile]
     out = COMMON.format(name=name)
     tags = list(dict.fromkeys(m.group(0) for m in REF_TAG.finditer(text)))
     if tags:
         shown = ", ".join("<d>…</d>" if t == "<d>" else t for t in tags)
         out += f"\nCopy these tags exactly, each where it belongs: {shown}."
+    if refs is not None and profile in ("h3ref", "h3image"):
+        if refs:
+            tags = ", ".join(f"<Picture {i}>" for i in range(1, refs + 1))
+            out += f"\nThere are {refs} reference picture(s), tagged {tags}. Use only these tags."
+        else:
+            out += "\nNo reference pictures are added yet: write no <Picture N> tags."
+    if arefs and profile == "h3ref":
+        tags = ", ".join(f"<Audio {i}>" for i in range(1, arefs + 1))
+        out += f"\nVoice references {tags}: keep them with the person who speaks with that voice."
     if keep:
         out += "\nUse each of these words exactly as written, unchanged and once: " + "; ".join(f'"{k[:80]}"' for k in keep[:30]) + "."
     return out + "\n\n" + rules.replace("{seconds}", f"{seconds:g}")
@@ -318,14 +328,19 @@ def _tidy(text: str) -> str:
 
 
 async def rewrite(text: str, profile: str, seconds: float, backend: str | None, url: str | None,
-                  model: str | None, keep: list[str] | None = None) -> AsyncIterator[str]:
+                  model: str | None, keep: list[str] | None = None, problems: list[str] | None = None,
+                  refs: int | None = None, arefs: int = 0) -> AsyncIterator[str]:
     """Stream the rewritten prompt in pieces."""
     if profile not in PROFILES:
         raise llm.LLMError(f"No live rewrite for {profile!r}")
     b = _backend(backend, url)
     name = await _model(b, model, profile)
-    messages = [{"role": "system", "content": system_prompt(profile, seconds, text, keep)},
-                {"role": "user", "content": f"Prompt to rewrite:\n{text.strip()}"}]
+    ask = f"Prompt to rewrite:\n{text.strip()}"
+    if problems:
+        ask += ("\n\nThe prompt has these problems. Fixing them comes first, even where it means changing the user's "
+                "wording; keep everything else:\n" + "\n".join(f"- {p[:400]}" for p in problems[:20]))
+    messages = [{"role": "system", "content": system_prompt(profile, seconds, text, keep, refs, arefs)},
+                {"role": "user", "content": ask}]
     if b.name == "ollama":
         body: dict[str, Any] = {"model": name, "messages": messages, "stream": True, "keep_alive": KEEP,
                                 "options": {"temperature": 0.3, "num_ctx": 4096, "num_predict": 700, "repeat_penalty": 1.1}}
@@ -367,13 +382,14 @@ async def rewrite(text: str, profile: str, seconds: float, backend: str | None, 
 
 
 async def rewrite_stream(text: str, profile: str, seconds: float, backend: str | None, url: str | None,
-                         model: str | None, keep: list[str] | None = None) -> AsyncIterator[bytes]:
+                         model: str | None, keep: list[str] | None = None, problems: list[str] | None = None,
+                         refs: int | None = None, arefs: int = 0) -> AsyncIterator[bytes]:
     """rewrite() as NDJSON lines for the browser: {"t": piece} ... {"done": true, "text": tidy} or {"error"}."""
     out: list[str] = []
     try:
         model = await _model(_backend(backend, url), model, profile)
         yield (json.dumps({"model": model}) + "\n").encode()
-        async for piece in rewrite(text, profile, seconds, backend, url, model, keep):
+        async for piece in rewrite(text, profile, seconds, backend, url, model, keep, problems, refs, arefs):
             out.append(piece)
             yield (json.dumps({"t": piece}) + "\n").encode()
         yield (json.dumps({"done": True, "text": _tidy("".join(out))}) + "\n").encode()

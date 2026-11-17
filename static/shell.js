@@ -135,7 +135,7 @@ const STEPS = {
   inputs: { title: "Inputs", sub: "" },
   shots: { title: "Shots", sub: "Plan the video shot by shot: each with its length, framing, action, camera, line and inputs." },
   loras: { title: "LoRAs", sub: "Add LoRAs to the model: styles, characters, motions." },
-  prompt: { title: "Prompt", sub: "Describe what you want. The Prompt Writer can turn a short idea into a full shot list." },
+  prompt: { title: "Prompt", sub: "Describe what you want. For H3, the Shot writer builds a full shot list from a short idea." },
   settings: { title: "Settings", sub: "Size, length, speed and variations." },
   generate: { title: "Generate", sub: "Check your choices, then make it." },
 };

@@ -107,3 +107,10 @@ body.embedded .topbar { padding: 8px 12px; min-height: 0; }
 body.embedded .topbar .brand { display: none; }
 body.embedded .topbar .status { justify-content: flex-start; width: 100%; }
 body.embedded .w-output { top: 8px; max-height: calc(100vh - 16px); }
+/* In the Prompt tab: one column, no "Use in studio" (the prompt follows along). */
+body.inline #w-use, body.inline #w-use2 { display: none; }
+body.inline .w-layout { grid-template-columns: 1fr; padding: 8px 4px; gap: 10px; }
+body.inline .w-output { position: static; max-height: none; }
+body.inline .w-input, body.inline .w-output { padding: 12px; }
+body.inline .w-controls { grid-template-columns: 1fr 1fr; }
+body.inline .f { grid-template-columns: 70px 1fr 26px; }

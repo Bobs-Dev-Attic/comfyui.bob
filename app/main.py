@@ -445,6 +445,9 @@ class RewriteRequest(LiveLLM):
     profile: str = Field(..., max_length=20)
     seconds: float = Field(5.0, ge=0.5, le=600)
     keep: list[str] = Field(default_factory=list, max_length=30)  # words the rewrite must keep (stand-ins for template parts)
+    problems: list[str] = Field(default_factory=list, max_length=20)  # what the live model view flagged: the rewrite fixes them
+    refs: int | None = Field(None, ge=0, le=9)  # reference pictures added (H3 Reference / H3 Image)
+    arefs: int = Field(0, ge=0, le=9)  # voice references (H3 Reference)
 
 
 @app.post("/api/prompt/warm")
@@ -463,7 +466,8 @@ async def prompt_rewrite(req: RewriteRequest):
         raise HTTPException(409, "Live rewrite pauses while a render runs, so the LLM doesn't take its VRAM")
     if req.profile not in prompts.PROFILES:
         raise HTTPException(400, f"No live rewrite for {req.profile}")
-    return StreamingResponse(prompts.rewrite_stream(req.text, req.profile, req.seconds, req.backend, req.url, req.model, req.keep),
+    return StreamingResponse(prompts.rewrite_stream(req.text, req.profile, req.seconds, req.backend, req.url, req.model, req.keep,
+                                                     req.problems, req.refs, req.arefs),
                              media_type="application/x-ndjson", headers={"Cache-Control": "no-store"})
 
 

@@ -119,8 +119,26 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .link.danger-link { color: var(--bad); }
 
 /* Prompt step: tags row, live model view, catalog, presets */
-.prompt-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; }
-.pt-label { color: var(--muted); font-weight: 600; }
+.prompt-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 4px 0 6px; font-size: 12px; }
+.pb-group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.pb-group + .pb-group { padding-left: 10px; border-left: 1px solid var(--line); }
+.pb-ref { position: relative; width: 34px; height: 34px; padding: 0; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: var(--panel-2); cursor: pointer; }
+.pb-ref img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pb-ref span { position: absolute; right: 1px; bottom: 1px; font-size: 10px; font-weight: 700; line-height: 1; padding: 1px 3px; border-radius: 4px; background: rgba(0,0,0,.72); color: #fff; }
+.pb-ref:hover, .pb-ref:focus-visible { border-color: var(--accent); }
+.pb-chip { border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2); color: var(--text); font: inherit; padding: 2px 8px; cursor: pointer; }
+.pb-chip:hover { border-color: var(--accent); }
+.pb-hint { color: var(--faint); }
+.ps-item { display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-bottom: 1px solid var(--line); }
+.ps-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ps-text small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-fixing { margin: 0 0 4px; color: var(--muted); font-size: 12px; }
+.prompt-mode { margin-bottom: 10px; }
+.step.writer-mode .prompt-field > :not(.writer-status):not(.writer) { display: none; }
+.prompt-writer { margin-bottom: 10px; }
+.prompt-writer[hidden] { display: none; }
+.pw-head { display: flex; align-items: center; gap: 8px; justify-content: space-between; margin-bottom: 6px; font-size: 12px; }
+#prompt-writer-frame { display: block; width: 100%; height: max(520px, calc(100vh - 300px)); border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
 .pt-chip { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: var(--panel-2); }
 .pt-chip button { border: 0; background: none; color: var(--text); font: inherit; padding: 2px 8px; cursor: pointer; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pt-chip .pt-ins { color: var(--accent); font-family: ui-monospace, monospace; border-right: 1px solid var(--line); }

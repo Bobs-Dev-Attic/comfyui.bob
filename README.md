@@ -173,10 +173,18 @@ Other features:
 - **✨ Live rewrite:** after a short pause in typing, a local LLM rewrites the prompt in the selected model's own format
   (a natural-language paragraph for FLUX and Krea, a style line plus `[Shot N]` lines and sound for H3, a style
   caption for Music 3) and streams it in under the prompt; **Tab** accepts it (Ctrl+Z undoes), **Esc** dismisses it.
-  Template parts survive the rewrite. The live rewrite has its own LLM choice next to its switch: **Auto** uses a small
+  Template parts survive the rewrite. The rewrite also fixes what the live model view flagged (negations, missing
+  `<Picture N>` references, camera move, sound lines, shot timing…), with a second pass for anything left, and says how
+  many it fixed. Tidy tags untagged H3 shot lines `[Shot N]` and puts quoted speech in `<d>[English] …</d>`. The live rewrite has its own LLM choice next to its switch: **Auto** uses a small
   fast model (`qwen3:4b-instruct`, else `llama3.2:3b`, `gemma3:4b`…) for image and music prompts and the Prompt writer's
   default for H3 shot lists. It loads while you type and is unloaded when a render starts; live rewrites pause while
   one runs.
+- **Prompt toolbar** (over the prompt): reference pictures as thumbnails (H3 Reference, H3 Image) and voices (🔊, H3
+  Reference) insert `<Picture N>` / `<Audio N>` at the cursor; this prompt's tags; **🏷 Presets**; and **📚 Insert
+  saved…**, which inserts a catalog prompt's text at the cursor and adds its tags.
+- **✍ Shot writer** (H3 models; the Prompt tab's switch, Alt+W): the Prompt Writer now lives in the Prompt tab. Build
+  the shot list field by field or let the LLM fill what you leave open; once it's complete it fills the prompt as you
+  go (Undo brings your text back). **↗ Pop out** opens it in its own window. The Writer pane beside the viewer is gone.
 - **Prompt tags and templates:** **+ Tag** adds a named value to the prompt, used as `<name>` or `{{name}}`; several
   values give one at random each Generate (the same one everywhere in the prompt). `{a|b}`, `{3::a|b}`, `<maybe p="0.3">…</maybe>`
   and `<list count="2">a, b, c</list>` roll too. **🏷 Presets** inserts ready-made words (hair, outfits, lighting,
