@@ -331,9 +331,23 @@ def _tidy(text: str) -> str:
     return text.strip().strip('"').strip()
 
 
+def creativity_note(pct: int | None) -> str:
+    """The Prompt tab's Creativity (0-100) as an instruction; None = the plain rewrite (keep, add nothing)."""
+    if pct is None:
+        return ""
+    pct = max(0, min(100, int(pct)))
+    return (f"\n\nCREATIVITY {pct}%: {llm.creativity_rule(pct)} Where this asks for more than the rules above allow, "
+            "it wins, but keep the user's named subjects, quoted spoken lines and reference tags.")
+
+
+def rewrite_temperature(pct: int | None) -> float:
+    """0.3 for the plain rewrite; with Creativity, 0% -> 0.2 up to 100% -> 1.1."""
+    return 0.3 if pct is None else round(0.2 + 0.9 * max(0, min(100, int(pct))) / 100, 2)
+
+
 async def rewrite(text: str, profile: str, seconds: float, backend: str | None, url: str | None,
                   model: str | None, keep: list[str] | None = None, problems: list[str] | None = None,
-                  refs: int | None = None, arefs: int = 0) -> AsyncIterator[str]:
+                  refs: int | None = None, arefs: int = 0, creativity: int | None = None) -> AsyncIterator[str]:
     """Stream the rewritten prompt in pieces."""
     if profile not in PROFILES:
         raise llm.LLMError(f"No live rewrite for {profile!r}")
@@ -343,11 +357,12 @@ async def rewrite(text: str, profile: str, seconds: float, backend: str | None, 
     if problems:
         ask += ("\n\nThe prompt has these problems. Fixing them comes first, even where it means changing the user's "
                 "wording; keep everything else:\n" + "\n".join(f"- {p[:400]}" for p in problems[:20]))
-    messages = [{"role": "system", "content": system_prompt(profile, seconds, text, keep, refs, arefs)},
+    messages = [{"role": "system", "content": system_prompt(profile, seconds, text, keep, refs, arefs) + creativity_note(creativity)},
                 {"role": "user", "content": ask}]
     if b.name == "ollama":
         body: dict[str, Any] = {"model": name, "messages": messages, "stream": True, "keep_alive": KEEP,
-                                "options": {"temperature": 0.3, "num_ctx": 4096, "num_predict": 700, "repeat_penalty": 1.1}}
+                                "options": {"temperature": rewrite_temperature(creativity), "num_ctx": 4096, "num_predict": 700,
+                                            "repeat_penalty": 1.1}}
         try:
             if "thinking" in await b._capabilities(name):  # type: ignore[attr-defined]
                 body["think"] = False
@@ -365,7 +380,7 @@ async def rewrite(text: str, profile: str, seconds: float, backend: str | None, 
                     if piece:
                         yield piece
         return
-    body = {"model": name, "messages": messages, "stream": True, "temperature": 0.3, "max_tokens": 700,
+    body = {"model": name, "messages": messages, "stream": True, "temperature": rewrite_temperature(creativity), "max_tokens": 700,
             "chat_template_kwargs": {"enable_thinking": False}}
     async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=5), headers=b._headers()) as c:
         async with c.stream("POST", f"{b.url}/v1/chat/completions", json=body) as r:
@@ -387,13 +402,13 @@ async def rewrite(text: str, profile: str, seconds: float, backend: str | None, 
 
 async def rewrite_stream(text: str, profile: str, seconds: float, backend: str | None, url: str | None,
                          model: str | None, keep: list[str] | None = None, problems: list[str] | None = None,
-                         refs: int | None = None, arefs: int = 0) -> AsyncIterator[bytes]:
+                         refs: int | None = None, arefs: int = 0, creativity: int | None = None) -> AsyncIterator[bytes]:
     """rewrite() as NDJSON lines for the browser: {"t": piece} ... {"done": true, "text": tidy} or {"error"}."""
     out: list[str] = []
     try:
         model = await _model(_backend(backend, url), model, profile)
         yield (json.dumps({"model": model}) + "\n").encode()
-        async for piece in rewrite(text, profile, seconds, backend, url, model, keep, problems, refs, arefs):
+        async for piece in rewrite(text, profile, seconds, backend, url, model, keep, problems, refs, arefs, creativity):
             out.append(piece)
             yield (json.dumps({"t": piece}) + "\n").encode()
         yield (json.dumps({"done": True, "text": _tidy("".join(out))}) + "\n").encode()

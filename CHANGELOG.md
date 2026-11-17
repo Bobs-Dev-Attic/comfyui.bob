@@ -5,6 +5,18 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.47.0] - 2026-11-17
+
+### Added
+- **✨ Rewrite and Creativity in the Prompt tab's model panel** (the box under the prompt, e.g. “H3 Reference”, and the
+  same for every model with a rewrite). Rewrite reshapes the prompt for the model right away, even with Live off; Tab
+  or Accept takes it, Ctrl+Z brings yours back. Creativity (0–100%, Literal to Wild) sets how far the rewrite may go
+  beyond what you wrote; it also applies to the live rewrite and to ✨ Write for me, and is remembered.
+
+### Changed
+- The live rewrite toggle is now labelled **Live**. It follows the Creativity setting (25%, Faithful, by default:
+  close to how it rewrote before).
+
 ## [0.46.0] - 2026-11-17
 
 ### Added

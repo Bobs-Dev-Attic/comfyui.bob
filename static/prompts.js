@@ -10,7 +10,10 @@
      in as a suggestion. Tab accepts it, Esc dismisses it. Template parts are swapped for a value they
      can give and put back after, so the rewrite keeps them. The LLM is loaded while you type and unloaded when a render starts. */
 const Prompts = (() => {
-  const LIVE_KEY = "bob.prompt.live", TIDY_KEY = "bob.prompt.tidy", MODEL_KEY = "bob.prompt.liveModel";
+  const LIVE_KEY = "bob.prompt.live", TIDY_KEY = "bob.prompt.tidy", MODEL_KEY = "bob.prompt.liveModel", CREAT_KEY = "bob.prompt.creativity";
+  // Creativity (0-100): how far a rewrite, and ✨ Write for me, may go beyond the prompt as written.
+  const CREAT_NAMES = [[15, "Literal"], [40, "Faithful"], [65, "Enhanced"], [85, "Bold"], [100, "Wild"]];
+  const creatName = p => CREAT_NAMES.find(([top]) => p <= top)[1];
   const lsStr = k => { try { return localStorage.getItem(k) || ""; } catch { return ""; } };
   const ls = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : v === "1"; } catch { return d; } };
   const lsSet = (k, v) => { try { localStorage.setItem(k, v ? "1" : "0"); } catch {} };
@@ -18,6 +21,7 @@ const Prompts = (() => {
     entries: [], presets: {}, nodeLib: false, loaded: false,
     live: ls(LIVE_KEY, true), tidy: ls(TIDY_KEY, true),
     liveModel: lsStr(MODEL_KEY),  // "" = the fastest installed (the server picks)
+    creativity: (v => Number.isFinite(v) && lsStr(CREAT_KEY) !== "" ? Math.max(0, Math.min(100, v)) : 25)(parseInt(lsStr(CREAT_KEY), 10)),
     previewSeed: Math.floor(Math.random() * 1e9),
     timer: 0, ctrl: null, sug: null,  // sug: {for, text, done, error, markers, missing}
     lastAsked: "", warmAt: 0, paused: false, entryId: null,
@@ -330,7 +334,8 @@ const Prompts = (() => {
         <span class="pl-count">${words(text)} words${(prof === "h3video" || prof === "h3ref") && words(text) >= 3 ? ` · ⏱ needs ~${fmtSec(neededSeconds(text))} of ${fmtSec(clipSeconds())}` : ""}</span>
         <span class="pl-gap"></span>
         <label class="pl-tg" title="Tidy the prompt for the model: weights and filler out, dialogue tagged. Generate sends the tidied text."><input type="checkbox" data-pl="tidy"${S.tidy ? " checked" : ""}> Tidy</label>
-        <label class="pl-tg" title="${canLive ? "A local LLM rewrites the prompt in this model's format after you pause typing (Tab accepts)" : "No live rewrite for this model"}"><input type="checkbox" data-pl="live"${S.live && canLive ? " checked" : ""}${canLive ? "" : " disabled"}> ✨ Live rewrite</label>
+        <label class="pl-tg" title="${canLive ? "A local LLM rewrites the prompt in this model's format after you pause typing (Tab accepts)" : "No live rewrite for this model"}"><input type="checkbox" data-pl="live"${S.live && canLive ? " checked" : ""}${canLive ? "" : " disabled"}> Live</label>
+        ${canLive ? `<button type="button" class="btn sm pl-rw" data-pl="rewrite" title="Rewrite the prompt for ${esc(modelLabel(modelKey()))} now, at the creativity below (Tab accepts)"${sug && !sug.done ? " disabled" : ""}>✨ Rewrite</button>` : ""}
         ${S.live && canLive ? (() => {
           const names = (typeof writer !== "undefined" && writer.models || []).map(m => m.name);
           if (S.liveModel && !names.includes(S.liveModel)) names.unshift(S.liveModel);
@@ -338,6 +343,10 @@ const Prompts = (() => {
             <option value="">Auto (fastest)${S.usedModel && !S.liveModel ? ` · ${esc(S.usedModel)}` : ""}</option>${names.map(n => `<option value="${esc(n)}"${n === S.liveModel ? " selected" : ""}>${esc(n)}</option>`).join("")}</select>`;
         })() : ""}
       </div>
+      ${canLive ? `<div class="pl-creat" title="How far the rewrite (and ✨ Write for me) may go beyond your prompt: Literal keeps it as written, Wild reinterprets it">
+          <label for="pl-creat">Creativity</label>
+          <input type="range" id="pl-creat" data-pl="creat" min="0" max="100" step="5" value="${S.creativity}" aria-valuetext="${S.creativity}% ${creatName(S.creativity)}">
+          <span class="pl-creat-val">${S.creativity}% · ${creatName(S.creativity)}</span></div>` : ""}
       ${notes.length ? `<ul class="pl-notes">${notes.map(([t, k, , dur]) => `<li class="pl-${k}">${k === "fix" ? "✓" : k === "warn" ? "⚠" : "💡"} ${esc(t)}${dur ? ` <button type="button" class="link" data-pl="dur" data-s="${dur}" title="Set Duration (Settings) to ${dur} s">Use ${dur} s</button>` : ""}</li>`).join("")}</ul>` : ""}
       ${sug ? `<div class="pl-sug${sug.done ? "" : " busy"}${sug.error ? " err" : ""}" aria-live="polite">
           <div class="pl-sug-head">${sug.error ? "⚠ Live rewrite" : sug.done ? `✨ ${esc(modelLabel(sug.model))} version` : `✨ Rewriting for ${esc(modelLabel(sug.model))}…`}
@@ -380,9 +389,9 @@ const Prompts = (() => {
   }
 
   /* from/prev: a second pass that rewrites the first suggestion again, to fix what it left flagged. */
-  async function ask(force = false, from = null, prev = null) {
+  async function ask(force = false, from = null, prev = null, manual = false) {
     const raw = ta().value, prof = profile();
-    if (!prof || !S.live) return;
+    if (!prof || (!S.live && !manual && !prev?.manual)) return;
     if (!from && (words(raw) < 3 || (!force && raw === S.lastAsked))) return;
     S.lastAsked = raw;
     S.ctrl?.abort();
@@ -391,14 +400,15 @@ const Prompts = (() => {
     // What the live model view flags (not what Tidy already put right) goes along, so the rewrite fixes it.
     const flagged = (from ? shape(resolve(from), prof) : shape(resolve(raw), prof)).notes.filter(([, k, fix]) => k !== "fix" && fix !== null);
     const problems = flagged.map(([t, , fix]) => fix || t);
-    const sug = S.sug = { for: raw, text: "", done: false, model: modelKey(), markers, problems,
+    const sug = S.sug = { for: raw, text: "", done: false, model: modelKey(), markers, problems, manual: manual || !!prev?.manual,
       total: prev?.total ?? problems.length, round: prev ? prev.round + 1 : 1 };
     renderLive();
     try {
       const res = await fetch("/api/prompt/rewrite", {
         method: "POST", headers: { "Content-Type": "application/json" }, signal: ctrl.signal,
         body: JSON.stringify({ text, keep: [...markers.map(m => m.value), ...spokenLines(from ?? raw)], problems, profile: prof, seconds: +$("#seconds").value || 5,
-          refs: ["h3ref", "h3image"].includes(prof) ? state.refs?.length || 0 : null, arefs: prof === "h3ref" ? state.arefs?.length || 0 : 0, ...llmOpts() }),
+          refs: ["h3ref", "h3image"].includes(prof) ? state.refs?.length || 0 : null, arefs: prof === "h3ref" ? state.arefs?.length || 0 : 0,
+          creativity: S.creativity, ...llmOpts() }),
       });
       if (res.status === 409) { S.paused = true; S.sug = null; renderLive(); return; }
       S.paused = false;
@@ -725,13 +735,25 @@ const Prompts = (() => {
       const a = e.target.closest("[data-pl]")?.dataset.pl;
       if (a === "accept") accept();
       if (a === "dismiss") dismiss();
-      if (a === "again") { S.lastAsked = ""; ask(true); }
+      if (a === "again") { S.lastAsked = ""; ask(true, null, null, true); }
+      if (a === "rewrite") {
+        if (words(ta().value) < 3) { Media.toast("Write a few words first."); return; }
+        clearTimeout(S.timer); S.lastAsked = ""; ask(true, null, null, true);
+      }
       if (a === "reroll") { e.preventDefault(); S.previewSeed = Math.floor(Math.random() * 1e9); renderLive(); }
       if (a === "dur") {
         const sec = $("#seconds"); sec.value = e.target.closest("[data-s]").dataset.s;
         sec.dispatchEvent(new Event("input", { bubbles: true }));
         Media.toast(`Duration set to ${sec.value} s.`);
       }
+    });
+    // Creativity: the label follows the slider; the value is kept for the next rewrite (and ✨ Write for me).
+    $("#prompt-live").addEventListener("input", e => {
+      if (e.target.dataset.pl !== "creat") return;
+      S.creativity = +e.target.value;
+      const v = $("#prompt-live .pl-creat-val"); if (v) v.textContent = `${S.creativity}% · ${creatName(S.creativity)}`;
+      e.target.setAttribute("aria-valuetext", `${S.creativity}% ${creatName(S.creativity)}`);
+      try { localStorage.setItem(CREAT_KEY, String(S.creativity)); } catch {}
     });
     $("#prompt-live").addEventListener("change", e => {
       const a = e.target.dataset.pl;
@@ -834,6 +856,6 @@ const Prompts = (() => {
     renderTags(); renderLive();
   }
 
-  return { init, refresh, resolve, shape, final, hasSyntax, catalog, presetsWin, accept, dismiss, profile,
+  return { creativity: () => S.creativity, init, refresh, resolve, shape, final, hasSyntax, catalog, presetsWin, accept, dismiss, profile,
     renderBar: () => renderTags(), setMode, toggleWriter, writerAvailable, readyToGenerate, _S: S };
 })();

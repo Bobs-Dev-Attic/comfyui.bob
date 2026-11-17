@@ -464,6 +464,7 @@ class RewriteRequest(LiveLLM):
     problems: list[str] = Field(default_factory=list, max_length=20)  # what the live model view flagged: the rewrite fixes them
     refs: int | None = Field(None, ge=0, le=9)  # reference pictures added (H3 Reference / H3 Image)
     arefs: int = Field(0, ge=0, le=9)  # voice references (H3 Reference)
+    creativity: int | None = Field(None, ge=0, le=100)  # the Prompt tab's Creativity; None = keep the idea as written
 
 
 @app.post("/api/prompt/warm")
@@ -483,7 +484,7 @@ async def prompt_rewrite(req: RewriteRequest):
     if req.profile not in prompts.PROFILES:
         raise HTTPException(400, f"No live rewrite for {req.profile}")
     return StreamingResponse(prompts.rewrite_stream(req.text, req.profile, req.seconds, req.backend, req.url, req.model, req.keep,
-                                                     req.problems, req.refs, req.arefs),
+                                                     req.problems, req.refs, req.arefs, req.creativity),
                              media_type="application/x-ndjson", headers={"Cache-Control": "no-store"})
 
 

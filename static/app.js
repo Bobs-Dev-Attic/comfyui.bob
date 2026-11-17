@@ -745,6 +745,7 @@ async function writePrompt() {
     last_frame: kind === "video" && eng === "h3" ? state.frames.last_frame?.ref ?? null : null,
     references: eng === "h3ref" || eng === "h3image" ? state.refs.map(r => r.ref) : [],
     backend: $("#llm-backend").value, url: $("#llm-url").value.trim(), model: $("#llm-model").value,
+    creativity: Prompts.creativity(),
   };
   writer.busy = true;
   $("#btn-write").disabled = true;
@@ -755,7 +756,7 @@ async function writePrompt() {
     writer.undo = idea;
     $("#prompt").value = r.prompt;
     Prompts.refresh();
-    const notes = [`Written by ${esc(r.model)} in ${r.seconds}s`];
+    const notes = [`Written by ${esc(r.model)} at ${r.creativity ?? body.creativity}% creativity in ${r.seconds}s`];
     if (pics) notes.push(r.vision ? `saw ${pics} picture${pics > 1 ? "s" : ""}` : `<span class="warn">this model can't see pictures</span>`);
     if (r.warnings?.length) notes.push(`<span class="warn" title="${esc(r.warnings.join("\n"))}">${r.warnings.length} rule${r.warnings.length > 1 ? "s" : ""} not met: check it</span>`);
     writerStatus(notes.join(" · ") + ` <button type="button" class="link" id="btn-undo-write">Undo</button>`);
