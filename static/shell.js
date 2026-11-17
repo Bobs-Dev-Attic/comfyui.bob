@@ -241,7 +241,10 @@ function renderSummary() {
     inputs !== null ? row("Inputs", esc(inputs || "add at least one picture"), "inputs", !inputs) : "",
     kind === "video" ? (() => {
       const d = Shots.describe();
-      return row("Shots", `${esc(d.text)}${d.empty ? ` · ⚠ ${d.empty} empty` : ""}${d.first ? `<div class="pv">${esc(d.first.length > 300 ? d.first.slice(0, 300) + "…" : d.first)}</div>` : ""}`, "shots", d.empty > 0);
+      // The prompt exactly as Generate sends it (subjects still to be defined are written in when you press Generate).
+      return row("Shots", `${esc(d.text)}${d.empty ? ` · ⚠ ${d.empty} empty` : ""}`
+        + (d.missing ? `<div class="hint">${d.missing} subject definition${d.missing === 1 ? " is" : "s are"} written by the vision model when you press Generate.</div>` : "")
+        + (d.prompt ? `<pre class="pv-prompt">${esc(d.prompt)}</pre>` : ""), "shots", d.empty > 0);
     })()
     : row("Prompt", prompt ? `<div class="pv">${esc(prompt.length > 400 ? prompt.slice(0, 400) + "…" : prompt)}</div>` : "empty", "prompt", !prompt),
     state.loras.length ? (() => {

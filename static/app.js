@@ -411,6 +411,18 @@ function initDrops() {
 /* ------------------------------------------------------------------ references */
 const MAX_REFS = 9;
 
+/* A short label for a prompt (titles, tiles, notifications): H3 prompts now open with section names
+   (subject_definitions:, integrated_multimodal_description:), so take the text from [Shot 1] on, without the labels
+   and the dialogue tags. */
+function promptLabel(p) {
+  let t = String(p || "");
+  // The [Shot 1] that opens a shot (line start, or after "integrated_multimodal_description: "), not one cited in
+  // retention_analysis; up to the next section.
+  const m = /(?:^|\n|:[ \t]+)\[Shot 1\][ \t]*([\s\S]*)/.exec(t);
+  if (m) t = m[1].split(/\n\s*\n/)[0];
+  return t.replace(/^(?:[a-z_]+:\s*)+/, "").replace(/<\/?d>|\[English\]\s*/g, "").replace(/\s+/g, " ").trim();
+}
+
 function renderRefs() {
   const box = $("#refs");
   if (!box) return;
@@ -808,7 +820,7 @@ function renderQueue() {
     const step = p?.steps ? ` · step ${p.step}/${p.steps}` : "";
     const label = it.status === "running" ? `${pct}%${step}` : it.status;
     return `<div class="q-item" data-id="${it.id}">
-      <span class="q-title"><b>${esc(engineName(it.kind, it.engine))}</b> · ${esc(label)} — ${esc((it.params.prompt || "").slice(0, 60))}</span>
+      <span class="q-title"><b>${esc(engineName(it.kind, it.engine))}</b> · ${esc(label)} — ${esc(promptLabel(it.params.prompt).slice(0, 60))}</span>
       <button class="btn ghost sm" data-log="${it.id}" title="Log, progress and time left">Log</button>
       <button class="btn ghost sm danger" data-cancel="${it.id}">Cancel</button>
       <div class="bar ${it.status === "running" && !pct ? "indeterminate" : ""}"><i style="width:${pct}%"></i></div></div>`;

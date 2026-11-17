@@ -60,7 +60,7 @@ const Bin = (() => {
       <div class="thumb">${thumbHTML(it)}${secs ? `<span class="b-dur">${secs}</span>` : ""}${onTl ? `<span class="b-ontl" title="On the timeline ${onTl}×">⧉${onTl > 1 ? onTl : ""}</span>` : ""}</div>
       ${it.status === "done" ? `<div class="b-row"><span class="b-stars">${stars(m.rating)}</span><span class="badge ${it.kind}">${it.engine === "timeline" ? "edit" : it.kind}</span></div>
         ${m.tags.length ? `<div class="b-tags">${m.tags.slice(0, 4).map(t => `<i style="--c:${Media.tagColor(t)}">${esc(t)}</i>`).join("")}${m.tags.length > 4 ? `<i>+${m.tags.length - 4}</i>` : ""}</div>` : ""}` : ""}
-      <div class="t-prompt">${esc((it.params?.prompt || "").replace(/\s+/g, " ").slice(0, 90))}</div>
+      <div class="t-prompt">${esc(promptLabel(it.params?.prompt).slice(0, 90))}</div>
       <div class="bar"><i style="width:${Math.round((p?.value ?? it.progress ?? 0) * 100)}%"></i></div></div>`;
   }
 
@@ -122,7 +122,7 @@ const Bin = (() => {
   function toTimeline(it) {
     const f0 = it.files?.[0];
     if (it.status !== "done" || !f0) return;
-    return TL.add({ ref: f0.path, kind: it.kind, name: (it.params?.prompt || f0.name).slice(0, 40), job: it.id });
+    return TL.add({ ref: f0.path, kind: it.kind, name: (promptLabel(it.params?.prompt) || f0.name).slice(0, 40), job: it.id });
   }
 
   function menu(x, y, it) {
@@ -215,7 +215,7 @@ const Bin = (() => {
       e.dataTransfer.setData("text/x-bob-url", f0.url);
       e.dataTransfer.setData("text/x-bob-kind", it.kind);
       e.dataTransfer.setData("text/x-bob-job", it.id);
-      e.dataTransfer.setData("text/x-bob-name", (it.params?.prompt || f0.name).slice(0, 40));
+      e.dataTransfer.setData("text/x-bob-name", (promptLabel(it.params?.prompt) || f0.name).slice(0, 40));
       e.dataTransfer.effectAllowed = "copy";
     });
     // Hover a video tile to see the clip in the thumbnail.

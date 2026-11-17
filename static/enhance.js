@@ -107,7 +107,7 @@ const Enhance = (() => {
     const form = document.createElement("div");
     form.className = "enh";
     form.innerHTML = `
-      <p class="hint">${it ? `${esc(it.kind === "video" ? "Video" : "Picture")}: ${esc((it.params?.prompt || it.files?.[0]?.name || "").slice(0, 90))}` : "Runs on every new picture or video (Settings › Post-Processing)."}
+      <p class="hint">${it ? `${esc(it.kind === "video" ? "Video" : "Picture")}: ${esc((promptLabel(it.params?.prompt) || it.files?.[0]?.name || "").slice(0, 90))}` : "Runs on every new picture or video (Settings › Post-Processing)."}
         The steps run in this order; each is optional.</p>
       <div class="enh-step${isVideo && h3 && c.facerefine ? "" : " off"}">
         <label class="check"><input type="checkbox" data-k="facerefine"${o.facerefine && isVideo && h3 ? " checked" : ""}${dis(isVideo && h3 && c.facerefine,

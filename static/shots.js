@@ -305,7 +305,7 @@ const Shots = (() => {
     document.getElementById("shots-hint").innerHTML = `${sh.mode === "multi"
       ? `Generate makes <b>one ${T.toFixed(1)} s video</b> from these shots.`
       : n > 1 ? `Generate makes <b>${n} videos</b>, one per shot, and puts them on the timeline in order.` : "Generate makes <b>one video</b> from this shot."} ${warn.map(w => `<span class="warn">⚠ ${esc(w)}</span>`).join(" ")}`;
-    document.getElementById("shots-prompt").textContent = sh.mode === "multi" ? prompt() : sh.list.map((_, i) => `── Shot ${i + 1} ──\n${prompt(i)}`).join("\n\n");
+    document.getElementById("shots-prompt").textContent = previewText();
   }
   function renderBanner() {
     const b = document.getElementById("prompt-shots-banner");
@@ -715,14 +715,14 @@ const Shots = (() => {
       if (id === "subjects-on") { sh.subjectsOn = e.target.checked; return changed(); }
       if (id === "shots-automatch") { sh.autoMatch = e.target.checked; return scheduleSave(); }
       const map = { "shots-style": "style", "shots-sound": "soundscape", "shots-music": "music", "shots-idea": "idea" };
-      if (map[id]) { sh[map[id]] = e.target.value; scheduleSave(); if (id !== "shots-idea") document.getElementById("shots-prompt").textContent = sh.mode === "multi" ? prompt() : sh.list.map((_, i) => `── Shot ${i + 1} ──\n${prompt(i)}`).join("\n\n"); return; }
+      if (map[id]) { sh[map[id]] = e.target.value; scheduleSave(); if (id !== "shots-idea") document.getElementById("shots-prompt").textContent = previewText(); return; }
       if (id === "shots-creat") { sh.creativity = +e.target.value; renderCreat(); scheduleSave(); }
       if (id === "shots-idea-s") { sh.ideaSeconds = Math.max(2, Math.min(60, +e.target.value || 10)); scheduleSave(); }
       if (e.target.dataset.subj != null) {
         const r = state.refs[+e.target.dataset.subj]; if (!r) return;
         if (e.target.value.trim()) r.desc = e.target.value; else delete r.desc;
         scheduleSave();
-        document.getElementById("shots-prompt").textContent = sh.mode === "multi" ? prompt() : sh.list.map((_, i) => `── Shot ${i + 1} ──\n${prompt(i)}`).join("\n\n");
+        document.getElementById("shots-prompt").textContent = previewText();
       }
     });
     step.addEventListener("change", e => {
@@ -878,12 +878,17 @@ const Shots = (() => {
     }
   }
   // For the Generate step's summary.
+  // Exactly what Generate sends: the multi-shot prompt, or each shot's own prompt.
+  function previewText() {
+    const sh = state.shots;
+    return sh.mode === "multi" || sh.list.length === 1 ? prompt() : sh.list.map((_, i) => `── Shot ${i + 1} ──\n${prompt(i)}`).join("\n\n");
+  }
   function describe() {
-    if (!upgraded()) return { text: "", first: "", empty: 0 };
+    if (!upgraded()) return { text: "", first: "", empty: 0, prompt: "", missing: 0 };
     const sh = state.shots, n = sh.list.length, T = total();
     const empty = sh.list.filter(s => !hasContent(s)).length;
     return { text: `${n} shot${n === 1 ? "" : "s"} · ${T.toFixed(1)} s · ${sh.mode === "multi" ? "one multi-shot video" : n > 1 ? "one video per shot" : "one video"}`,
-      first: summary(sh.list[0]), empty };
+      first: summary(sh.list[0]), empty, prompt: previewText(), missing: missingSubjects().length };
   }
   const ready = () => on() && state.shots.list.some(hasContent);
   // Reuse on a video result: its prompt as a shot with its own prompt (fills an empty single shot, else is added).
@@ -895,5 +900,5 @@ const Shots = (() => {
     return only ? 0 : sh.list.length - 1;
   }
 
-  return { init, render, renderBanner, prompt, on, ready, generate, onItem, ensure, describe, openModal, reuse, describeMissing };
+  return { init, render, renderBanner, prompt, previewText, on, ready, generate, onItem, ensure, describe, openModal, reuse, describeMissing };
 })();

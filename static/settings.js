@@ -314,7 +314,7 @@ const Settings = (() => {
     if (get("generation.sound_when_done")) chime();
     if (get("generation.notify_when_done") && document.hidden && "Notification" in window && Notification.permission === "granted") {
       const what = { image: "Picture", video: "Video", audio: "Sound" }[item.kind] || "Result";
-      try { new Notification(ok ? `${what} ready` : `${what} failed`, { body: (item.params?.prompt || item.error || "").slice(0, 120), tag: item.id, silent: true }); } catch { /* ignore */ }
+      try { new Notification(ok ? `${what} ready` : `${what} failed`, { body: (promptLabel(item.params?.prompt) || item.error || "").slice(0, 120), tag: item.id, silent: true }); } catch { /* ignore */ }
     }
   }
 
