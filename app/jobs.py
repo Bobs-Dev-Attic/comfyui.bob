@@ -133,6 +133,10 @@ class GenerateRequest(BaseModel):
     # "composite": start H3 from the rough animation's first frame instead of the picture (an object changed at the
     # start: moved, sized, turned, flipped, recoloured or partly erased)
     motion_first: Literal["picture", "composite"] = "picture"
+    # Or a rough animation drawn elsewhere (a 3D scene, scene3d.js) with its mask (white = follow it), in place of the
+    # plate and layers; both are conformed to the render's size and length here.
+    motion_video: str | None = Field(None, max_length=2000)
+    motion_video_mask: str | None = Field(None, max_length=2000)
     enhance: bool = False  # Klein prompt upsampler / Krea 2 prompt expander
     lyrics: str = Field("", max_length=20000)  # Music 3
     batch: int = Field(1, ge=1, le=4)  # number of takes (seeds seed, seed+1, ...)
@@ -484,18 +488,24 @@ class JobManager:
         if req.engine == "motion":
             if req.kind != "video":
                 raise ValueError("Motion layers make video")
-            if not req.first_frame or not req.motion_plate or not req.motion_layers:
-                raise ValueError("Motion layers need the picture, its empty background and at least one object")
             if not self.has_node("vloTimeToMove"):
                 raise ValueError("Motion layers need ComfyUI-vlo (vloTimeToMove) in ComfyUI")
             n = workflows.h3_length(req.seconds)
+            if req.motion_video:
+                if not req.first_frame or not req.motion_video_mask:
+                    raise ValueError("A rough animation needs the picture and its mask video")
+                for ref in (req.first_frame, req.motion_video, req.motion_video_mask):
+                    media_path(ref)
+            elif not req.first_frame or not req.motion_plate or not req.motion_layers:
+                raise ValueError("Motion layers need the picture, its empty background and at least one object")
             for lay in req.motion_layers:
                 media_path(lay.mask)
                 if len(lay.frames) < n:
                     raise ValueError(f"A layer has {len(lay.frames)} frames of path; {n} are needed for {req.seconds:g} s")
                 if any(not 4 <= len(f) <= 6 for f in lay.frames):
                     raise ValueError("Each frame of a layer's path is [dx, dy, scale, flip, rotation, flip upside down]")
-            media_path(req.motion_plate)
+            if not req.motion_video:
+                media_path(req.motion_plate)
         if req.continue_from:
             if req.engine != "h3ref":
                 raise ValueError("Continuing a video without a cut needs H3 Reference")
@@ -634,7 +644,8 @@ class JobManager:
             mp = workflows.H3_QUALITY.get(req.quality, workflows.H3_QUALITY["draft"])
             with Image.open(media_path(req.first_frame)) as im:  # framed like the picture
                 w, h = workflows.dims_for(im.size, mp)
-            edge = req.motion_edge if req.motion_edge >= 0 else motion.auto_edge(req.first_frame, req.motion_layers, w, h)
+            edge = (req.motion_edge if req.motion_edge >= 0 else 2 if req.motion_video
+                    else motion.auto_edge(req.first_frame, req.motion_layers, w, h))
             return workflows.build_motion(
                 files, prompt=req.prompt, width=w, height=h, seconds=req.seconds, seed=seed, turbo=req.turbo, steps=req.steps,
                 hold=req.motion_hold, edge=edge, prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras],
@@ -689,11 +700,18 @@ class JobManager:
                 vids = {"motion_ref": config.UPLOAD_DIR / f"{item['id']}_motion.mp4",
                         "motion_mask": config.UPLOAD_DIR / f"{item['id']}_motion_mask.mp4"}
                 first = config.UPLOAD_DIR / f"{item['id']}_motion_first.png" if req.motion_first == "composite" else None
-                info = await asyncio.to_thread(
-                    motion.render, req.first_frame, req.motion_plate, req.motion_layers, int(built.info["width"]),
-                    int(built.info["height"]), int(built.info["frames"]), vids["motion_ref"], vids["motion_mask"], first)
-                self.log(item, f"Drew the rough animation: {info['layers']} object(s), {info['frames']} frames"
-                         + (", starting from its own first frame" if first else ""))
+                if req.motion_video:  # drawn in the page (a 3D scene): fitted to this render's size and length
+                    info = await asyncio.to_thread(
+                        motion.conform, req.motion_video, req.motion_video_mask, int(built.info["width"]),
+                        int(built.info["height"]), int(built.info["frames"]), vids["motion_ref"], vids["motion_mask"], first)
+                    self.log(item, f"Fitted the 3D scene's rough animation: {info['frames']} frames at {info['size']}"
+                             + (", starting from its own first frame" if first else ""))
+                else:
+                    info = await asyncio.to_thread(
+                        motion.render, req.first_frame, req.motion_plate, req.motion_layers, int(built.info["width"]),
+                        int(built.info["height"]), int(built.info["frames"]), vids["motion_ref"], vids["motion_mask"], first)
+                    self.log(item, f"Drew the rough animation: {info['layers']} object(s), {info['frames']} frames"
+                             + (", starting from its own first frame" if first else ""))
                 if first:
                     req = req.model_copy(update={"first_frame": first.relative_to(config.ROOT).as_posix()})
             for role, node_id in built.image_inputs.items():

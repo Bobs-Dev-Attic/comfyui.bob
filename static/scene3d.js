@@ -193,7 +193,10 @@ const Scene3D = (() => {
     const footUV = info ? [info.foot[0], Math.min(1, info.foot[1] + 0.012)] : [0.5, 0.8];
     const G0 = pointAt(bg, ...footUV), d = Math.max(1e-6, -G0[2]);
     const hPic = info ? (info.y1 - info.y0) : 0.3;
-    const scale = (hPic * 2 * bg.tv * d) / hgt;
+    // sized to fit the object's box in the picture: its height, and its width too (a model that came out flatter or
+    // wider than the object would otherwise be blown up by its height alone)
+    const wPic = info ? (info.x1 - info.x0) : 0.3, wid = Math.max(1e-6, m.hi[0] - m.lo[0]);
+    const scale = Math.min((hPic * 2 * bg.tv * d) / hgt, (wPic * 2 * bg.t * d) / wid);
     // the model's front faces +Z (the camera); push it back so its front edge stands at the foot
     const back = norm([G0[0], 0, G0[2]]);
     return { pos: addv(G0, mulv(back, dep * scale / 2)), yaw: 0, scale };
@@ -279,7 +282,8 @@ const Scene3D = (() => {
       </aside>`;
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
-    foot.innerHTML = `<span class="hint s3-foot">Drag: orbit · Right-drag: pan · Wheel: zoom</span><button type="button" class="btn ghost" data-act="pic">📷 Save picture of this view</button>`;
+    foot.innerHTML = `<span class="hint s3-foot">Drag: orbit · Right-drag: pan · Wheel: zoom</span><button type="button" class="btn ghost" data-act="pic">📷 Save picture of this view</button>
+      <button type="button" class="btn primary" data-act="render" title="Make the video with H3, following this scene">🎬 Render video…</button>`;
     const win = WM.open({ id: "scene3d", title: `🏞 ${sc.name}`, content: root, footer: foot, width: 1100, height: 720, minWidth: 720, minHeight: 480,
       onClose: () => { if (s) { cancelAnimationFrame(s.raf); clearTimeout(s.poll); clearTimeout(s.saveT); s.ro?.disconnect(); s.closed = true; } s = null; meshCache.clear(); } });
     const cv = root.querySelector(".s3-canvas"), hud = root.querySelector(".s3-hud");
@@ -316,25 +320,132 @@ const Scene3D = (() => {
     loadObjects();
   }
 
+  /* ---------------------------------------------------------------- rendering to video (H3 with Time-to-Move) */
+  const shotCam = () => ({ yaw: 0, pitch: 0, dist: s.bg.dmed, target: [0, 0, -s.bg.dmed] });
+  // The camera of the render at time t: its path, or (without keys) the picture's own camera.
+  const camForRender = t => s.camKeys.length ? camAt(t) : shotCam();
+  const camDiff = (a, b) => Math.abs(a.yaw - b.yaw) + Math.abs(a.pitch - b.pitch) + Math.abs(a.dist - b.dist) / s.bg.dmed
+    + Math.hypot(...sub(a.target, b.target)) / s.bg.dmed;
+  const cameraMoves = () => s.camKeys.length > 1 && s.camKeys.some(k => camDiff(k, s.camKeys[0]) > 1e-3);
+  const startsAsPicture = () => camDiff(camForRender(0), shotCam()) < 0.02;
+  const frameCount = () => Math.round(dur() * FPS) + 1;
+
+  // Fill the holes of a frame (where nothing was drawn: what a camera move uncovers) with the colours around them, so
+  // H3 doesn't start from black there (push-pull: halve until tiny, then build back up, each level under the next).
+  function fillHoles(src, W, H) {
+    const mk = (w, h) => Object.assign(document.createElement("canvas"), { width: w, height: h });
+    const levels = [];
+    let prev = src, w = W, h = H;
+    while (w > 8 && h > 8) {
+      w = Math.ceil(w / 2); h = Math.ceil(h / 2);
+      const c = mk(w, h), g = c.getContext("2d");
+      g.imageSmoothingQuality = "high"; g.drawImage(prev, 0, 0, w, h);
+      levels.push(c); prev = c;
+    }
+    let base = levels.at(-1) || mk(1, 1);
+    const g0 = base.getContext("2d", { willReadFrequently: true }), d = g0.getImageData(0, 0, base.width, base.height);
+    for (let i = 3; i < d.data.length; i += 4) d.data[i] = 255;  // the tiniest level, opaque: average colours
+    g0.putImageData(d, 0, 0);
+    for (let i = levels.length - 2; i >= -1; i--) {
+      const top = i >= 0 ? levels[i] : src, tw = i >= 0 ? top.width : W, th = i >= 0 ? top.height : H;
+      const c = mk(tw, th), g = c.getContext("2d");
+      g.drawImage(base, 0, 0, tw, th); g.drawImage(top, 0, 0, tw, th);
+      base = c;
+    }
+    return base;
+  }
+
+  async function renderVideo(kind, size, n, progress) {
+    const fd = new FormData();
+    const mask = kind === "mask" ? (cameraMoves() ? "all" : "objects") : null;
+    for (let f = 0; f < n; f++) {
+      if (!s) throw new Error("The scene was closed");
+      const t = f / FPS;
+      draw({ size, t, cam: camForRender(t), mask });
+      // toDataURL is synchronous: toBlob's callback (and setTimeout) crawl when the tab is in the background
+      const url = (mask ? s.cv : fillHoles(s.cv, size[0], size[1])).toDataURL(mask ? "image/png" : "image/jpeg", 0.92), bin = atob(url.slice(url.indexOf(",") + 1));
+      const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      fd.append("frame", new Blob([bytes], { type: mask ? "image/png" : "image/jpeg" }), `${String(f).padStart(5, "0")}.${mask ? "png" : "jpg"}`);
+      if (f % 8 === 0) { progress(f, n); await new Promise(r => { const c = new MessageChannel(); c.port1.onmessage = r; c.port2.postMessage(0); }); }
+    }
+    fd.append("fps", String(FPS));
+    const r = await fetch("/api/frames/video", { method: "POST", body: fd });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+    return (await r.json()).ref;
+  }
+
+  function renderDialog() {
+    if (!s?.bg) return;
+    if (!s.objs.some(o => o.mesh && !o.hidden) && !cameraMoves()) return Media.toast("Nothing moves yet: key an object or the camera first.");
+    if (!state.caps?.editor?.motion && state.caps?.editor) return Media.toast("Rendering a scene needs H3 and ComfyUI-vlo (vloTimeToMove), as Animate objects does.");
+    const moving = s.objs.filter(o => o.mesh && !o.hidden && o.keys?.length > 1).map(o => o.name);
+    const pic = startsAsPicture();
+    const box = document.createElement("div");
+    box.className = "m3-make";
+    box.innerHTML = `<p class="hint">H3 makes the video from the picture, following this scene's rough animation (Time-to-Move, as in Animate objects):
+        ${cameraMoves() ? "the camera move and the objects" : "the objects; the camera holds still"}. ${frameCount()} frames, ${dur().toFixed(2)} s.</p>
+      <div class="field"><label for="s3r-what">What happens <span class="opt">optional</span></label>
+        <textarea id="s3r-what" rows="3" placeholder="${esc(moving.length ? `${moving.join(" and ")} move${moving.length > 1 ? "" : "s"} across the scene.` : "The scene comes to life.")}"></textarea></div>
+      <div class="row2"><div class="field"><label for="s3r-q">Quality</label><select id="s3r-q"><option value="draft">Draft</option><option value="standard" selected>Standard</option><option value="full">Full</option></select></div>
+        <div class="field"><label for="s3r-hold">Follow the plan</label><select id="s3r-hold"><option value="loose">Loosely</option><option value="normal" selected>Normally</option><option value="tight">Tightly</option></select></div></div>
+      <div class="field"><label for="s3r-first">Start from</label><select id="s3r-first">
+        <option value="picture"${pic ? " selected" : ""}>The picture (the scene starts as the picture)</option>
+        <option value="composite"${pic ? "" : " selected"}>The scene's first frame${pic ? "" : " (the camera starts elsewhere)"}</option></select></div>`;
+    const foot = document.createElement("div");
+    foot.className = "wm-foot-row";
+    foot.innerHTML = `<span class="hint s3r-st"></span><button type="button" class="btn ghost" data-a="cancel">Cancel</button><button type="button" class="btn primary" data-a="go">🎬 Render</button>`;
+    const win = WM.open({ id: "scene3d-render", title: `Render · ${s.sc.name}`, content: box, footer: foot, width: 520, height: 470, modal: true });
+    const st = foot.querySelector(".s3r-st");
+    foot.querySelector('[data-a="cancel"]').onclick = () => win.close();
+    foot.querySelector('[data-a="go"]').onclick = async e => {
+      e.target.disabled = true;
+      // the picture's aspect, longest side 960 (the server fits it to the render's size)
+      const n = frameCount(), W = Math.round((s.bg.aspect >= 1 ? 960 : 960 * s.bg.aspect) / 2) * 2, H = Math.round(W / s.bg.aspect / 2) * 2;
+      const keep = [s.cv.width, s.cv.height];
+      try {
+        st.textContent = "Drawing the rough animation…";
+        const ref = await renderVideo("ref", [W, H], n, (f, N) => { st.textContent = `Drawing the rough animation: frame ${f + 1} of ${N}`; });
+        const mask = await renderVideo("mask", [W, H], n, (f, N) => { st.textContent = `Drawing its mask: frame ${f + 1} of ${N}`; });
+        st.textContent = "Sending to H3…";
+        const what = box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder;
+        const cam = cameraMoves() ? "The camera moves smoothly through the scene." : "The camera holds a static shot.";
+        const prompt = `integrated_multimodal_description: [Shot 1] ${what.replace(/\s+/g, " ")} ${cam}\n\noverall_soundscape: Natural sound of the scene.\n\nnon_diegetic_music: N/A`;
+        await submit({ kind: "video", engine: "motion", prompt, seconds: n / FPS, aspect: "16:9", quality: box.querySelector("#s3r-q").value,
+          seed: -1, batch: 1, turbo: true, first_frame: s.sc.picture, motion_video: ref, motion_video_mask: mask,
+          motion_hold: box.querySelector("#s3r-hold").value, motion_first: box.querySelector("#s3r-first").value, project: s.sc.project });
+        win.close();
+        Media.toast("3D scene: queued. The video shows up in the gallery when it's done.");
+      } catch (err) { st.textContent = ""; e.target.disabled = false; Media.toast(`Render: ${err.message}`); }
+      finally { if (s) { s.cv.width = keep[0]; s.cv.height = keep[1]; s.dirty = true; } }
+    };
+  }
+
   function toShot() { const d = s.bg.dmed; s.cam = { yaw: 0, pitch: 0, dist: d, target: [0, 0, -d] }; s.dirty = true; }
   function eye() { const c = s.cam, y = c.yaw * rad, p = c.pitch * rad; return [c.target[0] + c.dist * Math.cos(p) * Math.sin(y), c.target[1] + c.dist * Math.sin(p), c.target[2] + c.dist * Math.cos(p) * Math.cos(y)]; }
   function frameSize() { const dpr = Math.min(2, window.devicePixelRatio || 1); return [Math.max(1, Math.round(s.cv.clientWidth * dpr)), Math.max(1, Math.round(s.cv.clientHeight * dpr))]; }
   // vertical half-angle: the picture's, widened so its whole width fits a narrower window
   function tanY(W, H) { return Math.max(s.bg.tv, s.bg.t / (W / H)); }
-  function viewProj(W, H) {
-    const e = eye();
-    return { e, VP: mul4(perspective(2 * Math.atan(tanY(W, H)), W / H, s.bg.dmed * 0.01, s.bg.dmed * 50), lookAt(e, s.cam.target, [0, 1, 0])) };
+  function viewProj(W, H, cam = s.cam) {
+    const e = eyeOf(cam);
+    return { e, VP: mul4(perspective(2 * Math.atan(tanY(W, H)), W / H, s.bg.dmed * 0.01, s.bg.dmed * 50), lookAt(e, cam.target, [0, 1, 0])) };
   }
-  function draw() {
-    const [W, H] = frameSize();
+  const eyeOf = c => { const y = c.yaw * rad, p = c.pitch * rad; return [c.target[0] + c.dist * Math.cos(p) * Math.sin(y), c.target[1] + c.dist * Math.sin(p), c.target[2] + c.dist * Math.cos(p) * Math.cos(y)]; };
+  // r (rendering a frame): { size: [W, H], t, cam, mask: "all" | "objects" } -- no paths or selection, black behind
+  function draw(r = null) {
+    const [W, H] = r?.size || frameSize();
     if (s.cv.width !== W || s.cv.height !== H) { s.cv.width = W; s.cv.height = H; }
-    const { e, VP } = viewProj(W, H), y = (s.cam.yaw - 40) * rad, key = [Math.sin(y) * 0.6, 0.85, Math.cos(y) * 0.6 + 0.3];
-    s.gpu.begin(W, H, G().themeBg(s.cv));
-    if (s.showBg) s.gpu.draw(s.bgMesh, { VP, M: ID, eye: e, key, unlit: true });
+    const t = r ? r.t : s.t, cam = r?.cam || s.cam;
+    const { e, VP } = viewProj(W, H, cam), y = (cam.yaw - 40) * rad, key = [Math.sin(y) * 0.6, 0.85, Math.cos(y) * 0.6 + 0.3];
+    s.gpu.begin(W, H, r ? [0, 0, 0] : G().themeBg(s.cv), r && !r.mask ? 0 : 1);  // a frame: holes stay see-through, to fill
+    const white = [1, 1, 1], black = [0, 0, 0];
+    if (r?.mask) s.gpu.draw(s.bgMesh, { VP, M: ID, eye: e, key, solid: r.mask === "all" ? white : black });
+    else if (s.showBg || r) s.gpu.draw(s.bgMesh, { VP, M: ID, eye: e, key, unlit: true });
     s.objs.forEach((o, i) => {
       if (!o.mesh || !o.pos || o.hidden) return;
-      s.gpu.draw(o.mesh, { VP, M: matOf(o), eye: e, key, look: s.clay ? 1 : 0, tint: i === s.sel ? [0.06, 0.04, 0.0] : null });
+      s.gpu.draw(o.mesh, { VP, M: matOf(o, poseAt(o, t)), eye: e, key, look: !r && s.clay ? 1 : 0,
+        tint: !r && i === s.sel ? [0.06, 0.04, 0.0] : null, solid: r?.mask ? white : null });
     });
+    if (r) return;
     const o = s.objs[s.sel];
     s.gl.disable(s.gl.DEPTH_TEST);
     const path = (fn, color) => {  // a path over the whole length, sampled every frame
@@ -345,7 +456,6 @@ const Scene3D = (() => {
     };
     if (o?.mesh && o.keys?.length > 1) path(t => poseAt(o, t).pos, [1, 0.77, 0.24, 0.9]);
     if (s.camKeys.length > 1 && s.camFree) {
-      const eyeOf = c => { const y = c.yaw * rad, p = c.pitch * rad; return [c.target[0] + c.dist * Math.cos(p) * Math.sin(y), c.target[1] + c.dist * Math.sin(p), c.target[2] + c.dist * Math.cos(p) * Math.cos(y)]; };
       path(t => eyeOf(camAt(t)), [0.48, 0.64, 1, 0.9]);
       // the camera at the playhead: a small frustum
       const c = camAt(s.t), ce = eyeOf(c), f = norm(sub(c.target, ce)), r = norm(cross(f, [0, 1, 0])), u = cross(r, f), L = s.bg.dmed * 0.12;
@@ -447,6 +557,7 @@ const Scene3D = (() => {
       if (a === "shot") { if (s.bg) toShot(); return; }
       if (a === "pic") { draw(); s.cv.toBlob(bl => { const x = document.createElement("a"); x.href = URL.createObjectURL(bl); x.download = `${s.sc.name}_view.png`; x.click(); setTimeout(() => URL.revokeObjectURL(x.href), 4000); }); return; }
       if (a === "add") return addModel();
+      if (a === "render") return renderDialog();
       if (a === "play") return play();
       if (a === "key-cam") {
         if (!s.bg) return;
@@ -571,5 +682,6 @@ const Scene3D = (() => {
     requestAnimationFrame(step); renderTime();
   }
 
-  return { create, open, openList, _state: () => s, _draw: () => s && s.bg && draw() };
+  return { create, open, openList, _state: () => s, _draw: (r = null) => s && s.bg && draw(r),
+    _render: (kind, size, n) => renderVideo(kind, size, n, () => {}), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
 })();

@@ -5,6 +5,27 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.75.0] - 2026-11-17
+
+### Added
+- **🎬 Render video…** in a 3D scene: MiniMax H3 makes the shot from the picture, following the scene (Time-to-Move,
+  as Animate objects does).
+  - The page draws the scene's rough animation frame by frame along its camera path (or the picture's own camera when
+    it has no keys), at the picture's aspect, for the H3 length of the scene; then its mask: the whole rendered view when
+    the camera moves (the holes a move opens are left to H3), otherwise only the objects.
+  - The holes a camera move opens (nothing drawn there) are filled with the colours around them in the rough
+    animation, so H3 doesn't start from black there; the mask still leaves them to H3.
+  - Frames are drawn and encoded without timers, so rendering keeps its speed if the tab goes to the background.
+  - Start from the picture (chosen when the scene starts as the picture does) or from the scene's first frame.
+  - What happens (optional), quality and how tightly to follow the plan, as in Animate objects.
+- `POST /api/frames/video`: numbered pictures from the page become a video at 24 fps.
+- Request fields `motion_video` and `motion_video_mask` (engine `motion`): a rough animation and its mask drawn
+  elsewhere, fitted to the render's size (centre crop) and length (the last frame held) instead of plate and layers.
+
+### Fixed
+- A 3D model placed in a scene is sized to fit both the height and the width of its object in the picture. A model that
+  came out flatter than the object (TRELLIS.2 sometimes makes a box as a slab) was blown up by its height alone.
+
 ## [0.74.0] - 2026-11-17
 
 ### Added
