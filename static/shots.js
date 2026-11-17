@@ -98,7 +98,7 @@ const Shots = (() => {
      - H3 (text / keyframes): integrated_multimodal_description: [Shot 1] <style> <shot> [Shot 2] At …, then
        overall_soundscape: and non_diegetic_music: (the server adds the keyframe line in front, workflows.h3_frame_alignment);
      - H3 Reference (full-reference mode): six sections, subject_definitions, summary, retention_analysis,
-       detailed_description, overall_soundscape, non_diegetic_music. Each reference picture is a <Subject N> (the
+       integrated_multimodal_description (the guide names it detailed_description here), overall_soundscape, non_diegetic_music. Each reference picture is a <Subject N> (the
        picture defines a person, object or place; it isn't a frame), each voice recording an <Audio N> voice-timbre
        reference, and whoever speaks gets a stable speaker ID (S1), (S2)… in order of first speaking.
      In a shot's fields people are tagged as <Picture N>; in reference mode those become <Subject N>. */
@@ -189,12 +189,12 @@ const Shots = (() => {
         `<Subject ${p}> (appears in ${at.map(k => `[Shot ${k + 1}]`).join(", ")}): fully_preserved - the identity, face, hair, build and appearance from <Picture ${p}> are retained.`),
       ...voices.map(a => `<Audio ${a}>: reference - its voice timbre ${a <= pics.length ? `guides the delivery of <Subject ${a}>` : "guides the spoken delivery"} without copying the original signal.`),
     ];
-    // detailed_description
+    // the main field: integrated_multimodal_description (the guide calls it detailed_description in reference mode; this studio uses the base name, by choice)
     let t = 0;
     const body = list.map((s, k) => { const txt = `[Shot ${k + 1}] ${shotText(s, k, t, n, ids)}`; t += +s.seconds || 0; return txt; }).join("\n");
     const look = oneLine(style);
     return [`subject_definitions:\n${defs.join("\n")}`, `summary:\n${summary}`, `retention_analysis:\n${retention.join("\n")}`,
-      `detailed_description:\nThe target video's look: ${look.charAt(0).toLowerCase() + look.slice(1)}.\n${body}`, audioFields("\n")].join("\n\n");
+      `integrated_multimodal_description:\nThe target video's look: ${look.charAt(0).toLowerCase() + look.slice(1)}.\n${body}`, audioFields("\n")].join("\n\n");
   }
   function basePrompt(list, style) {
     let t = 0;
