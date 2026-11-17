@@ -154,19 +154,35 @@ const Prompts = (() => {
       const d = s.replace(/<d>(?!\s*\[)/g, "<d>[English] ");
       if (d !== s) { s = d; notes.push(["Dialogue tagged [English]", "fix"]); }
       const neg = [...new Set((s.replace(/<d>[\s\S]*?<\/d>/g, "").match(NEG) || []).map(x => x.toLowerCase()))];
-      if (neg.length) notes.push([`H3 has no negative prompt: “${neg.slice(0, 3).join("”, “")}” may add what you meant to leave out`, "warn"]);
+      if (neg.length) {
+        const phrases = [...new Set((s.replace(/<d>[\s\S]*?<\/d>/g, "").match(/\b(?:no|not|never|without|nothing|nobody)\b(?:\s+[\w'-]+){0,2}/gi) || []))].slice(0, 6);
+        notes.push([`H3 has no negative prompt: “${neg.slice(0, 3).join("”, “")}” may add what you meant to leave out`, "warn",
+          `Negations make H3 add the thing: rewrite ${phrases.map(p => `“${p}”`).join(", ")} as what IS there (e.g. “no windows” → “bare plaster walls”, “not smiling” → “a calm, neutral face”). Use none of the words no, not, never, without outside spoken lines.`]);
+      }
       const refs = state.refs?.length || 0;
       if (prof === "h3ref" || prof === "h3image") {
         const used = [...s.matchAll(/<Picture (\d+)>/g)].map(m => +m[1]);
         const bad = [...new Set(used.filter(n => n < 1 || n > refs))];
-        if (bad.length) notes.push([`${bad.map(n => `<Picture ${n}>`).join(", ")}: only ${refs} reference picture${refs === 1 ? "" : "s"} added`, "warn"]);
+        if (bad.length) notes.push([`${bad.map(n => `<Picture ${n}>`).join(", ")}: only ${refs} reference picture${refs === 1 ? "" : "s"} added`, "warn",
+          refs ? `Only ${Array.from({ length: refs }, (_, i) => `<Picture ${i + 1}>`).join(", ")} exist. Remove ${bad.map(n => `<Picture ${n}>`).join(", ")}: refer to that person or thing with an existing tag or describe it in plain words instead.`
+            : `There are no reference pictures: remove every <Picture N> tag and describe those people or things in plain words.`]);
         if (prof === "h3ref" && refs && !used.length) notes.push(["Refer to the references as <Picture 1>, <Picture 2>…", "tip"]);
       }
       if (prof === "h3video" || prof === "h3ref") {
-        if (s && !/camera/i.test(s)) notes.push(["Add a camera move (e.g. “The camera pushes in slowly”)", "tip"]);
+        if (s && !/camera/i.test(s)) notes.push(["Add a camera move (e.g. “The camera pushes in slowly”)", "tip", "End every shot with exactly one camera move, e.g. “The camera pushes in slowly.”"]);
+        // Shot lines written without their [Shot N] tag (LLMs drop it): "At 00:04.000, close-up…" lines.
+        if (!/^\s*\[Shot\s*\d+\]/im.test(s) && /^\s*At\s+\d+:\d+(?:\.\d+)?,/im.test(s)) {
+          let k = 0;
+          s = s.replace(/^(\s*)At\s+(\d+:\d+(?:\.\d+)?),\s*/gim, (m, sp, time) => `${sp}[Shot ${++k}] ${k === 1 && /^0+:0+(\.0+)?$/.test(time) ? "" : `At ${time}, `}`);
+          notes.push(["Shot lines tagged [Shot 1], [Shot 2]…", "fix"]);
+        }
+        // Spoken words in quotes after says/asks… go in H3's <d> tags, or H3 may not voice them.
+        const quoted = s.replace(/\b(say|says|said|asks|asked|whispers|whispered|shouts|shouted|replies|replied)\b[,:]?\s*[“"]([^”"<>]{1,300})[”"]/gi,
+          (m, verb, line) => `${verb}: <d>[English] ${line.trim()}</d>`);
+        if (quoted !== s) { s = quoted; notes.push(["Spoken line put in <d>[English] …</d>", "fix"]); }
         if (/^\s*\[Shot\s*\d+\]/im.test(s)) s = shotList(s, notes);
         else {
-          if (s && !/soundscape|sound|music/i.test(s)) notes.push(["Describe the sound too: H3 renders it with the picture", "tip"]);
+          if (s && !/soundscape|sound|music/i.test(s)) notes.push(["Describe the sound too: H3 renders it with the picture", "tip", "Add the overall_soundscape: and non_diegetic_music: lines at the end."]);
           const clip = clipSeconds(), said = spoken(s), budget = Math.max(2, Math.floor(clip * 2.5));
           if (said > budget) notes.push([`${said} spoken words won't fit in ${fmtSec(clip)}: about ${budget} do (2.5 words a second)`, "warn"]);
         }
@@ -272,6 +288,10 @@ const Prompts = (() => {
       ${sug ? `<div class="pl-sug${sug.done ? "" : " busy"}${sug.error ? " err" : ""}" aria-live="polite">
           <div class="pl-sug-head">${sug.error ? "⚠ Live rewrite" : sug.done ? `✨ ${esc(modelLabel(sug.model))} version` : `✨ Rewriting for ${esc(modelLabel(sug.model))}…`}
             ${sug.done && !sug.error ? `<span class="pl-keys"><kbd>Tab</kbd> accept · <kbd>Esc</kbd> dismiss</span>` : ""}</div>
+          ${sug.total && !sug.error ? `<p class="pl-fixing">${sug.done
+            ? (sug.left?.length ? `Fixes ${Math.max(0, sug.total - sug.left.length)} of ${sug.total} flagged problem${sug.total === 1 ? "" : "s"}; still: ${sug.left.map(esc).join(" · ")}`
+              : `✓ Fixes the ${sug.total} flagged problem${sug.total === 1 ? "" : "s"}`)
+            : sug.round > 1 ? `Second pass: fixing the ${sug.problems.length} still flagged…` : `Fixing ${sug.total} flagged problem${sug.total === 1 ? "" : "s"}…`}</p>` : ""}
           <div class="pl-sug-text">${sug.error ? esc(sug.error) : esc(sug.text) || "…"}</div>
           ${sug.missing?.length ? `<p class="pl-warn">⚠ The rewrite dropped ${sug.missing.map(m => `<code>${esc(m)}</code>`).join(", ")}; accepting adds ${sug.missing.length === 1 ? "it" : "them"} at the end.</p>` : ""}
           <div class="pl-sug-actions">${sug.done && !sug.error ? `<button type="button" class="btn sm primary" data-pl="accept">Accept</button>` : ""}
@@ -305,20 +325,26 @@ const Prompts = (() => {
     return { backend, url: backend ? st.urls?.[backend] || undefined : undefined, model: S.liveModel || undefined };
   }
 
-  async function ask(force = false) {
+  /* from/prev: a second pass that rewrites the first suggestion again, to fix what it left flagged. */
+  async function ask(force = false, from = null, prev = null) {
     const raw = ta().value, prof = profile();
     if (!prof || !S.live) return;
-    if (words(raw) < 3 || (!force && raw === S.lastAsked)) return;
+    if (!from && (words(raw) < 3 || (!force && raw === S.lastAsked))) return;
     S.lastAsked = raw;
     S.ctrl?.abort();
     const ctrl = S.ctrl = new AbortController();
-    const { text, markers } = protect(raw);
-    const sug = S.sug = { for: raw, text: "", done: false, model: modelKey(), markers };
+    const { text, markers } = protect(from ?? raw);
+    // What the live model view flags (not what Tidy already put right) goes along, so the rewrite fixes it.
+    const flagged = (from ? shape(resolve(from), prof) : shape(resolve(raw), prof)).notes.filter(([, k]) => k !== "fix");
+    const problems = flagged.map(([t, , fix]) => fix || t);
+    const sug = S.sug = { for: raw, text: "", done: false, model: modelKey(), markers, problems,
+      total: prev?.total ?? problems.length, round: prev ? prev.round + 1 : 1 };
     renderLive();
     try {
       const res = await fetch("/api/prompt/rewrite", {
         method: "POST", headers: { "Content-Type": "application/json" }, signal: ctrl.signal,
-        body: JSON.stringify({ text, keep: markers.map(m => m.value), profile: prof, seconds: +$("#seconds").value || 5, ...llmOpts() }),
+        body: JSON.stringify({ text, keep: markers.map(m => m.value), problems, profile: prof, seconds: +$("#seconds").value || 5,
+          refs: ["h3ref", "h3image"].includes(prof) ? state.refs?.length || 0 : null, arefs: prof === "h3ref" ? state.arefs?.length || 0 : 0, ...llmOpts() }),
       });
       if (res.status === 409) { S.paused = true; S.sug = null; renderLive(); return; }
       S.paused = false;
@@ -337,13 +363,22 @@ const Prompts = (() => {
           if (m.error) throw new Error(m.error);
           if (m.model && m.model !== S.usedModel) { S.usedModel = m.model; const o = $("#prompt-live .pl-llm option[value='']"); if (o && !S.liveModel) o.textContent = `Auto (fastest) · ${m.model}`; }
           if (m.t) sug.text += m.t;
-          if (m.done) { const u = unprotect(m.text, markers); sug.text = u.text; sug.missing = u.missing; sug.done = true; }
+          if (m.done) {
+            const u = unprotect(m.text, markers); sug.text = u.text; sug.missing = [...new Set([...(prev?.missing || []), ...u.missing])]; sug.done = true;
+            sug.left = shape(resolve(sug.text), prof).notes.filter(([, k]) => k !== "fix").map(([t]) => t);
+            // Still flagged after the first pass (and fewer than before): one more pass on the rewrite itself.
+            if (sug.left.length && sug.round === 1 && sug.problems.length) { sug.again = true; }
+          }
         }
         if (S.sug !== sug) return;
         const now = performance.now();
         if (sug.done || now - shown > 50) { shown = now; renderSugText(sug); }
       }
-      if (S.sug === sug) { sug.done = true; renderLive(); }
+      if (S.sug === sug) {
+        sug.done = true;
+        if (sug.again && !sug.error) { sug.done = false; renderLive(); ask(true, sug.text, sug); return; }
+        renderLive();
+      }
     } catch (e) {
       if (e.name === "AbortError" || S.sug !== sug) return;
       sug.error = /reachable|server|Ollama/i.test(e.message) ? `${e.message}. Start Ollama (or set the LLM in the Prompt writer), or turn Live rewrite off.` : e.message;
@@ -379,16 +414,72 @@ const Prompts = (() => {
   }
 
   /* ------------------------------------------------------------ prompt tags (this prompt's own) */
+  /* The toolbar over the prompt: reference pictures and voices (H3 Reference, H3 Image), this prompt's
+     tags, presets, and text from the catalog, all inserted at the cursor. */
   function renderTags() {
-    const box = $("#prompt-tags");
+    const box = $("#prompt-bar");
     if (!box) return;
     const tags = state.promptTags || {};
     const names = Object.keys(tags);
-    box.innerHTML = `<span class="pt-label" title="Named values this prompt uses as <name> or {{name}}. A tag with several values gives one at random.">Tags</span>
-      ${names.map(n => { const v = tags[n], many = Array.isArray(v);
-        return `<span class="pt-chip" data-tag="${esc(n)}"><button type="button" class="pt-ins" data-pt="insert" title="Insert <${esc(n)}> at the cursor">&lt;${esc(n)}&gt;</button><button type="button" class="pt-val" data-pt="edit" title="Edit">${many ? `🎲 ${v.length}` : esc(String(typeof v === "string" ? v : JSON.stringify(v)).slice(0, 28)) || "…"}</button></span>`; }).join("")}
-      <button type="button" class="link" data-pt="add">+ Tag</button>
-      <button type="button" class="link" data-pt="presets" title="Pick ready-made words: hair, outfits, lighting, camera…">🏷 Presets</button>`;
+    const mk = modelKey(), refModel = mk === "video:h3ref" || mk === "image:h3image";
+    const refs = refModel ? state.refs || [] : [], arefs = mk === "video:h3ref" ? state.arefs || [] : [];
+    box.innerHTML = `${refModel ? `<div class="pb-group pb-refs" role="group" aria-label="References">
+        ${refs.map((r, i) => `<button type="button" class="pb-ref" data-pt="ref" data-n="${i + 1}" title="Insert <Picture ${i + 1}>"><img src="${esc(r.url)}" alt=""><span>${i + 1}</span></button>`).join("")}
+        ${arefs.map((a, i) => `<button type="button" class="pb-chip" data-pt="aref" data-n="${i + 1}" title="Insert <Audio ${i + 1}> (${esc(a.name || "")})">🔊 ${i + 1}</button>`).join("")}
+        ${refs.length || arefs.length ? "" : `<span class="pb-hint">No references yet</span>`}
+        <button type="button" class="link" data-pt="add-ref" title="Add reference pictures${mk === "video:h3ref" ? " and voices" : ""} (Inputs step)">+ Reference</button>
+      </div>` : ""}
+      <div class="pb-group" role="group" aria-label="Prompt tags" title="Named values this prompt uses as <name> or {{name}}. A tag with several values gives one at random.">
+        ${names.map(n => { const v = tags[n], many = Array.isArray(v);
+          return `<span class="pt-chip" data-tag="${esc(n)}"><button type="button" class="pt-ins" data-pt="insert" title="Insert <${esc(n)}> at the cursor">&lt;${esc(n)}&gt;</button><button type="button" class="pt-val" data-pt="edit" title="Edit">${many ? `🎲 ${v.length}` : esc(String(typeof v === "string" ? v : JSON.stringify(v)).slice(0, 28)) || "…"}</button></span>`; }).join("")}
+        <button type="button" class="link" data-pt="add">+ Tag</button>
+        <button type="button" class="link" data-pt="presets" title="Pick ready-made words: hair, outfits, lighting, camera…">🏷 Presets</button>
+      </div>
+      <div class="pb-group"><button type="button" class="link" data-pt="from-catalog" title="Insert a saved prompt's text (and its tags) at the cursor">📚 Insert saved…</button></div>`;
+  }
+  // The textarea keeps its caret while focus is elsewhere; insert there and tell the live view.
+  function insertText(text) {
+    insertAtCursor(ta(), text);
+    ta().dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  /* Insert from the catalog: a saved prompt's text at the cursor, its tags added to this prompt's
+     (a tag of the same name already here is kept). */
+  async function insertSaved() {
+    try { await load(true); } catch (e) { Media.toast(`Catalog: ${e.message}`); return; }
+    const box = document.createElement("div");
+    box.className = "pp";
+    const mk = modelKey();
+    const draw = q => {
+      const ql = q.toLowerCase();
+      const list = S.entries.filter(e => !ql || e.title.toLowerCase().includes(ql) || e.prompt.toLowerCase().includes(ql))
+        .sort((a, b) => (b.model === mk) - (a.model === mk));
+      $(".pp-list", box).innerHTML = list.length ? list.map(e => `<div class="ps-item" data-id="${esc(e.id)}">
+          <div class="ps-text"><b>${esc(e.title)}</b><small>${esc(modelLabel(e.model))}${Object.keys(e.tags || {}).length ? ` · ${Object.keys(e.tags).length} tag(s)` : ""} · ${esc(e.prompt.replace(/\s+/g, " ").slice(0, 80))}</small></div>
+          <button type="button" class="btn sm" data-a="text" title="Insert the text at the cursor (and add its tags)">Insert</button>
+          ${Object.keys(e.tags || {}).length ? `<button type="button" class="btn sm ghost" data-a="tags" title="Add only its tags">Tags</button>` : ""}
+        </div>`).join("") : `<p class="hint">${S.entries.length ? "Nothing matches." : "The catalog is empty: save a prompt from 📚 Catalog first."}</p>`;
+    };
+    box.innerHTML = `<input type="search" class="pp-q" placeholder="Search saved prompts" aria-label="Search saved prompts"><div class="pp-list"></div>`;
+    const w = WM.open({ id: "prompt-insert", title: "Insert a saved prompt", content: box, width: 480, height: 520, modal: false });
+    draw("");
+    $(".pp-q", box).addEventListener("input", e => draw(e.target.value.trim()));
+    box.addEventListener("click", e => {
+      const a = e.target.closest("[data-a]")?.dataset.a, id = e.target.closest("[data-id]")?.dataset.id;
+      const entry = S.entries.find(x => x.id === id);
+      if (!a || !entry) return;
+      const tags = state.promptTags ||= {};
+      const added = [], kept = [];
+      for (const [k, v] of Object.entries(entry.tags || {})) {
+        if (!(k in tags)) { tags[k] = structuredClone(v); added.push(k); }
+        else if (JSON.stringify(tags[k]) !== JSON.stringify(v)) kept.push(k);
+      }
+      if (a === "text") insertText(entry.prompt);
+      afterTags();
+      Media.toast([a === "text" ? `Inserted “${entry.title}”` : "", added.length ? `added tag${added.length === 1 ? "" : "s"} ${added.map(n => `<${n}>`).join(", ")}` : "",
+        kept.length ? `kept your own ${kept.map(n => `<${n}>`).join(", ")}` : ""].filter(Boolean).join("; ") || "Its tags are already here.");
+      if (a === "text") w.close();
+    });
   }
   function editTag(name = null) {
     const tags = state.promptTags ||= {};
@@ -593,18 +684,55 @@ const Prompts = (() => {
         dismiss(false); S.lastAsked = ""; onInput();
       }
     });
-    $("#prompt-tags").addEventListener("click", e => {
-      const a = e.target.closest("[data-pt]")?.dataset.pt, name = e.target.closest("[data-tag]")?.dataset.tag;
+    const bar = $("#prompt-bar");
+    bar.addEventListener("mousedown", e => { if (e.target.closest("button")) e.preventDefault(); });  // keep the caret in the prompt
+    bar.addEventListener("click", e => {
+      const el = e.target.closest("[data-pt]"), a = el?.dataset.pt, name = e.target.closest("[data-tag]")?.dataset.tag;
       if (a === "add") editTag();
       if (a === "edit") editTag(name);
       if (a === "presets") presetsWin();
-      if (a === "insert") { insertAtCursor(ta(), `<${name}>`); ta().dispatchEvent(new Event("input", { bubbles: true })); }
+      if (a === "insert") insertText(`<${name}>`);
+      if (a === "ref") insertText(`<Picture ${el.dataset.n}>`);
+      if (a === "aref") insertText(`<Audio ${el.dataset.n}>`);
+      if (a === "add-ref") showStep("inputs");
+      if (a === "from-catalog") insertSaved();
     });
+    $$("#prompt-mode button").forEach(b => b.addEventListener("click", () => setMode(b.dataset.m)));
     $("#btn-catalog").onclick = catalog;
     $("#seconds").addEventListener("input", () => renderLive());  // H3 checks depend on the clip length
     load().then(renderLive).catch(() => {});
     renderTags(); renderLive();
   }
+  /* The Prompt tab writes the prompt as text (with the live view) or with the Shot writer (H3 models): the
+     writer page in a frame, which keeps the prompt in step as you build the shot list. */
+  const MODE_KEY = "bob.prompt.mode";
+  let writerOk = false;
+  const wantMode = () => { try { return localStorage.getItem(MODE_KEY) || "text"; } catch { return "text"; } };
+  function setMode(m, persist = true) {
+    const writerOn = m === "writer" && writerOk;
+    const step = $('.step[data-step="prompt"]');
+    step.classList.toggle("writer-mode", writerOn);
+    $("#prompt-writer").hidden = !writerOn;
+    $$("#prompt-mode button").forEach(b => { const on = b.dataset.m === (writerOn ? "writer" : "text"); b.classList.toggle("active", on); b.setAttribute("aria-selected", String(on)); });
+    if (writerOn) {
+      dismiss(false);
+      const f = $("#prompt-writer-frame");
+      if (!f.getAttribute("src")) f.src = "/writer?embed=1&inline=1";  // loaded the first time it's shown
+      else postContext(true);
+    } else renderLive();
+    if (persist && writerOk) { try { localStorage.setItem(MODE_KEY, writerOn ? "writer" : "text"); } catch {} }
+  }
+  function writerAvailable(ok) {
+    writerOk = ok;
+    $("#prompt-mode").hidden = !ok;
+    setMode(ok ? wantMode() : "text", false);
+  }
+  function toggleWriter() {
+    if (!writerOk) { Media.toast("The Shot writer is for the MiniMax H3 models."); return; }
+    showStep("prompt");
+    setMode($('.step[data-step="prompt"]').classList.contains("writer-mode") ? "text" : "writer");
+  }
+
   // The model, the prompt or the tags changed from outside (model pick, project load, Reuse…).
   function refresh() {
     if (S.sug && S.sug.model !== modelKey()) dismiss(false);
@@ -612,5 +740,6 @@ const Prompts = (() => {
     renderTags(); renderLive();
   }
 
-  return { init, refresh, resolve, shape, final, hasSyntax, catalog, presetsWin, accept, dismiss, profile, _S: S };
+  return { init, refresh, resolve, shape, final, hasSyntax, catalog, presetsWin, accept, dismiss, profile,
+    renderBar: () => renderTags(), setMode, toggleWriter, writerAvailable, _S: S };
 })();

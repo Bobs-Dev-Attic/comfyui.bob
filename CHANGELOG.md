@@ -5,6 +5,25 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.40.0] - 2026-11-16
+
+### Added
+- **The live rewrite fixes what the live model view flags.** The problems go to the LLM as concrete instructions
+  (reword these negations as what is there; only these `<Picture N>` tags exist; add a camera move; add the sound
+  lines; fix these shot times…), together with the references you've added. If anything is still flagged, a second
+  pass rewrites the result once more. The suggestion says how many problems it fixed and lists what's left.
+- **A toolbar over the prompt.** For H3 Reference and H3 Image: your reference pictures as thumbnails (and voices for
+  H3 Reference) that insert `<Picture N>` / `<Audio N>` at the cursor, plus **+ Reference** to add more. For every
+  model: this prompt's tags, **+ Tag**, **🏷 Presets**, and **📚 Insert saved…**, which inserts a catalog prompt's
+  text at the cursor and adds its tags (keeping yours when a name is taken).
+- **Tidy for H3 shot lists:** shot lines without their tag get `[Shot 1]`, `[Shot 2]`…, and quoted speech after
+  says / asks / whispers… goes into `<d>[English] …</d>`.
+
+### Changed
+- **The Prompt Writer moved into the Prompt tab** as the **✍ Shot writer**, next to **✏ Prompt** (H3 models; Alt+W
+  switches). A complete shot list fills the prompt as you build it, with Undo to get your text back; **↗ Pop out**
+  still opens it in its own window. The Writer pane beside the viewer and its ✍ Writer button are gone.
+
 ## [0.39.0] - 2026-11-16
 
 ### Added

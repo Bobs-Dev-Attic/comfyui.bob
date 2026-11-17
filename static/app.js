@@ -412,6 +412,7 @@ function renderRefs() {
     </div>`).join("")
     + (state.refs.length < MAX_REFS ? `<div class="ref-add" id="ref-add" tabindex="0" role="button">+ Add<br>picture</div>` : "");
   $$(".ref .x", box).forEach(b => b.onclick = () => { state.refs.splice(+b.dataset.i, 1); renderRefs(); });
+  Prompts.renderBar?.();
   $$(".ref .tag", box).forEach(b => b.onclick = () => insertAtCursor($("#prompt"), `<Picture ${+b.dataset.i + 1}>`));
   const add = $("#ref-add");
   if (add) {
@@ -480,6 +481,7 @@ function renderArefs() {
   $$(".aref .tag", box).forEach(b => b.onclick = () => insertAtCursor($("#prompt"), `<Audio ${+b.dataset.i + 1}>`));
   const add = $("#aref-add");
   if (add) add.onclick = () => $("#aref-input").click();
+  Prompts.renderBar?.();
 }
 
 function addAref(ref, url, name) {
@@ -554,6 +556,18 @@ studioChannel.onmessage = ({ data: msg }) => {
   if (msg?.type === "hello") postContext(true);
   else if (msg?.type === "set" && typeof msg.seconds === "number") {
     $("#seconds").value = msg.seconds; updateDerived();
+  } else if (msg?.type === "use" && typeof msg.prompt === "string" && msg.quiet) {
+    // The Shot writer in the Prompt tab keeps the prompt in step as you build the shot list.
+    const p = $("#prompt");
+    if (p.value === msg.prompt) return;
+    if (writer.undo == null) {
+      writer.undo = p.value;
+      writerStatus(`The Shot writer is filling the prompt <button type="button" class="link" id="btn-undo-write">Undo</button>`);
+      $("#btn-undo-write").onclick = () => { if (writer.undo != null) p.value = writer.undo; writer.undo = null; writerStatus(""); Prompts.setMode("text"); Prompts.refresh(); scheduleSave(); };
+    }
+    p.value = msg.prompt;
+    if (typeof msg.seconds === "number" && +$("#seconds").value !== msg.seconds) { $("#seconds").value = msg.seconds; updateDerived(); }
+    Prompts.refresh(); scheduleSave();
   } else if (msg?.type === "use" && typeof msg.prompt === "string") {
     const p = $("#prompt");
     writer.undo = p.value;
@@ -634,8 +648,8 @@ function writerSupported() {
 function renderWriter() {
   const ok = writerSupported();
   $("#btn-write").hidden = !ok;
-  $("#btn-writer-window").hidden = !ok;
   $("#f-writer").hidden = !ok;
+  Prompts.writerAvailable(ok);
   const multi = state.kind === "video";
   $("#llm-shots").closest(".row2").hidden = !multi;
 }
@@ -1071,8 +1085,7 @@ function init() {
   Bin.init();
   Layout.init();
   $$("#mon-seg button").forEach(b => b.onclick = () => Monitor.show(b.dataset.m));
-  $("#btn-writer-window").onclick = () => Layout.setWriter(true);
-  $("#wp-pop").onclick = () => { Layout.setWriter(false); openWriterWindow(); };
+  $("#pw-pop").onclick = () => { Prompts.setMode("text"); openWriterWindow(); };
   $("#btn-media").onclick = () => Media.openWindow();
   $("#prompt").addEventListener("input", () => postContext());
   $("#aspect").innerHTML = Object.keys(ASPECT).map(a => `<option>${a}</option>`).join("");
