@@ -94,6 +94,25 @@ const Shots = (() => {
     const m = /^<Picture (\d+)>$/.exec(speakerOf(s));
     return m && +m[1] <= state.arefs.length ? `<Audio ${m[1]}>` : "";
   }
+  /* The voice recordings a video actually uses (1-based, in order): each spoken line's voice, and any <Audio N> written
+     in its shots or in the look, sound and music. Only these go to H3, renumbered <Audio 1>, <Audio 2>… With every
+     recording attached, H3 tends to give a lone speaker the first voice (MiniMax's guide: similar voices can merge into
+     one timbre), so a video where only <Picture 2> speaks got <Audio 1>'s voice. A shot with its own prompt keeps all. */
+  function audiosFor(list) {
+    const n = state.arefs.length;
+    if (!isRef() || !n) return [];
+    if (list.some(s => s.rawOn && s.raw.trim())) return state.arefs.map((_, k) => k + 1);
+    const used = new Set();
+    const cite = t => { for (const m of String(t || "").matchAll(/<Audio (\d+)>/g)) if (+m[1] >= 1 && +m[1] <= n) used.add(+m[1]); };
+    for (const s of list) {
+      if ((s.dialogue || "").trim()) cite(voiceFor(s));
+      cite([s.setting, s.action, s.dialogue].join(" "));
+    }
+    const sh = state.shots; cite([sh.style, sh.soundscape, sh.music].join(" "));
+    // Nothing to say and nothing else to send: keep them all rather than send H3 no references at all.
+    if (!used.size && !state.refs.length) return state.arefs.map((_, k) => k + 1);
+    return [...used].sort((a, b) => a - b);
+  }
   /* The prompt follows MiniMax's Video Prompt Writing Guide (a copy ships with ComfyUI-Fantastic-MiniMaxH3-PromptBuilder):
      - H3 (text / keyframes): integrated_multimodal_description: [Shot 1] <style> <shot> [Shot 2] At …, then
        overall_soundscape: and non_diegetic_music: (the server adds the keyframe line in front, workflows.h3_frame_alignment);
@@ -181,16 +200,24 @@ const Shots = (() => {
     const H = P(), ids = new Map();
     list.forEach((s, k) => { if (!s.rawOn && (s.dialogue || "").trim() && !ids.has(speakerKey(s, k))) ids.set(speakerKey(s, k), ids.size + 1); });
     const n = list.length, T = list.reduce((a, s) => a + (+s.seconds || 0), 0);
-    const pics = state.refs.map((r, k) => k + 1), voices = state.arefs.map((a, k) => k + 1);
+    const pics = state.refs.map((r, k) => k + 1), voices = audiosFor(list);  // labels are renumbered at the end
     // subject_definitions
     const defs = pics.map(p => {
       const d = subjectsWanted() ? oneLine(state.refs[p - 1].desc) : "";
       return d ? `<Subject ${p}> is the subject of <Picture ${p}>: ${d.charAt(0).toLowerCase() + d.slice(1)}.`
         : `<Subject ${p}> is the main subject of <Picture ${p}>, kept exactly as it appears there.`;
     });
+    // Whose voice each recording is: the subject who speaks with it in this video (a voice picked on the line),
+    // else the subject with the same number.
+    const owner = new Map();
+    list.forEach(s => {
+      const v = /^<Audio (\d+)>$/.exec((s.dialogue || "").trim() ? voiceFor(s) : ""), sp = /^<Picture (\d+)>$/.exec(speakerOf(s));
+      if (v && sp && !owner.has(+v[1])) owner.set(+v[1], +sp[1]);
+    });
+    const ownerOf = a => owner.get(a) ?? (a <= pics.length ? a : 0);
     for (const a of voices) {
-      const sid = a <= pics.length ? ids.get(`<Picture ${a}>`) : null;
-      defs.push(a <= pics.length ? `<Audio ${a}> is the voice-timbre reference for <Subject ${a}>${sid ? ` (S${sid})` : ""}.`
+      const p = ownerOf(a), sid = p ? ids.get(`<Picture ${p}>`) : null;
+      defs.push(p ? `<Audio ${a}> is the voice-timbre reference for <Subject ${p}>${sid ? ` (S${sid})` : ""}.`
         : `<Audio ${a}> is a voice-timbre reference.`);
     }
     // summary
@@ -198,21 +225,24 @@ const Shots = (() => {
     const who = pics.map(p => `<Subject ${p}>`);
     const whoText = who.length > 1 ? `${who.slice(0, -1).join(", ")} and ${who.at(-1)}` : who[0] || "the subject";
     const opening = list[0] && !list[0].rawOn ? oneLine(subj(resolveText(list[0].action))).split(/\s+/).slice(0, 40).join(" ") : "";
-    const voiceRoles = voices.filter(a => a <= pics.length).map(a => `<Audio ${a}> as the voice-timbre reference for <Subject ${a}>`);
+    const voiceRoles = voices.filter(a => ownerOf(a)).map(a => `<Audio ${a}> as the voice-timbre reference for <Subject ${ownerOf(a)}>`);
     const summary = `[${tasks.join(" + ")}] The target video is ${n === 1 ? "a single" : `a ${n}-shot`} ${T.toFixed(1)}-second scene with ${whoText}`
       + (voiceRoles.length ? `, using ${voiceRoles.join(" and ")}` : "") + "." + (opening ? ` It opens as ${opening.charAt(0).toLowerCase() + opening.slice(1)}.` : "");
     // retention_analysis
     const retention = [
       ...pics.map(p => [p, appearsIn(p, list)]).filter(([, at]) => at.length).map(([p, at]) =>
         `<Subject ${p}> (appears in ${at.map(k => `[Shot ${k + 1}]`).join(", ")}): fully_preserved - the identity, face, hair, build and appearance from <Picture ${p}> are retained.`),
-      ...voices.map(a => `<Audio ${a}>: reference - its voice timbre ${a <= pics.length ? `guides the delivery of <Subject ${a}>` : "guides the spoken delivery"} without copying the original signal.`),
+      ...voices.map(a => `<Audio ${a}>: reference - its voice timbre ${ownerOf(a) ? `guides the delivery of <Subject ${ownerOf(a)}>` : "guides the spoken delivery"} without copying the original signal.`),
     ];
     // the main field: integrated_multimodal_description (the guide calls it detailed_description in reference mode; this studio uses the base name, by choice)
     let t = 0;
     const body = list.map((s, k) => { const txt = `[Shot ${k + 1}] ${shotText(s, k, t, n, ids)}`; t += +s.seconds || 0; return txt; }).join("\n");
     const look = oneLine(style);
-    return [`subject_definitions:\n${defs.join("\n")}`, `summary:\n${summary}`, `retention_analysis:\n${retention.join("\n")}`,
+    const out = [`subject_definitions:\n${defs.join("\n")}`, `summary:\n${summary}`, `retention_analysis:\n${retention.join("\n")}`,
       `integrated_multimodal_description:\nThe target video's look: ${look.charAt(0).toLowerCase() + look.slice(1)}.\n${body}`, audioFields("\n")].join("\n\n");
+    // Only the recordings this video uses are sent, in order: <Audio 2> alone becomes <Audio 1>.
+    const renum = new Map(voices.map((a, k) => [a, k + 1]));
+    return out.replace(/<Audio (\d+)>/g, (m, a) => renum.has(+a) ? `<Audio ${renum.get(+a)}>` : m);
   }
   function basePrompt(list, style) {
     let t = 0;
@@ -891,26 +921,28 @@ const Shots = (() => {
       const items = await submit(req);
       if (autoTl && items?.length) { pending.set(items[0].id, { ids: items.map(x => x.id), project: state.project?.id ?? "experiment", one: true }); savePending(); }
     };
+    // Only the voice recordings this video uses (the prompt numbers them the same way).
+    const arefsFor = list => isR && (base.ref_audios || []).length ? audiosFor(list).map(a => base.ref_audios[a - 1]).filter(Boolean) : base.ref_audios;
     if (sh.mode === "multi") {
       const first = framesOf(0).first_frame, last = framesOf(sh.list.length - 1).last_frame;
-      return submitOne({ ...base, prompt: prompt(), seconds: Math.min(300, total()),
+      return submitOne({ ...base, prompt: prompt(), seconds: Math.min(300, total()), ref_audios: arefsFor(sh.list),
         first_frame: !isR ? first?.ref ?? null : null, last_frame: !isR ? last?.ref ?? null : null });
     }
     const reqFor = i => {
       const s = sh.list[i], f = framesOf(i);
-      return { ...base, prompt: prompt(i), seconds: +s.seconds || 3, references: isR ? base.references : [],
+      return { ...base, prompt: prompt(i), seconds: +s.seconds || 3, references: isR ? base.references : [], ref_audios: arefsFor([s]),
         first_frame: !isR ? f.first_frame?.ref ?? null : null, last_frame: !isR ? f.last_frame?.ref ?? null : null };
     };
     if (sh.list.length === 1) {  // one shot: a plain generation (takes allowed), no timeline layout
       const req = reqFor(0);
-      if (isR && !req.references.length && !(base.ref_audios || []).length) { err.textContent = "Add reference pictures on the Inputs step."; return; }
+      if (isR && !req.references.length && !(req.ref_audios || []).length) { err.textContent = "Add reference pictures on the Inputs step."; return; }
       return submitOne(req);
     }
     // one per shot: submit them in order, then place the results on the timeline in order
     const ids = [];
     for (let i = 0; i < sh.list.length; i++) {
       const req = { ...reqFor(i), batch: 1 };
-      if (isR && !req.references.length && !(base.ref_audios || []).length) { err.textContent = `Shot ${i + 1} has no reference pictures.`; return; }
+      if (isR && !req.references.length && !(req.ref_audios || []).length) { err.textContent = `Shot ${i + 1} has no reference pictures.`; return; }
       try {
         const { items } = await api("/api/generate", { method: "POST", body: JSON.stringify(req) });
         for (const it of items) { state.items.set(it.id, it); Activity.onEvent({ type: "item", item: it }); }

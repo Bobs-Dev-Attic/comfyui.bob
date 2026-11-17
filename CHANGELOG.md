@@ -5,6 +5,19 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.64.0] - 2026-11-17
+
+### Fixed
+- **H3 Reference used the first voice for everyone.** Every video got all the reference sounds, so when only
+  <Picture 2> spoke, H3 heard <Audio 1> first and tended to give her that voice (MiniMax's guide warns that similar
+  voices can merge into one timbre). Now each video gets only the recordings it uses (each spoken line's voice, and
+  any <Audio N> written in its shots or in the look, sound and music), renumbered from <Audio 1> in the prompt and
+  in the request. A video where <Picture 2> speaks alone gets just her voice. A shot with nobody speaking sends no
+  recordings; a multi-shot video with two speakers still sends both, each bound to its speaker. A shot with its own
+  prompt still gets them all.
+- A voice picked on a spoken line is now defined as that speaker's voice in subject_definitions, summary and
+  retention_analysis (before, <Audio N> was always said to belong to <Subject N>).
+
 ## [0.63.0] - 2026-11-17
 
 ### Fixed
