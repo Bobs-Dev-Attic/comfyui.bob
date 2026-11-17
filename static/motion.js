@@ -101,6 +101,13 @@ const Motion = (() => {
     $("#mo-showplate").disabled = !m.plateImg;
     const path = $(".mo-path");
     path.hidden = !lay;
+    const sel = $("#mo-track");
+    if (sel && sel.dataset.n !== String(m.tracks.length)) {
+      sel.dataset.n = String(m.tracks.length);
+      sel.innerHTML = m.tracks.length ? m.tracks.map(tr => `<option value="${esc(tr.id)}">${esc(tr.name)} · ${tr.duration.toFixed(1)} s</option>`).join("")
+        : `<option value="">No tracked paths yet</option>`;
+    }
+    if (sel) { sel.disabled = !m.tracks.length; $('[data-act="apply-track"]').disabled = !m.tracks.length; }
     if (lay) {
       const k = keyAt(lay, m.t, false), cur = at(lay, m.t);
       $(".mo-path-h").textContent = `Path of ${lay.name}`;
@@ -233,6 +240,25 @@ const Motion = (() => {
   }
 
   /* ---------------------------------------------------------------- open */
+  /* A path tracked in a video becomes the selected object's path: its moves (shares of that video's frame, so
+     shares of this picture's) and size, keyed in the same curve. The shot gets as long as the path, up to 10 s. */
+  function applyTrack(id) {
+    const tr = m.tracks.find(x => x.id === id), lay = m.layers[m.sel];
+    if (!tr || !lay) return;
+    const flip = !!lay.keys[0]?.f;
+    lay.keys = tr.keys.filter(k => k.t <= 10 + 1e-6).map(k => ({ t: k.t, x: k.x, y: k.y, s: Math.max(0.05, k.s), f: flip }));
+    if (!lay.keys.length || lay.keys[0].t > 0) lay.keys.unshift({ t: 0, x: 0, y: 0, s: 1, f: flip });
+    const want = Math.max(2, Math.min(10, Math.ceil(tr.duration * 2) / 2));
+    if (want !== m.seconds) { m.seconds = want; $("#mo-sec").value = String(want); }
+    m.t = 0;
+    Media.toast(`${lay.name} now follows “${tr.name}” (${lay.keys.length} keys, ${tr.duration.toFixed(1)} s). Drag or change keys to adjust it.`);
+    refresh();
+  }
+  async function loadTracks() {
+    try { m.tracks = (await api("/api/tracks")).tracks || []; } catch { m.tracks = []; }
+    if (m) renderSide();
+  }
+
   async function open(src) {
     if (m?.win) m.win.close();
     const pic = await loadImg(src.url);
@@ -261,7 +287,9 @@ const Motion = (() => {
           <p class="hint mo-keyhint"></p>
           <div class="mo-keys"></div>
           <div class="field"><label for="mo-scale">Size <span class="mo-scale-v"></span></label><input type="range" id="mo-scale" min="0.2" max="3" step="0.01"></div>
-          <label class="check"><input type="checkbox" id="mo-flip"> Flipped</label></section>
+          <label class="check"><input type="checkbox" id="mo-flip"> Flipped</label>
+          <div class="field mo-track"><label for="mo-track">Use a tracked path <span class="opt">from 🎯 Track an object, on a video</span></label>
+            <div class="mo-find"><select id="mo-track"></select><button type="button" class="btn sm" data-act="apply-track">Use</button></div></div></section>
         <section><h3>Shot</h3>
           <div class="row2"><div class="field"><label for="mo-sec">Length</label><div class="sm-sec"><input type="number" id="mo-sec" min="2" max="10" step="0.5" value="3"> s</div></div>
             <div class="field"><label for="mo-q">Quality</label><select id="mo-q"><option value="draft">Draft</option><option value="standard">Standard</option><option value="full">Full</option></select></div></div>
@@ -276,7 +304,7 @@ const Motion = (() => {
     const win = WM.open({ id: "motion", title: `Animate objects · ${src.name || src.ref.split("/").pop()}`, content: root, footer: foot,
       width: 1100, height: 720, minWidth: 760, minHeight: 520, onClose: () => { m = null; } });
     m = { win, root: win.el, canvas: root.querySelector(".mo-canvas"), pic, ref: src.ref, project: state.project?.id ?? null,
-      layers: [], sel: -1, t: 0, seconds: 3, quality: "draft", hold: "normal", prompt: "", plateRef: "", plateImg: null, showPlate: false };
+      layers: [], tracks: [], sel: -1, t: 0, seconds: 3, quality: "draft", hold: "normal", prompt: "", plateRef: "", plateImg: null, showPlate: false };
     const all = [root, foot];
     const on = (ev, fn) => all.forEach(el => el.addEventListener(ev, fn));
     on("click", e => {
@@ -289,6 +317,7 @@ const Motion = (() => {
       if (a === "generate") return generate();
       if (a === "del-layer") { m.layers.splice(+b.dataset.i, 1); m.sel = Math.min(m.sel, m.layers.length - 1); if (m.plateRef) m.plateStale = true; return refresh(); }
       if (a === "del-key") { m.layers[m.sel].keys.splice(+b.dataset.key, 1); return refresh(); }
+      if (a === "apply-track") return applyTrack($("#mo-track").value);
       if (b.dataset.key != null) { m.t = m.layers[m.sel].keys[+b.dataset.key].t; return refresh(); }
       if (b.dataset.i != null) { m.sel = +b.dataset.i; return refresh(); }
     });
@@ -307,6 +336,7 @@ const Motion = (() => {
     m.canvas.addEventListener("pointerdown", onDown);
     new ResizeObserver(() => m && draw()).observe(m.canvas);
     refresh();
+    loadTracks();
   }
 
   return { open, _state: () => m };

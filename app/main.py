@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, appsettings, audiotools, config, llm, media, modelpaths, models, projects, prompts, render, syscheck, updater, workflows
+from . import __version__, appsettings, audiotools, config, llm, media, modelpaths, models, projects, prompts, render, syscheck, tracking, updater, workflows
 from .comfy import ComfyService
 from .jobs import EnhanceOpts, GenerateRequest, JobManager, media_path
 
@@ -234,6 +234,84 @@ async def edit_select(req: SelectReq):
         raise HTTPException(502, "AI select returned nothing")
     rel = paths[0].relative_to(config.ROOT).as_posix()
     return {"mask": rel, "url": "/" + rel}
+
+
+# ------------------------------------------------------------------ track an object in a video (app/tracking.py)
+
+class TrackReq(BaseModel):
+    video: str = Field(..., max_length=2000)
+    start: float = Field(0, ge=0)  # seconds into the video where tracking starts (the object is picked on that frame)
+    positive: list[dict[str, float]] = Field(default_factory=list, max_length=32)  # video pixels on that frame
+    negative: list[dict[str, float]] = Field(default_factory=list, max_length=32)
+    text: str = Field("", max_length=300)
+    threshold: float = Field(0.5, ge=0.05, le=0.95)
+
+
+@app.post("/api/track")
+async def track_object(req: TrackReq):
+    """Follow an object through a video with SAM 3.1 and return its path (cleaned and smoothed) and keys."""
+    if not (req.positive or req.text.strip()):
+        raise HTTPException(400, "Click the object, or type what to track")
+    installed = await comfy.installed_models()
+    ckpt = _sam_ckpt(installed)
+    if not ckpt or not jobs.has_node("SAM3_VideoTrack"):
+        raise HTTPException(409, "Tracking needs a SAM 3 checkpoint (sam3*.safetensors) and ComfyUI's SAM 3 nodes")
+    try:
+        if media.kind_of(req.video) != "video":
+            raise media.MediaError("Only videos can be tracked")
+        p = await asyncio.to_thread(tracking.plan, req.video, req.start)
+    except (media.MediaError, OSError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    k = p["k"]
+    scale = lambda pts: [{"x": q["x"] * k, "y": q["y"] * k} for q in pts]  # noqa: E731
+    built = workflows.build_track(ckpt, first=p["first"], count=p["count"], width=p["tw"], height=p["th"], fps=p["fps"],
+                                  positive=scale(req.positive), negative=scale(req.negative), text=req.text,
+                                  threshold=req.threshold)
+    t0 = asyncio.get_running_loop().time()
+    try:
+        paths = await jobs.run_quick(built, {"video": req.video}, timeout=900)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - ComfyUI's own error text is the useful part
+        raise HTTPException(502, f"Tracking failed: {str(exc)[:500]}") from exc
+    if not paths:
+        raise HTTPException(502, "Tracking returned nothing")
+    try:
+        raw = await asyncio.to_thread(tracking.measure, paths[0], p["tw"] / p["th"])
+        path = tracking.clean(raw, p["fps"])
+    except media.MediaError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    finally:
+        paths[0].unlink(missing_ok=True)
+    return {"start": p["start"], "fps": p["fps"], "frames": len(path), "duration": round(len(path) / p["fps"], 3),
+            "width": p["width"], "height": p["height"], "found": round(sum(1 for q in path if q["ok"]) / max(1, len(path)), 3),
+            "path": path, "keys": tracking.keys(path), "seconds": round(asyncio.get_running_loop().time() - t0, 1)}
+
+
+class TrackSave(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    video: str = Field(..., max_length=2000)
+    start: float = 0
+    duration: float = Field(..., gt=0)
+    aspect: float = Field(..., gt=0)  # the video's width / height
+    keys: list[dict[str, float]] = Field(..., min_length=1, max_length=2000)
+
+
+@app.get("/api/tracks")
+async def tracks_list():
+    return {"tracks": tracking.list_saved()}
+
+
+@app.post("/api/tracks")
+async def tracks_save(req: TrackSave):
+    return tracking.save(req.model_dump())
+
+
+@app.delete("/api/tracks/{track_id}")
+async def tracks_delete(track_id: str):
+    if not tracking.delete(track_id):
+        raise HTTPException(404, "No such path")
+    return {"ok": True}
 
 
 # ------------------------------------------------------------------ Inputs: describe a picture, audio tools
