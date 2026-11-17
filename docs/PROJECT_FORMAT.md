@@ -45,7 +45,7 @@ versions can add fields without breaking older files.
 | `audios` | `[{ref, url}]` | H3 Reference sounds (voices to clone; a sound file or a video's soundtrack), in `<Audio N>` order, up to 3 |
 | `loras` | `[{name, strength}]` | LoRAs on the model, applied in order after the model (and H3's turbo LoRA). `name` is as ComfyUI lists it under `models/loras`; strength −4…4 |
 | `enhance_after` (request only) | object or `null` | Settings › After generating: the Enhance chain to run on the result when it's done |
-| `shots` | object or `null` | The Shots step (video): `{on, mode: "multi"\|"each", style, soundscape, music, list}`; each shot is `{id, seconds, framing, setting, action, camera, dialogue, voice ("<Audio N>" or ""), first_frame, last_frame ({ref, url} or null), refs ([picture indexes] for H3 Reference)}` |
+| `shots` | object or `null` | The Shots step (video): `{on, mode: "multi"\|"each", style, soundscape, music, list}`; each shot is `{id, seconds, framing, angle ("low angle", "overhead"… or ""), setting, action, position (where the camera stands, or ""), camera, dialogue, voice ("<Audio N>" or ""), first_frame, last_frame ({ref, url} or null), refs ([picture indexes] for H3 Reference)}` |
 | `clean_audio` | bool | Clean the sounds and keep their best 6–10 s of speech (the `H3RefAudioPrep` node, when installed) |
 | `frames` | `{first_frame, last_frame}` | Keyframes, each `{ref, url}` or `null` |
 

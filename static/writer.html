@@ -34,11 +34,22 @@
             <label class="mini-toggle" title="Rewrite the prompt a moment after you stop typing">
               <input type="checkbox" id="w-auto" checked> Auto
             </label>
-            <button type="button" class="btn sm" id="w-write">✨ Write</button>
+            <button type="button" class="btn sm" id="w-write" title="Write the shot list from your idea at the creativity below">✨ Write</button>
+            <button type="button" class="btn sm" id="w-enhance" title="Improve the fields as they are now (locked ones stay as written) at the creativity below">🪄 Enhance</button>
           </span>
         </div>
         <textarea id="w-idea" rows="4" placeholder="Say it in your own words, e.g. “a lighthouse keeper climbs the stairs in a storm and lights the lamp”"></textarea>
         <p class="hint" id="w-status"></p>
+      </div>
+
+      <div class="field w-creat" id="w-creat-field">
+        <div class="label-row"><label for="w-creativity">Creativity</label><span class="val" id="w-creativity-val"></span></div>
+        <input type="range" id="w-creativity" min="0" max="100" step="5" value="50"
+          title="How far the LLM may go beyond your idea, for ✨ Write and 🪄 Enhance">
+        <div class="w-creat-presets" role="group" aria-label="Creativity presets">
+          <button type="button" data-creat="0">Literal 0%</button><button type="button" data-creat="25">Faithful 25%</button>
+          <button type="button" data-creat="50">Enhanced 50%</button><button type="button" data-creat="75">Bold 75%</button>
+          <button type="button" data-creat="100">Wild 100%</button></div>
       </div>
 
       <div class="w-controls">

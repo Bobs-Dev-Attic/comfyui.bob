@@ -34,7 +34,14 @@ PREFERRED = ("qwen3-vl:8b-instruct", "qwen3-vl", "gemma4", "qwen3", "gemma3", "l
 NEGATION = re.compile(r"\b(no|not|never|without|don't|doesn't|isn't|aren't|nothing|nobody|none|neither|nor)\b", re.I)
 FILLER = re.compile(r"\b(masterpiece|best quality|8k|4k|ultra[- ]?hd|hdr|highly detailed|trending|award[- ]winning)\b", re.I)
 TAG = re.compile(r"<Picture (\d+)>")
-LIMITS = {"style": 35, "setting": 30, "action": 45, "camera": 16, "soundscape": 70, "music": 30}
+LIMITS = {"style": 35, "setting": 30, "action": 45, "position": 14, "camera": 16, "soundscape": 70, "music": 30}
+# Where the camera is (mirrored in static/h3prompt.js). H3 follows "Low-angle wide shot" and "The camera is behind her
+# at shoulder height and tracks her" far more reliably than a bare move with no position.
+ANGLES = ["eye level", "low angle", "high angle", "overhead", "ground level", "over the shoulder", "point of view",
+          "dutch angle"]
+ANGLE_ADJ = {"eye level": "eye-level", "low angle": "low-angle", "high angle": "high-angle", "overhead": "overhead top-down",
+             "ground level": "ground-level", "over the shoulder": "over-the-shoulder", "point of view": "point-of-view",
+             "dutch angle": "dutch-angle"}
 
 
 class LLMError(RuntimeError):
@@ -249,6 +256,10 @@ class WriteRequest:
     url: str | None = None  # server URL; None = backend default
     model: str | None = None
     seed: int | None = None
+    # 0 = literal (only what the idea says) ... 100 = free reinterpretation; also sets the sampling temperature.
+    creativity: int = 50
+    # Enhance: the fields as they are now (same shape as `locked`); the model improves them instead of starting over.
+    draft: dict[str, Any] = field(default_factory=dict)
     # Fields the user wrote or locked; the LLM keeps them and writes the rest to fit.
     # {"style": "...", "soundscape": "...", "music": "...", "shots": [{"action": "..."}, {}, ...]}
     locked: dict[str, Any] = field(default_factory=dict)
@@ -293,10 +304,14 @@ def _schema(req: WriteRequest, n: int) -> dict[str, Any]:
             "soundscape": _text(LIMITS["soundscape"]), "music": _text(LIMITS["music"])}}
     shot_props: dict[str, Any] = {
         "framing": {"type": "string", "enum": FRAMINGS},
+        "angle": {"type": "string", "enum": ANGLES},
         "setting": _text(LIMITS["setting"]),
         "action": _text(LIMITS["action"]),
+        "position": _text(LIMITS["position"]),
         "camera": _text(LIMITS["camera"]),
     }
+    if req.mode == "still":
+        del shot_props["camera"]
     if req.dialogue and req.mode != "still":
         shot_props["dialogue"] = _text(40)
     shot = {"type": "object", "required": list(shot_props), "properties": shot_props}
@@ -316,9 +331,11 @@ You fill in JSON fields. Code turns them into the final prompt, so write plain f
 Field rules:
 - style: one line with medium, look, palette, lens and mood, e.g. "Cinematic live-action, warm tungsten palette, 35mm lens, quiet tension". At most 35 words.
 - framing: pick one from the list.
+- angle: the camera's height and angle, from the list: "eye level" for neutral, "low angle" to make the subject strong or tall, "high angle" to make it small, "overhead" straight down, "ground level" at the floor, "over the shoulder" past one person to another, "point of view" through a character's eyes, "dutch angle" tilted for unease.
+- position: where the camera stands relative to the subject, as a place a camera operator could stand, as one phrase without commas starting with a preposition, e.g. "behind her at shoulder height", "across the table from him", "on the stairs above them", "low beside the front wheel". At most 14 words.
 - setting: where the shot is and its light, as concrete visual facts. At most 30 words.
 - action: what the subject does in this shot, starting with the subject, in present tense, with concrete gestures, colors and materials. At most 45 words.
-- camera: exactly one move, starting with a verb, e.g. "holds a static shot", "pushes in slowly", "pans left at slow speed", "tracks alongside the subject". At most 16 words.
+- camera: exactly one move from that position, starting with a verb, with its direction and speed, e.g. "holds a static shot", "pushes in slowly toward her face", "pans left at slow speed to the door", "tracks alongside her as she walks". At most 16 words. The angle, position and move must fit together and match the framing.
 - dialogue: the spoken words only, in English, about 2.5 words per second of the shot; use "" when nobody speaks.
 - soundscape: ambience and sound effects, in order and tied to the action. At most 70 words.
 - music: the score style and mood, or "N/A" for none.
@@ -327,7 +344,7 @@ Writing rules:
 - Describe only what is there. Never use negations ("no", "not", "without", "never"); H3 has no negative prompt.
 - Skip filler such as "masterpiece", "8k", "highly detailed".
 - Keep the same subject, look and wardrobe from shot to shot unless the idea changes them.
-- Vary framing and camera between neighbouring shots.
+- Vary framing, angle and camera position between neighbouring shots, and keep screen direction consistent: a subject moving left to right keeps doing so unless the camera clearly moves around them.
 - Keep everything physically plausible and readable in a few seconds.
 - Follow the user's idea; it decides the story. Keep every specific detail the user gave."""
 
@@ -368,6 +385,13 @@ def _user_message(req: WriteRequest, n: int, frames: int) -> str:
                       "by their picture tag, so the right voice is used."]
     if not req.dialogue:
         lines += ["Nobody speaks: dialogue is \"\" in every shot."]
+    lines += ["", "CREATIVITY " + f"{creativity_of(req)}%: " + creativity_rule(creativity_of(req))]
+    current = [(label, value) for key, label, value in locked_items(req.draft)
+               if value.strip() and key not in {k for k, _l, _v in locked_items(req.locked)}]
+    if current:
+        lines += ["", "CURRENT DRAFT. Enhance it: keep what works, make every field more vivid, specific and filmable at "
+                  "the creativity level above, and fix anything vague or contradictory:"]
+        lines += [f"- {label}: {value}" for label, value in current]
     fixed = locked_items(req.locked)
     if fixed:
         lines += ["", "FIXED FIELDS. The user wrote these: copy each one exactly into its field, and write every "
@@ -377,7 +401,32 @@ def _user_message(req: WriteRequest, n: int, frames: int) -> str:
 
 
 FIELD_LABELS = {"style": "style", "soundscape": "soundscape", "music": "music"}
-SHOT_FIELDS = ("framing", "setting", "action", "camera", "dialogue")
+SHOT_FIELDS = ("framing", "angle", "setting", "action", "position", "camera", "dialogue")
+
+CREATIVITY = [  # (up to this %, the rule)
+    (15, "Literal. Film exactly what the idea says. Add only the visual facts needed to film it (light, framing, camera); "
+         "invent no new events, characters, props or places."),
+    (40, "Faithful. Keep the idea's events as given; add modest concrete detail: textures, light, small gestures."),
+    (65, "Enhanced. Keep the idea's core and every detail the user gave, and enrich it: vivid specific details, a clear "
+         "visual style, motivated camera angles and moves, and layered sound."),
+    (85, "Bold. Keep the subject and what the idea is about, and add striking imagery, dramatic light, inventive angles "
+         "and small story beats that build to a payoff."),
+    (100, "Wild. Treat the idea as a starting point: reinterpret it as a surprising cinematic concept with an unusual "
+          "style and bold camera choices, still about the subject the user named."),
+]
+
+
+def creativity_of(req: WriteRequest) -> int:
+    return max(0, min(100, int(req.creativity)))
+
+
+def creativity_rule(pct: int) -> str:
+    return next(rule for top, rule in CREATIVITY if pct <= top)
+
+
+def temperature_of(pct: int) -> float:
+    """0% -> 0.25 (sticks to the words), 50% -> 0.7 (the old default), 100% -> 1.15."""
+    return round(0.25 + 0.9 * pct / 100, 2)
 
 
 def locked_items(locked: dict[str, Any]) -> list[tuple[str, str, str]]:
@@ -450,7 +499,11 @@ def validate(data: dict[str, Any], req: WriteRequest, n: int, frames: int) -> li
     for i, s in enumerate(shots, 1):
         check(f"Shot {i} setting", s.get("setting", ""), "setting")
         check(f"Shot {i} action", s.get("action", ""), "action")
-        check(f"Shot {i} camera", s.get("camera", ""), "camera")
+        if req.mode != "still":
+            check(f"Shot {i} camera", s.get("camera", ""), "camera")
+        check(f"Shot {i} position", s.get("position", ""), "position")
+        if s.get("angle") and str(s["angle"]).strip().lower() not in ANGLES and f"shots.{i}.angle" not in locked:
+            problems.append(f"Shot {i} angle must be one of: {', '.join(ANGLES)}.")
     if shots and req.mode != "still":
         times = shot_times(frames, len(shots)) + [frames / workflows.FPS]
         for i, s in enumerate(shots):
@@ -515,9 +568,21 @@ def clean_dialogue(line: str, budget: int) -> str:
     return text.rstrip(",;:-—… ")
 
 
-def _camera(s: str) -> str:
+def _camera(s: str, position: str = "") -> str:
     s = re.sub(r"^(the\s+)?camera\s+", "", s.strip(), flags=re.I).rstrip(".")
-    return f"The camera {s}."
+    pos = position_text(position)
+    return f"The camera is {pos} and {s}." if pos else f"The camera {s}."
+
+
+def angle_text(a: str | None) -> str:
+    a = re.sub(r"\.+$", "", (a or "").strip().lower())
+    return ANGLE_ADJ.get(a, a)
+
+
+def position_text(s: str | None) -> str:
+    s = re.sub(r"^(the\s+)?camera\s+", "", (s or "").strip(), flags=re.I)
+    s = re.sub(r"^(is|sits|stands|stays|placed|positioned)\s+", "", s, flags=re.I)
+    return re.sub(r"[.,;]+$", "", s)
 
 
 def voice_of(action: str, voices: int) -> str:
@@ -536,16 +601,21 @@ def assemble(data: dict[str, Any], req: WriteRequest, n: int, frames: int) -> st
     shots = data["shots"][:n]
     if req.mode == "still":
         s = shots[0]
-        return f"{style}\n\n{s['framing'].capitalize()}. {_sentence(s['setting'])} {_sentence(s['action'])} The camera holds a static shot."
+        angle = angle_text(s.get("angle"))
+        head = f"{angle.capitalize()} {s['framing'].lower()}" if angle else s["framing"].capitalize()
+        return (f"{style}\n\n{head}. {_sentence(s['setting'])} {_sentence(s['action'])} "
+                f"{_camera('holds a static shot', s.get('position', ''))}")
     times = shot_times(frames, len(shots)) + [frames / workflows.FPS]
     out = [style, ""]
     for k, s in enumerate(shots):
         when = "" if k == 0 else f"At {fmt_time(times[k])}, "
-        body = f"{when}{s['framing']}. {_sentence(s['setting'])} {_sentence(s['action'])}"
+        angle = angle_text(s.get("angle"))
+        head = f"{angle} {s['framing']}" if angle else s["framing"]
+        body = f"{when}{head}. {_sentence(s['setting'])} {_sentence(s['action'])}"
         line = clean_dialogue(s.get("dialogue") or "", dialogue_budget(times[k + 1] - times[k]))
         if line:
             body += f" They say{voice_of(s.get('action', ''), req.voices if req.mode == 'ref' else 0)}: <d>[English] {line}</d>"
-        out.append(f"[Shot {k + 1}] {body[0].upper() + body[1:]} {_camera(s['camera'])}")
+        out.append(f"[Shot {k + 1}] {body[0].upper() + body[1:]} {_camera(s['camera'], s.get('position', ''))}")
     music = data.get("music", "").strip() or "N/A"
     out += ["", f"overall_soundscape: {_sentence(data['soundscape'])}", f"non_diegetic_music: {music}"]
     return "\n".join(out)
@@ -571,7 +641,8 @@ async def write_prompt(req: WriteRequest, attempts: int = 3) -> dict[str, Any]:
     t0 = time.monotonic()
     best: tuple[dict[str, Any], list[str]] | None = None
     for attempt in range(1, attempts + 1):
-        raw = await llm.chat(model, messages, schema, seed=None if req.seed is None else req.seed + attempt)
+        raw = await llm.chat(model, messages, schema, seed=None if req.seed is None else req.seed + attempt,
+                             temperature=temperature_of(creativity_of(req)))
         try:
             data = json.loads(raw)
         except ValueError:
@@ -604,6 +675,7 @@ async def write_prompt(req: WriteRequest, attempts: int = 3) -> dict[str, Any]:
         "model": model,
         "vision": bool(req.images and can_see is not False and not getattr(llm, "text_only", False)),
         "attempts": attempt,
+        "creativity": creativity_of(req),
         "warnings": problems,
         "seconds": round(time.monotonic() - t0, 1),
     }

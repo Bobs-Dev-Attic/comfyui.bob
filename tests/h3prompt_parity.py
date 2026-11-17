@@ -26,6 +26,14 @@ CASES = [
                 "shots": [{**SHOT, "dialogue": "Move on now, please move on now, please move on now"}]}),
     ("still", 5, {"style": "watercolor", "shots": [{"framing": "Medium Shot", "setting": "a library", "action": "a fox reads"}]}),
     ("sound", 6, {"soundscape": "thunder at 0s, a dog barks at 3s", "music": ""}),
+    # Camera angle + position (the fields are optional; old drafts without them build as before).
+    ("t2v", 8, {"style": "noir", "soundscape": "rain", "music": "",
+                "shots": [{**SHOT, "angle": "low angle", "position": "behind her at shoulder height,", "dialogue": ""},
+                          {**SHOT, "angle": "Over the shoulder", "position": "The camera is across the table from him.",
+                           "dialogue": "", "camera": "racks focus"},
+                          {**SHOT, "angle": "slightly tilted", "position": "", "dialogue": ""}]}),
+    ("still", 5, {"style": "watercolor", "shots": [{"framing": "Wide Shot", "angle": "overhead", "setting": "a library",
+                                                     "action": "a fox reads", "position": "positioned high above the desk"}]}),
 ]
 
 
