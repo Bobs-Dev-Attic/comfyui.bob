@@ -130,6 +130,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .pl-model { font-weight: 700; color: var(--accent); }
 .pl-count { color: var(--muted); }
 .pl-gap { flex: 1; }
+.pl-llm { font-size: 11.5px; padding: 1px 4px; max-width: 220px; }
 .pl-tg { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); cursor: pointer; white-space: nowrap; }
 .pl-notes { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .pl-notes li { color: var(--muted); }

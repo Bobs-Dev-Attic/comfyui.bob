@@ -5,6 +5,20 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.38.0] - 2026-11-16
+
+### Added
+- **A model choice for the live rewrite**, next to its switch, separate from the Prompt writer's. **Auto** (the
+  default) uses a small fast model for image and music prompts (`qwen3:4b-instruct` first, then `qwen3:4b`,
+  `llama3.2:3b`, `gemma3:4b`, `qwen3:1.7b`) and the Prompt writer's default for H3 shot lists, where small models break
+  the format. It shows which model it picked.
+
+### Changed
+- **Live rewrites start about three times sooner**: the first words show about 0.2 s after the pause instead of
+  0.6 s. Bob no longer asks the LLM server for its model list on every rewrite (that took most of the time; a warm
+  model answers in about 0.03 s), and the pause before a rewrite is 0.6 s instead of 0.85 s.
+- Every model warmed for the live rewrite is unloaded when a render starts, not just the last one.
+
 ## [0.37.0] - 2026-11-16
 
 ### Added

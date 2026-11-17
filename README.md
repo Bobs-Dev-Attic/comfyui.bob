@@ -170,8 +170,10 @@ Other features:
 - **✨ Live rewrite:** after a short pause in typing, a local LLM rewrites the prompt in the selected model's own format
   (a natural-language paragraph for FLUX and Krea, a style line plus `[Shot N]` lines and sound for H3, a style
   caption for Music 3) and streams it in under the prompt; **Tab** accepts it (Ctrl+Z undoes), **Esc** dismisses it.
-  Template parts survive the rewrite. The LLM (the Prompt writer's choice) loads while you type and is unloaded when a
-  render starts; live rewrites pause while one runs.
+  Template parts survive the rewrite. The live rewrite has its own LLM choice next to its switch: **Auto** uses a small
+  fast model (`qwen3:4b-instruct`, else `llama3.2:3b`, `gemma3:4b`…) for image and music prompts and the Prompt writer's
+  default for H3 shot lists. It loads while you type and is unloaded when a render starts; live rewrites pause while
+  one runs.
 - **Prompt tags and templates:** **+ Tag** adds a named value to the prompt, used as `<name>` or `{{name}}`; several
   values give one at random each Generate (the same one everywhere in the prompt). `{a|b}`, `{3::a|b}`, `<maybe p="0.3">…</maybe>`
   and `<list count="2">a, b, c</list>` roll too. **🏷 Presets** inserts ready-made words (hair, outfits, lighting,
