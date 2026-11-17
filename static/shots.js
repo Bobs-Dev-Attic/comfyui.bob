@@ -27,7 +27,7 @@ const Shots = (() => {
   const uid = () => Math.random().toString(16).slice(2, 10);
   const OVER = () => ({ seed: "", quality: "", steps: "", turbo: "", aspect: "" });
   const blank = (seconds = 5) => ({ id: uid(), title: "", notes: "", brief: "", raw: "", rawOn: false, seconds,
-    framing: "medium shot", angle: "", setting: "", action: "", position: "", camera: "holds a static shot", dialogue: "", voice: "",
+    framing: "medium shot", angle: "", setting: "", action: "", position: "", camera: "holds a static shot", dialogue: "", voice: "", speaker: "",
     first_frame: null, last_frame: null, refs: [], over: OVER() });
   const isVideo = () => state.kind === "video";
   const isRef = () => state.engine.video === "h3ref";
@@ -47,7 +47,7 @@ const Shots = (() => {
     const s = { ...blank(), ...(x && typeof x === "object" ? x : {}) };
     s.id = s.id || uid();
     s.seconds = clampSec(s.seconds);
-    for (const k of ["title", "notes", "brief", "raw", ...FIELDS, "voice"]) s[k] = typeof s[k] === "string" ? s[k] : "";
+    for (const k of ["title", "notes", "brief", "raw", ...FIELDS, "voice", "speaker"]) s[k] = typeof s[k] === "string" ? s[k] : "";
     s.framing ||= "medium shot"; s.camera ||= "holds a static shot";
     s.rawOn = !!s.rawOn;
     s.refs = Array.isArray(s.refs) ? s.refs.filter(n => Number.isInteger(n)) : [];
@@ -85,6 +85,17 @@ const Shots = (() => {
   }
 
   /* ---------------------------------------------------------------- prompts */
+  // Who says the spoken line (H3 Reference): "<Picture N>", or "" for anyone. Ignored once that picture is gone.
+  const speakerOf = s => {
+    const m = /^<Picture (\d+)>$/.exec(s.speaker || "");
+    return isRef() && m && +m[1] >= 1 && +m[1] <= state.refs.length ? s.speaker : "";
+  };
+  // The voice: the one chosen, else the speaker's own recording (<Audio N> goes with <Picture N>).
+  function voiceFor(s) {
+    if (s.voice) return s.voice;
+    const m = /^<Picture (\d+)>$/.exec(speakerOf(s));
+    return m && +m[1] <= state.arefs.length ? `<Audio ${m[1]}>` : "";
+  }
   function shotText(s, k, start, n) {
     const H = P();
     if (s.rawOn && s.raw.trim()) {  // its own prompt, as one shot's description inside the multi-shot format
@@ -99,7 +110,10 @@ const Shots = (() => {
     if (s.setting.trim()) parts.push(H.sentence(s.setting));
     if (s.action.trim()) parts.push(H.sentence(s.action));
     const line = H.cleanDialogue(s.dialogue || "", H.dialogueBudget(+s.seconds || 3));
-    if (line) parts.push(s.voice ? `They say, in the voice of ${s.voice}: <d>[English] ${line}</d>` : `They say: <d>[English] ${line}</d>`);
+    if (line) {
+      const v = voiceFor(s);
+      parts.push(`${speakerOf(s) ? `The person from ${s.speaker} says` : "They say"}${v ? `, in the voice of ${v}` : ""}: <d>[English] ${line}</d>`);
+    }
     const pos = H.positionText(s.position);
     parts.push(`The camera ${pos ? `is ${pos} and ` : ""}${H.cameraText(s.camera || "holds a static shot")}.`);
     return parts.join(" ");
@@ -159,7 +173,7 @@ const Shots = (() => {
       const t0 = t; t += +s.seconds || 0;
       const thumb = thumbOf(s, i), text = summary(s);
       const meta = s.rawOn && s.raw.trim() ? ["own prompt"] : [s.framing, s.angle, s.camera].filter(Boolean);
-      const badges = [s.dialogue.trim() && !s.rawOn ? `<span class="sb-badge" title="Spoken line: ${esc(s.dialogue)}">🗣</span>` : "",
+      const badges = [s.dialogue.trim() && !s.rawOn ? `<span class="sb-badge" title="${esc(speakerOf(s) ? `${s.speaker} says` : "Spoken line")}: ${esc(s.dialogue)}">🗣</span>` : "",
         overCount(s) ? `<span class="sb-badge" title="${overCount(s)} setting${overCount(s) === 1 ? "" : "s"} of its own">⚙ ${overCount(s)}</span>` : "",
         s.notes.trim() ? `<span class="sb-badge" title="${esc(s.notes)}">📝</span>` : ""].join("");
       return `<div class="shot-block${hasContent(s) ? "" : " sb-blank"}" data-i="${i}" ${n > 1 ? 'draggable="true"' : ""} role="listitem" aria-label="Shot ${i + 1}${s.title ? `: ${esc(s.title)}` : ""}">
@@ -282,6 +296,7 @@ const Shots = (() => {
     const brief = (s.brief || "").trim() || [s.action, s.setting].filter(x => x.trim()).join(". ");
     if (!enhance && !brief) return Media.toast("Write in a line what happens in this shot first.");
     let idea = brief;
+    if (speakerOf(s)) idea += `\n\n(The spoken line is said by the person in ${s.speaker}.)`;
     if (prev && hasContent(prev)) idea += `\n\n(For continuity only, don't film it: the shot before this one is ${summary(prev).slice(0, 300)})`;
     const f = framesOf(i);
     const refs = isRef() ? (s.refs?.length ? s.refs.map(k => state.refs[k]?.ref).filter(Boolean) : state.refs.map(r => r.ref)) : [];
@@ -376,6 +391,7 @@ const Shots = (() => {
     if (s.framing && !framings.includes(s.framing)) framings.push(s.framing);
     const angles = [...H.ANGLES]; if (s.angle && !angles.includes(s.angle)) angles.push(s.angle);
     const voices = state.arefs.map((_, k) => `<Audio ${k + 1}>`);
+    const speakerVoice = speakerOf(s) ? voiceFor({ ...s, voice: "" }) : "";
     const fr = framesOf(i);
     const frame = role => {
       const own = s[role], used = fr[role], from = role === "first_frame" ? fr.firstFromInputs : fr.lastFromInputs;
@@ -433,7 +449,10 @@ const Shots = (() => {
               <textarea rows="3" data-sf="action" placeholder="${isRef() ? "The woman from <Picture 1> turns around and smiles" : "The woman turns around and smiles"}">${esc(s.action)}</textarea></div>
             <div class="row2">
               <div class="field"><label>Spoken line <span class="opt">optional</span></label><input data-sf="dialogue" value="${esc(s.dialogue)}" placeholder="See you tomorrow."></div>
-              <div class="field"><label>Voice</label><select data-sf="voice" ${voices.length ? "" : "disabled title='Add reference sounds on the Inputs step to choose a voice'"}>${opt("", "Any", s.voice)}${voices.map(v => opt(v, v, s.voice)).join("")}</select></div>
+              <div class="sm-say">
+                ${isRef() ? `<div class="field"><label>Speaker</label><select data-sf="speaker" title="Which reference picture's person says the line" ${state.refs.length ? "" : "disabled"}>${opt("", "Anyone", s.speaker)}${state.refs.map((_, k) => opt(`<Picture ${k + 1}>`, `<Picture ${k + 1}>`, s.speaker)).join("")}</select></div>` : ""}
+                <div class="field"><label>Voice</label><select data-sf="voice" ${voices.length ? "" : "disabled title='Add reference sounds on the Inputs step to choose a voice'"}>${opt("", speakerVoice ? `Speaker's · ${speakerVoice}` : "Any", s.voice)}${voices.map(v => opt(v, v, s.voice)).join("")}</select></div>
+              </div>
             </div>
             <label class="sm-check"><input type="checkbox" data-sf="rawOn"${rawOn ? " checked" : ""}> Write the prompt myself <span class="opt">this shot sends the text below instead of the fields above</span></label>
             ${rawOn ? `<div class="field"><textarea rows="6" data-sf="raw" class="sm-raw" placeholder="The whole prompt for this shot, in H3's format">${esc(s.raw)}</textarea>
