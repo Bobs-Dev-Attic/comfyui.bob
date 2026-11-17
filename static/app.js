@@ -823,40 +823,67 @@ function select(id) {
 
 /* Result viewer zoom: the wheel zooms the picture at the pointer (fit .. 16x of fit), scroll bars
    and dragging move around a zoomed picture, double-click goes back to fit. */
-const ImageZoom = (() => {
-  const MAX = 16, STEP = 1.2;
-  function attach(wrap, badge) {
-    const img = wrap.querySelector("img");
-    let z = 1, drag = null;
-    const fitScale = () => Math.min(wrap.clientWidth / img.naturalWidth, wrap.clientHeight / img.naturalHeight, 1);
-    function apply(nz, cx, cy) {
-      if (!img.naturalWidth) return;
-      const wr = wrap.getBoundingClientRect(), ir = img.getBoundingClientRect();
-      // The picture point under the pointer (as a fraction) stays under the pointer.
-      const fx = ir.width ? (cx - ir.left) / ir.width : .5, fy = ir.height ? (cy - ir.top) / ir.height : .5;
-      z = Math.min(MAX, Math.max(1, nz));
-      wrap.classList.toggle("zoomed", z > 1);
-      if (z === 1) { img.style.width = img.style.height = ""; }
-      else {
-        const s = fitScale() * z;
-        img.style.width = `${Math.round(img.naturalWidth * s)}px`;
-        img.style.height = `${Math.round(img.naturalHeight * s)}px`;
-        wrap.scrollLeft = img.offsetLeft + fx * img.offsetWidth - (cx - wr.left);
-        wrap.scrollTop = img.offsetTop + fy * img.offsetHeight - (cy - wr.top);
-      }
-      if (badge) { badge.hidden = z === 1; badge.textContent = `${Math.round(fitScale() * z * 100)}%`; }
+/* Result zoom for pictures and videos. "Fit" (the default) scales the result with the viewer, so dragging the bar
+   above the timeline makes it smaller or bigger; a fixed zoom (100%, or −/+ and the mouse wheel) keeps that size and
+   scrolls instead. The choice is remembered for the next result. Double-click a picture to switch Fit / 100%. */
+const MediaZoom = (() => {
+  const MIN = 0.05, MAX = 16, STEP = 1.2;
+  const readUi = () => { try { return JSON.parse(localStorage.getItem("bob.ui") || "{}") || {}; } catch { return {}; } };
+  const saveScale = s => { try { localStorage.setItem("bob.ui", JSON.stringify({ ...readUi(), resultZoom: s })); } catch {} };
+  let ro = null;
+  function attach(wrap, ctl) {
+    const el = wrap.querySelector("img, video"), video = el.tagName === "VIDEO";
+    let scale = typeof readUi().resultZoom === "number" ? readUi().resultZoom : null;  // null = Fit
+    let drag = null;
+    const nat = () => video ? [el.videoWidth, el.videoHeight] : [el.naturalWidth, el.naturalHeight];
+    const ready = () => nat()[0] > 0;
+    const fitScale = () => { const [w, h] = nat(); return Math.min(wrap.clientWidth / w, wrap.clientHeight / h, 1); };
+    const shown = () => scale ?? fitScale();
+    function label() {
+      if (!ctl) return;
+      const pct = ready() ? `${Math.round(shown() * 100)}%` : "";
+      const lb = ctl.querySelector("[data-z=toggle]");
+      lb.textContent = scale == null ? `Fit${pct ? ` · ${pct}` : ""}` : pct;
+      lb.setAttribute("aria-pressed", String(scale == null));
+      lb.title = scale == null ? "Fit: the result scales with the viewer. Click for actual size (100%)" : "Fixed zoom: the result keeps this size. Click to fit the viewer";
     }
+    // cx/cy: the screen point that stays put (the pointer, or the viewer's centre).
+    function apply(ns, cx, cy, persist = true) {
+      if (!ready()) { scale = ns; label(); return; }
+      const wr = wrap.getBoundingClientRect(), er = el.getBoundingClientRect();
+      cx ??= wr.left + wr.width / 2; cy ??= wr.top + wr.height / 2;
+      const fx = er.width ? (cx - er.left) / er.width : .5, fy = er.height ? (cy - er.top) / er.height : .5;
+      scale = ns == null ? null : Math.min(MAX, Math.max(MIN, ns));
+      if (scale != null && Math.abs(scale - fitScale()) < 0.005 && fitScale() < 1) scale = null;  // zoomed back to the fit size
+      wrap.classList.toggle("zoomed", scale != null);
+      const [w, h] = nat();
+      if (scale == null) el.style.width = el.style.height = "";
+      else {
+        el.style.width = `${Math.round(w * scale)}px`; el.style.height = `${Math.round(h * scale)}px`;
+        wrap.scrollLeft = el.offsetLeft + fx * el.offsetWidth - (cx - wr.left);
+        wrap.scrollTop = el.offsetTop + fy * el.offsetHeight - (cy - wr.top);
+      }
+      if (persist) saveScale(scale);
+      label();
+    }
+    const step = dir => apply(shown() * Math.pow(STEP, dir));
+    el.addEventListener(video ? "loadedmetadata" : "load", () => apply(scale, undefined, undefined, false));
+    if (ready()) apply(scale, undefined, undefined, false); else label();
     wrap.addEventListener("wheel", e => {
-      if (!img.naturalWidth) return;
+      if (!ready()) return;
       e.preventDefault();
       // One mouse-wheel notch (about 100 px) is one step; touchpads send many small deltas.
       const px = e.deltaY * (e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 800 : 1);
-      apply(z * Math.pow(STEP, -Math.max(-300, Math.min(300, px)) / 100), e.clientX, e.clientY);
+      apply(shown() * Math.pow(STEP, -Math.max(-300, Math.min(300, px)) / 100), e.clientX, e.clientY);
     }, { passive: false });
-    wrap.addEventListener("dblclick", e => apply(1, e.clientX, e.clientY));
+    if (!video) wrap.addEventListener("dblclick", e => apply(scale == null ? 1 : null, e.clientX, e.clientY));
     wrap.addEventListener("pointerdown", e => {
-      if (z === 1 || e.button !== 0) return;
-      drag = { x: e.clientX, y: e.clientY, l: wrap.scrollLeft, t: wrap.scrollTop };
+      if (scale == null || e.button !== 0) return;
+      // A video's own controls (play, the scrubber, volume) sit along its bottom: leave those clicks alone.
+      if (video && e.clientY > el.getBoundingClientRect().bottom - 48) return;
+      if (wrap.scrollWidth <= wrap.clientWidth && wrap.scrollHeight <= wrap.clientHeight) return;
+      e.preventDefault();
+      drag = { x: e.clientX, y: e.clientY, l: wrap.scrollLeft, t: wrap.scrollTop, moved: false };
       wrap.setPointerCapture(e.pointerId); wrap.classList.add("panning");
     });
     wrap.addEventListener("pointermove", e => {
@@ -865,6 +892,16 @@ const ImageZoom = (() => {
     });
     const end = () => { drag = null; wrap.classList.remove("panning"); };
     wrap.addEventListener("pointerup", end); wrap.addEventListener("pointercancel", end);
+    if (ctl) ctl.onclick = e => {
+      const z = e.target.closest("[data-z]")?.dataset.z;
+      if (z === "out") step(-1);
+      else if (z === "in") step(1);
+      else if (z === "toggle") apply(scale == null ? 1 : null);
+    };
+    // The viewer changes size with the bar above the timeline, the gallery and the window: keep the Fit % current.
+    ro?.disconnect();
+    ro = new ResizeObserver(() => { if (wrap.isConnected) label(); else ro.disconnect(); });
+    ro.observe(wrap);
   }
   return { attach };
 })();
@@ -900,9 +937,14 @@ function renderViewer() {
   if (it.status === "done" && f) {
     // No autoplay: the viewer often changes on its own (a project opens, a result finishes),
     // and sound must never start without the user pressing play.
-    if (it.kind === "video") html = `<video class="media" src="${esc(f.url)}" controls playsinline preload="metadata"></video>`;
-    else if (it.kind === "image") html = `<div class="zoom-wrap" title="Wheel: zoom at the pointer · drag: move · double-click: fit">
-      <img class="media" src="${esc(f.url)}" alt="" draggable="false"></div><span class="zoom-badge" hidden></span>`;
+    const zoomCtl = `<div class="zoom-ctl" role="group" aria-label="Zoom">
+      <button type="button" data-z="out" title="Zoom out (or the mouse wheel)" aria-label="Zoom out">−</button>
+      <button type="button" data-z="toggle" class="zc-label">Fit</button>
+      <button type="button" data-z="in" title="Zoom in (or the mouse wheel)" aria-label="Zoom in">+</button></div>`;
+    if (it.kind === "video") html = `<div class="zoom-wrap" title="Wheel: zoom at the pointer · drag: move when zoomed">
+      <video class="media" src="${esc(f.url)}" controls playsinline preload="metadata"></video></div>${zoomCtl}`;
+    else if (it.kind === "image") html = `<div class="zoom-wrap" title="Wheel: zoom at the pointer · drag: move · double-click: Fit / 100%">
+      <img class="media" src="${esc(f.url)}" alt="" draggable="false"></div>${zoomCtl}`;
     else html = `<div class="audio-card">${waveHTML(it.id, 48)}<audio src="${esc(f.url)}" controls preload="metadata"></audio></div>`;
   } else if (isBusy(it)) {
     const pv = state.previews.get(it.id) || mediaUrl(it.params.first_frame || it.params.references?.[0]);
@@ -915,7 +957,7 @@ function renderViewer() {
   viewer.insertAdjacentHTML("beforeend", html);
   if (isBusy(it)) updateLive(it.id);
   const zw = viewer.querySelector(".zoom-wrap");
-  if (zw) ImageZoom.attach(zw, viewer.querySelector(".zoom-badge"));
+  if (zw) MediaZoom.attach(zw, viewer.querySelector(".zoom-ctl"));
 
   // meta
   const info = it.info || {};

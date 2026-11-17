@@ -312,12 +312,19 @@ details.advanced .field + .field, details.advanced .row2 + .field { margin-top: 
 /* Result picture: zoomable (ImageZoom in app.js), scroll bars when it's bigger than the viewer. */
 .viewer .zoom-wrap { position: absolute; inset: 0; display: flex; overflow: auto; overscroll-behavior: contain;
   scrollbar-color: #5b606b #15171b; cursor: zoom-in; }
-.viewer .zoom-wrap > img.media { margin: auto; flex: none; user-select: none; }
+.viewer .zoom-wrap > img.media, .viewer .zoom-wrap > video.media { margin: auto; flex: none; user-select: none; }
 .viewer .zoom-wrap.zoomed { cursor: grab; }
 .viewer .zoom-wrap.zoomed > img.media { max-width: none; max-height: none; }
 .viewer .zoom-wrap.panning { cursor: grabbing; }
-.viewer .zoom-badge { position: absolute; left: 10px; bottom: 10px; padding: 2px 8px; border-radius: 6px; pointer-events: none;
-  background: rgba(0, 0, 0, .6); color: #e9eaee; font: 12px/1.5 ui-monospace, Consolas, monospace; }
+.viewer .zoom-wrap.zoomed > video.media { max-width: none; max-height: none; }
+/* Zoom: − / Fit or the % (click: Fit ↔ 100%) / +, top right so it never covers a video's own controls. */
+.viewer .zoom-ctl { position: absolute; right: 10px; top: 10px; z-index: 3; display: flex; border-radius: 8px; overflow: hidden;
+  background: rgba(0, 0, 0, .62); border: 1px solid rgba(255, 255, 255, .14); backdrop-filter: blur(6px); opacity: .55; transition: opacity .15s; }
+.viewer:hover .zoom-ctl, .viewer .zoom-ctl:focus-within { opacity: 1; }
+.viewer .zoom-ctl button { background: none; border: 0; color: #e9eaee; font: 12px/1 ui-monospace, Consolas, monospace; padding: 6px 9px; cursor: pointer; }
+.viewer .zoom-ctl button:hover { background: rgba(255, 255, 255, .12); }
+.viewer .zoom-ctl .zc-label { min-width: 64px; border-inline: 1px solid rgba(255, 255, 255, .14); font-variant-numeric: tabular-nums; }
+.viewer .zoom-ctl .zc-label[aria-pressed="true"] { color: var(--accent); }
 .audio-card { display: flex; flex-direction: column; align-items: center; gap: 18px; color: #cfd3db; width: 100%; }
 .wave { display: flex; gap: 4px; align-items: center; height: 80px; }
 .wave i { width: 5px; border-radius: 3px; background: linear-gradient(var(--audio), var(--video)); opacity: .85; }
