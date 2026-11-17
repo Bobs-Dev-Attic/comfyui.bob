@@ -395,8 +395,9 @@ const Model3D = (() => {
     precision highp float;
     in vec3 vNrm; in vec2 vUv; in vec4 vCol; in vec3 vPos; out vec4 o;
     uniform sampler2D uTex; uniform sampler2D uAo; uniform int uHasTex; uniform int uHasAo; uniform int uMode; uniform int uUnlit;
-    uniform vec4 uBase; uniform vec3 uEye; uniform vec3 uKey; uniform vec3 uTint;
+    uniform vec4 uBase; uniform vec3 uEye; uniform vec3 uKey; uniform vec3 uTint; uniform vec4 uSolid;
     void main() {
+      if (uSolid.a > 0.5) { o = vec4(uSolid.rgb, 1.0); return; }  // one flat colour (a mask)
       vec4 c = uBase * vCol;
       if (uHasTex == 1 && uMode == 0) c *= texture(uTex, vUv);
       if (uUnlit == 1) { o = vec4(c.rgb, 1.0); return; }
@@ -446,9 +447,9 @@ const Model3D = (() => {
       if (!keep) for (const p of prims) { delete p.pos; delete p.nrm; delete p.uv; delete p.idx; }
       return { parts, lo, hi, tris };
     }
-    function begin(W, H, bg) {
+    function begin(W, H, bg, alpha = 1) {
       gl.viewport(0, 0, W, H);
-      gl.clearColor(bg[0], bg[1], bg[2], 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      gl.clearColor(bg[0], bg[1], bg[2], alpha); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       gl.enable(gl.DEPTH_TEST);
     }
     // o: { VP, M, eye, key, look (0 texture, 1 clay), unlit, tint }
@@ -457,6 +458,7 @@ const Model3D = (() => {
       gl.uniformMatrix4fv(U("uVP"), false, o.VP); gl.uniformMatrix4fv(U("uM"), false, o.M);
       gl.uniform3fv(U("uEye"), o.eye); gl.uniform3fv(U("uKey"), o.key); gl.uniform1i(U("uMode"), o.look || 0);
       gl.uniform1i(U("uUnlit"), o.unlit ? 1 : 0); gl.uniform3fv(U("uTint"), o.tint || [0, 0, 0]);
+      gl.uniform4fv(U("uSolid"), o.solid ? [...o.solid, 1] : [0, 0, 0, 0]);
       gl.uniform1i(U("uTex"), 0); gl.uniform1i(U("uAo"), 1);
       for (const p of mesh.parts) {
         gl.uniform4fv(U("uBase"), p.base); gl.uniform1i(U("uHasTex"), p.gtex ? 1 : 0); gl.uniform1i(U("uHasAo"), p.gao ? 1 : 0);

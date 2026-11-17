@@ -107,6 +107,10 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   sizing an object at the playhead keys it there, so it moves along a smooth path through its keys (shown in yellow).
   The camera is keyed on purpose with **◆ Key the camera**: look around, key the view, move the playhead, key another;
   orbiting to look around doesn't change its path (shown in blue, with the camera at the playhead).
+  **🎬 Render video…** makes the shot with MiniMax H3 the way Animate objects does (Time-to-Move): the page draws the
+  scene's rough animation along its camera path at the picture's aspect, and a mask of what H3 should follow (the whole
+  view when the camera moves, with the holes it opens left to H3; otherwise just the objects). H3 starts from the
+  picture (when the scene starts as the picture) or from the scene's first frame. Needs what Animate objects needs.
 - **Objects in motion in a shot** (Shots › a shot's Edit window, One video per shot): give the shot a picture from the Inputs
   step and its objects' paths (the Animate objects window, in a "Use for this shot" mode). That shot then renders from the
   picture with the objects on their paths, with the shot's own text, length and settings; it can take a tracked path too.

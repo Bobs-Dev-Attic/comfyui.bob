@@ -1414,6 +1414,43 @@ async def free():
 UPLOAD_LIMITS = {"image": 50, "video": 2048, "audio": 500}  # MB per kind
 
 
+@app.post("/api/frames/video")
+async def frames_to_video(request: Request):
+    """Frames drawn in the page (a 3D scene's rough animation or its mask), as numbered pictures in a form, become one
+    video in data/uploads at the given fps (form field "fps", default 24)."""
+    form = await request.form()
+    files = [f for k, f in form.multi_items() if k == "frame" and hasattr(f, "read")]
+    if not files:
+        raise HTTPException(400, "No frames")
+    if len(files) > 600:
+        raise HTTPException(400, "Too many frames (at most 600)")
+    fps = float(form.get("fps") or 24)
+    exe = media.ffmpeg()
+    if not exe:
+        raise HTTPException(500, "ffmpeg isn't installed")
+    folder = config.UPLOAD_DIR / f"frames_{uuid.uuid4().hex[:12]}"
+    folder.mkdir(parents=True)
+    try:
+        ext = ".png"
+        for i, f in enumerate(files):
+            ext = Path(f.filename or "").suffix.lower() or ".png"
+            if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+                raise HTTPException(400, "Frames must be pictures")
+            (folder / f"{i:05d}{ext}").write_bytes(await f.read())
+        target = config.UPLOAD_DIR / f"{uuid.uuid4().hex[:12]}.mp4"
+        r = await asyncio.to_thread(subprocess.run, [exe, "-nostdin", "-v", "error", "-y", "-framerate", f"{fps:g}",
+                                                     "-i", str(folder / f"%05d{ext}"), "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+                                                     "-c:v", "libx264", "-crf", "8", "-pix_fmt", "yuv420p", str(target)],
+                                    capture_output=True, text=True, stdin=subprocess.DEVNULL, creationflags=media.NO_WINDOW)
+        if r.returncode or not target.is_file():
+            raise HTTPException(500, f"ffmpeg couldn't make the video: {r.stderr.strip()[-300:]}")
+    finally:
+        import shutil
+        shutil.rmtree(folder, ignore_errors=True)
+    rel = target.relative_to(config.ROOT).as_posix()
+    return {"ref": rel, "url": "/" + rel, "frames": len(files)}
+
+
 @app.post("/api/upload")
 async def upload(file: UploadFile = File(...)):
     ext = Path(file.filename or "").suffix.lower()

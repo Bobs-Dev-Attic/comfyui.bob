@@ -100,6 +100,31 @@ def frame_of(lay: Any, f: int) -> tuple[float, float, float, bool, float, bool]:
     return float(dx), float(dy), max(0.05, float(s)), bool(fh), float(r), bool(fv)
 
 
+def conform(ref: str, mask: str, width: int, height: int, frames: int, out_ref: Path, out_mask: Path,
+            out_first: Path | None = None) -> dict[str, Any]:
+    """A rough animation drawn elsewhere (a 3D scene) and its mask, fitted to the render: 24 fps, width x height
+    (centre crop, as the picture is framed), exactly `frames` frames (the last one held if it's short); with
+    out_first, also its first frame as a picture."""
+    exe = media.ffmpeg()
+    if not exe:
+        raise media.MediaError("ffmpeg isn't installed")
+    fit = (f"fps={FPS},scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,crop={width}:{height},"
+           f"tpad=stop_mode=clone:stop_duration=30")
+    for src, out, extra, crf in ((ref, out_ref, "", 10), (mask, out_mask, ",format=gray", 0)):
+        out.parent.mkdir(parents=True, exist_ok=True)
+        r = subprocess.run([exe, "-nostdin", "-v", "error", "-y", "-i", str(media.resolve(src)), "-an", "-vf", fit + extra,
+                            "-frames:v", str(frames), "-c:v", "libx264", "-crf", str(crf), "-pix_fmt", "yuv420p", str(out)],
+                           capture_output=True, text=True, stdin=subprocess.DEVNULL, creationflags=media.NO_WINDOW)
+        if r.returncode or not out.is_file():
+            raise media.MediaError(r.stderr.strip()[-400:] or "ffmpeg couldn't fit the rough animation")
+    if out_first is not None:
+        r = subprocess.run([exe, "-nostdin", "-v", "error", "-y", "-i", str(out_ref), "-frames:v", "1", str(out_first)],
+                           capture_output=True, text=True, stdin=subprocess.DEVNULL, creationflags=media.NO_WINDOW)
+        if r.returncode or not out_first.is_file():
+            raise media.MediaError(r.stderr.strip()[-400:] or "ffmpeg couldn't take the first frame")
+    return {"frames": frames, "size": f"{width}×{height}"}
+
+
 def render(first_frame: str, plate: str, layers: list[Any], width: int, height: int, frames: int,
            out_ref: Path, out_mask: Path, out_first: Path | None = None) -> dict[str, Any]:
     """Draw the rough animation and its mask video (frames x width x height, 24 fps); with out_first, also its first
