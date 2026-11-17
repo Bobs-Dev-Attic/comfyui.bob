@@ -972,6 +972,17 @@ async def media_peaks(path: str):
             raise HTTPException(404, str(exc)) from exc
 
 
+@app.get("/api/media/audio")
+async def media_audio(path: str):
+    """A file's sound as Opus/WebM, for browsers that can't play its own audio codec (cached)."""
+    async with _thumb_slots:
+        try:
+            f = await asyncio.to_thread(media.playable_audio, path)
+        except (media.MediaError, OSError, subprocess.SubprocessError) as exc:
+            raise HTTPException(404, str(exc)) from exc
+    return FileResponse(f, media_type="audio/webm")
+
+
 @app.get("/api/media/thumb")
 async def media_thumb(path: str, w: int = 256):
     async with _thumb_slots:

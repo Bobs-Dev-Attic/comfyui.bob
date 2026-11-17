@@ -5,6 +5,15 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.63.0] - 2026-11-17
+
+### Fixed
+- **Timeline sound in browsers without AAC** (Avast Secure Browser, plain Chromium). These play the H.264 picture
+  but can't decode AAC, the sound H3 videos carry, so every audio track was silent. The timeline now plays such a
+  file's sound from an Opus copy the studio makes once and caches (`/api/media/audio`): straight away when the
+  browser says it has no AAC, or as soon as it fails to play a file's own sound. Video clips that keep their sound
+  on a video track are covered too.
+
 ## [0.62.0] - 2026-11-17
 
 ### Fixed
