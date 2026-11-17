@@ -17,13 +17,13 @@ from typing import Any, Literal
 from PIL import Image
 from pydantic import BaseModel, Field
 
-from . import config, imaging, media, models, workflows
+from . import config, imaging, media, models, motion, workflows
 from .comfy import ComfyService
 
 log = logging.getLogger("bob.jobs")
 
 Kind = Literal["video", "image", "audio"]
-Engine = Literal["h3", "h3ref", "klein", "krea2", "h3image", "music3", "reshoot", "enhance", "angles", "imgedit"]
+Engine = Literal["h3", "h3ref", "klein", "krea2", "h3image", "music3", "reshoot", "enhance", "angles", "imgedit", "motion"]
 EditOp = Literal["erase", "replace", "prompt", "instruct", "remove_bg", "adjust"]
 
 
@@ -75,6 +75,12 @@ async def submit_job(client: Any, wf: Any, preview_method: str | None) -> Any:
         return await client.submit(wf)
 
 
+class MotionLayer(BaseModel):
+    mask: str = Field(..., max_length=2000)  # white = the object, on the first frame
+    # one entry per frame: [dx, dy, scale, flip] (dx, dy: the object's move as a share of the picture's width, height)
+    frames: list[list[float]] = Field(..., min_length=1, max_length=400)
+
+
 class GenerateRequest(BaseModel):
     kind: Kind
     engine: Engine = "h3"
@@ -116,6 +122,12 @@ class GenerateRequest(BaseModel):
     # the result is only what comes after them). Needs ComfyUI-NKD-Basic-Tools (NKDAVLatentExtend).
     continue_from: str | None = Field(None, max_length=2000)
     overlap: Literal[22, 39, 56] = 39
+    # Motion layers (engine "motion", app/motion.py): first_frame is the picture, motion_plate the picture with the
+    # objects erased, and each layer an object's mask with its place in every frame.
+    motion_plate: str | None = Field(None, max_length=2000)
+    motion_layers: list[MotionLayer] = Field(default_factory=list, max_length=6)
+    motion_hold: Literal["loose", "normal", "tight"] = "normal"
+    motion_edge: int = Field(-1, ge=-1, le=64)  # -1 = automatic
     enhance: bool = False  # Klein prompt upsampler / Krea 2 prompt expander
     lyrics: str = Field("", max_length=20000)  # Music 3
     batch: int = Field(1, ge=1, le=4)  # number of takes (seeds seed, seed+1, ...)
@@ -378,7 +390,8 @@ class JobManager:
             sets = ([] if req.edit_op == "remove_bg" else [edit_set] if req.edit_op in ("erase", "replace", "instruct")
                     else [models.ALL_SETS["krea2"]])
         else:
-            sets = [models.ALL_SETS["h3"], models.ALL_SETS["klein"]] if req.engine == "reshoot" else [models.ALL_SETS[req.engine]]
+            sets = ([models.ALL_SETS["h3"], models.ALL_SETS["klein"]] if req.engine == "reshoot"
+                    else [models.ALL_SETS["h3"]] if req.engine == "motion" else [models.ALL_SETS[req.engine]])
         files: dict[str, Any] = {}
         for mset in sets:
             resolved = models.resolve(mset, installed)
@@ -463,6 +476,21 @@ class JobManager:
                 raise ValueError("H3 Reference only makes video")
             if not req.references and not req.ref_audios:
                 raise ValueError("Add at least one reference picture or reference sound")
+        if req.engine == "motion":
+            if req.kind != "video":
+                raise ValueError("Motion layers make video")
+            if not req.first_frame or not req.motion_plate or not req.motion_layers:
+                raise ValueError("Motion layers need the picture, its empty background and at least one object")
+            if not self.has_node("vloTimeToMove"):
+                raise ValueError("Motion layers need ComfyUI-vlo (vloTimeToMove) in ComfyUI")
+            n = workflows.h3_length(req.seconds)
+            for lay in req.motion_layers:
+                media_path(lay.mask)
+                if len(lay.frames) < n:
+                    raise ValueError(f"A layer has {len(lay.frames)} frames of path; {n} are needed for {req.seconds:g} s")
+                if any(len(f) != 4 for f in lay.frames):
+                    raise ValueError("Each frame of a layer's path is [dx, dy, scale, flip]")
+            media_path(req.motion_plate)
         if req.continue_from:
             if req.engine != "h3ref":
                 raise ValueError("Continuing a video without a cut needs H3 Reference")
@@ -597,6 +625,15 @@ class JobManager:
                 clean_audio=req.clean_audio and self.has_node("H3RefAudioPrep"), prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras],
                 continue_overlap=req.overlap if req.continue_from else 0,
             )
+        if req.engine == "motion":
+            mp = workflows.H3_QUALITY.get(req.quality, workflows.H3_QUALITY["draft"])
+            with Image.open(media_path(req.first_frame)) as im:  # framed like the picture
+                w, h = workflows.dims_for(im.size, mp)
+            edge = req.motion_edge if req.motion_edge >= 0 else motion.auto_edge(req.first_frame, req.motion_layers, w, h)
+            return workflows.build_motion(
+                files, prompt=req.prompt, width=w, height=h, seconds=req.seconds, seed=seed, turbo=req.turbo, steps=req.steps,
+                hold=req.motion_hold, edge=edge, prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras],
+            )
         if req.engine == "imgedit":
             return workflows.build_imgedit(
                 req.edit_op, files if req.edit_op != "remove_bg" else None, prompt=req.prompt, strength=req.edit_strength,
@@ -649,6 +686,20 @@ class JobManager:
                     rect = config.UPLOAD_DIR / f"{item['id']}_rect.png"
                     await asyncio.to_thread(imaging.mask_rect, media_path(req.edit_mask), rect)
                     wf.set_input(node_id, field, client.assets.from_file(rect))
+                    continue
+                if role in ("motion_ref", "motion_mask"):  # motion layers: the rough animation and its mask, drawn here
+                    vids = {"motion_ref": config.UPLOAD_DIR / f"{item['id']}_motion.mp4",
+                            "motion_mask": config.UPLOAD_DIR / f"{item['id']}_motion_mask.mp4"}
+                    if not vids["motion_ref"].is_file():
+                        info = await asyncio.to_thread(
+                            motion.render, req.first_frame, req.motion_plate, req.motion_layers, int(built.info["width"]),
+                            int(built.info["height"]), int(built.info["frames"]), vids["motion_ref"], vids["motion_mask"])
+                        self.log(item, f"Drew the rough animation: {info['layers']} object(s), {info['frames']} frames")
+                    wf.set_input(node_id, "file", client.assets.from_file(vids[role]))
+                    sent = saved.get(str(node_id))
+                    if sent:
+                        sent["inputs"]["file"] = vids[role].name
+                        sent.setdefault("_meta", {})["title"] = role
                     continue
                 if role == "tail":  # continuing without a cut: the previous video's last frames at this size
                     tail = config.UPLOAD_DIR / f"{item['id']}_tail.mp4"

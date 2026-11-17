@@ -77,6 +77,12 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   u2net). Every AI edit is also a result in the gallery; Undo/Redo step through them. **Save as new result** keeps the
   crop, size and color changes. Needs `sam3.1_multiplex_fp16` in `models/checkpoints` for AI select, and the NKD
   Nodes (inpaint crop and stitch).
+- **🎬 Animate objects** (a picture's menu in the results, or on the Inputs step): cut objects out of the picture and
+  move them along paths, then MiniMax H3 renders the shot from the picture with the objects following their paths
+  (Time-to-Move, the method of [h3-motion](https://github.com/PxTicks/h3-motion)). Find each object by name or click
+  it (AI select), make the empty background (Erase), drag each object at a time on the scrubber to key its path, set
+  its size and flip, and Generate. Needs AI select and Erase (above), H3, and
+  [ComfyUI-vlo](https://github.com/PxTicks/ComfyUI-vlo) 0.3+ for `vloTimeToMove`.
 - **🔄 Angles** (any picture: viewer, results menu or media library): re-shoot it from other camera angles with Qwen Image
   Edit 2511 and the multiple-angles LoRA. Pick directions × heights on a grid or a preset such as **24 head angles**, make a
   plain backdrop pure white, upscale each with SeedVR2, and put them in a new project. Needs `qwen_image_edit_2511` (bf16,

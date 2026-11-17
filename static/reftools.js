@@ -26,6 +26,7 @@ const RefTools = (() => {
       ["🔍  Open", () => openPicture(i)],
       ["✎  Edit…", () => editPicture(i)],
       [`✨  Describe with AI…${r.desc ? " (has one)" : ""}`, () => describe(i)],
+      ["🎬  Animate objects…", () => Motion.open({ ref: r.ref, url: r.url, name: r.ref.split("/").pop() })],
       ["🗑  Remove", () => { state.refs.splice(i, 1); renderRefs(); }],
     ]);
   }

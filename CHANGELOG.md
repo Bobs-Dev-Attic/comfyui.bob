@@ -5,6 +5,25 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.68.0] - 2026-11-17
+
+### Added
+- **🎬 Animate objects** (motion layers): break a picture into layers of objects, move them along animated paths,
+  and have MiniMax H3 render the shot. Open it from a picture's menu in the results or on the Inputs step.
+  - **Objects:** find one by name ("the red car") or Pick and click it: AI select (SAM 3.1) makes a layer per
+    object.
+  - **Empty background:** one Erase of every object at once, for them to move over.
+  - **Path:** move the scrubber and drag an object to key where it is then; size and flip are keyed the same way.
+    Between keys it follows a smooth curve; the path shows as dots; ▶ plays the rough animation.
+  - **Generate:** the studio draws the rough animation (the objects pasted along their paths over the empty
+    background) and a mask of them, and H3 renders from the original picture with Time-to-Move holding the objects
+    to their paths for the first steps, then letting H3 redraw them so they belong in the shot, with sound. Follow
+    the path loosely, normally or tightly; edge freedom is set by object size (h3-motion's rule).
+  - New engine `motion` (`app/motion.py`, `workflows.build_motion`): request fields `motion_plate`,
+    `motion_layers` (each object's mask and its move, size and flip in every frame), `motion_hold`, `motion_edge`.
+  - Needs [ComfyUI-vlo](https://github.com/PxTicks/ComfyUI-vlo) (0.3.1 installed on this machine) for
+    `vloTimeToMove`; the method is PxTicks' [h3-motion](https://github.com/PxTicks/h3-motion), rebuilt here.
+
 ## [0.67.1] - 2026-11-17
 
 ### Fixed

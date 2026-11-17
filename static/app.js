@@ -132,7 +132,7 @@ async function api(path, opts = {}) {
   return res.json();
 }
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const engineName = (kind, eng) => eng === "enhance" ? "Enhanced" : eng === "angles" ? "Angles" : eng === "imgedit" ? "Edited" : (ENGINES[kind]?.find(e => e.key === eng) || {}).label || eng;
+const engineName = (kind, eng) => eng === "enhance" ? "Enhanced" : eng === "angles" ? "Angles" : eng === "imgedit" ? "Edited" : eng === "motion" ? "Animated objects" : (ENGINES[kind]?.find(e => e.key === eng) || {}).label || eng;
 function fmtDur(s) { if (s == null) return ""; s = Math.round(s); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`; }
 function waveHTML(seed, n = 28) {
   let x = 0; for (const c of seed) x = (x * 31 + c.charCodeAt(0)) >>> 0;
