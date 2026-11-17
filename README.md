@@ -95,6 +95,14 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   `trellis_2_texture_vae_bf16` (vae), `dino_v3_L_naf_fp32` (clip_vision), from
   [Comfy-Org/TRELLIS.2](https://huggingface.co/Comfy-Org/TRELLIS.2) and [Comfy-Org/Pixal3D](https://huggingface.co/Comfy-Org/Pixal3D),
   plus BiRefNet (background_removal) for a whole picture. Models live in `data/models3d.json`, files in `outputs/3d/`.
+- **🏞 3D scene** (a picture's menu, or 🏞 Open as a 3D scene in Animate objects): the picture in depth with 3D models
+  standing in it. Depth Anything 3 (`depth_anything_3_base`, already used for camera moves) turns the background (the
+  empty background from Animate objects when there is one, so objects don't show twice) into a surface, and its camera
+  is estimated from the picture. Each object's 3D model (🧊 Make 3D, from the scene or Animate objects) stands where it
+  was: on the ground under its foot, sized by its height in the picture. 🎥 looks through the picture's own camera
+  (which shows the picture); drag to orbit, right-drag to pan, wheel to zoom; drag an object over the ground,
+  Shift+drag to raise it, and turn or size it in the side panel. Scenes live in `data/scenes3d.json`; ☰ › **3D scenes**
+  lists them. The camera and depth are estimates: sizes and distances are usually within about 10%.
 - **Objects in motion in a shot** (Shots › a shot's Edit window, One video per shot): give the shot a picture from the Inputs
   step and its objects' paths (the Animate objects window, in a "Use for this shot" mode). That shot then renders from the
   picture with the objects on their paths, with the shot's own text, length and settings; it can take a tracked path too.
@@ -294,8 +302,9 @@ Other features:
 - `app/projectfile.py`: the `project.json` schema (pydantic), migration, and JSON Schema export.
 - `app/media.py`: media sources, bookmarks, the thumbnail cache, the folder picker, probing and frame grabs.
 - `app/render.py`: renders a timeline to MP4 with ffmpeg.
-- `app/model3d.py`: Make 3D (TRELLIS.2 picture to GLB) and the list of 3D models; `static/model3d.js` is its window and
-  the GLB viewer (WebGL 2, no libraries).
+- `app/model3d.py`: Make 3D (TRELLIS.2 picture to GLB), the list of 3D models, and 3D scenes (Depth Anything 3
+  backgrounds); `static/model3d.js` is the models window and the GLB viewer (WebGL 2, no libraries), `static/scene3d.js`
+  the scene window.
 - `app/fcpxml.py`: exports a timeline as FCPXML 1.9 for DaVinci Resolve and Final Cut Pro.
 - `static/`: the UI (vanilla JS, no build step).
   - `shell.js`: the side panel steps, projects, settings persistence and the panel splitter.

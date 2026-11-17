@@ -27,6 +27,7 @@ const RefTools = (() => {
       ["✎  Edit…", () => editPicture(i)],
       [`✨  Describe with AI…${r.desc ? " (has one)" : ""}`, () => describe(i)],
       ["🎬  Animate objects…", () => Motion.open({ ref: r.ref, url: r.url, name: r.ref.split("/").pop() })],
+      ["🏞  3D scene…", () => Scene3D.create({ ref: r.ref, url: r.url, name: r.ref.split("/").pop().replace(/\.[^.]+$/, "") })],
       ["🧊  Make 3D…", () => Model3D.start({ ref: r.ref, url: r.url, name: r.ref.split("/").pop().replace(/\.[^.]+$/, "") })],
       ["🗑  Remove", () => { state.refs.splice(i, 1); renderRefs(); }],
     ]);

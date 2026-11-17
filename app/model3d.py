@@ -12,6 +12,7 @@ import random
 import shutil
 import threading
 import time
+import urllib.parse
 import uuid
 from pathlib import Path
 from typing import Any
@@ -179,3 +180,113 @@ async def _run(jobs: Any, model_id: str, built: workflows.Built, refs: dict[str,
             if p.exists() and p.parent == config.UPLOAD_DIR:
                 p.unlink(missing_ok=True)
         _tasks.pop(model_id, None)
+
+
+# --------------------------------------------------------------------------- 3D scenes
+# A scene: a picture's background as a depth surface (Depth Anything 3) with 3D models standing in it. The list lives
+# in data/scenes3d.json; each background is outputs/3d/scene_<id>.glb. Objects are placed and moved in the page;
+# the server keeps what it's sent.
+
+SCENES_FILE = config.DATA_DIR / "scenes3d.json"
+
+
+def _read_scenes() -> list[dict[str, Any]]:
+    try:
+        return json.loads(SCENES_FILE.read_text("utf-8")).get("scenes", [])
+    except (OSError, ValueError):
+        return []
+
+
+def _write_scenes(items: list[dict[str, Any]]) -> None:
+    SCENES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = SCENES_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"scenes": items}, indent=1, ensure_ascii=False), "utf-8")
+    tmp.replace(SCENES_FILE)
+
+
+def _scene_public(s: dict[str, Any]) -> dict[str, Any]:
+    q = lambda ref: f"/api/media/file?path={urllib.parse.quote(ref)}" if ref else None  # noqa: E731
+    return {**s, "bg_url": _url(s.get("bg")), "picture_url": q(s.get("picture")), "plate_url": q(s.get("plate"))}
+
+
+def list_scenes() -> list[dict[str, Any]]:
+    return [_scene_public(s) for s in sorted(_read_scenes(), key=lambda s: s.get("updated", 0), reverse=True)]
+
+
+def get_scene(scene_id: str) -> dict[str, Any] | None:
+    return next((_scene_public(s) for s in _read_scenes() if s["id"] == scene_id), None)
+
+
+def update_scene(scene_id: str, **fields: Any) -> dict[str, Any] | None:
+    with _lock:
+        items = _read_scenes()
+        for s in items:
+            if s["id"] == scene_id:
+                s.update(fields, updated=time.time())
+                _write_scenes(items)
+                return _scene_public(s)
+    return None
+
+
+def delete_scene(scene_id: str) -> bool:
+    with _lock:
+        items = _read_scenes()
+        keep = [s for s in items if s["id"] != scene_id]
+        if len(keep) == len(items):
+            return False
+        _write_scenes(keep)
+    (OUT_DIR / f"scene_{scene_id}.glb").unlink(missing_ok=True)
+    return True
+
+
+def start_scene(jobs: Any, *, picture: str, plate: str | None, name: str, project: str | None,
+                objects: list[dict[str, Any]]) -> dict[str, Any]:
+    """Make a scene's background (a few seconds); returns the entry at once (status "running")."""
+    scene_id = uuid.uuid4().hex[:12]
+    now = time.time()
+    entry = {"id": scene_id, "name": name.strip()[:120] or "3D scene", "project": project, "picture": picture,
+             "plate": plate, "status": "running", "error": None, "bg": None, "objects": objects, "camera": None,
+             "created": now, "updated": now}
+    with _lock:
+        items = _read_scenes()
+        items.append(entry)
+        _write_scenes(items)
+    built = workflows.build_scene_background(prefix=f"bob/scene/{scene_id}")
+    _tasks[f"scene_{scene_id}"] = asyncio.get_running_loop().create_task(_run_scene(jobs, scene_id, built, plate or picture))
+    return _scene_public(entry)
+
+
+async def _run_scene(jobs: Any, scene_id: str, built: workflows.Built, source: str) -> None:
+    paths: list[Path] = []
+    try:
+        paths = await jobs.run_quick(built, {"source": source}, timeout=600)
+        OUT_DIR.mkdir(parents=True, exist_ok=True)
+        target = OUT_DIR / f"scene_{scene_id}.glb"
+        glb = next((p for p in paths if p.suffix.lower() == ".glb"), None)
+        if glb:
+            shutil.move(str(glb), target)
+        elif not await _fetch_glb(jobs.comfy.http, scene_id, target):
+            raise RuntimeError("ComfyUI returned no background")
+        if not update_scene(scene_id, status="done", bg=target.relative_to(config.ROOT).as_posix()):
+            target.unlink(missing_ok=True)  # deleted meanwhile
+    except asyncio.CancelledError:
+        update_scene(scene_id, status="failed", error="Cancelled")
+        raise
+    except Exception as exc:  # noqa: BLE001
+        log.exception("3D scene %s failed", scene_id)
+        update_scene(scene_id, status="failed", error=str(exc)[:500] or type(exc).__name__)
+    finally:
+        for p in paths:
+            if p.exists() and p.parent == config.UPLOAD_DIR:
+                p.unlink(missing_ok=True)
+        _tasks.pop(f"scene_{scene_id}", None)
+
+
+def recover_scenes() -> None:
+    with _lock:
+        items = _read_scenes()
+        if any(s.get("status") == "running" for s in items):
+            for s in items:
+                if s.get("status") == "running":
+                    s.update(status="failed", error="The studio restarted while this was being made")
+            _write_scenes(items)

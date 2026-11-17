@@ -48,6 +48,7 @@ async def lifespan(_: FastAPI):
     logging.getLogger("bob.projects").info("startup backup: %s", result)
     await comfy.start()
     model3d.recover()
+    model3d.recover_scenes()
     # Settings › Updates: check GitHub for a newer version now and then (and install it when idle, if Automatic).
     update_task = asyncio.create_task(updater.loop(_rendering))
     yield
@@ -383,6 +384,83 @@ async def models3d_rename(model_id: str, req: Model3DPatch):
     return m
 
 
+class SceneObject(BaseModel):
+    id: str = Field(..., max_length=40)
+    name: str = Field("Object", max_length=120)
+    model: str | None = Field(None, max_length=40)  # a 3D model's id
+    mask: str | None = Field(None, max_length=2000)  # where it was in the picture (white = the object)
+    # placement, set by the page: position (scene units; camera at the origin looking down -Z, Y up), turn in degrees
+    # about the vertical, scale of the model; none until placed
+    pos: list[float] | None = Field(None, min_length=3, max_length=3)
+    yaw: float = 0
+    scale: float | None = None
+    auto_scale: float | None = None  # the scale it was placed at (the size slider's 100%)
+    hidden: bool = False
+
+
+class SceneNew(BaseModel):
+    picture: str = Field(..., max_length=2000)
+    plate: str | None = Field(None, max_length=2000)  # the picture with its objects erased (Animate objects)
+    name: str = Field("3D scene", max_length=120)
+    project: str | None = Field(None, max_length=200)
+    objects: list[SceneObject] = Field(default_factory=list, max_length=64)
+
+
+class ScenePatch(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=120)
+    objects: list[SceneObject] | None = Field(None, max_length=64)
+    camera: dict[str, float] | None = None
+
+
+@app.post("/api/scenes")
+async def scenes_new(req: SceneNew):
+    """Start a 3D scene: its background (the plate, or else the picture) becomes a depth surface."""
+    try:
+        nodes = await comfy.node_types()
+    except Exception:  # noqa: BLE001
+        nodes = set()
+    need = {"LoadDA3Model", "DA3Inference", "DA3GeometryToMesh", "SaveGLB", "ImageScaleToMaxDimension"}
+    if nodes and need - nodes:
+        raise HTTPException(409, "A 3D scene needs ComfyUI's Depth Anything 3 nodes: " + ", ".join(sorted(need - nodes)))
+    for ref in [req.picture] + ([req.plate] if req.plate else []):
+        try:
+            if media.kind_of(ref) != "image" or not media_path(ref).is_file():
+                raise HTTPException(400, "A 3D scene starts from a picture")
+        except (media.MediaError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+    return model3d.start_scene(jobs, picture=req.picture, plate=req.plate, name=req.name, project=req.project,
+                               objects=[o.model_dump() for o in req.objects])
+
+
+@app.get("/api/scenes")
+async def scenes_list():
+    return {"scenes": model3d.list_scenes()}
+
+
+@app.get("/api/scenes/{scene_id}")
+async def scenes_get(scene_id: str):
+    s = model3d.get_scene(scene_id)
+    if not s:
+        raise HTTPException(404, "No such 3D scene")
+    return s
+
+
+@app.patch("/api/scenes/{scene_id}")
+async def scenes_patch(scene_id: str, req: ScenePatch):
+    fields = {k: v for k, v in req.model_dump(exclude_unset=True).items() if v is not None}
+    s = model3d.update_scene(scene_id, **fields)
+    if not s:
+        raise HTTPException(404, "No such 3D scene")
+    return s
+
+
+@app.delete("/api/scenes/{scene_id}")
+async def scenes_delete(scene_id: str):
+    if not model3d.delete_scene(scene_id):
+        raise HTTPException(404, "No such 3D scene")
+    return {"ok": True}
+
+
 @app.delete("/api/models3d/{model_id}")
 async def models3d_delete(model_id: str):
     if not model3d.delete(model_id):
@@ -533,6 +611,8 @@ async def capabilities(refresh: bool = False):
     editor["motion"] = editor["select"] and editor["erase"] and engines["h3"]["ready"] and "vloTimeToMove" in nodes
     # Make 3D: TRELLIS.2 and ComfyUI's mesh nodes (and background removal for a whole picture).
     editor["make3d"] = _make3d_missing(installed, nodes) == []
+    editor["scene3d"] = {"LoadDA3Model", "DA3Inference", "DA3GeometryToMesh", "SaveGLB"} <= nodes and any(
+        "depth_anything_3_base" in n for n in installed.get("geometry_estimation", []))
     return {
         "editor": editor,
         "engines": engines,
