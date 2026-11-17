@@ -185,6 +185,9 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .sys-content { padding: 14px 16px; }
 
 /* ---------------------------------------------------------------- explorer */
+/* "Bob Studio updated to vX": the studio restarted with a new version under this page. */
+.update-bar { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 100001; display: flex; align-items: center; gap: 12px;
+  padding: 8px 10px 8px 16px; border-radius: 12px; background: var(--panel); border: 1px solid var(--accent); box-shadow: 0 10px 30px rgba(0, 0, 0, .35); font-size: 13px; }
 .ex { display: grid; grid-template-rows: auto auto 1fr auto; height: 100%; font-size: 13px; }
 .ex-tool, .ex-cmd { display: flex; align-items: center; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--line); }
 .ex-cmd { background: color-mix(in srgb, var(--panel-2) 50%, transparent); }

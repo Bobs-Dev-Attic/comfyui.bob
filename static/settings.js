@@ -25,7 +25,7 @@ const Settings = (() => {
   const ACCENTS = { orange: "#ff7a45", blue: "#4f8cff", violet: "#9b7bff", green: "#2fbf71", pink: "#ff5fa2", teal: "#22b8c8", gold: "#e5b52e", red: "#ef4444" };
   const SECTIONS = [
     ["appearance", "Appearance", "🎨"], ["projects", "Projects", "🗂"], ["generation", "Generation", "⚡"],
-    ["editor", "Image editor", "✏"], ["advanced", "Settings file", "{ }"], ["about", "About", "ℹ"],
+    ["editor", "Image editor", "✏"], ["updates", "Updates", "⟳"], ["advanced", "Settings file", "{ }"], ["about", "About", "ℹ"],
   ];
 
   let data = null;       // {settings, defaults, file, ...} from the server
@@ -169,6 +169,26 @@ const Settings = (() => {
         ${row("Edit model", "For Erase, Replace with… and Edit the whole picture. The editor's own picker changes this too.",
           `<select data-k="editor.edit_model">${[["qwen", "Qwen Image Edit 2511 · fast"], ["h3image", "MiniMax H3 Image"]].map(([v, l]) =>
             `<option value="${v}"${s.editor.edit_model === v ? " selected" : ""}${state?.caps && !caps[v] ? " disabled" : ""}>${l}${state?.caps && !caps[v] ? " (not installed)" : ""}</option>`).join("")}</select>`)}`;
+    } else if (sec === "updates") {
+      const u = s.updates || { mode: "auto", check_minutes: 5 }, st = modal.update;
+      const mins = [[1, "Every minute"], [5, "Every 5 minutes"], [15, "Every 15 minutes"], [60, "Every hour"], [360, "Every 6 hours"], [1440, "Once a day"]];
+      if (!mins.some(m => m[0] === u.check_minutes)) mins.push([u.check_minutes, `Every ${u.check_minutes} minutes`]);
+      const when = st?.checked ? new Date(st.checked * 1000).toLocaleTimeString() : "";
+      const line = !st ? "Checking…"
+        : st.error ? `⚠ ${e(st.error)}`
+        : st.restarting ? "Installed. Restarting…"
+        : st.behind ? `${st.behind} new change${st.behind === 1 ? "" : "s"} on GitHub${st.blocked ? `: ${e(st.blocked)}` : u.mode === "auto" ? ": installing when nothing is rendering" : ""}`
+        : `✓ Up to date (v${e(st.version)})${when ? ` · checked ${e(when)}` : ""}`;
+      pane.innerHTML = `<h3>Updates</h3>
+        <p class="hint">The studio checks GitHub (<code>${e(st?.repo || "Bobs-Dev-Attic/comfyui.bob")}</code>, branch main) for a newer version.
+          Automatic installs it while nothing is rendering, then the studio restarts itself and the page offers a reload. It never overwrites edits of your own.</p>
+        ${row("When there's a new version", "", select("updates.mode", u.mode, [["auto", "Install it automatically"], ["notify", "Tell me; I'll install it"], ["off", "Don't check"]]))}
+        ${row("Check", "", select("updates.check_minutes", u.check_minutes, mins))}
+        <div class="set-update${st?.error || st?.blocked ? " bad" : ""}" aria-live="polite"><p>${line}</p>
+          ${st?.commits?.length ? `<ul>${st.commits.map(c => `<li>${e(c)}</li>`).join("")}</ul>` : ""}</div>
+        <div class="set-actions"><button type="button" class="btn sm" data-a="update-check">Check now</button>
+          ${st?.behind && !st.blocked && !st.error && !st.restarting ? `<button type="button" class="btn sm primary" data-a="update-apply">Update and restart</button>` : ""}</div>`;
+      if (!st) updateCheck(false);
     } else if (sec === "advanced") {
       pane.innerHTML = `<h3>Settings file</h3>
         <p class="hint">All of these settings live in <code>${e(data.file)}</code> in the studio's folder. Edit the JSON here, or export it to copy your setup to another PC.</p>
@@ -204,6 +224,16 @@ const Settings = (() => {
       close,
       chime,
       versions: () => { close(); historyDialog(state.project?.id || "experiment"); },
+      "update-check": () => updateCheck(true),
+      "update-apply": async () => {
+        status("Updating…");
+        try {
+          const r = await fetch("/api/update/apply", { method: "POST" });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(j.detail || r.statusText);
+          modal.update = j; status("Restarting…"); render();
+        } catch (err) { status(err.message, true); updateCheck(false); }
+      },
       "json-apply": async () => {
         let obj;
         try { obj = JSON.parse(modal.root.querySelector(".set-json").value); } catch (err) { return status(`Not valid JSON: ${err.message}`, true); }
@@ -232,7 +262,7 @@ const Settings = (() => {
     if (!key) return;
     const [sec, name] = key.split(".");
     let v = t.type === "checkbox" ? t.checked : t.type === "number" ? +t.value : t.value;
-    if (key === "projects.version_minutes") v = +v;
+    if (key === "projects.version_minutes" || key === "updates.check_minutes") v = +v;
     if (key === "projects.versions_keep") { v = Math.max(5, Math.min(500, Math.round(v || 30))); t.value = v; }
     if (key === "generation.notify_when_done" && v && "Notification" in window && Notification.permission !== "granted") {
       v = (await Notification.requestPermission()) === "granted";
@@ -240,6 +270,15 @@ const Settings = (() => {
       if (!v) { render(); return status("Notifications are blocked for this site", true); }
     }
     set({ [sec]: { [name]: v } });
+  }
+
+  // Settings › Updates: what the studio last found (fresh = fetch from GitHub now).
+  async function updateCheck(fresh) {
+    try {
+      const r = await fetch(fresh ? "/api/update/check" : "/api/update", { method: fresh ? "POST" : "GET" });
+      const j = await r.json();
+      if (modal) { modal.update = j; if (modal.section === "updates") render(); }
+    } catch (err) { status(`Can't check: ${err.message}`, true); }
   }
 
   async function post(path, body) {

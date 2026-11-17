@@ -44,8 +44,16 @@ def open_when_ready(url: str, timeout: float = 60) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Start Bob Studio.")
     ap.add_argument("--open", action="store_true", help="open the browser once the server is up")
+    ap.add_argument("--after-update", action="store_true", help=argparse.SUPPRESS)  # started by the updater
     args = ap.parse_args()
     url = app_url()
+
+    if args.after_update:
+        # The studio that installed the update is shutting down: wait for it to free the port.
+        deadline = time.monotonic() + 60
+        while running_version() and time.monotonic() < deadline:
+            time.sleep(0.5)
+        time.sleep(1)
 
     version = running_version()
     if version:
