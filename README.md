@@ -102,10 +102,10 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   missing first.
 - **Prompt format**: the Shots step writes prompts in MiniMax's official layout (Video Prompt Writing Guide). H3:
   `integrated_multimodal_description: [Shot 1] …` then `overall_soundscape:` and `non_diegetic_music:`. H3 Reference
-  (full-reference mode): `subject_definitions`, `summary`, `retention_analysis`, `detailed_description`,
-  `overall_soundscape`, `non_diegetic_music`, with each reference picture a `<Subject N>`, each voice recording an
-  `<Audio N>` voice-timbre reference, and speakers numbered `(S1)`, `(S2)`… The output passes minimax-h3-tools'
-  prompt lint.
+  (full-reference mode): `subject_definitions`, `summary`, `retention_analysis`, `integrated_multimodal_description`
+  (the guide calls this one `detailed_description` in reference mode), `overall_soundscape`, `non_diegetic_music`, with each reference picture a `<Subject N>`, each voice recording an
+  `<Audio N>` voice-timbre reference, and speakers numbered `(S1)`, `(S2)`… The H3 output passes minimax-h3-tools'
+  prompt lint; for H3 Reference it flags the main field's name, which is used here by choice.
 - **Shots** (video, after Inputs): every H3 and H3 Reference video is planned here, shot by shot (video has no Prompt
   step). The shots are compact blocks: drag one to reorder, **⋯** for Edit, Move up/down, Duplicate and Delete, or
   double-click to edit. **Edit** opens a large window with the shot's length, framing, angle, camera position and move,

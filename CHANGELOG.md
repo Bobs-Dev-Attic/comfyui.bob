@@ -5,6 +5,12 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.56.1] - 2026-11-17
+
+### Changed
+- H3 Reference prompts call their main section `integrated_multimodal_description:` (as H3 prompts do) instead of the
+  guide's `detailed_description:`. The other five sections are unchanged.
+
 ## [0.56.0] - 2026-11-17
 
 ### Changed
