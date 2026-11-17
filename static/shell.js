@@ -252,6 +252,7 @@ function collectSettings() {
   return {
     v: 1, kind: state.kind, engine: { ...state.engine },
     prompt: $("#prompt").value, lyrics: $("#lyrics").value,
+    promptTags: structuredClone(state.promptTags || {}),
     aspect: $("#aspect").value, quality: $("#quality").value, seconds: +$("#seconds").value,
     seed: $("#seed").value, steps: $("#steps").value, cfg: $("#cfg").value, batch: state.batch,
     turbo: $("#turbo").checked, enhance: $("#enhance").checked, fidelity: $("#fidelity").checked,
@@ -285,8 +286,10 @@ function applySettings(s) {
     if (state.shots) state.shots.list = state.shots.list.filter(x => x && typeof x === "object").map(x => ({
       id: Math.random().toString(16).slice(2, 10), seconds: 3, framing: "medium shot", setting: "", action: "", camera: "holds a static shot",
       dialogue: "", voice: "", first_frame: null, last_frame: null, refs: [], ...x }));
+    state.promptTags = s.promptTags && typeof s.promptTags === "object" && !Array.isArray(s.promptTags) ? structuredClone(s.promptTags) : {};
     renderForm();
     $("#prompt").value = s.prompt || "";
+    Prompts.refresh();
     $("#lyrics").value = s.lyrics || "";
     if (s.aspect && [...$("#aspect").options].some(o => o.value === s.aspect)) $("#aspect").value = s.aspect;
     if (s.quality && [...$("#quality").options].some(o => o.value === s.quality)) $("#quality").value = s.quality;

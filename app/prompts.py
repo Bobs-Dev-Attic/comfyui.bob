@@ -1,0 +1,355 @@
+"""The Prompt step's helpers: a catalog of saved prompts, tag presets, and the live
+model-specific rewrite.
+
+Catalog (data/prompt_library.json): entries {id, title, model, prompt, tags, updated}.
+``model`` is the kind:engine the prompt was written for ("image:krea2", "video:h3"...), ``tags`` a
+JSON object of named values; a prompt refers to them as <name> or {{name}}, and a tag
+with several values gives one at random. The ComfyUI Prompt Explorer node's library can
+be imported once (it keeps its own file; nothing is shared afterwards).
+
+Tag presets (data/tag_presets.json, seeded from app/tag_presets.json): {category: [tag...]}
+for the tag picker; <category_slug/> in a prompt picks one at random.
+
+Live rewrite: the browser sends the prompt after a short pause in typing; a local LLM
+rewrites it in the selected model's own style and the text streams back. The LLM stays
+loaded ("warm") for a few minutes while someone is typing and is unloaded as soon as a
+render starts, so it never holds VRAM during one.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import re
+import shutil
+import threading
+import time
+import uuid
+from pathlib import Path
+from typing import Any, AsyncIterator
+
+import httpx
+
+from . import config, llm
+
+log = logging.getLogger("bob.prompts")
+
+LIBRARY = config.DATA_DIR / "prompt_library.json"
+PRESETS = config.DATA_DIR / "tag_presets.json"
+DEFAULT_PRESETS = Path(__file__).with_name("tag_presets.json")
+_lock = threading.Lock()
+
+# The Prompt Explorer node's model names, as Bob engine keys (import only).
+NODE_MODELS = {"flux2": "image:klein", "flux": "image:klein", "krea2": "image:krea2", "krea": "image:krea2",
+               "minimax h3": "video:h3", "h3": "video:h3", "music 3": "audio:music3"}
+
+
+# --------------------------------------------------------------------------- catalog
+
+def _read() -> list[dict[str, Any]]:
+    try:
+        data = json.loads(LIBRARY.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError) as exc:
+        log.warning("prompt_library.json unreadable: %s", exc)
+        return []
+    entries = data.get("entries") if isinstance(data, dict) else None
+    return [e for e in entries if isinstance(e, dict)] if isinstance(entries, list) else []
+
+
+def _write(entries: list[dict[str, Any]]) -> None:
+    tmp = LIBRARY.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"version": 1, "entries": entries}, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(LIBRARY)
+
+
+def _clean_tags(tags: Any) -> dict[str, Any]:
+    if isinstance(tags, str):
+        try:
+            tags = json.loads(tags)
+        except ValueError:
+            return {}
+    if not isinstance(tags, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for k, v in tags.items():
+        k = str(k).strip()[:80]
+        if not k:
+            continue
+        if isinstance(v, list):
+            out[k] = [str(x) if not isinstance(x, (dict, list)) else json.dumps(x, ensure_ascii=False) for x in v][:200]
+        elif isinstance(v, dict):
+            out[k] = v  # nested groups (from the node) stay as they are: <group.key>
+        else:
+            out[k] = str(v)
+    return out
+
+
+def _sanitize(item: dict[str, Any]) -> dict[str, Any]:
+    title = str(item.get("title", "")).strip()[:200]
+    if not title:
+        raise ValueError("Give the prompt a title")
+    return {
+        "id": str(item.get("id") or uuid.uuid4().hex)[:40],
+        "title": title,
+        "model": str(item.get("model", "") or "").strip()[:40],
+        "prompt": str(item.get("prompt", "") or "")[:40000],
+        "tags": _clean_tags(item.get("tags", {})),
+        "updated": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+
+
+def _sorted(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(entries, key=lambda e: str(e.get("title", "")).lower())
+
+
+def list_entries() -> list[dict[str, Any]]:
+    with _lock:
+        return _sorted(_read())
+
+
+def save_entry(item: dict[str, Any]) -> dict[str, Any]:
+    entry = _sanitize(item)
+    with _lock:
+        entries = _read()
+        i = next((k for k, e in enumerate(entries) if e.get("id") == entry["id"]), -1)
+        if i >= 0:
+            entries[i] = entry
+        else:
+            entries.append(entry)
+        _write(entries)
+    return entry
+
+
+def delete_entry(entry_id: str) -> bool:
+    with _lock:
+        entries = _read()
+        keep = [e for e in entries if e.get("id") != entry_id]
+        if len(keep) == len(entries):
+            return False
+        _write(keep)
+    return True
+
+
+def node_library() -> Path | None:
+    """The Prompt Explorer node's library.json, if it can be found."""
+    roots = []
+    if config.COMFYUI_DIR:
+        base = Path(config.COMFYUI_DIR)
+        roots += [base / "ComfyUI" / "custom_nodes", base / "custom_nodes"]
+    for r in roots:
+        p = r / "comfyui-prompt-explorer" / "library.json"
+        if p.is_file():
+            return p
+    return None
+
+
+def import_node_library() -> dict[str, int]:
+    """Copy the node's entries in (once: entries already imported, by id, are skipped)."""
+    src = node_library()
+    if not src:
+        raise ValueError("The Prompt Explorer node's library wasn't found (looked under BOB_COMFYUI_DIR's custom_nodes)")
+    try:
+        data = json.loads(src.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"Couldn't read the node's library: {exc}") from exc
+    incoming = data.get("entries", []) if isinstance(data, dict) else []
+    added = skipped = 0
+    with _lock:
+        entries = _read()
+        have = {e.get("id") for e in entries}
+        for it in incoming:
+            if not isinstance(it, dict) or not str(it.get("title", "")).strip():
+                continue
+            if it.get("id") in have:
+                skipped += 1
+                continue
+            m = str(it.get("model", "")).strip()
+            try:
+                entry = _sanitize({**it, "model": NODE_MODELS.get(m.lower(), m)})
+            except ValueError:
+                continue
+            entries.append(entry)
+            have.add(entry["id"])
+            added += 1
+        if added:
+            _write(entries)
+    return {"added": added, "skipped": skipped}
+
+
+def presets() -> dict[str, list[str]]:
+    if not PRESETS.exists() and DEFAULT_PRESETS.exists():
+        shutil.copyfile(DEFAULT_PRESETS, PRESETS)
+    try:
+        data = json.loads(PRESETS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {str(k): [str(x) for x in v] for k, v in data.items() if isinstance(v, list)} if isinstance(data, dict) else {}
+
+
+# --------------------------------------------------------------------------- live rewrite
+
+COMMON = """You rewrite prompts for {name}. Keep every subject, detail, name, color, number and quoted line the user gave, and add nothing that changes the idea; fill in only what the format needs.
+Reply with the rewritten prompt only: no title, no notes, no quotes around it, no markdown."""
+# Reference tags the user wrote are named in the instructions (only those: naming others makes models invent them).
+REF_TAG = re.compile(r"<(?:Picture|Audio|Subject|Image|Video) \d+>|<d>")
+
+NO_NEG = "Describe only what is there: never use negations (no, not, without, never). Skip filler such as masterpiece, best quality, 8k, highly detailed."
+
+PROFILES: dict[str, tuple[str, str]] = {
+    "flux": ("FLUX 3 Klein, an image model that reads natural language",
+             "Write one flowing paragraph of 40 to 90 words: the main subject and what it is doing first, then its details (clothing only for people), "
+             "then the setting, then light, lens and style. Plain sentences: no comma-separated tag lists and no weights such as (word:1.2). " + NO_NEG),
+    "krea": ("Krea 2, a photoreal image model that reads natural language",
+             "Write one paragraph of 30 to 80 words in plain, concrete photographic language: subject and action, wardrobe and materials, "
+             "place, light and time of day, camera and lens. No tag lists and no weights such as (word:1.2). " + NO_NEG),
+    "h3still": ("MiniMax H3 rendering one still frame",
+                "Line 1: the style (medium, look, palette, lens, mood) in one line.\nThen a blank line.\nThen one paragraph: the framing, "
+                "the setting and its light, then the subject and pose. " + NO_NEG),
+    "h3image": ("MiniMax H3 Image, a still-image model that can use reference pictures",
+                "Line 1: the style in one line.\nThen a blank line.\nThen one paragraph: framing, setting and light, subject and pose. "
+                "Refer to things from the reference pictures by their tags (e.g. the woman from <Picture 1>). " + NO_NEG),
+    "h3video": ("MiniMax H3, a video model that renders picture and sound from a shot list",
+                "Format:\nLine 1: the style (medium, look, palette, lens, mood).\nA blank line.\nOne line per shot: "
+                "\"[Shot 1] <framing>. <setting and light>. <action in present tense>. The camera <one move>.\" "
+                "Later shots begin with the start time, e.g. \"[Shot 2] At 00:04.000, close-up. …\". Spoken words go after "
+                "\"They say:\" as <d>[English] the words</d>.\nA blank line.\noverall_soundscape: <ambience and effects in order>\n"
+                "non_diegetic_music: <score style, or N/A>\nUse one shot unless the user describes several; the clip is {seconds} seconds. " + NO_NEG),
+    "h3ref": ("MiniMax H3 Reference, a video model that uses reference pictures tagged <Picture 1>, <Picture 2>…",
+              "Use the same format as an H3 shot list:\nLine 1: the style.\nA blank line.\n\"[Shot 1] <framing>. <setting and light>. "
+              "<action>. The camera <one move>.\" (later shots begin with their start time, e.g. At 00:04.000,).\nA blank line.\n"
+              "overall_soundscape: …\nnon_diegetic_music: …\nRefer to people, objects and places from the references by tag instead of "
+              "describing their looks. The clip is {seconds} seconds. " + NO_NEG),
+    "h3sound": ("MiniMax H3 making sound only",
+                "Exactly two lines:\noverall_soundscape: <ambience and sound effects in time order, with rough times such as at 2 seconds>\n"
+                "non_diegetic_music: <score style and mood, or N/A>\nThe clip is {seconds} seconds."),
+    "music": ("Music 3, a song model; this is its style caption",
+              "One line of comma-separated descriptors, 10 to 30 words: genre and sub-genre, mood, tempo or BPM, key instruments, "
+              "vocal type and delivery, production style."),
+}
+
+
+def system_prompt(profile: str, seconds: float, text: str = "", keep: list[str] | None = None) -> str:
+    name, rules = PROFILES[profile]
+    out = COMMON.format(name=name)
+    tags = list(dict.fromkeys(m.group(0) for m in REF_TAG.finditer(text)))
+    if tags:
+        shown = ", ".join("<d>…</d>" if t == "<d>" else t for t in tags)
+        out += f"\nCopy these tags exactly, each where it belongs: {shown}."
+    if keep:
+        out += "\nUse each of these words exactly as written, unchanged and once: " + "; ".join(f'"{k[:80]}"' for k in keep[:30]) + "."
+    return out + "\n\n" + rules.replace("{seconds}", f"{seconds:g}")
+
+
+_warm: dict[str, Any] = {}  # {"url", "model", "until"} while an Ollama model is held loaded for typing
+KEEP = "4m"
+
+
+def _backend(backend: str | None, url: str | None) -> llm.Backend:
+    return llm.make_backend(backend, url)
+
+
+async def _model(b: llm.Backend, model: str | None) -> str:
+    default = config.OLLAMA_MODEL if b.name == "ollama" else config.LLM_MODEL
+    return await b.pick(model or None, default)
+
+
+async def warm(backend: str | None, url: str | None, model: str | None) -> dict[str, Any]:
+    """Load the model now (Ollama), so the first rewrite answers quickly."""
+    b = _backend(backend, url)
+    name = await _model(b, model)
+    if b.name == "ollama":
+        try:
+            async with httpx.AsyncClient(timeout=120) as c:
+                # The same options as rewrite(), or Ollama loads the model a second time for a different context size.
+                await c.post(f"{b.url}/api/generate", json={"model": name, "keep_alive": KEEP, "options": {"num_ctx": 4096}})
+        except httpx.HTTPError as exc:
+            raise llm.LLMError(f"Ollama is not reachable at {b.url}") from exc
+        _warm.update(url=b.url, model=name, until=time.time() + 240)
+    return {"model": name, "backend": b.name}
+
+
+async def release() -> None:
+    """Unload the warm model (a render is starting). Quiet: never fails the caller."""
+    if not _warm:
+        return
+    url, model = _warm.get("url"), _warm.get("model")
+    _warm.clear()
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            await c.post(f"{url}/api/generate", json={"model": model, "keep_alive": 0})
+        log.info("unloaded %s for a render", model)
+    except httpx.HTTPError:
+        pass
+
+
+def _tidy(text: str) -> str:
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)
+    text = re.sub(r"^```\w*\n?|\n?```$", "", text.strip())
+    text = re.sub(r"^(here(?:'s| is) (?:the |your )?(?:rewritten |revised )?prompt[^:\n]*:)\s*", "", text, flags=re.I)
+    return text.strip().strip('"').strip()
+
+
+async def rewrite(text: str, profile: str, seconds: float, backend: str | None, url: str | None,
+                  model: str | None, keep: list[str] | None = None) -> AsyncIterator[str]:
+    """Stream the rewritten prompt in pieces."""
+    if profile not in PROFILES:
+        raise llm.LLMError(f"No live rewrite for {profile!r}")
+    b = _backend(backend, url)
+    name = await _model(b, model)
+    messages = [{"role": "system", "content": system_prompt(profile, seconds, text, keep)},
+                {"role": "user", "content": f"Prompt to rewrite:\n{text.strip()}"}]
+    if b.name == "ollama":
+        body: dict[str, Any] = {"model": name, "messages": messages, "stream": True, "keep_alive": KEEP,
+                                "options": {"temperature": 0.3, "num_ctx": 4096, "num_predict": 700, "repeat_penalty": 1.1}}
+        try:
+            if "thinking" in await b._capabilities(name):  # type: ignore[attr-defined]
+                body["think"] = False
+        except httpx.HTTPError:
+            pass
+        _warm.update(url=b.url, model=name, until=time.time() + 240)
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=5)) as c:
+            async with c.stream("POST", f"{b.url}/api/chat", json=body) as r:
+                if r.status_code != 200:
+                    raise llm.LLMError(f"Ollama error {r.status_code}: {(await r.aread())[:300]!r}")
+                async for line in r.aiter_lines():
+                    if not line.strip():
+                        continue
+                    piece = json.loads(line).get("message", {}).get("content", "")
+                    if piece:
+                        yield piece
+        return
+    body = {"model": name, "messages": messages, "stream": True, "temperature": 0.3, "max_tokens": 700,
+            "chat_template_kwargs": {"enable_thinking": False}}
+    async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=5), headers=b._headers()) as c:
+        async with c.stream("POST", f"{b.url}/v1/chat/completions", json=body) as r:
+            if r.status_code != 200:
+                raise llm.LLMError(f"LLM server error {r.status_code}: {(await r.aread())[:300]!r}")
+            async for line in r.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    piece = json.loads(data)["choices"][0].get("delta", {}).get("content") or ""
+                except (ValueError, KeyError, IndexError):
+                    continue
+                if piece:
+                    yield piece
+
+
+async def rewrite_stream(text: str, profile: str, seconds: float, backend: str | None, url: str | None,
+                         model: str | None, keep: list[str] | None = None) -> AsyncIterator[bytes]:
+    """rewrite() as NDJSON lines for the browser: {"t": piece} ... {"done": true, "text": tidy} or {"error"}."""
+    out: list[str] = []
+    try:
+        async for piece in rewrite(text, profile, seconds, backend, url, model, keep):
+            out.append(piece)
+            yield (json.dumps({"t": piece}) + "\n").encode()
+        yield (json.dumps({"done": True, "text": _tidy("".join(out))}) + "\n").encode()
+    except (llm.LLMError, httpx.HTTPError) as exc:
+        yield (json.dumps({"error": str(exc) or type(exc).__name__}) + "\n").encode()
+    except asyncio.CancelledError:  # the browser moved on (the user kept typing)
+        raise

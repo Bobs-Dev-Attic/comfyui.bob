@@ -200,6 +200,7 @@ function renderForm() {
   updateDerived();
   renderMissing();
   renderSteps();
+  Prompts.refresh();
 }
 
 function updateDerived() {
@@ -282,7 +283,7 @@ function collectRequest() {
   const cfg = $("#cfg").value !== "" ? +$("#cfg").value : null;
   return {
     kind, engine: eng,
-    prompt: $("#prompt").value,
+    prompt: Prompts.final($("#prompt").value),  // tags and {a|b} resolved, tidied for the model
     lyrics: $("#lyrics").value,
     aspect: $("#aspect").value,
     quality: $("#quality").value,
@@ -557,6 +558,7 @@ studioChannel.onmessage = ({ data: msg }) => {
     const p = $("#prompt");
     writer.undo = p.value;
     p.value = msg.prompt;
+    Prompts.refresh();
     if (typeof msg.seconds === "number") { $("#seconds").value = msg.seconds; updateDerived(); }
     writerStatus(`Prompt from the writer window <button type="button" class="link" id="btn-undo-write">Undo</button>`);
     $("#btn-undo-write").onclick = () => { if (writer.undo != null) p.value = writer.undo; writer.undo = null; writerStatus(""); };
@@ -726,6 +728,7 @@ async function writePrompt() {
     const r = await api("/api/prompt/write", { method: "POST", body: JSON.stringify(body) });
     writer.undo = idea;
     $("#prompt").value = r.prompt;
+    Prompts.refresh();
     const notes = [`Written by ${esc(r.model)} in ${r.seconds}s`];
     if (pics) notes.push(r.vision ? `saw ${pics} picture${pics > 1 ? "s" : ""}` : `<span class="warn">this model can't see pictures</span>`);
     if (r.warnings?.length) notes.push(`<span class="warn" title="${esc(r.warnings.join("\n"))}">${r.warnings.length} rule${r.warnings.length > 1 ? "s" : ""} not met: check it</span>`);
@@ -1044,6 +1047,7 @@ function init() {
     const p = $("#prompt");
     p.value = p.value.trim() ? p.value.trimEnd() + "\n\n" + t : t;
     p.focus();
+    Prompts.refresh();
   };
   $("#btn-tips").onclick = () => { $("#tips").hidden = !$("#tips").hidden; };
   $("#btn-free").onclick = async () => {
@@ -1061,6 +1065,7 @@ function init() {
   $("#btn-goto-shots").onclick = () => showStep("shots");
   initArefs();
   initWriter();
+  Prompts.init();
   initSysCheck();
   TL.mount($("#timeline"));
   Bin.init();

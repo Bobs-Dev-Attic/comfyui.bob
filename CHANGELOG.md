@@ -5,6 +5,28 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.37.0] - 2026-11-16
+
+### Added
+- **Live model view in the Prompt step.** As you type, the prompt is tidied for the selected model and checked:
+  weights like `(word:1.2)` and filler words come out for FLUX 3 Klein and Krea 2, H3 dialogue gets `[English]`, and
+  notes flag what the model handles badly (negations for H3, `<Picture N>` beyond the references, no camera move or
+  sound, tag lists for sentence models, overlong prompts). **What the model gets** shows exactly what Generate sends.
+- **✨ Live rewrite.** After a short pause in typing, a local LLM (Ollama or an OpenAI-compatible server, the Prompt
+  writer's choice) rewrites the prompt in the selected model's own format and streams it in under the prompt. Tab
+  accepts (Ctrl+Z undoes), Esc dismisses, ↻ asks again. With the model warm the first words show in about half a
+  second.
+  - The LLM loads when you start typing and stays loaded for a few minutes; it's unloaded when a render starts, and
+    live rewrites pause while one runs.
+  - Template parts (`{a|b}`, `<preset/>`, prompt tags) survive the rewrite; anything it drops is added back on accept.
+- **Prompt tags and templates**, as in the Prompt Explorer node: named values used as `<name>` or `{{name}}` (several
+  values: one at random, the same throughout the prompt), plus `{a|b}`, weighted `{3::a|b}`, `<maybe p="…">`,
+  `<list>` and `<category/>` from the presets. Each Generate rolls them again. Tags are saved with the project.
+- **🏷 Tag presets**: ready-made words by category (hair, outfits, lighting, camera, mood…), filterable; tick and insert,
+  or insert a random pick.
+- **📚 Prompt catalog**: Bob's own library of saved prompts and their tags, grouped by model, with search; use, save,
+  update and delete. **Import from the Prompt Explorer node** copies that node's library in once.
+
 ## [0.36.0] - 2026-11-16
 
 ### Added

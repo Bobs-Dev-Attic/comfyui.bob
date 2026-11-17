@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, appsettings, config, llm, media, modelpaths, models, projects, render, syscheck, workflows
+from . import __version__, appsettings, config, llm, media, modelpaths, models, projects, prompts, render, syscheck, workflows
 from .comfy import ComfyService
 from .jobs import EnhanceOpts, GenerateRequest, JobManager, media_path
 
@@ -286,6 +286,7 @@ async def h3_length(seconds: float):
 
 @app.post("/api/generate")
 async def generate(req: GenerateRequest):
+    asyncio.create_task(prompts.release())  # a live-rewrite LLM must not hold VRAM during the render
     try:
         items = await jobs.generate(req)
     except ValueError as exc:
@@ -385,6 +386,84 @@ async def write_prompt(req: WritePromptRequest):
     except (llm.LLMError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
     return {"mode": mode, **result}
+
+
+# ------------------------------------------------------------------ prompt catalog + live rewrite
+
+def _rendering() -> bool:
+    return any(i.get("status") in ("queued", "running", "submitting") for i in jobs.list())
+
+
+@app.get("/api/prompts")
+async def prompt_list():
+    return {"entries": prompts.list_entries(), "presets": prompts.presets(),
+            "node_library": bool(prompts.node_library())}
+
+
+class PromptEntry(BaseModel):
+    id: str | None = Field(None, max_length=40)
+    title: str = Field(..., max_length=200)
+    model: str = Field("", max_length=40)
+    prompt: str = Field("", max_length=40000)
+    tags: dict = Field(default_factory=dict)
+
+
+@app.post("/api/prompts")
+async def prompt_save(entry: PromptEntry):
+    try:
+        saved = prompts.save_entry(entry.model_dump())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"entry": saved, "entries": prompts.list_entries()}
+
+
+@app.delete("/api/prompts/{entry_id}")
+async def prompt_delete(entry_id: str):
+    if not prompts.delete_entry(entry_id):
+        raise HTTPException(404, "No such prompt")
+    return {"entries": prompts.list_entries()}
+
+
+@app.post("/api/prompts/import-node")
+async def prompt_import_node():
+    try:
+        result = await asyncio.to_thread(prompts.import_node_library)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {**result, "entries": prompts.list_entries()}
+
+
+class LiveLLM(BaseModel):
+    backend: str | None = Field(None, max_length=20)
+    url: str | None = Field(None, max_length=500)
+    model: str | None = Field(None, max_length=200)
+
+
+class RewriteRequest(LiveLLM):
+    text: str = Field(..., min_length=1, max_length=8000)
+    profile: str = Field(..., max_length=20)
+    seconds: float = Field(5.0, ge=0.5, le=600)
+    keep: list[str] = Field(default_factory=list, max_length=30)  # words the rewrite must keep (stand-ins for template parts)
+
+
+@app.post("/api/prompt/warm")
+async def prompt_warm(req: LiveLLM):
+    if _rendering():
+        return {"paused": True}
+    try:
+        return await prompts.warm(req.backend, req.url, req.model)
+    except llm.LLMError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/prompt/rewrite")
+async def prompt_rewrite(req: RewriteRequest):
+    if _rendering():
+        raise HTTPException(409, "Live rewrite pauses while a render runs, so the LLM doesn't take its VRAM")
+    if req.profile not in prompts.PROFILES:
+        raise HTTPException(400, f"No live rewrite for {req.profile}")
+    return StreamingResponse(prompts.rewrite_stream(req.text, req.profile, req.seconds, req.backend, req.url, req.model, req.keep),
+                             media_type="application/x-ndjson", headers={"Cache-Control": "no-store"})
 
 
 # ------------------------------------------------------------------ projects
