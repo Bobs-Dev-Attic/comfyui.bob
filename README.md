@@ -189,7 +189,8 @@ Other features:
 - **Voices go with pictures** (H3 Reference): `<Audio N>` is the voice of the person in `<Picture N>`. The Shot writer
   writes spoken lines as “They say, in the voice of <Audio N>:” for the person tagged in the shot, the live rewrite
   pairs them the same way, the live view flags a sentence that gives `<Picture 2>` the voice `<Audio 1>`, and a prompt
-  without `<Audio>` tags gets a lead sentence that pairs them.
+  without `<Audio>` tags gets a lead sentence that pairs them. The Shot writer shows each picture's voice under it
+  (🔊 Audio N and the recording's name, or “no voice”); click it to insert the tag.
 - **Duration check** (H3 video, H3 Reference): the live view and the Shot writer show how long the prompt needs (about
   2 s per shot to read, spoken lines at 2.5 words a second, timed shots from their start) against the clip length,
   warn when it may be cut off or needs more than H3's 15 s, and offer **Use N s** to set Duration. The Writer pane beside the viewer is gone.

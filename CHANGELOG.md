@@ -5,6 +5,22 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.43.0] - 2026-11-16
+
+### Added
+- **The Shot writer shows which voice each picture uses** (H3 Reference): under each reference picture, “🔊 Audio N”
+  with the recording's name (click to insert `<Audio N>`), or “no voice” when that picture has none; voices beyond the
+  pictures are listed as for whoever else speaks.
+
+### Fixed
+- **Generate could do nothing visible.** In the Shot writer, a finished shot list that hadn't been edited since it
+  was restored never reached the prompt, so Generate sent an empty prompt; the server's error showed only on the
+  Generate step, out of sight when Generate was pressed from the Prompt tab (the top Generate button or Ctrl+Enter).
+  - Generate now takes the Shot writer's shot list when it's showing; an incomplete one says how many fields are
+    empty instead.
+  - An empty prompt is caught before sending: Bob goes to the Prompt step and says so.
+  - Any error from Generate also shows as a message wherever you are.
+
 ## [0.42.0] - 2026-11-16
 
 ### Changed

@@ -347,6 +347,7 @@ async function submit(req) {
     renderGallery(); renderQueue();
   } catch (e) {
     $("#form-error").textContent = e.message;
+    Media.toast(`Generate: ${e.message}`);  // the error line is on the Generate step; Generate can be pressed from anywhere
   } finally {
     renderMissing();
   }
@@ -544,6 +545,7 @@ function studioContext() {
     seconds: +$("#seconds").value, aspect: $("#aspect").value,
     references: state.refs.map(r => ({ ref: r.ref, url: r.url })),
     voices: state.engine.video === "h3ref" ? state.arefs.length : 0,  // <Audio N> is the voice of <Picture N>
+    voice_names: state.engine.video === "h3ref" ? state.arefs.map(a => a.name || a.ref.split("/").pop()) : [],
     first_frame: state.engine.video === "h3" ? pic(state.frames.first_frame) : null,
     last_frame: state.engine.video === "h3" ? pic(state.frames.last_frame) : null,
     idea: $("#prompt").value,
@@ -1071,7 +1073,12 @@ function init() {
     try { await api("/api/free", { method: "POST" }); } catch {}
     b.disabled = false; b.textContent = "Free VRAM"; pollStatus();
   };
-  $("#form").addEventListener("submit", e => { e.preventDefault(); if (Shots.on()) Shots.generate(collectRequest()); else submit(collectRequest()); });
+  $("#form").addEventListener("submit", e => {
+    e.preventDefault();
+    if (Shots.on()) { Shots.generate(collectRequest()); return; }
+    if (!Prompts.readyToGenerate()) return;
+    submit(collectRequest());
+  });
   $("#prompt").addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $("#form").requestSubmit(); } });
   initDrops();
   initRefs();

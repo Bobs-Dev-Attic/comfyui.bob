@@ -794,6 +794,33 @@ const Prompts = (() => {
     $("#prompt-mode").hidden = !ok;
     setMode(ok ? wantMode() : "text", false);
   }
+  /* Before Generate: in the Shot writer, take its shot list (a finished draft may never have been sent, e.g.
+     one restored from last time); an incomplete list or an empty prompt stops here with a message instead of
+     an error the server shows on another step. */
+  function readyToGenerate() {
+    const writerOn = $('.step[data-step="prompt"]').classList.contains("writer-mode");
+    if (writerOn) {
+      const w = $("#prompt-writer-frame")?.contentWindow?.shotWriter;
+      if (w) {
+        const holes = w.holes();
+        if (holes) {
+          showStep("prompt");
+          Media.toast(`The shot list has ${holes} empty field${holes === 1 ? "" : "s"}: fill ${holes === 1 ? "it" : "them"} or press ✨ Write in the Shot writer.`);
+          return false;
+        }
+        const text = w.text();
+        if (text.trim() && text !== ta().value) { ta().value = text; refresh(); scheduleSave(); }
+      }
+    }
+    const needsPrompt = !(state.kind === "video" && state.engine.video === "h3" && (state.frames?.first_frame || state.frames?.last_frame));
+    if (!ta().value.trim() && needsPrompt) {
+      showStep("prompt");
+      Media.toast(writerOn ? "The Shot writer has nothing yet: type your idea and press ✨ Write." : "Write a prompt first.");
+      if (!writerOn) ta().focus();
+      return false;
+    }
+    return true;
+  }
   function toggleWriter() {
     if (!writerOk) { Media.toast("The Shot writer is for the MiniMax H3 models."); return; }
     showStep("prompt");
@@ -808,5 +835,5 @@ const Prompts = (() => {
   }
 
   return { init, refresh, resolve, shape, final, hasSyntax, catalog, presetsWin, accept, dismiss, profile,
-    renderBar: () => renderTags(), setMode, toggleWriter, writerAvailable, _S: S };
+    renderBar: () => renderTags(), setMode, toggleWriter, writerAvailable, readyToGenerate, _S: S };
 })();
