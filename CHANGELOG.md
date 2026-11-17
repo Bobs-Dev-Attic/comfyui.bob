@@ -5,6 +5,14 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.61.0] - 2026-11-17
+
+### Added
+- **Add to timeline when done**, a checkbox beside the "One video per shot" / "One multi-shot video" buttons on the
+  Shots step (on by default, saved with the project). When it's on, a finished video goes at the end of the
+  timeline's first video track: one shot or a multi-shot video as soon as it's done (with several takes, the first
+  good take), several shots in order once all are done, as before. Turn it off to keep results in the bin only.
+
 ## [0.60.0] - 2026-11-17
 
 ### Added
