@@ -5,6 +5,32 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.49.0] - 2026-11-17
+
+### Changed
+- **Video is planned on the Shots step.** For MiniMax H3 and H3 Reference the workflow is now Project → Model → Inputs →
+  Shots → LoRAs → Settings → Generate; the Prompt step is for pictures and sound only. Shots is always on (no *Use
+  shots* switch), and a new project starts with one shot made as **One video per shot**.
+- **Shots are compact blocks**: a thumbnail, the shot's title, time and framing, and what happens. Drag a block to
+  reorder (with more than one), use its **⋯** menu (Edit, Move up, Move down, Duplicate, Delete), or double-click it.
+- Older projects open unchanged in effect: a project that made its video from the Prompt step gets that prompt as shot
+  1's own prompt; one that used shots keeps them.
+
+### Added
+- **The shot's Edit window**: everything about one shot in a large window, with ‹ › (Alt+←/→) to step through shots.
+  - **✨ Write / 🪄 Enhance** this shot from a one-line brief, at a Creativity level, with the shot before it as
+    context so people and places carry over; **↶ Undo** puts the fields back.
+  - Length, framing, angle, camera position and move, where, what happens (with Picture tags), spoken line and voice.
+  - Inputs: the shot's first and last frame (shot 1 and the last shot use the Inputs step's frames when they have none
+    of their own) or which reference pictures it uses.
+  - **Settings for this shot only**: quality, aspect, turbo, seed and steps; blank uses the project's Settings.
+  - **Write the prompt myself**: the shot sends your text instead of the fields.
+  - A title (shown on the block) and notes, and a live preview of the exact prompt the shot sends.
+- **✨ Write the shots from an idea** on the Shots step: an idea, a number of shots and a length become a full shot list
+  (plus the look, sound and music when those are empty).
+- The Generate step's summary shows the shots (count, length, how they're made) and flags empty ones; Generate stops on
+  an empty shot and says which.
+
 ## [0.48.1] - 2026-11-17
 
 ### Fixed

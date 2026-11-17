@@ -89,10 +89,16 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   super-resolution). Settings › **After generating** can run it on every new result. Needs the ComfyUI-H3-FaceRefine,
   ComfyUI-DLSS5-Enhancer and SeedVR2 custom nodes, and the RelayVSR model files; missing ones are greyed out. The window,
   the After generating setting and the Activity console estimate how long it takes, learning from your own runs.
-- **Shots** (video, after Inputs): plan the video shot by shot: each shot has a length, framing, where, what happens, a camera
-  move, a spoken line with a voice from the reference sounds, and its own first/last frame (H3) or reference pictures (H3
-  Reference). Turn on **Use shots** and pick **One video · multi-shot** (one generation in H3's `[Shot 1] … [Shot 2] At
-  00:03.000, …` format) or **One video per shot** (a generation per shot, laid out on the timeline in order).
+- **Shots** (video, after Inputs): every H3 and H3 Reference video is planned here, shot by shot (video has no Prompt
+  step). The shots are compact blocks: drag one to reorder, **⋯** for Edit, Move up/down, Duplicate and Delete, or
+  double-click to edit. **Edit** opens a large window with the shot's length, framing, angle, camera position and move,
+  where, what happens, a spoken line and voice, its first/last frame (H3; shot 1 and the last shot fall back to the Inputs
+  step's frames) or reference pictures (H3 Reference), **✨ Write / 🪄 Enhance** for this shot from a one-line brief at a
+  Creativity level, its own settings (quality, aspect, turbo, seed, steps; blank = the project's), a title and notes,
+  *Write the prompt myself*, and the exact prompt it sends. **✨ Write the shots from an idea** fills the whole list. A new
+  project starts with one shot; Generate makes **One video per shot** (several shots go on the timeline in order) or
+  **One multi-shot video** (H3's `[Shot 1] … [Shot 2] At 00:03.000, …` format). Older projects that used the Prompt step
+  open with that prompt as shot 1's own prompt.
 - **LoRAs** (every model): add LoRAs with a strength, reorder them, and click trigger words into the prompt. **📂 Browse
   LoRAs…** opens a Windows Explorer style browser over every LoRA ComfyUI can load: folder tree, address bar, search,
   details or large icons, and a details pane (what model it's for, base, rank, size, trigger words, description, preview

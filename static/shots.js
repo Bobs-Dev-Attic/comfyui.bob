@@ -1,36 +1,96 @@
-/* Shots: the Shots step for video models. A shot list, each shot with its own length, framing,
-   setting, action, camera move and spoken line (with a voice from the reference sounds), and its
-   own inputs: first / last frame (H3) or which reference pictures it uses (H3 Reference).
+/* Shots: the Shots step, where every H3 video is planned (H3 and H3 Reference; the Prompt step is for pictures
+   and sound). The step lists the shots as compact blocks: drag one by its handle to reorder, ⋯ for Edit, Move,
+   Duplicate and Delete, double-click to edit. Edit opens a large window with everything about that shot: its
+   length, framing, angle, camera position and move, where and what happens, a spoken line and voice, its inputs
+   (first / last frame, or which reference pictures), ✨ AI help for this shot, its own generation settings, a
+   title and notes, and the exact prompt it sends.
 
-   Two ways to make video from it, chosen per run:
-   - multi: one generation whose prompt is H3's multi-shot format ([Shot 1] ... [Shot 2] At
-     00:03.000, ...), timed from each shot's length; the first shot's first frame and the last
-     shot's last frame become the video's keyframes;
-   - each: one generation per shot, then the results go on the timeline in order.
+   Two ways to make video from the list, chosen in the step:
+   - each (the default): one generation per shot; with several shots the results go on the timeline in order;
+   - multi: one generation whose prompt is H3's multi-shot format ([Shot 1] ... [Shot 2] At 00:03.000, ...).
 
-   state.shots = {on, mode, style, soundscape, music, list: [shot]} (saved with the settings). */
+   A shot's first frame falls back to the Inputs step's first frame for shot 1, and its last frame to the Inputs
+   step's last frame for the last shot. A shot can also carry its own prompt ("Write the prompt myself").
+
+   state.shots = {v: 2, mode, style, soundscape, music, idea, ideaShots, ideaSeconds, creativity, list: [shot]},
+   saved with the project settings. Older projects (Use shots off, the prompt on the Prompt step) become one
+   shot whose own prompt is that prompt. */
 "use strict";
 
 const Shots = (() => {
   const P = () => window.H3Prompt;
-  const CAMERAS = ["holds a static shot", "slowly pushes in", "slowly pulls back", "pans left", "pans right", "tilts up", "tilts down",
-    "tracks alongside the subject", "follows the subject from behind", "orbits around the subject", "cranes up", "is handheld and close", "racks focus"];
+  const V = 2;
+  const FIELDS = ["framing", "angle", "setting", "action", "position", "camera", "dialogue"];
+  const EXTRA_FRAMINGS = ["over-the-shoulder shot", "point-of-view shot", "insert shot"];
+  const CREAT_NAMES = [[15, "Literal"], [40, "Faithful"], [65, "Enhanced"], [85, "Bold"], [100, "Wild"]];
+  const creatName = p => CREAT_NAMES.find(([top]) => p <= top)[1];
   const uid = () => Math.random().toString(16).slice(2, 10);
-  const blank = (seconds = 3) => ({ id: uid(), seconds, framing: "medium shot", angle: "", setting: "", action: "", position: "", camera: "holds a static shot", dialogue: "", voice: "",
-    first_frame: null, last_frame: null, refs: [] });
-  const on = () => state.kind === "video" && state.shots?.on && state.shots.list.length > 0;
+  const OVER = () => ({ seed: "", quality: "", steps: "", turbo: "", aspect: "" });
+  const blank = (seconds = 5) => ({ id: uid(), title: "", notes: "", brief: "", raw: "", rawOn: false, seconds,
+    framing: "medium shot", angle: "", setting: "", action: "", position: "", camera: "holds a static shot", dialogue: "", voice: "",
+    first_frame: null, last_frame: null, refs: [], over: OVER() });
+  const isVideo = () => state.kind === "video";
+  const isRef = () => state.engine.video === "h3ref";
+  // A list is usable once ensure() has upgraded it; while a project loads (state.loading) it may still be the old shape.
+  const upgraded = () => state.shots?.v === V && Array.isArray(state.shots.list);
+  const on = () => isVideo() && upgraded() && state.shots.list.length > 0;
   const total = () => state.shots.list.reduce((a, s) => a + (+s.seconds || 0), 0);
   const fmtT = t => P()?.fmtTime(t) || t.toFixed(2);
+  const clampSec = v => Math.max(1, Math.min(15, Math.round((+v || 1) * 2) / 2));
+  const str = v => typeof v === "string" ? v.trim() : "";
+  const hasContent = s => !!((s.rawOn && str(s.raw)) || str(s.setting) || str(s.action) || str(s.dialogue));
+  const overCount = s => Object.values(s.over || {}).filter(v => v !== "").length;
+  const settingsSeconds = () => { const v = +document.getElementById("seconds")?.value; return v >= 1 && v <= 15 ? v : 5; };
 
-  function ensure() {
-    if (!state.shots || !Array.isArray(state.shots.list)) state.shots = { on: false, mode: "multi", style: "", soundscape: "", music: "", list: [] };
-    if (!state.shots.list.length) state.shots.list.push(blank(3), blank(3));
-    return state.shots;
+  /* ---------------------------------------------------------------- state */
+  function normShot(x) {
+    const s = { ...blank(), ...(x && typeof x === "object" ? x : {}) };
+    s.id = s.id || uid();
+    s.seconds = clampSec(s.seconds);
+    for (const k of ["title", "notes", "brief", "raw", ...FIELDS, "voice"]) s[k] = typeof s[k] === "string" ? s[k] : "";
+    s.framing ||= "medium shot"; s.camera ||= "holds a static shot";
+    s.rawOn = !!s.rawOn;
+    s.refs = Array.isArray(s.refs) ? s.refs.filter(n => Number.isInteger(n)) : [];
+    s.over = { ...OVER(), ...(s.over && typeof s.over === "object" ? s.over : {}) };
+    return s;
+  }
+  /* Make state.shots a v2 shot list. `prompt`: the project's Prompt-step text, kept as shot 1's own prompt when an
+     older project made its videos from the Prompt step. */
+  const checked = new WeakSet();  // lists already normalized (a loaded file may lack fields)
+  function ensure(prompt = null) {
+    const old = state.shots;
+    if (old?.v === V && Array.isArray(old.list)) {
+      if (!checked.has(old.list)) {
+        old.list = old.list.filter(x => x && typeof x === "object").map(normShot);
+        old.mode = old.mode === "multi" ? "multi" : "each";
+        checked.add(old.list);
+      }
+      if (!old.list.length) old.list.push(blank(settingsSeconds()));
+      return old;
+    }
+    const sh = { v: V, mode: "each", style: "", soundscape: "", music: "", idea: "", ideaShots: "", ideaSeconds: 10, creativity: 50, list: [] };
+    if (old && Array.isArray(old.list) && old.on) {
+      Object.assign(sh, { mode: old.mode === "multi" ? "multi" : "each", style: old.style || "", soundscape: old.soundscape || "", music: old.music || "" });
+      sh.list = old.list.map(normShot);
+    }
+    const text = (prompt ?? document.getElementById("prompt")?.value ?? "").trim();
+    if (!sh.list.length) {
+      const s = blank(settingsSeconds());
+      if (text && isVideo()) Object.assign(s, { raw: text, rawOn: true, title: "From the Prompt step" });
+      sh.list.push(s);
+    }
+    checked.add(sh.list);
+    state.shots = sh;
+    return sh;
   }
 
   /* ---------------------------------------------------------------- prompts */
   function shotText(s, k, start, n) {
     const H = P();
+    if (s.rawOn && s.raw.trim()) {  // its own prompt, as one shot's description inside the multi-shot format
+      const body = s.raw.trim().replace(/\s*\n+\s*/g, " ");
+      return k > 0 && n > 1 ? `At ${fmtT(start)}, ${body}` : body;
+    }
     // "Low-angle wide shot." and "The camera is behind her at shoulder height and tracks her": a stated angle and
     // position steer H3's camera far better than a move alone (both are optional).
     const framing = H.shotHead(s.angle, (s.framing || "medium shot").trim());
@@ -48,142 +108,452 @@ const Shots = (() => {
     const sh = state.shots, H = P();
     return `\n\noverall_soundscape: ${H.sentence(sh.soundscape || "") || "Natural ambient sound of the scene."}\nnon_diegetic_music: ${(sh.music || "").trim() || "N/A"}`;
   }
-  // The whole multi-shot prompt, or one shot's own prompt (each mode).
+  // One shot's own prompt (one video per shot), or the whole multi-shot prompt (only = null).
   function prompt(only = null) {
     const sh = state.shots, H = P();
     const style = H.sentence(sh.style || "") || "Cinematic live-action, natural light.";
-    if (only != null) return `${style}\n\n[Shot 1] ${shotText(sh.list[only], 0, 0, 1)}${tail()}`;
+    if (only != null) {
+      const s = sh.list[only];
+      if (s.rawOn && s.raw.trim()) return Prompts.final(s.raw);  // its own prompt: tags and {a|b} resolved, tidied
+      return `${style}\n\n[Shot 1] ${shotText(s, 0, 0, 1)}${tail()}`;
+    }
     let t = 0;
     const body = sh.list.map((s, k) => { const txt = `[Shot ${k + 1}] ${shotText(s, k, t, sh.list.length)}`; t += +s.seconds || 0; return txt; }).join("\n");
     return `${style}\n\n${body}${tail()}`;
   }
+  // The frames a shot actually uses: its own, else the Inputs step's (first for shot 1, last for the last shot).
+  function framesOf(i) {
+    const sh = state.shots, s = sh.list[i], last = sh.list.length - 1;
+    return {
+      first_frame: s.first_frame || (i === 0 ? state.frames.first_frame : null) || null,
+      last_frame: s.last_frame || (i === last ? state.frames.last_frame : null) || null,
+      firstFromInputs: !s.first_frame && i === 0 && !!state.frames.first_frame,
+      lastFromInputs: !s.last_frame && i === last && !!state.frames.last_frame,
+    };
+  }
 
   /* ---------------------------------------------------------------- the step */
+  const thumbOf = (s, i) => {
+    if (isRef()) { const k = s.refs?.length ? s.refs[0] : 0; return state.refs[k]?.url || ""; }
+    const f = framesOf(i); return (f.first_frame || f.last_frame)?.url || "";
+  };
+  function summary(s) {
+    if (s.rawOn && s.raw.trim()) return s.raw.trim();
+    return [s.action, s.setting].map(x => x.trim()).filter(Boolean).join(" · ");
+  }
   function render() {
     const box = document.getElementById("shot-list");
-    if (!box) return;
-    const sh = ensure(), eng = state.engine.video, isRef = eng === "h3ref";
-    document.getElementById("shots-on").checked = !!sh.on;
+    if (!box || state.loading && !upgraded()) return;  // applySettings upgrades it once the prompt is in
+    const sh = ensure();
     $$("#shots-mode button").forEach(b => b.classList.toggle("active", b.dataset.m === sh.mode));
-    document.getElementById("shots-style").value = sh.style || "";
-    document.getElementById("shots-sound").value = sh.soundscape || "";
-    document.getElementById("shots-music").value = sh.music || "";
-    const T = total();
-    document.getElementById("shots-total").textContent = `${sh.list.length} shot${sh.list.length === 1 ? "" : "s"} · ${T.toFixed(1)} s`;
-    const voices = state.arefs.map((_, i) => `<Audio ${i + 1}>`);
+    for (const [id, k] of [["shots-style", "style"], ["shots-sound", "soundscape"], ["shots-music", "music"], ["shots-idea", "idea"]]) {
+      const el = document.getElementById(id); if (el && document.activeElement !== el) el.value = sh[k] || "";
+    }
+    const ideaN = document.getElementById("shots-idea-n"); if (ideaN) ideaN.value = sh.ideaShots || "";
+    const ideaS = document.getElementById("shots-idea-s"); if (ideaS && document.activeElement !== ideaS) ideaS.value = sh.ideaSeconds || 10;
+    renderCreat();
+    const T = total(), n = sh.list.length;
+    document.getElementById("shots-total").textContent = `${n} shot${n === 1 ? "" : "s"} · ${T.toFixed(1)} s`;
     let t = 0;
     box.innerHTML = sh.list.map((s, i) => {
       const t0 = t; t += +s.seconds || 0;
-      const frame = role => {
-        const f = s[role];
-        return `<div class="shot-frame${f ? " has" : ""}" data-role="${role}" tabindex="0" title="${role === "first_frame" ? "First" : "Last"} frame of this shot: drop a picture, or click to upload">
-          ${f ? `<img src="${esc(f.url)}" alt=""><button type="button" class="x" data-shot-act="clear-${role}" title="Remove">×</button>` : `<span>${role === "first_frame" ? "First" : "Last"} frame</span>`}</div>`;
-      };
-      return `<div class="shot-card" data-i="${i}">
-        <div class="shot-h">
-          <b>Shot ${i + 1}</b><span class="shot-t">${fmtT(t0)} – ${fmtT(t)}</span>
-          <label class="shot-dur" title="Length of this shot">⏱ <input type="number" min="1" max="15" step="0.5" value="${s.seconds}" data-f="seconds"> s</label>
-          <span class="shot-btns">
-            <button type="button" class="ex-btn" data-shot-act="up" title="Move earlier" ${i ? "" : "disabled"}>↑</button>
-            <button type="button" class="ex-btn" data-shot-act="down" title="Move later" ${i < sh.list.length - 1 ? "" : "disabled"}>↓</button>
-            <button type="button" class="ex-btn" data-shot-act="dup" title="Duplicate">⧉</button>
-            <button type="button" class="ex-btn" data-shot-act="del" title="Delete" ${sh.list.length > 1 ? "" : "disabled"}>✕</button>
-          </span>
+      const thumb = thumbOf(s, i), text = summary(s);
+      const meta = s.rawOn && s.raw.trim() ? ["own prompt"] : [s.framing, s.angle, s.camera].filter(Boolean);
+      const badges = [s.dialogue.trim() && !s.rawOn ? `<span class="sb-badge" title="Spoken line: ${esc(s.dialogue)}">🗣</span>` : "",
+        overCount(s) ? `<span class="sb-badge" title="${overCount(s)} setting${overCount(s) === 1 ? "" : "s"} of its own">⚙ ${overCount(s)}</span>` : "",
+        s.notes.trim() ? `<span class="sb-badge" title="${esc(s.notes)}">📝</span>` : ""].join("");
+      return `<div class="shot-block${hasContent(s) ? "" : " sb-blank"}" data-i="${i}" ${n > 1 ? 'draggable="true"' : ""} role="listitem" aria-label="Shot ${i + 1}${s.title ? `: ${esc(s.title)}` : ""}">
+        <span class="sb-grip" title="${n > 1 ? "Drag to reorder" : ""}" aria-hidden="true">${n > 1 ? "⠿" : ""}</span>
+        <div class="sb-thumb">${thumb ? `<img src="${esc(thumb)}" alt="">` : `<span>${i + 1}</span>`}</div>
+        <div class="sb-main" data-shot-act="edit" title="Edit this shot (double-click)">
+          <div class="sb-top"><b>Shot ${i + 1}</b>${s.title ? `<span class="sb-title">${esc(s.title)}</span>` : ""}
+            <span class="sb-time">${fmtT(t0)} – ${fmtT(t)} · ${(+s.seconds).toFixed(1)} s</span>${badges}</div>
+          <div class="sb-meta">${esc(meta.join(" · "))}</div>
+          <div class="sb-text">${text ? esc(text) : '<span class="sb-empty">Empty: click to describe it, or write it with ✨</span>'}</div>
         </div>
-        <div class="row2">
-          <div class="field"><label>Framing</label><select data-f="framing">${P().FRAMINGS.map(f => `<option${f === s.framing ? " selected" : ""}>${f}</option>`).join("")}<option value="over-the-shoulder shot"${s.framing === "over-the-shoulder shot" ? " selected" : ""}>over-the-shoulder shot</option><option value="point-of-view shot"${s.framing === "point-of-view shot" ? " selected" : ""}>point-of-view shot</option><option value="insert shot"${s.framing === "insert shot" ? " selected" : ""}>insert shot</option></select></div>
-          <div class="field"><label>Angle</label><select data-f="angle" title="The camera's height and angle"><option value="">Any</option>${P().ANGLES.map(a => `<option${a === s.angle ? " selected" : ""}>${a}</option>`).join("")}</select></div>
-        </div>
-        <div class="row2">
-          <div class="field"><label>Camera position <span class="opt">optional</span></label><input data-f="position" value="${esc(s.position || "")}" placeholder="behind her at shoulder height" title="Where the camera stands, relative to the subject"></div>
-          <div class="field"><label>Camera move</label><input list="shot-cams" data-f="camera" value="${esc(s.camera)}" placeholder="holds a static shot"></div>
-        </div>
-        <div class="field"><label>Where</label><input data-f="setting" value="${esc(s.setting)}" placeholder="A rain-soaked back alley at night, neon signs further down"></div>
-        <div class="field"><label>What happens ${isRef && state.refs.length ? `<span class="shot-tags">${state.refs.map((_, k) => `<button type="button" class="chip-btn" data-tag="<Picture ${k + 1}>">Picture ${k + 1}</button>`).join("")}</span>` : ""}</label>
-          <textarea rows="2" data-f="action" placeholder="The woman from <Picture 1> turns around and smiles">${esc(s.action)}</textarea></div>
-        <div class="row2 shot-say">
-          <div class="field"><label>Spoken line <span class="opt">optional</span></label><input data-f="dialogue" value="${esc(s.dialogue)}" placeholder="See you tomorrow."></div>
-          <div class="field"><label>Voice</label><select data-f="voice" ${voices.length ? "" : "disabled title='Add reference sounds on the Inputs step to choose a voice'"}><option value="">Any</option>${voices.map(v => `<option${v === s.voice ? " selected" : ""}>${esc(v)}</option>`).join("")}</select></div>
-        </div>
-        ${!isRef ? `<div class="shot-frames">${frame("first_frame")}${frame("last_frame")}
-          <p class="hint">${sh.mode === "multi" ? (i === 0 ? "Shot 1's first frame starts the video." : i === sh.list.length - 1 ? "The last shot's last frame ends the video." : "One video: only the first shot's first frame and the last shot's last frame are used.") : "Each shot is its own video and uses its own frames."}</p></div>` : ""}
-        ${isRef && sh.mode === "each" && state.refs.length ? `<div class="shot-refs"><span class="hint inline">Pictures in this shot:</span> ${state.refs.map((r, k) => `<label class="shot-ref"><input type="checkbox" data-ref="${k}"${!s.refs?.length || s.refs.includes(k) ? " checked" : ""}><img src="${esc(r.url)}" alt="">${k + 1}</label>`).join("")}</div>` : ""}
+        <button type="button" class="sb-more" data-shot-act="menu" aria-haspopup="menu" aria-label="Shot ${i + 1} options" title="Options">⋯</button>
       </div>`;
     }).join("");
-    document.getElementById("shots-prompt").textContent = sh.mode === "multi" ? prompt() : sh.list.map((_, i) => `── Shot ${i + 1} ──\n${prompt(i)}`).join("\n\n");
     const warn = [];
     if (sh.mode === "multi" && T > 15) warn.push(`H3 makes up to about 15 s in one video; this is ${T.toFixed(1)} s. Use “One video per shot”, or shorten.`);
-    if (sh.mode === "multi" && sh.list.length > 6) warn.push("More than 6 shots in one video crowds it; H3 does best with 1–5.");
-    document.getElementById("shots-hint").innerHTML = sh.on
-      ? `${sh.mode === "multi" ? `Generate makes <b>one ${T.toFixed(1)} s video</b> from this shot list.` : `Generate makes <b>${sh.list.length} videos</b>, one per shot, and puts them on the timeline in order.`} ${warn.map(w => `<span class="warn">⚠ ${esc(w)}</span>`).join(" ")}`
-      : "Shots are off: Generate uses the Prompt step. Turn on <b>Use shots</b> to build the video from this list.";
-    renderBanner();
+    if (sh.mode === "multi" && n > 6) warn.push("More than 6 shots in one video crowds it; H3 does best with 1–5.");
+    if (sh.mode === "multi" && sh.list.some(overCount)) warn.push("Shots' own settings apply only with one video per shot.");
+    const empty = sh.list.map((s, i) => hasContent(s) ? 0 : i + 1).filter(Boolean);
+    if (empty.length) warn.push(`Shot${empty.length > 1 ? "s" : ""} ${empty.join(", ")} ${empty.length > 1 ? "are" : "is"} empty.`);
+    document.getElementById("shots-hint").innerHTML = `${sh.mode === "multi"
+      ? `Generate makes <b>one ${T.toFixed(1)} s video</b> from these shots.`
+      : n > 1 ? `Generate makes <b>${n} videos</b>, one per shot, and puts them on the timeline in order.` : "Generate makes <b>one video</b> from this shot."} ${warn.map(w => `<span class="warn">⚠ ${esc(w)}</span>`).join(" ")}`;
+    document.getElementById("shots-prompt").textContent = sh.mode === "multi" ? prompt() : sh.list.map((_, i) => `── Shot ${i + 1} ──\n${prompt(i)}`).join("\n\n");
+    if (modal) renderModal();
   }
   function renderBanner() {
     const b = document.getElementById("prompt-shots-banner");
-    if (b) b.hidden = !on();
+    if (b) b.hidden = true;  // the Prompt step isn't shown for video any more
   }
-  function changed() { scheduleSave(); render(); }
+  function renderCreat() {
+    const sh = state.shots, v = sh.creativity ?? 50;
+    for (const id of ["shots-creat", "sm-creat"]) {
+      const el = document.getElementById(id); if (!el) continue;
+      if (+el.value !== v) el.value = v;
+      el.setAttribute("aria-valuetext", `${v}% ${creatName(v)}`);
+    }
+    $$(".shots-creat-val").forEach(el => { el.textContent = `${v}% · ${creatName(v)}`; });
+  }
+  function changed() { scheduleSave(); render(); if (typeof renderSteps === "function") renderSteps(); }
 
-  function init() {
-    ensure();
-    const step = document.querySelector('.step[data-step="shots"]');
-    step.addEventListener("input", e => {
-      const sh = state.shots, f = e.target.dataset.f, card = e.target.closest("[data-i]");
-      if (e.target.id === "shots-style") sh.style = e.target.value;
-      else if (e.target.id === "shots-sound") sh.soundscape = e.target.value;
-      else if (e.target.id === "shots-music") sh.music = e.target.value;
-      else if (f && card) {
-        const s = sh.list[+card.dataset.i];
-        s[f] = f === "seconds" ? Math.max(1, Math.min(15, +e.target.value || 1)) : e.target.value;
-        if (f === "seconds") { render(); scheduleSave(); return; }
-      } else if (e.target.dataset.ref != null && card) {
-        const s = sh.list[+card.dataset.i];
-        s.refs = [...card.querySelectorAll("[data-ref]")].filter(x => x.checked).map(x => +x.dataset.ref);
-      } else return;
-      scheduleSave();
-      document.getElementById("shots-prompt").textContent = sh.mode === "multi" ? prompt() : sh.list.map((_, i) => `── Shot ${i + 1} ──\n${prompt(i)}`).join("\n\n");
+  /* ---------------------------------------------------------------- list actions */
+  function move(from, to) {
+    const L = state.shots.list;
+    if (from === to || from < 0 || to < 0 || from >= L.length || to >= L.length) return;
+    const [s] = L.splice(from, 1); L.splice(to, 0, s);
+    if (modal && modal.i === from) modal.i = to;
+    changed();
+  }
+  function duplicate(i) {
+    const L = state.shots.list, c = { ...structuredClone(L[i]), id: uid() };
+    if (c.title) c.title += " (copy)";
+    L.splice(i + 1, 0, c); changed();
+    return i + 1;
+  }
+  function remove(i) {
+    const L = state.shots.list;
+    if (L.length <= 1) return;
+    const s = L[i];
+    if (hasContent(s) && !confirm(`Delete shot ${i + 1}${s.title ? ` “${s.title}”` : ""}?`)) return;
+    L.splice(i, 1);
+    if (modal) { if (modal.i === i) closeModal(); else if (modal.i > i) modal.i--; }
+    changed();
+  }
+  function add() {
+    const L = state.shots.list, last = L[L.length - 1];
+    L.push({ ...blank(last?.seconds || settingsSeconds()), framing: last?.framing || "medium shot", setting: last?.setting || "" });
+    changed();
+    return L.length - 1;
+  }
+  function menu(i, anchor) {
+    document.querySelector(".ex-menu")?.remove();
+    const n = state.shots.list.length;
+    const items = [["✎  Edit…", () => openModal(i)], null,
+      ["↑  Move up", () => move(i, i - 1), i === 0], ["↓  Move down", () => move(i, i + 1), i === n - 1], null,
+      ["⧉  Duplicate", () => duplicate(i)], ["🗑  Delete", () => remove(i), n <= 1]];
+    const m = document.createElement("div");
+    m.className = "ex-menu"; m.setAttribute("role", "menu");
+    m.innerHTML = items.map((it, k) => it ? `<button type="button" role="menuitem" data-k="${k}"${it[2] ? " disabled" : ""}>${esc(it[0])}</button>` : '<div class="menu-sep"></div>').join("");
+    document.body.appendChild(m);
+    const a = anchor.getBoundingClientRect(), r = m.getBoundingClientRect();
+    Object.assign(m.style, { left: Math.max(8, Math.min(a.right - r.width, innerWidth - r.width - 8)) + "px",
+      top: (a.bottom + r.height + 8 > innerHeight ? a.top - r.height - 4 : a.bottom + 4) + "px", zIndex: 100000 });
+    anchor.setAttribute("aria-expanded", "true");
+    const close = () => { m.remove(); anchor.setAttribute("aria-expanded", "false"); document.removeEventListener("pointerdown", outside, true); };
+    const outside = ev => { if (!m.contains(ev.target) && ev.target !== anchor) close(); };
+    m.addEventListener("click", ev => { const b = ev.target.closest("button"); if (b && !b.disabled) { close(); items[+b.dataset.k][1](); } });
+    m.addEventListener("keydown", ev => {
+      const bs = [...m.querySelectorAll("button:not([disabled])")], at = bs.indexOf(document.activeElement);
+      if (ev.key === "Escape") { ev.stopPropagation(); close(); anchor.focus(); }
+      if (ev.key === "ArrowDown") { ev.preventDefault(); bs[(at + 1) % bs.length]?.focus(); }
+      if (ev.key === "ArrowUp") { ev.preventDefault(); bs[(at - 1 + bs.length) % bs.length]?.focus(); }
     });
-    step.addEventListener("change", e => {
-      if (e.target.id === "shots-on") { state.shots.on = e.target.checked; changed(); }
-      else if (e.target.matches("select[data-f]")) { const s = state.shots.list[+e.target.closest("[data-i]").dataset.i]; s[e.target.dataset.f] = e.target.value; changed(); }
+    setTimeout(() => document.addEventListener("pointerdown", outside, true));
+    m.querySelector("button:not([disabled])")?.focus();
+  }
+
+  /* ---------------------------------------------------------------- ✨ AI (the prompt writer, /api/prompt/write) */
+  function aiBase() {
+    const v = id => document.getElementById(id)?.value ?? "";
+    return { kind: "video", engine: state.engine.video, aspect: v("aspect") || "16:9",
+      backend: v("llm-backend") || null, url: v("llm-url").trim() || null, model: v("llm-model") || null,
+      voices: isRef() ? state.arefs.length : 0, creativity: state.shots.creativity ?? 50 };
+  }
+  function projectLocks() {
+    const sh = state.shots, l = {};
+    for (const k of ["style", "soundscape", "music"]) if ((sh[k] || "").trim()) l[k] = sh[k];
+    return l;
+  }
+  // The look, sound and music the writer came up with fill the project's when those are still empty.
+  function takeProjectFields(f) {
+    const sh = state.shots;
+    for (const k of ["style", "soundscape", "music"]) if (!(sh[k] || "").trim() && typeof f?.[k] === "string" && f[k].trim()) sh[k] = f[k].trim();
+  }
+  const wantsLine = t => /\b(say|says|said|ask|asks|tell|tells|shout|shouts|whisper|whispers|reply|replies|talk|talks)\b|["“”]/i.test(t);
+  const shotFields = s => Object.fromEntries(FIELDS.map(k => [k, s[k] || ""]));
+  async function aiShot(i, enhance) {
+    const sh = state.shots, s = sh.list[i], prev = sh.list[i - 1];
+    const brief = (s.brief || "").trim() || [s.action, s.setting].filter(x => x.trim()).join(". ");
+    if (!enhance && !brief) return Media.toast("Write in a line what happens in this shot first.");
+    let idea = brief;
+    if (prev && hasContent(prev)) idea += `\n\n(For continuity only, don't film it: the shot before this one is ${summary(prev).slice(0, 300)})`;
+    const f = framesOf(i);
+    const refs = isRef() ? (s.refs?.length ? s.refs.map(k => state.refs[k]?.ref).filter(Boolean) : state.refs.map(r => r.ref)) : [];
+    const body = { ...aiBase(), idea, seconds: +s.seconds || 5, shots: 1, dialogue: !!s.dialogue.trim() || wantsLine(brief),
+      first_frame: !isRef() ? f.first_frame?.ref ?? null : null, last_frame: !isRef() ? f.last_frame?.ref ?? null : null,
+      references: refs, locked: projectLocks(), draft: enhance ? { ...projectLocks(), shots: [shotFields(s)] } : {} };
+    const j = await api("/api/prompt/write", { method: "POST", body: JSON.stringify(body) });
+    const got = j.fields?.shots?.[0];
+    if (!got) throw new Error("The writer returned no shot");
+    undo.set(s.id, { ...shotFields(s), rawOn: s.rawOn });
+    for (const k of FIELDS) if (typeof got[k] === "string") s[k] = got[k].trim();
+    s.rawOn = false;
+    if (!s.brief.trim()) s.brief = brief.split("\n")[0];
+    takeProjectFields(j.fields);
+    changed();
+    return j;
+  }
+  async function aiAll() {
+    const sh = state.shots, idea = (sh.idea || "").trim();
+    if (!idea) return Media.toast("Write your idea first.");
+    if (sh.list.some(hasContent) && !confirm("Replace the shots you have with new ones written from this idea?")) return;
+    const seconds = Math.max(2, Math.min(60, +sh.ideaSeconds || 10));
+    const body = { ...aiBase(), idea, seconds: Math.min(15, seconds), shots: sh.ideaShots ? +sh.ideaShots : null, dialogue: wantsLine(idea),
+      first_frame: !isRef() ? state.frames.first_frame?.ref ?? null : null, last_frame: !isRef() ? state.frames.last_frame?.ref ?? null : null,
+      references: isRef() ? state.refs.map(r => r.ref) : [], locked: projectLocks(), draft: {} };
+    if (seconds > 15 && !body.shots) body.shots = Math.max(2, Math.min(6, Math.round(seconds / 3.5)));
+    const j = await api("/api/prompt/write", { method: "POST", body: JSON.stringify(body) });
+    const shots = j.fields?.shots || [];
+    if (!shots.length) throw new Error("The writer returned no shots");
+    const each = Math.max(1, Math.floor(seconds / shots.length * 2) / 2);
+    sh.list = shots.map((x, k) => normShot({ ...blank(k === shots.length - 1 ? clampSec(seconds - each * (shots.length - 1)) : each),
+      ...Object.fromEntries(FIELDS.map(f => [f, typeof x?.[f] === "string" ? x[f].trim() : ""])) }));
+    for (const k of ["style", "soundscape", "music"]) if (typeof j.fields?.[k] === "string" && j.fields[k].trim() && !projectLocks()[k]) sh[k] = j.fields[k].trim();
+    changed();
+    return j;
+  }
+  const undo = new Map();  // shot id → its fields before the last ✨ (not saved)
+
+  /* ---------------------------------------------------------------- the Edit window */
+  let modal = null;  // {root, i}
+  function openModal(i) {
+    if (modal) { modal.i = i; renderModal(true); return; }
+    const root = document.createElement("div");
+    root.className = "set-overlay shot-overlay";
+    root.innerHTML = `<div class="shot-modal" role="dialog" aria-modal="true" aria-labelledby="sm-h"></div>`;
+    document.body.appendChild(root);
+    modal = { root, i, back: document.activeElement };
+    root.addEventListener("pointerdown", e => { if (e.target === root) closeModal(); });
+    root.addEventListener("keydown", e => {
+      if (e.key === "Escape" && !e.target.closest(".ex-menu")) { e.stopPropagation(); closeModal(); }
+      if (e.key === "Tab") trap(e);
+      if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); go(e.key === "ArrowLeft" ? -1 : 1); }
     });
-    step.addEventListener("click", e => {
-      const sh = state.shots;
-      const m = e.target.closest("#shots-mode button")?.dataset.m;
-      if (m) { sh.mode = m; return changed(); }
-      if (e.target.closest("#btn-shot-add")) { const last = sh.list[sh.list.length - 1]; sh.list.push({ ...blank(last?.seconds || 3), framing: last?.framing || "medium shot", setting: last?.setting || "" }); return changed(); }
-      const tag = e.target.closest("[data-tag]");
-      if (tag) { const ta = tag.closest(".shot-card").querySelector('[data-f="action"]'); insertAtCursor(ta, tag.dataset.tag); ta.dispatchEvent(new Event("input", { bubbles: true })); return; }
-      const a = e.target.closest("[data-shot-act]")?.dataset.shotAct, card = e.target.closest("[data-i]");
-      if (a && card) {
-        const i = +card.dataset.i;
-        if (a === "up" && i) [sh.list[i - 1], sh.list[i]] = [sh.list[i], sh.list[i - 1]];
-        if (a === "down" && i < sh.list.length - 1) [sh.list[i + 1], sh.list[i]] = [sh.list[i], sh.list[i + 1]];
-        if (a === "dup") sh.list.splice(i + 1, 0, { ...structuredClone(sh.list[i]), id: uid() });
-        if (a === "del" && sh.list.length > 1) sh.list.splice(i, 1);
-        if (a.startsWith("clear-")) sh.list[i][a.slice(6)] = null;
-        return changed();
+    root.addEventListener("input", onModalInput);
+    root.addEventListener("change", onModalChange);
+    root.addEventListener("click", onModalClick);
+    root.addEventListener("dragover", e => { const fr = e.target.closest(".shot-frame"); if (fr) { e.preventDefault(); fr.classList.add("over"); } });
+    root.addEventListener("dragleave", e => e.target.closest(".shot-frame")?.classList.remove("over"));
+    root.addEventListener("drop", onFrameDrop);
+    renderModal(true);
+  }
+  function closeModal() {
+    if (!modal) return;
+    const back = modal.back; modal.root.remove(); modal = null;
+    render();
+    back?.isConnected && back.focus?.();
+  }
+  function go(d) {
+    const n = state.shots.list.length, j = modal.i + d;
+    if (j < 0 || j >= n) return;
+    modal.i = j; renderModal(true);
+  }
+  function trap(e) {
+    const f = [...modal.root.querySelectorAll("button, input, select, textarea, [tabindex]:not([tabindex='-1'])")].filter(x => !x.disabled && x.offsetParent);
+    if (!f.length) return;
+    if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); f.at(-1).focus(); }
+    else if (!e.shiftKey && document.activeElement === f.at(-1)) { e.preventDefault(); f[0].focus(); }
+  }
+  const opt = (v, l, cur) => `<option value="${esc(v)}"${String(v) === String(cur) ? " selected" : ""}>${esc(l)}</option>`;
+  function renderModal(focus = false) {
+    const sh = state.shots, n = sh.list.length;
+    if (modal.i >= n) modal.i = n - 1;
+    const i = modal.i, s = sh.list[i], H = P(), multi = sh.mode === "multi";
+    const box = modal.root.querySelector(".shot-modal");
+    const keep = document.activeElement && box.contains(document.activeElement) ? document.activeElement.dataset.sf || document.activeElement.id : null;
+    let t0 = 0; for (let k = 0; k < i; k++) t0 += +sh.list[k].seconds || 0;
+    const framings = [...H.FRAMINGS, ...EXTRA_FRAMINGS];
+    if (s.framing && !framings.includes(s.framing)) framings.push(s.framing);
+    const angles = [...H.ANGLES]; if (s.angle && !angles.includes(s.angle)) angles.push(s.angle);
+    const voices = state.arefs.map((_, k) => `<Audio ${k + 1}>`);
+    const fr = framesOf(i);
+    const frame = role => {
+      const own = s[role], used = fr[role], from = role === "first_frame" ? fr.firstFromInputs : fr.lastFromInputs;
+      const name = role === "first_frame" ? "First" : "Last";
+      return `<div class="shot-frame${used ? " has" : ""}${from ? " inherited" : ""}" data-role="${role}" tabindex="0" title="${name} frame of this shot: drop a picture, or click to choose one">
+        ${used ? `<img src="${esc(used.url)}" alt="">${own ? `<button type="button" class="x" data-sm="clear-${role}" title="Remove">×</button>` : ""}` : `<span>${name} frame</span>`}
+        ${from ? `<em>from Inputs</em>` : ""}</div>`;
+    };
+    const qOpts = [...(document.getElementById("quality")?.options || [])].map(o => [o.value, o.textContent]);
+    const aOpts = [...(document.getElementById("aspect")?.options || [])].map(o => [o.value, o.textContent]);
+    const proj = { quality: document.getElementById("quality")?.selectedOptions[0]?.textContent || "",
+      aspect: document.getElementById("aspect")?.selectedOptions[0]?.textContent || "",
+      seed: document.getElementById("seed")?.value, steps: document.getElementById("steps")?.value, turbo: document.getElementById("turbo")?.checked };
+    const o = s.over, rawOn = s.rawOn, busy = modal.busy;
+    const preview = multi ? prompt() : prompt(i);
+    box.innerHTML = `
+      <header class="sm-head">
+        <button type="button" class="set-x" data-sm="prev" title="Previous shot (Alt+←)" ${i ? "" : "disabled"} aria-label="Previous shot">‹</button>
+        <h2 id="sm-h">Shot ${i + 1} <small>of ${n}</small></h2>
+        <button type="button" class="set-x" data-sm="next" title="Next shot (Alt+→)" ${i < n - 1 ? "" : "disabled"} aria-label="Next shot">›</button>
+        <input class="sm-title" data-sf="title" value="${esc(s.title)}" placeholder="Title (optional): Arrival at the door" aria-label="Shot title">
+        <span class="sm-time">${fmtT(t0)} – ${fmtT(t0 + (+s.seconds || 0))}</span>
+        <button type="button" class="set-x" data-sm="close" title="Close (Esc)" aria-label="Close">✕</button>
+      </header>
+      <div class="sm-body">
+        <div class="sm-form">
+          <section class="sm-ai${busy ? " busy" : ""}">
+            <div class="sm-ai-row">
+              <input data-sf="brief" value="${esc(s.brief)}" placeholder="✨ In a line, what happens: she opens the door and freezes" aria-label="What happens, in a line">
+              <button type="button" class="btn sm primary" data-sm="ai-write" ${busy ? "disabled" : ""} title="Write this shot's fields from the line at the creativity below">✨ Write</button>
+              <button type="button" class="btn sm" data-sm="ai-enhance" ${busy || !hasContent(s) ? "disabled" : ""} title="Improve the fields as they are now">🪄 Enhance</button>
+              ${undo.has(s.id) ? `<button type="button" class="btn sm ghost" data-sm="ai-undo" title="Put back the fields from before ✨">↶ Undo</button>` : ""}
+            </div>
+            <div class="sm-ai-row">
+              <label for="sm-creat">Creativity</label>
+              <input type="range" id="sm-creat" min="0" max="100" step="5" value="${sh.creativity ?? 50}">
+              <span class="shots-creat-val"></span>
+              <span class="sm-ai-status" aria-live="polite">${esc(modal.status || "")}</span>
+            </div>
+          </section>
+
+          <section>
+            <h3>Shot</h3>
+            <div class="sm-grid">
+              <div class="field"><label for="sm-sec">Length</label><div class="sm-sec"><input type="number" id="sm-sec" data-sf="seconds" min="1" max="15" step="0.5" value="${s.seconds}"> s</div></div>
+              <div class="field"><label>Framing</label><select data-sf="framing">${framings.map(f => opt(f, f, s.framing)).join("")}</select></div>
+              <div class="field"><label>Angle</label><select data-sf="angle" title="The camera's height and angle">${opt("", "Any", s.angle)}${angles.map(a => opt(a, a, s.angle)).join("")}</select></div>
+            </div>
+            <div class="row2">
+              <div class="field"><label>Camera position <span class="opt">optional</span></label><input data-sf="position" value="${esc(s.position)}" placeholder="behind her at shoulder height" title="Where the camera stands, relative to the subject"></div>
+              <div class="field"><label>Camera move</label><input list="shot-cams" data-sf="camera" value="${esc(s.camera)}" placeholder="holds a static shot"></div>
+            </div>
+            <div class="field"><label>Where <span class="opt">place and light</span></label><input data-sf="setting" value="${esc(s.setting)}" placeholder="A rain-soaked back alley at night, neon signs further down"></div>
+            <div class="field"><label>What happens ${isRef() && state.refs.length ? `<span class="shot-tags">${state.refs.map((_, k) => `<button type="button" class="chip-btn" data-tag="<Picture ${k + 1}>" data-for="action">Picture ${k + 1}</button>`).join("")}</span>` : ""}</label>
+              <textarea rows="3" data-sf="action" placeholder="${isRef() ? "The woman from <Picture 1> turns around and smiles" : "The woman turns around and smiles"}">${esc(s.action)}</textarea></div>
+            <div class="row2">
+              <div class="field"><label>Spoken line <span class="opt">optional</span></label><input data-sf="dialogue" value="${esc(s.dialogue)}" placeholder="See you tomorrow."></div>
+              <div class="field"><label>Voice</label><select data-sf="voice" ${voices.length ? "" : "disabled title='Add reference sounds on the Inputs step to choose a voice'"}>${opt("", "Any", s.voice)}${voices.map(v => opt(v, v, s.voice)).join("")}</select></div>
+            </div>
+            <label class="sm-check"><input type="checkbox" data-sf="rawOn"${rawOn ? " checked" : ""}> Write the prompt myself <span class="opt">this shot sends the text below instead of the fields above</span></label>
+            ${rawOn ? `<div class="field"><textarea rows="6" data-sf="raw" class="sm-raw" placeholder="The whole prompt for this shot, in H3's format">${esc(s.raw)}</textarea>
+              <p class="hint">${multi ? `In one multi-shot video this text becomes Shot ${i + 1}'s description.` : "Tags like <Picture 1> and {a|b} choices work as on the Prompt step."}</p></div>` : ""}
+          </section>
+
+          <section>
+            <h3>Inputs</h3>
+            ${!isRef() ? `<div class="shot-frames">${frame("first_frame")}${frame("last_frame")}
+              <p class="hint">${multi ? (i === 0 ? "In one multi-shot video, shot 1's first frame starts it." : i === n - 1 ? "In one multi-shot video, the last shot's last frame ends it." : "In one multi-shot video only shot 1's first frame and the last shot's last frame are used.") : "This shot's video starts and ends on these. Empty: text to video."}</p></div>`
+            : state.refs.length ? `<div class="shot-refs">${state.refs.map((r, k) => `<label class="shot-ref"><input type="checkbox" data-ref="${k}"${!s.refs?.length || s.refs.includes(k) ? " checked" : ""}${multi ? " disabled" : ""}><img src="${esc(r.url)}" alt="">${k + 1}</label>`).join("")}</div>
+              <p class="hint">${multi ? "One multi-shot video uses every reference picture." : "The reference pictures this shot uses (all, when none are ticked)."}</p>`
+            : `<p class="hint">Add reference pictures on the <button type="button" class="link" data-sm="goto-inputs">Inputs step</button>.</p>`}
+          </section>
+
+          <section>
+            <h3>Settings <span class="opt">this shot only; blank uses the project's Settings</span></h3>
+            ${multi ? `<p class="hint">One multi-shot video uses the project's Settings. Switch to “One video per shot” to give shots their own.</p>` : ""}
+            <div class="sm-grid sm-over"${multi ? " inert" : ""}>
+              <div class="field"><label>Quality</label><select data-over="quality">${opt("", `Project · ${proj.quality}`, o.quality)}${qOpts.map(([v, l]) => opt(v, l, o.quality)).join("")}</select></div>
+              <div class="field"><label>Aspect</label><select data-over="aspect">${opt("", `Project · ${proj.aspect}`, o.aspect)}${aOpts.map(([v, l]) => opt(v, l, o.aspect)).join("")}</select></div>
+              <div class="field"><label>Turbo</label><select data-over="turbo">${opt("", `Project · ${proj.turbo ? "on" : "off"}`, o.turbo)}${opt("on", "On", o.turbo)}${opt("off", "Off (full steps)", o.turbo)}</select></div>
+              <div class="field"><label>Seed</label><input type="number" data-over="seed" min="-1" value="${esc(o.seed)}" placeholder="Project · ${esc(proj.seed === "" || +proj.seed < 0 ? "random" : proj.seed)}"></div>
+              <div class="field"><label>Steps</label><input type="number" data-over="steps" min="1" max="100" value="${esc(o.steps)}" placeholder="Project · ${esc(proj.steps || "auto")}"></div>
+            </div>
+          </section>
+
+          <section>
+            <h3>Notes</h3>
+            <textarea rows="2" data-sf="notes" placeholder="Anything to remember about this shot (not sent to the model)">${esc(s.notes)}</textarea>
+          </section>
+        </div>
+        <aside class="sm-side">
+          <div class="label-row"><h3>Prompt ${multi ? "<span class=\"opt\">the whole multi-shot video</span>" : "<span class=\"opt\">this shot's video</span>"}</h3>
+            <button type="button" class="link" data-sm="copy" title="Copy the prompt">Copy</button></div>
+          <pre class="sm-prompt">${esc(preview)}</pre>
+          <p class="hint">${preview.split(/\s+/).filter(Boolean).length} words · updates as you edit.</p>
+        </aside>
+      </div>
+      <footer class="sm-foot">
+        <button type="button" class="btn sm ghost" data-sm="delete" ${n > 1 ? "" : "disabled"}>🗑 Delete</button>
+        <button type="button" class="btn sm ghost" data-sm="dup">⧉ Duplicate</button>
+        <button type="button" class="btn sm ghost" data-sm="add">＋ New shot</button>
+        <span class="sm-gap"></span>
+        <span class="hint">Saved as you edit.</span>
+        <button type="button" class="btn sm primary" data-sm="close">Done</button>
+      </footer>`;
+    renderCreat();
+    if (focus) box.querySelector('[data-sf="brief"]')?.focus();
+    else if (keep) (box.querySelector(`[data-sf="${keep}"]`) || box.querySelector(`#${CSS.escape(keep)}`))?.focus();
+  }
+  function refreshPreview() {
+    if (!modal) return;
+    const multi = state.shots.mode === "multi", text = multi ? prompt() : prompt(modal.i);
+    const pre = modal.root.querySelector(".sm-prompt"); if (pre) pre.textContent = text;
+    const w = modal.root.querySelector(".sm-side .hint"); if (w) w.textContent = `${text.split(/\s+/).filter(Boolean).length} words · updates as you edit.`;
+  }
+  function onModalInput(e) {
+    const s = state.shots.list[modal.i], f = e.target.dataset.sf, ov = e.target.dataset.over;
+    if (e.target.id === "sm-creat") { state.shots.creativity = +e.target.value; renderCreat(); scheduleSave(); return; }
+    if (f && f !== "rawOn" && e.target.tagName !== "SELECT") {
+      if (f === "seconds") { s.seconds = clampSec(e.target.value); const tm = modal.root.querySelector(".sm-time"); if (tm) { let t0 = 0; for (let k = 0; k < modal.i; k++) t0 += +state.shots.list[k].seconds || 0; tm.textContent = `${fmtT(t0)} – ${fmtT(t0 + s.seconds)}`; } }
+      else s[f] = e.target.value;
+    } else if (ov && e.target.tagName === "INPUT") s.over[ov] = e.target.value.trim();
+    else return;
+    scheduleSave(); refreshPreview();
+  }
+  function onModalChange(e) {
+    const s = state.shots.list[modal.i], f = e.target.dataset.sf, ov = e.target.dataset.over;
+    if (f === "rawOn") {
+      s.rawOn = e.target.checked;
+      if (s.rawOn && !s.raw.trim()) s.raw = prompt(modal.i);  // start from what the fields make
+    } else if (f && e.target.tagName === "SELECT") s[f] = e.target.value;
+    else if (f === "seconds") s.seconds = clampSec(e.target.value);
+    else if (ov && e.target.tagName === "SELECT") s.over[ov] = e.target.value;
+    else if (e.target.dataset.ref != null) s.refs = [...modal.root.querySelectorAll("[data-ref]")].filter(x => x.checked).map(x => +x.dataset.ref);
+    else return;
+    changed();
+  }
+  async function onModalClick(e) {
+    const tag = e.target.closest("[data-tag]");
+    if (tag) {
+      const ta = modal.root.querySelector(`[data-sf="${tag.dataset.for}"]`);
+      insertAtCursor(ta, tag.dataset.tag); ta.dispatchEvent(new Event("input", { bubbles: true })); return;
+    }
+    const a = e.target.closest("[data-sm]")?.dataset.sm;
+    const fr = e.target.closest(".shot-frame");
+    if (!a && fr && !fr.classList.contains("has") || !a && fr?.classList.contains("inherited")) return pickFrame(modal.i, fr.dataset.role);
+    if (!a) return;
+    const i = modal.i, s = state.shots.list[i];
+    if (a === "close") return closeModal();
+    if (a === "prev") return go(-1);
+    if (a === "next") return go(1);
+    if (a === "dup") { modal.i = duplicate(i); return renderModal(true); }
+    if (a === "add") { modal.i = add(); return renderModal(true); }
+    if (a === "delete") return remove(i);
+    if (a === "goto-inputs") { closeModal(); return showStep("inputs"); }
+    if (a.startsWith("clear-")) { s[a.slice(6)] = null; return changed(); }
+    if (a === "copy") { try { await navigator.clipboard.writeText(modal.root.querySelector(".sm-prompt").textContent); Media.toast("Prompt copied."); } catch {} return; }
+    if (a === "ai-undo") { const u = undo.get(s.id); if (u) { Object.assign(s, u); undo.delete(s.id); changed(); } return; }
+    if (a === "ai-write" || a === "ai-enhance") {
+      const enhance = a === "ai-enhance", id = s.id;
+      modal.busy = true; modal.status = `${enhance ? "Enhancing" : "Writing"} at ${state.shots.creativity ?? 50}% creativity…`; renderModal();
+      try {
+        const j = await aiShot(i, enhance);
+        if (modal) modal.status = `${enhance ? "Enhanced" : "Written"} by ${j.model} in ${j.seconds}s${j.warnings?.length ? ` · ${j.warnings.length} note${j.warnings.length > 1 ? "s" : ""}` : ""}`;
+      } catch (err) {
+        if (modal) modal.status = `⚠ ${err.message}`;
+      } finally {
+        if (modal) { modal.busy = false; const k = state.shots.list.findIndex(x => x.id === id); if (k >= 0) modal.i = k; renderModal(); }
       }
-      const fr = e.target.closest(".shot-frame");
-      if (fr && !fr.classList.contains("has")) pickFrame(+fr.closest("[data-i]").dataset.i, fr.dataset.role);
-    });
-    // frames: drop from the gallery / Media, or files
-    step.addEventListener("dragover", e => { const fr = e.target.closest(".shot-frame"); if (fr) { e.preventDefault(); fr.classList.add("over"); } });
-    step.addEventListener("dragleave", e => e.target.closest(".shot-frame")?.classList.remove("over"));
-    step.addEventListener("drop", async e => {
-      const fr = e.target.closest(".shot-frame"); if (!fr) return;
-      e.preventDefault(); fr.classList.remove("over");
-      const i = +fr.closest("[data-i]").dataset.i, role = fr.dataset.role;
-      const ref = e.dataTransfer.getData("text/x-bob-ref");
-      if (ref) {
-        const kind = e.dataTransfer.getData("text/x-bob-kind");
-        if (kind && kind !== "image") return Media.toast("Shot frames are pictures. Use “Continue from this clip's last frame” on a video to get one.");
-        state.shots.list[i][role] = { ref, url: e.dataTransfer.getData("text/x-bob-url") || mediaUrl(ref) };
-        return changed();
-      }
-      const f = e.dataTransfer.files[0]; if (f) await uploadTo(i, role, f);
-    });
+    }
+  }
+  async function onFrameDrop(e) {
+    const fr = e.target.closest(".shot-frame"); if (!fr || !modal) return;
+    e.preventDefault(); fr.classList.remove("over");
+    const i = modal.i, role = fr.dataset.role;
+    const ref = e.dataTransfer.getData("text/x-bob-ref");
+    if (ref) {
+      const kind = e.dataTransfer.getData("text/x-bob-kind");
+      if (kind && kind !== "image") return Media.toast("Shot frames are pictures. Use “Continue from this clip's last frame” on a video to get one.");
+      state.shots.list[i][role] = { ref, url: e.dataTransfer.getData("text/x-bob-url") || mediaUrl(ref) };
+      return changed();
+    }
+    const f = e.dataTransfer.files[0]; if (f) await uploadTo(i, role, f);
   }
   function pickFrame(i, role) {
     const inp = Object.assign(document.createElement("input"), { type: "file", accept: "image/png,image/jpeg,image/webp,image/bmp" });
@@ -198,7 +568,73 @@ const Shots = (() => {
       if (j.kind !== "image") throw new Error("Shot frames are pictures.");
       state.shots.list[i][role] = { ref: j.ref, url: j.url };
       changed();
-    } catch (e) { Media.toast(e.message); }
+    } catch (err) { Media.toast(err.message); }
+  }
+
+  /* ---------------------------------------------------------------- wiring */
+  function init() {
+    ensure();
+    const step = document.querySelector('.step[data-step="shots"]');
+    step.addEventListener("input", e => {
+      const sh = state.shots, id = e.target.id;
+      const map = { "shots-style": "style", "shots-sound": "soundscape", "shots-music": "music", "shots-idea": "idea" };
+      if (map[id]) { sh[map[id]] = e.target.value; scheduleSave(); if (id !== "shots-idea") document.getElementById("shots-prompt").textContent = sh.mode === "multi" ? prompt() : sh.list.map((_, i) => `── Shot ${i + 1} ──\n${prompt(i)}`).join("\n\n"); return; }
+      if (id === "shots-creat") { sh.creativity = +e.target.value; renderCreat(); scheduleSave(); }
+      if (id === "shots-idea-s") { sh.ideaSeconds = Math.max(2, Math.min(60, +e.target.value || 10)); scheduleSave(); }
+    });
+    step.addEventListener("change", e => {
+      if (e.target.id === "shots-idea-n") { state.shots.ideaShots = e.target.value; scheduleSave(); }
+    });
+    step.addEventListener("click", async e => {
+      const sh = state.shots;
+      const m = e.target.closest("#shots-mode button")?.dataset.m;
+      if (m) { sh.mode = m; return changed(); }
+      if (e.target.closest("#btn-shot-add")) return openModal(add());
+      if (e.target.closest("#btn-shots-write")) {
+        const b = e.target.closest("#btn-shots-write"), st = document.getElementById("shots-idea-status");
+        b.disabled = true; st.textContent = `Writing the shots at ${sh.creativity ?? 50}% creativity…`;
+        try { const j = await aiAll(); st.textContent = j ? `Written by ${j.model} in ${j.seconds}s: ${state.shots.list.length} shot${state.shots.list.length === 1 ? "" : "s"}. Edit any of them below.` : ""; }
+        catch (err) { st.textContent = `⚠ ${err.message}`; }
+        finally { b.disabled = false; }
+        return;
+      }
+      const block = e.target.closest(".shot-block"); if (!block) return;
+      const i = +block.dataset.i, a = e.target.closest("[data-shot-act]")?.dataset.shotAct;
+      if (a === "menu") return menu(i, e.target.closest(".sb-more"));
+      if (a === "edit" || e.target.closest(".sb-thumb")) return openModal(i);
+    });
+    step.addEventListener("dblclick", e => { const b = e.target.closest(".shot-block"); if (b && !e.target.closest(".sb-more")) openModal(+b.dataset.i); });
+    step.addEventListener("keydown", e => {
+      const b = e.target.closest?.(".sb-main"); if (!b) return;
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openModal(+b.closest(".shot-block").dataset.i); }
+    });
+    // drag to reorder (the whole block is the handle; only with more than one shot)
+    let dragFrom = -1;
+    const list = document.getElementById("shot-list");
+    list.addEventListener("dragstart", e => {
+      const b = e.target.closest?.(".shot-block"); if (!b) return;
+      dragFrom = +b.dataset.i; b.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/x-bob-shot", String(dragFrom));
+    });
+    list.addEventListener("dragend", () => { dragFrom = -1; $$(".shot-block", list).forEach(x => x.classList.remove("dragging", "drop-before", "drop-after")); });
+    list.addEventListener("dragover", e => {
+      if (dragFrom < 0) return;
+      const b = e.target.closest(".shot-block"); if (!b) return;
+      e.preventDefault(); e.dataTransfer.dropEffect = "move";
+      const r = b.getBoundingClientRect(), after = e.clientY > r.top + r.height / 2;
+      $$(".shot-block", list).forEach(x => x.classList.remove("drop-before", "drop-after"));
+      if (+b.dataset.i !== dragFrom) b.classList.add(after ? "drop-after" : "drop-before");
+    });
+    list.addEventListener("drop", e => {
+      if (dragFrom < 0) return;
+      const b = e.target.closest(".shot-block"); if (!b) return;
+      e.preventDefault();
+      const r = b.getBoundingClientRect(), after = e.clientY > r.top + r.height / 2;
+      let to = +b.dataset.i + (after ? 1 : 0);
+      if (to > dragFrom) to--;
+      const from = dragFrom; dragFrom = -1;
+      move(from, to);
+    });
   }
 
   /* ---------------------------------------------------------------- generate */
@@ -207,34 +643,55 @@ const Shots = (() => {
   const PKEY = "bob.shotBatches";
   const savePending = () => { try { localStorage.setItem(PKEY, JSON.stringify([...pending])); } catch {} };
   try { for (const [k, v] of JSON.parse(localStorage.getItem(PKEY) || "[]")) pending.set(k, v); } catch {}
+  function withOverrides(req, s) {
+    const o = s.over || {};
+    if (o.quality) req.quality = o.quality;
+    if (o.aspect) req.aspect = o.aspect;
+    if (o.turbo) req.turbo = o.turbo === "on";
+    if (o.seed !== "" && Number.isFinite(+o.seed)) req.seed = +o.seed;
+    if (o.steps !== "" && +o.steps > 0) req.steps = +o.steps;
+    return req;
+  }
   async function generate(base) {
-    const sh = state.shots, isRef = base.engine === "h3ref";
+    const sh = ensure(), isR = base.engine === "h3ref", err = document.getElementById("form-error");
+    err.textContent = "";
+    const empty = sh.list.findIndex(s => !hasContent(s));
+    if (empty >= 0) {
+      err.textContent = `Shot ${empty + 1} is empty: describe it (Shots step › Edit), or write it with ✨.`;
+      Media.toast(err.textContent); showStep("shots"); return;
+    }
     if (sh.mode === "multi") {
-      const first = sh.list[0].first_frame, last = sh.list[sh.list.length - 1].last_frame;
-      const req = { ...base, prompt: prompt(), seconds: Math.min(300, total()),
-        first_frame: !isRef ? first?.ref ?? null : null, last_frame: !isRef ? last?.ref ?? null : null };
+      const first = framesOf(0).first_frame, last = framesOf(sh.list.length - 1).last_frame;
+      return submit({ ...base, prompt: prompt(), seconds: Math.min(300, total()),
+        first_frame: !isR ? first?.ref ?? null : null, last_frame: !isR ? last?.ref ?? null : null });
+    }
+    const reqFor = i => {
+      const s = sh.list[i], f = framesOf(i);
+      const refs = isR ? (s.refs?.length ? s.refs.map(k => state.refs[k]?.ref).filter(Boolean) : base.references) : [];
+      return withOverrides({ ...base, prompt: prompt(i), seconds: +s.seconds || 3, references: refs,
+        first_frame: !isR ? f.first_frame?.ref ?? null : null, last_frame: !isR ? f.last_frame?.ref ?? null : null }, s);
+    };
+    if (sh.list.length === 1) {  // one shot: a plain generation (takes allowed), no timeline layout
+      const req = reqFor(0);
+      if (isR && !req.references.length && !(base.ref_audios || []).length) { err.textContent = "Add reference pictures on the Inputs step."; return; }
       return submit(req);
     }
     // one per shot: submit them in order, then place the results on the timeline in order
     const ids = [];
-    $("#form-error").textContent = "";
     for (let i = 0; i < sh.list.length; i++) {
-      const s = sh.list[i];
-      const refs = isRef ? (s.refs?.length ? s.refs.map(k => state.refs[k]?.ref).filter(Boolean) : base.references) : [];
-      const req = { ...base, batch: 1, prompt: prompt(i), seconds: +s.seconds || 3, references: refs,
-        first_frame: !isRef ? s.first_frame?.ref ?? null : null, last_frame: !isRef ? s.last_frame?.ref ?? null : null };
-      if (isRef && !refs.length && !(base.ref_audios || []).length) { $("#form-error").textContent = `Shot ${i + 1} has no reference pictures.`; return; }
+      const req = { ...reqFor(i), batch: 1 };
+      if (isR && !req.references.length && !(base.ref_audios || []).length) { err.textContent = `Shot ${i + 1} has no reference pictures.`; return; }
       try {
         const { items } = await api("/api/generate", { method: "POST", body: JSON.stringify(req) });
         for (const it of items) { state.items.set(it.id, it); Activity.onEvent({ type: "item", item: it }); }
         ids.push(items[0].id);
-      } catch (e) { $("#form-error").textContent = `Shot ${i + 1}: ${e.message}`; break; }
+      } catch (e) { err.textContent = `Shot ${i + 1}: ${e.message}`; break; }
     }
     if (!ids.length) return;
     pending.set(ids[0], { ids, project: state.project?.id ?? "experiment" });
     savePending();
     renderGallery(); renderQueue(); select(ids[0]);
-    Media.toast(`${ids.length} shot${ids.length === 1 ? "" : "s"} queued: they go on the timeline in order when all are done.`);
+    Media.toast(`${ids.length} shots queued: they go on the timeline in order when all are done.`);
   }
   // Called for every studio item update: when a whole batch is done, lay it out on the timeline.
   async function onItem(it) {
@@ -258,6 +715,23 @@ const Shots = (() => {
       return;
     }
   }
+  // For the Generate step's summary.
+  function describe() {
+    if (!upgraded()) return { text: "", first: "", empty: 0 };
+    const sh = state.shots, n = sh.list.length, T = total();
+    const empty = sh.list.filter(s => !hasContent(s)).length;
+    return { text: `${n} shot${n === 1 ? "" : "s"} · ${T.toFixed(1)} s · ${sh.mode === "multi" ? "one multi-shot video" : n > 1 ? "one video per shot" : "one video"}`,
+      first: summary(sh.list[0]), empty };
+  }
+  const ready = () => on() && state.shots.list.some(hasContent);
+  // Reuse on a video result: its prompt as a shot with its own prompt (fills an empty single shot, else is added).
+  function reuse(text, seconds) {
+    const sh = ensure(), only = sh.list.length === 1 && !hasContent(sh.list[0]);
+    const s = { ...blank(clampSec(seconds || settingsSeconds())), raw: text, rawOn: true, title: "Reused from a result" };
+    if (only) sh.list[0] = s; else sh.list.push(s);
+    changed();
+    return only ? 0 : sh.list.length - 1;
+  }
 
-  return { init, render, renderBanner, prompt, on, generate, onItem, ensure };
+  return { init, render, renderBanner, prompt, on, ready, generate, onItem, ensure, describe, openModal, reuse };
 })();
