@@ -98,7 +98,14 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   comfyui-demucs-voice-isolate nodes; the rest uses ffmpeg.
 - **Subjects** (Shots step, H3 Reference): a detailed definition of who or what each reference picture is (face,
   eyes, hair, skin, marks, build, clothes), written by the vision model and editable. They go at the top of every shot's
-  prompt as `<Picture N>: …` so H3 keeps the subjects accurate; Generate writes any that are missing first.
+  prompt's `subject_definitions` as `<Subject N>` so H3 keeps the subjects accurate; Generate writes any that are
+  missing first.
+- **Prompt format**: the Shots step writes prompts in MiniMax's official layout (Video Prompt Writing Guide). H3:
+  `integrated_multimodal_description: [Shot 1] …` then `overall_soundscape:` and `non_diegetic_music:`. H3 Reference
+  (full-reference mode): `subject_definitions`, `summary`, `retention_analysis`, `detailed_description`,
+  `overall_soundscape`, `non_diegetic_music`, with each reference picture a `<Subject N>`, each voice recording an
+  `<Audio N>` voice-timbre reference, and speakers numbered `(S1)`, `(S2)`… The output passes minimax-h3-tools'
+  prompt lint.
 - **Shots** (video, after Inputs): every H3 and H3 Reference video is planned here, shot by shot (video has no Prompt
   step). The shots are compact blocks: drag one to reorder, **⋯** for Edit, Move up/down, Duplicate and Delete, or
   double-click to edit. **Edit** opens a large window with the shot's length, framing, angle, camera position and move,

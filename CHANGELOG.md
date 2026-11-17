@@ -5,6 +5,24 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.56.0] - 2026-11-17
+
+### Changed
+- **Shot prompts use MiniMax's official H3 prompt layout** (the Video Prompt Writing Guide; checked clean with
+  minimax-h3-tools' prompt lint):
+  - **H3 Reference** (full-reference mode) now has its six sections:
+    `subject_definitions:` (`<Subject 1> is the subject of <Picture 1>: …` per picture, and `<Audio 1> is the
+    voice-timbre reference for <Subject 1> (S1).` per voice), `summary:` (`[reference generation + audio reference]
+    …`), `retention_analysis:` (where each subject appears, `fully_preserved`; each voice `reference`),
+    `detailed_description:` (the look, then `[Shot 1] …` with `<Subject N>` in place of `<Picture N>`, and
+    `<Subject 1> (S1) says, using the voice timbre referenced from <Audio 1>: <d>[English] …</d>`),
+    `overall_soundscape:` and `non_diegetic_music:`.
+  - **H3** prompts now start `integrated_multimodal_description: [Shot 1] <look> …`, with speakers numbered `(S1)`,
+    `(S2)`…, then `overall_soundscape:` and `non_diegetic_music:`, each set apart by a blank line (the keyframe line,
+    when there are keyframes, still goes first).
+- The Subjects switch now chooses whether `subject_definitions` carries the detailed definitions or a plain line per
+  picture.
+
 ## [0.55.0] - 2026-11-17
 
 ### Added
