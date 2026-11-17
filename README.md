@@ -184,7 +184,11 @@ Other features:
   saved…**, which inserts a catalog prompt's text at the cursor and adds its tags.
 - **✍ Shot writer** (H3 models; the Prompt tab's switch, Alt+W): the Prompt Writer now lives in the Prompt tab. Build
   the shot list field by field or let the LLM fill what you leave open; once it's complete it fills the prompt as you
-  go (Undo brings your text back). **↗ Pop out** opens it in its own window. The Writer pane beside the viewer is gone.
+  go (Undo brings your text back). **↗ Pop out** opens it in its own window. The side panel widens while the Shot
+  writer shows (760 px; drag the splitter to change it, remembered apart from the usual width).
+- **Duration check** (H3 video, H3 Reference): the live view and the Shot writer show how long the prompt needs (about
+  2 s per shot to read, spoken lines at 2.5 words a second, timed shots from their start) against the clip length,
+  warn when it may be cut off or needs more than H3's 15 s, and offer **Use N s** to set Duration. The Writer pane beside the viewer is gone.
 - **Prompt tags and templates:** **+ Tag** adds a named value to the prompt, used as `<name>` or `{{name}}`; several
   values give one at random each Generate (the same one everywhere in the prompt). `{a|b}`, `{3::a|b}`, `<maybe p="0.3">…</maybe>`
   and `<list count="2">a, b, c</list>` roll too. **🏷 Presets** inserts ready-made words (hair, outfits, lighting,

@@ -137,7 +137,9 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .step.writer-mode .prompt-field > :not(.writer-status):not(.writer) { display: none; }
 .prompt-writer { margin-bottom: 10px; }
 .prompt-writer[hidden] { display: none; }
-.pw-head { display: flex; align-items: center; gap: 8px; justify-content: space-between; margin-bottom: 6px; font-size: 12px; }
+.pw-head { display: flex; align-items: center; gap: 8px; justify-content: space-between; flex-wrap: wrap; margin-bottom: 6px; font-size: 12px; }
+.pw-dur { color: var(--muted); }
+.pw-dur.warn { color: var(--warn); }
 #prompt-writer-frame { display: block; width: 100%; height: max(520px, calc(100vh - 300px)); border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
 .pt-chip { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: var(--panel-2); }
 .pt-chip button { border: 0; background: none; color: var(--text); font: inherit; padding: 2px 8px; cursor: pointer; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
