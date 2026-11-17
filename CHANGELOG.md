@@ -5,6 +5,19 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.52.0] - 2026-11-17
+
+### Changed
+- **Post-Processing on the Settings step** replaces *After generating* and its *Enhance settings…* window: a collapsible
+  section like Advanced, its summary line showing what runs (or Off). Its steps are right there: **1 · FaceRefine**,
+  **2 · DLSS 5** (Off or a mode) and **3 · Upscale** (Off, SeedVR2 or RelayVSR ×2), each with its options when on.
+  Each step has its own **Off**; with every step off no enhanced file is made, so the *Nothing more / Enhance each
+  result* switch is gone. The section estimates how long the chain adds per result, and is hidden for sound.
+  Your earlier choice carries over: *Enhance each result* keeps the steps you had; *Nothing more* starts with all off.
+  The ✨ Enhance… window on a result keeps its own last choices.
+- **Diffusion model, Sampling (sampler and scheduler), Steps and CFG moved to Settings › Advanced**, beside Seed and
+  Takes. The Model step now only picks the model.
+
 ## [0.51.0] - 2026-11-17
 
 ### Added

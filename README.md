@@ -40,7 +40,7 @@ port 8189 by itself if nothing is listening there.
 | Image | H3 still (one frame on H3's 768p canvas), FLUX 3 Klein (with optional prompt upsampler), Krea 2, or MiniMax H3 Image (6 steps, up to 4 MP, optional reference pictures tagged `<Picture N>`; files from [Comfy-Org/MiniMax-H3-Image](https://huggingface.co/Comfy-Org/MiniMax-H3-Image)) | PNG |
 | Audio | H3 sound (generates sound jointly with a tiny video and keeps only the audio) or MiniMax Music 3 | MP3 |
 
-The Model step can also swap the diffusion model and pick the **sampler, scheduler, steps and CFG** (Default = the
+Settings › **Advanced** can also swap the diffusion model and pick the **sampler, scheduler, steps and CFG** (Default = the
 model's ComfyUI template). A result's **{ } Workflow** button shows the exact ComfyUI workflow it was made with, to
 compare with your own or load in ComfyUI.
 
@@ -86,9 +86,9 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   **FaceRefine** (videos made with H3: tracks the main face and re-renders it with H3 Reference at a low denoise, using the
   video's own prompt, references and LoRAs, then stitches it back), **DLSS 5** (NVIDIA neural rendering, 1x look or 1.5–3x
   upscale), then **SeedVR2** (restore and upscale to 720p–2160p, 3B or 7B) or **RelayVSR ×2** (fast 2x video
-  super-resolution). Settings › **After generating** can run it on every new result. Needs the ComfyUI-H3-FaceRefine,
+  super-resolution). Settings › **Post-Processing** can run it on every new result (each step has its own Off). Needs the ComfyUI-H3-FaceRefine,
   ComfyUI-DLSS5-Enhancer and SeedVR2 custom nodes, and the RelayVSR model files; missing ones are greyed out. The window,
-  the After generating setting and the Activity console estimate how long it takes, learning from your own runs.
+  Post-Processing and the Activity console estimate how long it takes, learning from your own runs.
 - **Shots** (video, after Inputs): every H3 and H3 Reference video is planned here, shot by shot (video has no Prompt
   step). The shots are compact blocks: drag one to reorder, **⋯** for Edit, Move up/down, Duplicate and Delete, or
   double-click to edit. **Edit** opens a large window with the shot's length, framing, angle, camera position and move,

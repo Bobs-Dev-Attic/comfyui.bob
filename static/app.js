@@ -98,8 +98,8 @@ const state = {
   frames: { first_frame: null, last_frame: null },
   refs: [],  // [{ref, url}] for H3 Reference
   loras: [],  // [{name, strength}] LoRAs on the model (loras.js)
-  unet: {},  // engine -> diffusion model file picked in the Model step (none = the engine's default)
-  sampling: {},  // engine -> {sampler, scheduler} picked in the Model step (missing = the engine's own)
+  unet: {},  // engine -> diffusion model file picked in Settings › Advanced (none = the engine's default)
+  sampling: {},  // engine -> {sampler, scheduler} picked in Settings › Advanced (missing = the engine's own)
   shots: null,  // the Shots step (shots.js)
   arefs: [],  // [{ref, url, name}] reference sounds (voices to clone) for H3 Reference
   items: new Map(),
@@ -162,6 +162,8 @@ function renderForm() {
   $("#f-arefs").hidden = !(kind === "video" && isH3);
   $("#f-arefs").classList.toggle("needs-ref", !isRef);
   $("#f-fidelity").hidden = !isRef;
+  $("#f-enhance-after").hidden = kind === "audio";
+  if (typeof Enhance !== "undefined") Enhance.renderSettings();  // FaceRefine fits H3 video only
   $("#f-lyrics").hidden = !isMusic;
   $("#f-aspect").hidden = kind === "audio";
   $("#f-quality").hidden = kind === "audio";

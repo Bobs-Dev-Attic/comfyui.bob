@@ -79,20 +79,6 @@
           <!-- 2 · Model -->
           <section class="step" data-step="model" role="tabpanel">
             <div id="model-list"></div>
-            <div class="field unet-field" id="unet-field" hidden></div>
-            <div class="field sampling-field" id="sampling-field" hidden></div>
-            <div class="row2 samp-nums" id="samp-nums">
-              <div class="field">
-                <label for="steps">Steps</label>
-                <input type="number" id="steps" min="1" max="150" placeholder="auto">
-                <p class="hint" id="steps-hint">auto</p>
-              </div>
-              <div class="field">
-                <label for="cfg">CFG</label>
-                <input type="number" id="cfg" min="0" max="30" step="0.1" placeholder="auto">
-                <p class="hint" id="cfg-hint">auto</p>
-              </div>
-            </div>
             <div class="missing" id="missing" hidden></div>
           </section>
 
@@ -261,12 +247,6 @@
 
           <!-- 5 · Settings -->
           <section class="step" data-step="settings" role="tabpanel">
-            <div class="field enh-after" id="f-enhance-after">
-              <label>After generating</label>
-              <div class="enh-after-row"><select id="enhance-after"><option value="">Nothing more</option><option value="on">Enhance each result</option></select>
-                <button type="button" class="btn sm" id="btn-enhance-after" title="What Enhance does">✨ Enhance settings…</button></div>
-              <p class="hint" id="enhance-after-hint"></p>
-            </div>
     <div class="row2">
               <div class="field" id="f-aspect">
                 <label for="aspect">Aspect</label>
@@ -314,20 +294,37 @@
                   <p class="hint">-1 = random each run</p>
                 </div>
                 <div class="field">
-                  <label>Steps and CFG</label>
-                  <p class="hint">On the <button type="button" class="link" data-goto="model">Model</button> step, with the sampler and scheduler.</p>
+                  <label>Takes</label>
+                  <div class="seg" id="batch-seg">
+                    <button type="button" data-v="1" class="active">1</button>
+                    <button type="button" data-v="2">2</button>
+                    <button type="button" data-v="3">3</button>
+                    <button type="button" data-v="4">4</button>
+                  </div>
+                  <p class="hint">Each take uses the next seed.</p>
                 </div>
               </div>
-              <div class="field">
-                <label for="batch">Takes</label>
-                <div class="seg" id="batch-seg">
-                  <button type="button" data-v="1" class="active">1</button>
-                  <button type="button" data-v="2">2</button>
-                  <button type="button" data-v="3">3</button>
-                  <button type="button" data-v="4">4</button>
+              <div class="field unet-field" id="unet-field" hidden></div>
+              <div class="field sampling-field" id="sampling-field" hidden></div>
+              <div class="row2 samp-nums" id="samp-nums">
+                <div class="field">
+                  <label for="steps">Steps</label>
+                  <input type="number" id="steps" min="1" max="150" placeholder="auto">
+                  <p class="hint" id="steps-hint">auto</p>
                 </div>
-                <p class="hint">Each take uses the next seed, so you can pick the best one.</p>
+                <div class="field">
+                  <label for="cfg">CFG</label>
+                  <input type="number" id="cfg" min="0" max="30" step="0.1" placeholder="auto">
+                  <p class="hint" id="cfg-hint">auto</p>
+                </div>
               </div>
+            </details>
+
+            <details class="advanced post-proc" id="f-enhance-after">
+              <summary>Post-Processing <span class="pp-sum" id="enhance-after-sum"></span></summary>
+              <p class="hint">Runs after every new picture or video, in this order, and saves one enhanced copy beside it. Set a step to Off to skip it; with every step off, no enhanced file is made.</p>
+              <div id="pp-body"></div>
+              <p class="hint" id="enhance-after-hint"></p>
             </details>
 
           </section>

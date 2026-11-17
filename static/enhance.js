@@ -1,6 +1,6 @@
 /* Enhance: improve a finished picture or video with FaceRefine, DLSS 5 and an upscaler
    (SeedVR2 or RelayVSR x2), in that order (app/workflows.py build_enhance). The window opens
-   from a result's ✨ Enhance… (viewer or results menu); Settings › After generating can run
+   from a result's ✨ Enhance… (viewer or results menu); Settings › Post-Processing runs
    the same chain on every new result. The last choices are remembered (localStorage). */
 "use strict";
 
@@ -66,7 +66,7 @@ const Enhance = (() => {
     const r = rawEstimate(o, src);
     return r == null ? null : r * factor(o, src.kind);
   }
-  // The chain a finished generation gets from Settings › After generating (only what fits it).
+  // The chain a finished generation gets from Settings › Post-Processing (only what fits it).
   function afterOpts(it) {
     if (!it?.params?.enhance_after || it.engine === "enhance" || !["video", "image"].includes(it.kind)) return null;
     const o = { ...it.params.enhance_after };
@@ -107,7 +107,7 @@ const Enhance = (() => {
     const form = document.createElement("div");
     form.className = "enh";
     form.innerHTML = `
-      <p class="hint">${it ? `${esc(it.kind === "video" ? "Video" : "Picture")}: ${esc((it.params?.prompt || it.files?.[0]?.name || "").slice(0, 90))}` : "Runs on every new picture or video when Settings › After generating is on."}
+      <p class="hint">${it ? `${esc(it.kind === "video" ? "Video" : "Picture")}: ${esc((it.params?.prompt || it.files?.[0]?.name || "").slice(0, 90))}` : "Runs on every new picture or video (Settings › Post-Processing)."}
         The steps run in this order; each is optional.</p>
       <div class="enh-step${isVideo && h3 && c.facerefine ? "" : " off"}">
         <label class="check"><input type="checkbox" data-k="facerefine"${o.facerefine && isVideo && h3 ? " checked" : ""}${dis(isVideo && h3 && c.facerefine,
@@ -189,37 +189,105 @@ const Enhance = (() => {
     } catch (e) { Media.toast(`Enhance failed: ${e.message}`); }
   }
 
-  /* ---- Settings › After generating */
-  function after() {
-    const sel = document.getElementById("enhance-after");
-    return sel?.value === "on" ? load() : null;
+  /* ---- Settings › Post-Processing: the chain every new picture or video gets, step by step. Each step has its own
+     Off; with every step off nothing runs and no enhanced file is made. Kept apart from the ✨ Enhance window's last
+     choices (bob.enhance.afterOpts). Older studios kept an on/off switch (bob.enhance.after) over the window's
+     choices: "on" carries those choices over, otherwise everything starts off. */
+  const AFTER_KEY = KEY + ".afterOpts";
+  const ALL_OFF = { facerefine: false, dlss: false, upscaler: "none" };
+  function loadAfter() {
+    try {
+      const raw = localStorage.getItem(AFTER_KEY);
+      if (raw) return { ...DEF, ...ALL_OFF, ...(JSON.parse(raw) || {}) };
+      return localStorage.getItem(KEY + ".after") === "on" ? load() : { ...DEF, ...ALL_OFF };
+    } catch { return { ...DEF, ...ALL_OFF }; }
   }
-  // The size and length the Settings step would make now, for the After generating estimate.
+  const storeAfter = o => { try { localStorage.setItem(AFTER_KEY, JSON.stringify(o)); } catch {} };
+  const anyOn = o => !!(o.facerefine || o.dlss || o.upscaler !== "none");
+  // What Generate sends: the chain when any step is on, else nothing.
+  function after() {
+    const o = loadAfter();
+    return anyOn(o) ? o : null;
+  }
+  // The size and length the Settings step would make now, for the estimate.
   function formSource() {
     const m = /(\d+)\s*×\s*(\d+)/.exec(document.getElementById("dims")?.textContent || "");
     const f = /(\d+) frames/.exec(document.getElementById("seconds-val")?.textContent || "");
     const sec = +(document.getElementById("seconds")?.value || 5);
     return m ? { kind: state.kind, width: +m[1], height: +m[2], frames: f ? +f[1] : Math.round(sec * 24) + 1 } : null;
   }
+  const opt = (v, l, cur, off = "") => `<option value="${esc(v)}"${String(v) === String(cur) ? " selected" : ""}${off ? ` disabled title="${esc(off)}"` : ""}>${esc(l)}</option>`;
+  async function renderSettings() {
+    const box = document.getElementById("pp-body");
+    if (!box) return;
+    const c = await getCaps(), o = loadAfter();
+    if (!o.seedvr2_model || !(c.seedvr2_models || []).includes(o.seedvr2_model))
+      o.seedvr2_model = (c.seedvr2_models || []).find(m => /3b_fp8/.test(m)) || (c.seedvr2_models || [])[0] || "";
+    const video = state.kind === "video", h3 = ["h3", "h3ref"].includes(state.engine?.[state.kind]);
+    const faceWhy = !c.facerefine ? "ComfyUI-H3-FaceRefine isn't installed" : !video ? "FaceRefine is for videos" : !h3 ? "FaceRefine needs H3 or H3 Reference" : "";
+    const dlssWhy = c.dlss ? "" : "ComfyUI-DLSS5-Enhancer isn't installed";
+    const face = o.facerefine ? "on" : "off", dlss = o.dlss ? o.dlss_mode : "off";
+    const keep = document.activeElement && box.contains(document.activeElement) ? document.activeElement.dataset.pp : null;
+    box.innerHTML = `
+      <div class="pp-step${faceWhy ? " na" : ""}">
+        <div class="pp-head"><label for="pp-face">1 · FaceRefine</label>
+          <select id="pp-face" data-pp="face">${opt("off", "Off", face)}${opt("on", "On", face, faceWhy)}</select></div>
+        <p class="hint">${faceWhy ? esc(faceWhy) + "." : "Re-renders the main face with H3 Reference at a low denoise and stitches it back."}</p>
+        ${o.facerefine && !faceWhy ? `<div class="enh-opts">
+          <div class="field"><label>Strength <span>${(+o.face_strength).toFixed(2)}</span></label><input type="range" min="0.1" max="0.8" step="0.05" data-pp="face_strength" value="${o.face_strength}"></div>
+          <div class="field"><label>Steps</label><input type="number" min="4" max="50" data-pp="face_steps" value="${o.face_steps}"></div></div>` : ""}
+      </div>
+      <div class="pp-step${dlssWhy ? " na" : ""}">
+        <div class="pp-head"><label for="pp-dlss">2 · DLSS 5</label>
+          <select id="pp-dlss" data-pp="dlss">${opt("off", "Off", dlss)}${[["1x", "1x · look only"], ["1.5x", "1.5x · Quality"], ["1.724x", "1.72x · Balanced"], ["2x", "2x · Performance"], ["3x", "3x · Ultra Performance"]]
+            .map(([v, l]) => opt(v, l, dlss, dlssWhy)).join("")}</select></div>
+        <p class="hint">${dlssWhy ? esc(dlssWhy) + "." : "NVIDIA neural rendering: sharper detail, tone and skin. 1x only improves the look; 1.5–3x also upscales."}</p>
+        ${o.dlss && !dlssWhy ? `<div class="enh-opts">
+          <div class="field"><label>Style</label><select data-pp="dlss_style">${["Default", "Natural", "Cinematic"].map(v => opt(v, v, o.dlss_style)).join("")}</select></div>
+          <div class="field"><label>Intensity <span>${(+o.dlss_intensity).toFixed(2)}</span></label><input type="range" min="0" max="2" step="0.05" data-pp="dlss_intensity" value="${o.dlss_intensity}"></div></div>` : ""}
+      </div>
+      <div class="pp-step">
+        <div class="pp-head"><label for="pp-up">3 · Upscale</label>
+          <select id="pp-up" data-pp="upscaler">${opt("none", "Off", o.upscaler)}${opt("seedvr2", "SeedVR2", o.upscaler, c.seedvr2 ? "" : "SeedVR2 nodes or models aren't installed")}${opt("relayvsr", "RelayVSR ×2 (video)", o.upscaler, c.relayvsr ? "" : "RelayVSR model files aren't installed")}</select></div>
+        <p class="hint">SeedVR2 restores and upscales to a chosen size (3B is faster, 7B finer). RelayVSR doubles video resolution in one fast step.</p>
+        ${o.upscaler === "seedvr2" ? `<div class="enh-opts">
+          <div class="field"><label>SeedVR2 model</label><select data-pp="seedvr2_model">${(c.seedvr2_models || []).map(m => opt(m, m, o.seedvr2_model)).join("")}</select></div>
+          <div class="field"><label>Short side</label><select data-pp="seedvr2_res">${[720, 1080, 1440, 2160].map(v => opt(v, `${v}p`, o.seedvr2_res)).join("")}</select></div></div>` : ""}
+        ${o.upscaler === "relayvsr" ? `<div class="enh-opts">
+          <div class="field"><label>Detail <span>${(+o.relay_detail).toFixed(2)}</span></label><input type="range" min="0" max="1" step="0.05" data-pp="relay_detail" value="${o.relay_detail}"></div></div>` : ""}
+      </div>`;
+    if (keep) box.querySelector(`[data-pp="${keep}"]`)?.focus();
+    renderAfter();
+  }
   function renderAfter() {
-    const h = document.getElementById("enhance-after-hint");
+    const h = document.getElementById("enhance-after-hint"), sum = document.getElementById("enhance-after-sum");
     if (!h) return;
-    const on = document.getElementById("enhance-after").value === "on";
-    if (!on) { h.textContent = "Results stay as they come out. Use ✨ Enhance… on any result later."; return; }
-    const o = afterOpts({ kind: state.kind, engine: state.engine?.[state.kind], params: { engine: state.engine?.[state.kind], enhance_after: load() } });
+    const all = loadAfter();
+    const o = anyOn(all) ? afterOpts({ kind: state.kind, engine: state.engine?.[state.kind], params: { engine: state.engine?.[state.kind], enhance_after: all } }) : null;
     const secs = o && formSource() ? estimate(o, formSource()) : null;
-    h.textContent = `Each new result then runs: ${o ? summary(o, state.kind) : "nothing (no step fits this kind)"}`
-      + (secs != null ? `, adding ${fmtTime(secs)} per result at these settings` : "") + ". Results made by Enhance aren't enhanced again.";
+    if (sum) sum.textContent = o ? summary(o, state.kind) : "Off";
+    h.textContent = !anyOn(all) ? "Every step is off: results stay as they come out, and no enhanced file is made. You can still use ✨ Enhance… on any result."
+      : `Each new ${state.kind === "video" ? "video" : "picture"} then gets one enhanced copy: ${o ? summary(o, state.kind) : "nothing (no step that's on fits this kind)"}`
+        + (secs != null ? `, adding ${fmtTime(secs)} per result at these settings` : "") + ". Results made by Enhance aren't enhanced again.";
   }
   function initSettings() {
-    const sel = document.getElementById("enhance-after");
-    try { sel.value = localStorage.getItem(KEY + ".after") || ""; } catch {}
-    sel.addEventListener("change", () => { try { localStorage.setItem(KEY + ".after", sel.value); } catch {} renderAfter(); });
-    document.getElementById("btn-enhance-after").onclick = () => dialog(null);
-    renderAfter();
+    const box = document.getElementById("pp-body");
+    const set = (el, rerender) => {
+      const o = loadAfter(), k = el.dataset.pp, v = el.value;
+      if (k === "face") o.facerefine = v === "on";
+      else if (k === "dlss") { o.dlss = v !== "off"; if (o.dlss) o.dlss_mode = v; }
+      else if (k === "upscaler") o.upscaler = v;
+      else o[k] = el.type === "range" || el.type === "number" || k === "seedvr2_res" ? +v : v;
+      storeAfter(o);
+      if (rerender) renderSettings();
+      else { const lab = el.closest(".field")?.querySelector("label span"); if (lab) lab.textContent = (+v).toFixed(2); renderAfter(); }
+    };
+    box.addEventListener("input", e => { if (e.target.dataset.pp && e.target.type === "range") set(e.target, false); });
+    box.addEventListener("change", e => { if (e.target.dataset.pp) set(e.target, e.target.tagName === "SELECT"); });
+    renderSettings();
   }
   // A generation that asked to be enhanced afterwards is enhanced by the server when it's done
   // (app/jobs.py _enhance_after): once, whether or not a page is open. Nothing to do here.
   function onItem() {}
-  return { dialog, after, initSettings, onItem, estimate, expected, afterTime, fmtTime, renderAfter };
+  return { dialog, after, initSettings, onItem, estimate, expected, afterTime, fmtTime, renderAfter, renderSettings };
 })();

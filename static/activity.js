@@ -56,7 +56,7 @@ const Activity = (() => {
   const enh = (fn, it) => { try { return typeof Enhance !== "undefined" ? Enhance[fn](it) : null; } catch { return null; } };
   // An enhance run's whole time from its steps and sizes: each step restarts the progress bar.
   const expected = e => e.item ? enh("expected", e.item) : null;
-  // What Settings › After generating will add once this generation is done.
+  // What Settings › Post-Processing will add once this generation is done.
   const afterOf = e => e.item && e.status !== "done" ? enh("afterTime", e.item) : null;
   // Seconds left, from the progress rate over the last ~45 s (or since it started). Enhance
   // runs use their expected time less the time so far, until that runs out.
