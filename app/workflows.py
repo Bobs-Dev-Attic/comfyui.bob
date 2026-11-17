@@ -1312,3 +1312,24 @@ def build_make3d(files: dict[str, str], *, seed: int, quality: str = "standard",
     preview = g.add("SaveImage", images=o(crop), filename_prefix=prefix + "_input")
     return Built(graph=g.nodes, outputs=[save, preview], image_inputs=inputs,
                  info={"model": "TRELLIS.2", "faces": faces, "texture": tex, "quality": quality})
+
+
+def build_scene_background(*, largest: int = 1280, decimation: int = 2, prefix: str = "bob/scene") -> Built:
+    """The background of a 3D scene: Depth Anything 3 turns the picture into a textured surface mesh (a GLB, glTF
+    axes: camera at the origin looking down -Z, Y up). Each vertex's UV is its place in the picture and -Z its depth.
+
+    Multi-view mode with ray_pose is the one that estimates the camera from a single picture (cam_dec returns none),
+    but its intrinsics are in the model's working size while the mesh is laid on the picture's own grid, so the mesh
+    is skewed. The page rebuilds it from UV and depth, with the field of view read from the mesh (principal point /
+    focal length, which doesn't depend on that size; app/model3d.py). image_inputs: source."""
+    g = Graph()
+    o = Graph.out
+    src = g.add("LoadImage", image="")
+    pic = g.add("ImageScaleToMaxDimension", image=o(src), upscale_method="area", largest_size=int(largest))
+    model = g.add("LoadDA3Model", model_name="depth_anything_3_base.safetensors", weight_dtype="default")
+    geo = g.add("DA3Inference", da3_model=o(model), image=o(pic), resolution=1008, resize_method="upper_bound_resize",
+                mode="multiview", **{"mode.ref_view_strategy": "first", "mode.pose_method": "ray_pose"})
+    mesh = g.add("DA3GeometryToMesh", da3_geometry=o(geo), batch_index=0, decimation=int(decimation),
+                 discontinuity_threshold=0.04, confidence_threshold=0.0, use_sky_mask=False, texture=True)
+    save = g.add("SaveGLB", mesh=o(mesh), filename_prefix=prefix)
+    return Built(graph=g.nodes, outputs=[save], image_inputs={"source": src}, info={"model": "Depth Anything 3"})

@@ -1295,6 +1295,7 @@ function openMainMenu() {
     ["🕘  Project versions…", () => historyDialog(proj())],
     ["🗂  Project settings…", () => projectSettingsDialog()],
     ["🧊  3D models…", () => Model3D.openList()],
+    ["🏞  3D scenes…", () => Scene3D.openList()],
     ...(state.project ? [
       [`✎  Rename “${state.project.name}”…`, () => renameProjectDialog()],
       [`🗑  Delete “${state.project.name}”…`, () => deleteProjectDialog()],

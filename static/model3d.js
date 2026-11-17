@@ -385,5 +385,99 @@ const Model3D = (() => {
     if (win.el) win.el.__m3 = v;  // for tests
   }
 
-  return { start, openList, view, _parseGLB: parseGLB };
+  /* ---------------------------------------------------------------- shared drawing, for 3D scenes (scene3d.js)
+     Many meshes, each with its own model matrix; the background is drawn unlit (its texture is the picture). */
+  const SVS = `#version 300 es
+    in vec3 aPos; in vec3 aNrm; in vec2 aUv; in vec4 aCol;
+    uniform mat4 uVP; uniform mat4 uM; out vec3 vNrm; out vec2 vUv; out vec4 vCol; out vec3 vPos;
+    void main() { vec4 w = uM * vec4(aPos, 1.0); vPos = w.xyz; vNrm = mat3(uM) * aNrm; vUv = aUv; vCol = aCol; gl_Position = uVP * w; }`;
+  const SFS = `#version 300 es
+    precision highp float;
+    in vec3 vNrm; in vec2 vUv; in vec4 vCol; in vec3 vPos; out vec4 o;
+    uniform sampler2D uTex; uniform sampler2D uAo; uniform int uHasTex; uniform int uHasAo; uniform int uMode; uniform int uUnlit;
+    uniform vec4 uBase; uniform vec3 uEye; uniform vec3 uKey; uniform vec3 uTint;
+    void main() {
+      vec4 c = uBase * vCol;
+      if (uHasTex == 1 && uMode == 0) c *= texture(uTex, vUv);
+      if (uUnlit == 1) { o = vec4(c.rgb, 1.0); return; }
+      vec3 n = normalize(vNrm);
+      if (length(vNrm) < 0.01) n = normalize(cross(dFdx(vPos), dFdy(vPos)));
+      vec3 v = normalize(uEye - vPos);
+      if (dot(n, v) < 0.0) n = -n;
+      if (uMode == 1) c = vec4(0.78, 0.78, 0.8, 1.0);
+      float ao = (uHasAo == 1) ? texture(uAo, vUv).r : 1.0;
+      vec3 l = normalize(uKey);
+      float diff = max(dot(n, l), 0.0), hemi = 0.5 + 0.5 * n.y, rim = pow(1.0 - max(dot(n, v), 0.0), 3.0);
+      vec3 lit = c.rgb * (0.3 * hemi + 0.2 + 0.62 * diff) * mix(1.0, ao, 0.8) + rim * 0.06 + uTint;
+      o = vec4(lit, 1.0);
+    }`;
+
+  function gpu(gl) {
+    const prog = program(gl, SVS, SFS), lprog = program(gl, LVS, LFS);
+    const U = n => gl.getUniformLocation(prog, n);
+    const tex = img => {
+      if (!img) return null;
+      const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img); gl.generateMipmap(gl.TEXTURE_2D);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      return t;
+    };
+    // prims (from parseGLB) -> GPU parts and the local bounding box. Keeps the CPU arrays only when keep is set.
+    function upload(prims, keep = false) {
+      const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      const parts = [];
+      let tris = 0;
+      for (const p of prims) {
+        for (let k = 0; k < p.pos.length; k += 3) for (let c = 0; c < 3; c++) { lo[c] = Math.min(lo[c], p.pos[k + c]); hi[c] = Math.max(hi[c], p.pos[k + c]); }
+        const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+        const attr = (name, data, n) => { const loc = gl.getAttribLocation(prog, name); if (loc < 0) return; const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, n, gl.FLOAT, false, 0, 0); };
+        const fixed = (name, vals) => { const loc = gl.getAttribLocation(prog, name); if (loc >= 0) { gl.disableVertexAttribArray(loc); gl["vertexAttrib" + vals.length + "f"](loc, ...vals); } };
+        attr("aPos", p.pos, 3);
+        p.nrm ? attr("aNrm", p.nrm, 3) : fixed("aNrm", [0, 0, 0]);
+        p.uv ? attr("aUv", p.uv, 2) : fixed("aUv", [0, 0]);
+        p.col ? attr("aCol", p.col.data, p.col.n) : fixed("aCol", [1, 1, 1, 1]);
+        const idx = p.idx || Uint32Array.from({ length: p.pos.length / 3 }, (_, i) => i);
+        const ib = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+        gl.bindVertexArray(null);
+        tris += idx.length / 3;
+        parts.push({ vao, count: idx.length, base: p.base, gtex: tex(p.tex), gao: tex(p.ao), fixedCol: !p.col });
+      }
+      if (!keep) for (const p of prims) { delete p.pos; delete p.nrm; delete p.uv; delete p.idx; }
+      return { parts, lo, hi, tris };
+    }
+    function begin(W, H, bg) {
+      gl.viewport(0, 0, W, H);
+      gl.clearColor(bg[0], bg[1], bg[2], 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      gl.enable(gl.DEPTH_TEST);
+    }
+    // o: { VP, M, eye, key, look (0 texture, 1 clay), unlit, tint }
+    function draw(mesh, o) {
+      gl.useProgram(prog);
+      gl.uniformMatrix4fv(U("uVP"), false, o.VP); gl.uniformMatrix4fv(U("uM"), false, o.M);
+      gl.uniform3fv(U("uEye"), o.eye); gl.uniform3fv(U("uKey"), o.key); gl.uniform1i(U("uMode"), o.look || 0);
+      gl.uniform1i(U("uUnlit"), o.unlit ? 1 : 0); gl.uniform3fv(U("uTint"), o.tint || [0, 0, 0]);
+      gl.uniform1i(U("uTex"), 0); gl.uniform1i(U("uAo"), 1);
+      for (const p of mesh.parts) {
+        gl.uniform4fv(U("uBase"), p.base); gl.uniform1i(U("uHasTex"), p.gtex ? 1 : 0); gl.uniform1i(U("uHasAo"), p.gao ? 1 : 0);
+        gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, p.gtex); gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, p.gao);
+        gl.bindVertexArray(p.vao); gl.drawElements(gl.TRIANGLES, p.count, gl.UNSIGNED_INT, 0);
+      }
+      gl.bindVertexArray(null);
+    }
+    // line segments (x,y,z pairs) in one colour, e.g. a selection box
+    function lines(pts, VP, color) {
+      gl.useProgram(lprog);
+      const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+      const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(pts), gl.STREAM_DRAW);
+      const loc = gl.getAttribLocation(lprog, "aPos"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
+      gl.uniformMatrix4fv(gl.getUniformLocation(lprog, "uMVP"), false, VP); gl.uniform4fv(gl.getUniformLocation(lprog, "uColor"), color);
+      gl.drawArrays(gl.LINES, 0, pts.length / 3);
+      gl.bindVertexArray(null); gl.deleteBuffer(b); gl.deleteVertexArray(vao);
+    }
+    return { upload, begin, draw, lines };
+  }
+
+  return { start, openList, view, download, _parseGLB: parseGLB,
+    gl: { parseGLB, gpu, mul4, perspective, lookAt, themeBg } };
 })();

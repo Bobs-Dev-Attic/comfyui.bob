@@ -449,6 +449,19 @@ const Motion = (() => {
     if (m) renderSide();
   }
 
+  /* The picture as a 3D scene (scene3d.js): its objects, with any 3D models already made from them, over the empty
+     background when there is one. */
+  async function openScene() {
+    try { await saveMasks(); } catch (e) { return Media.toast(`Couldn't save an object: ${e.message}`); }
+    let made = [];
+    try { made = (await api("/api/models3d")).models || []; } catch { /* none */ }
+    const objects = m.layers.map(l => {
+      const md = made.find(x => x.source === m.ref && x.mask === l.mask && x.status !== "failed");
+      return { name: l.name, mask: l.mask, model: md?.id || null };
+    });
+    Scene3D.create({ ref: m.ref, url: m.url, name: m.name.replace(/\.[^.]+$/, ""), plate: m.plateRef && !m.plateStale ? m.plateRef : null, objects });
+  }
+
   /* opts (the Shots step): plan = a shot's saved plan to reopen; seconds = the shot's length; onUse(plan) = save it
      to the shot instead of generating (the shot's own text, length and settings make the video). */
   async function open(src, opts = {}) {
@@ -479,6 +492,9 @@ const Motion = (() => {
           <p class="hint">The picture with every object erased, for them to move over (an edit with the Erase model).</p>
           <div class="mo-row"><button type="button" class="btn sm" data-act="plate">Make empty background</button><span class="mo-plate-st hint"></span></div>
           <label class="check"><input type="checkbox" id="mo-showplate"> Show it in the preview</label></section>
+        <section><h3>3D</h3>
+          <p class="hint">The picture in depth with its objects as 3D models, seen through its own camera. Make the empty background first so they don't show twice.</p>
+          <div class="mo-row"><button type="button" class="btn sm" data-act="scene3d">🏞 Open as a 3D scene</button></div></section>
         <section class="mo-path" hidden><h3 class="mo-path-h"></h3>
           <p class="hint mo-keyhint"></p>
           <div class="mo-keys"></div>
@@ -515,6 +531,7 @@ const Motion = (() => {
       if (a === "find") { const w = $("#mo-word").value.trim(); if (w) addLayer({ text: w }, w.replace(/^(the|a|an)\s+/i, "")); return; }
       if (a === "pick") { m.picking = !m.picking; return refresh(); }
       if (a === "plate") return makePlate();
+      if (a === "scene3d") return openScene();
       if (a === "generate") return generate();
       if (a === "del-layer") { m.layers.splice(+b.dataset.i, 1); m.sel = Math.min(m.sel, m.layers.length - 1); if (m.plateRef) m.plateStale = true; return refresh(); }
       if (a === "del-key") { m.layers[m.sel].keys.splice(+b.dataset.key, 1); return refresh(); }

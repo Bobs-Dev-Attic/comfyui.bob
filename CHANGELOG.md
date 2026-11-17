@@ -5,6 +5,22 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.73.0] - 2026-11-17
+
+### Added
+- **🏞 3D scenes**: a picture in depth with 3D models standing in it, seen through the picture's own camera.
+  - From a picture's menu (results or the Inputs step), or **🏞 Open as a 3D scene** in Animate objects, which brings
+    its objects (with any 3D models already made from them) and uses the empty background when there is one.
+  - The background becomes a surface with Depth Anything 3, which also estimates the camera. Its mesh comes skewed
+    (the camera is in the model's working size), so the page rebuilds it from each point's place in the picture and its
+    depth; looking through the picture's camera shows the picture itself.
+  - Each object's 3D model stands where the object was: on the ground just under its foot, sized by its height in the
+    picture, facing the camera. Objects without a model have a 🧊 Make 3D button; they stand in the scene when ready.
+  - Drag to orbit, right-drag to pan, wheel to zoom, 🎥 back to the picture's camera; drag an object over the ground,
+    Shift+drag to raise it; Turn, Size, Put back, Hide and Remove in the side panel; add any other 3D model.
+  - ☰ › **3D scenes** lists them (open, rename, delete). Scenes are kept in `data/scenes3d.json`.
+- API: `POST /api/scenes`, `GET /api/scenes`, `GET` / `PATCH` / `DELETE /api/scenes/{id}`; capability `editor.scene3d`.
+
 ## [0.72.0] - 2026-11-17
 
 ### Added

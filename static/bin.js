@@ -141,6 +141,7 @@ const Bin = (() => {
       done && (vid || img) && ["✨ Enhance… (FaceRefine, DLSS 5, upscale)", () => Enhance.dialog(it)],
       done && img && it.files?.[0] && ["🔄 Angles… (other camera angles)", () => Angles.dialog({ ref: it.files[0].path, url: it.files[0].url, name: it.files[0].name })],
       done && img && it.files?.[0] && ["🎬 Animate objects… (move them along paths)", () => Motion.open({ ref: it.files[0].path, url: it.files[0].url, name: it.files[0].name })],
+      done && img && it.files?.[0] && ["🏞 3D scene… (the picture in depth, for 3D models)", () => Scene3D.create({ ref: it.files[0].path, url: it.files[0].url, name: (promptLabel(it.params?.prompt) || it.files[0].name).slice(0, 60) })],
       done && img && it.files?.[0] && ["🧊 Make 3D… (a 3D model of the main object)", () => Model3D.start({ ref: it.files[0].path, url: it.files[0].url, name: (promptLabel(it.params?.prompt) || it.files[0].name).slice(0, 60) })],
       !["enhance", "angles"].includes(it.engine) && ["Reuse settings", () => action("reuse", it)],
       it.engine !== "timeline" && ["Re-roll", () => action("reroll", it)],
