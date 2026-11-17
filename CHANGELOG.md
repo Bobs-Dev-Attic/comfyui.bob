@@ -5,6 +5,22 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.69.0] - 2026-11-17
+
+### Added
+- **🎯 Track an object** in a video (a video's menu in the results), step 2 of h3-motion's layering technique.
+  - **Pick it:** go to a frame where it's clearly seen and click it (Shift+click marks what isn't it), or type its
+    name.
+  - **Track:** SAM 3.1 finds it on that frame and follows it frame by frame, up to 15 s (frames are tracked at a
+    512 px short side). The studio then measures each frame's mask, drops frames whose size or position jumps off
+    the line of its neighbours, fills the gaps, smooths the path (a local quadratic fit) and simplifies it into
+    keys. The path shows over the video, with a marker that follows the object as it plays.
+  - **Save path:** kept in `data/tracks.json`. In 🎬 Animate objects, pick an object and choose it under
+    **Use a tracked path**: the object moves and scales the same way (moves as a share of the frame), on the same
+    curve as hand-made keys, and the shot takes the path's length (up to 10 s). Drag keys afterwards to adjust.
+  - New endpoints `POST /api/track`, `GET`/`POST /api/tracks`, `DELETE /api/tracks/{id}` (`app/tracking.py`,
+    `workflows.build_track`).
+
 ## [0.68.0] - 2026-11-17
 
 ### Added

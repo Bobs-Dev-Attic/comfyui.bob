@@ -137,6 +137,7 @@ const Bin = (() => {
       done && img && ["Use as last frame", () => action("last", it)],
       done && img && ["Use as reference", () => action("ref", it)],
       done && vid && ["Continue from the last frame", () => continueFrom(it)],
+      done && vid && it.files?.[0] && ["🎯 Track an object… (a path for Animate objects)", () => Tracker.open({ ref: it.files[0].path, url: it.files[0].url, name: it.files[0].name })],
       done && (vid || img) && ["✨ Enhance… (FaceRefine, DLSS 5, upscale)", () => Enhance.dialog(it)],
       done && img && it.files?.[0] && ["🔄 Angles… (other camera angles)", () => Angles.dialog({ ref: it.files[0].path, url: it.files[0].url, name: it.files[0].name })],
       done && img && it.files?.[0] && ["🎬 Animate objects… (move them along paths)", () => Motion.open({ ref: it.files[0].path, url: it.files[0].url, name: it.files[0].name })],

@@ -836,8 +836,9 @@ class JobManager:
 
         client = self.comfy.client
         wf = client.workflows.from_json(built.graph)
-        for role, node_id in built.image_inputs.items():  # "aref…" roles are sounds (LoadAudio), the rest pictures
-            wf.set_input(node_id, "audio" if role.startswith("aref") else "image", client.assets.from_file(media_path(refs[role])))
+        for role, node_id in built.image_inputs.items():  # "aref…" roles are sounds (LoadAudio), "video…" LoadVideo, the rest pictures
+            field = "audio" if role.startswith("aref") else "file" if role.startswith("video") else "image"
+            wf.set_input(node_id, field, client.assets.from_file(media_path(refs[role])))
         job = await client.submit(wf)
         deadline = time.monotonic() + timeout
         while True:

@@ -1012,6 +1012,40 @@ def build_ai_select(sam_ckpt: str, *, positive: list[dict] | None = None, negati
     return Built(graph=g.nodes, outputs=[save], image_inputs={"source": load})
 
 
+def build_track(sam_ckpt: str, *, first: int, count: int, width: int, height: int, fps: float,
+                positive: list[dict] | None = None, negative: list[dict] | None = None, text: str = "",
+                threshold: float = 0.5, prefix: str = "bob/track") -> Built:
+    """Track one object through a video (app/tracking.py): SAM 3.1 finds it on the first frame (points in
+    width x height pixels, or words) and SAM3_VideoTrack follows it. image_inputs: video (a LoadVideo).
+    Output: a mask video, white over the object in every frame."""
+    import json as _json
+
+    g = Graph()
+    o = Graph.out
+    ckpt = g.add("CheckpointLoaderSimple", ckpt_name=sam_ckpt)
+    load = g.add("LoadVideo", file="")
+    parts = g.add("GetVideoComponents", video=o(load))
+    clip = g.add("ImageFromBatch", image=o(parts, 0), batch_index=int(first), length=int(count))
+    frames = g.add("ImageScale", image=o(clip), upscale_method="area", width=width, height=height, crop="disabled")
+    first_frame = g.add("ImageFromBatch", image=o(frames), batch_index=0, length=1)
+    args: dict[str, Any] = {"model": o(ckpt), "image": o(first_frame), "threshold": float(threshold),
+                            "refine_iterations": 2, "individual_masks": False}
+    if text.strip():
+        args["conditioning"] = o(g.add("CLIPTextEncode", clip=o(ckpt, 1), text=text.strip()))
+    if positive:
+        args["positive_coords"] = _json.dumps([{"x": int(p["x"]), "y": int(p["y"])} for p in positive])
+    if negative:
+        args["negative_coords"] = _json.dumps([{"x": int(p["x"]), "y": int(p["y"])} for p in negative])
+    det = g.add("SAM3_Detect", **args)
+    track = g.add("SAM3_VideoTrack", images=o(frames), model=o(ckpt), initial_mask=o(det), detection_threshold=float(threshold),
+                  max_objects=1, detect_interval=1)
+    masks = g.add("SAM3_TrackToMask", track_data=o(track), object_indices="0")
+    pics = g.add("MaskToImage", mask=o(masks))
+    video = g.add("CreateVideo", images=o(pics), fps=float(fps))
+    save = g.add("SaveVideo", video=o(video), filename_prefix=prefix, format="auto", codec="auto")
+    return Built(graph=g.nodes, outputs=[save], image_inputs={"video": load})
+
+
 EDIT_MODELS = {"qwen": "Qwen Image Edit 2511", "h3image": "MiniMax H3 Image"}
 
 
