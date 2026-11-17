@@ -118,16 +118,15 @@ const Motion = (() => {
     }
     const ok = m.layers.length && m.plateRef && !m.plateStale && !m.plateBusy;
     $('[data-act="generate"]').disabled = !ok || m.busy;
-    $(".mo-foot-st").textContent = m.busy ? m.busy : !m.layers.length ? "Add an object to move." : !m.plateRef || m.plateStale ? "Make the empty background, then Generate." : "Ready to generate.";
+    const verb = m.onUse ? "Use for this shot" : "Generate";
+    $(".mo-foot-st").textContent = m.busy ? m.busy : !m.layers.length ? "Add an object to move." : !m.plateRef || m.plateStale ? `Make the empty background, then ${verb}.`
+      : m.onUse ? "Ready: the shot renders with these objects and paths." : "Ready to generate.";
   }
   const refresh = () => { renderSide(); draw(); };
 
   /* ---------------------------------------------------------------- objects */
-  async function addLayer(body, name) {
-    m.busy = "Finding the object…"; renderSide();
-    try {
-      const r = await api("/api/edit/select", { method: "POST", body: JSON.stringify({ source: m.ref, ...body }) });
-      const mi = await loadImg(r.url + `?t=${Date.now()}`);
+  // A layer from its mask (white = the object): the cut-out and where it sits. null if the mask is empty.
+  function layerFrom(mi, mask, name, keys) {
       const W = m.pic.width, H = m.pic.height, mc = mk(W, H), g = mc.getContext("2d");
       g.drawImage(mi, 0, 0, W, H);
       const d = g.getImageData(0, 0, W, H), px = d.data;
@@ -137,14 +136,22 @@ const Motion = (() => {
         px[o + 3] = on ? 255 : 0;
         if (on) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
       }
-      if (x1 < 0) throw new Error("Nothing was found there: try another word, or click right on the object");
+      if (x1 < 0) return null;
       g.putImageData(d, 0, 0);
       const box = [x0, y0, x1 + 1, y1 + 1], cut = mk(box[2] - x0, box[3] - y0), cg = cut.getContext("2d");
       cg.drawImage(mc, x0, y0, cut.width, cut.height, 0, 0, cut.width, cut.height);
       cg.globalCompositeOperation = "source-in";
       cg.drawImage(m.pic, x0, y0, cut.width, cut.height, 0, 0, cut.width, cut.height);
-      m.layers.push({ name: name || `Object ${m.layers.length + 1}`, color: COLORS[m.layers.length % COLORS.length], mask: r.mask, maskImg: mi,
-        box, cut, keys: [{ t: 0, x: 0, y: 0, s: 1, f: false }] });
+      return { name: name || `Object ${m.layers.length + 1}`, color: COLORS[m.layers.length % COLORS.length], mask, maskImg: mi,
+        box, cut, keys: keys?.length ? structuredClone(keys) : [{ t: 0, x: 0, y: 0, s: 1, f: false }] };
+  }
+  async function addLayer(body, name) {
+    m.busy = "Finding the object…"; renderSide();
+    try {
+      const r = await api("/api/edit/select", { method: "POST", body: JSON.stringify({ source: m.ref, ...body }) });
+      const lay = layerFrom(await loadImg(r.url + `?t=${Date.now()}`), r.mask, name);
+      if (!lay) throw new Error("Nothing was found there: try another word, or click right on the object");
+      m.layers.push(lay);
       m.sel = m.layers.length - 1;
       if (m.plateRef) m.plateStale = true;
     } catch (e) { Media.toast(`Couldn't select it: ${e.message}`); }
@@ -190,8 +197,25 @@ const Motion = (() => {
     });
   }
 
+  /* ---------------------------------------------------------------- plans (a shot's motion, Shots step) */
+  // What a shot keeps: the picture, its empty background, each object's mask and keys, and how tightly to follow.
+  const planOf = () => ({ picture: { ref: m.ref, url: m.url, name: m.name }, plate: m.plateRef, hold: m.hold,
+    layers: m.layers.map(l => ({ name: l.name, mask: l.mask, keys: structuredClone(l.keys) })) });
+  // The request's layers for `seconds` of a plan: each object's move, size and flip in every frame.
+  function layerFrames(plan, seconds) {
+    const n = window.H3Prompt.h3Length(+seconds || 3);
+    return plan.layers.map(l => ({ mask: l.mask,
+      frames: Array.from({ length: n }, (_, f) => { const p = at(l, f / FPS); return [+p.x.toFixed(5), +p.y.toFixed(5), +p.s.toFixed(4), p.f ? 1 : 0]; }) }));
+  }
+  function use() {
+    const plan = planOf(), cb = m.onUse;
+    cb?.(plan);  // first: closing the window may reopen the shot, which should show the plan
+    m?.win.close();
+  }
+
   /* ---------------------------------------------------------------- generate */
   async function generate() {
+    if (m.onUse) return use();
     const n = frames(), iw = m.pic.width, ih = m.pic.height;
     const layers = m.layers.map(l => ({ mask: l.mask,
       frames: Array.from({ length: n }, (_, f) => { const p = at(l, f / FPS); return [+p.x.toFixed(5), +p.y.toFixed(5), +p.s.toFixed(4), p.f ? 1 : 0]; }) }));
@@ -259,9 +283,12 @@ const Motion = (() => {
     if (m) renderSide();
   }
 
-  async function open(src) {
+  /* opts (the Shots step): plan = a shot's saved plan to reopen; seconds = the shot's length; onUse(plan) = save it
+     to the shot instead of generating (the shot's own text, length and settings make the video). */
+  async function open(src, opts = {}) {
     if (m?.win) m.win.close();
     const pic = await loadImg(src.url);
+    const shot = !!opts.onUse;
     const root = document.createElement("div");
     root.className = "mo";
     root.innerHTML = `
@@ -290,21 +317,25 @@ const Motion = (() => {
           <label class="check"><input type="checkbox" id="mo-flip"> Flipped</label>
           <div class="field mo-track"><label for="mo-track">Use a tracked path <span class="opt">from 🎯 Track an object, on a video</span></label>
             <div class="mo-find"><select id="mo-track"></select><button type="button" class="btn sm" data-act="apply-track">Use</button></div></div></section>
-        <section><h3>Shot</h3>
+        <section${shot ? " hidden" : ""}><h3>Shot</h3>
           <div class="row2"><div class="field"><label for="mo-sec">Length</label><div class="sm-sec"><input type="number" id="mo-sec" min="2" max="10" step="0.5" value="3"> s</div></div>
             <div class="field"><label for="mo-q">Quality</label><select id="mo-q"><option value="draft">Draft</option><option value="standard">Standard</option><option value="full">Full</option></select></div></div>
           <div class="field"><label for="mo-what">What happens <span class="opt">optional</span></label>
             <textarea id="mo-what" rows="3" placeholder="The red car drives off to the right, its wheels spinning."></textarea></div>
           <div class="field"><label for="mo-hold">Follow the path</label><select id="mo-hold" title="How long the objects are held to their paths before H3 is free to redraw them">
             <option value="loose">Loosely (more natural, may wander)</option><option value="normal" selected>Normally</option><option value="tight">Tightly (may look pasted on)</option></select></div></section>
+        ${shot ? `<section><h3>This shot</h3><p class="hint">The shot's own text, length (${(+opts.seconds || 3).toFixed(1)} s) and settings make the video; here are its objects and their paths.</p>
+          <div class="field"><label for="mo-hold2">Follow the path</label><select id="mo-hold2">
+            <option value="loose">Loosely (more natural, may wander)</option><option value="normal">Normally</option><option value="tight">Tightly (may look pasted on)</option></select></div></section>` : ""}
       </aside>`;
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
-    foot.innerHTML = `<span class="mo-foot-st hint"></span><button type="button" class="btn primary" data-act="generate">Generate</button>`;
+    foot.innerHTML = `<span class="mo-foot-st hint"></span><button type="button" class="btn primary" data-act="generate">${shot ? "Use for this shot" : "Generate"}</button>`;
     const win = WM.open({ id: "motion", title: `Animate objects · ${src.name || src.ref.split("/").pop()}`, content: root, footer: foot,
-      width: 1100, height: 720, minWidth: 760, minHeight: 520, onClose: () => { m = null; } });
-    m = { win, root: win.el, canvas: root.querySelector(".mo-canvas"), pic, ref: src.ref, project: state.project?.id ?? null,
-      layers: [], tracks: [], sel: -1, t: 0, seconds: 3, quality: "draft", hold: "normal", prompt: "", plateRef: "", plateImg: null, showPlate: false };
+      width: 1100, height: 720, minWidth: 760, minHeight: 520, onClose: () => { m = null; opts.onClose?.(); } });
+    m = { win, root: win.el, canvas: root.querySelector(".mo-canvas"), pic, ref: src.ref, url: src.url, name: src.name || src.ref.split("/").pop(),
+      project: state.project?.id ?? null, onUse: opts.onUse || null,
+      layers: [], tracks: [], sel: -1, t: 0, seconds: shot ? Math.max(1, +opts.seconds || 3) : 3, quality: "draft", hold: "normal", prompt: "", plateRef: "", plateImg: null, showPlate: false };
     const all = [root, foot];
     const on = (ev, fn) => all.forEach(el => el.addEventListener(ev, fn));
     on("click", e => {
@@ -329,15 +360,30 @@ const Motion = (() => {
       if (id === "mo-showplate") { m.showPlate = e.target.checked; return draw(); }
       if (id === "mo-sec") { m.seconds = Math.max(2, Math.min(10, +e.target.value || 3)); m.t = Math.min(m.t, dur()); return refresh(); }
       if (id === "mo-q") m.quality = e.target.value;
-      if (id === "mo-hold") m.hold = e.target.value;
+      if (id === "mo-hold" || id === "mo-hold2") m.hold = e.target.value;
       if (id === "mo-what") m.prompt = e.target.value;
     });
     root.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.id === "mo-word") { e.preventDefault(); root.querySelector('[data-act="find"]').click(); } });
     m.canvas.addEventListener("pointerdown", onDown);
     new ResizeObserver(() => m && draw()).observe(m.canvas);
+    if (shot) { const h = root.querySelector("#mo-hold2"); if (h) h.value = opts.plan?.hold || "normal"; m.hold = opts.plan?.hold || "normal"; }
     refresh();
     loadTracks();
+    if (opts.plan) await restore(opts.plan);
+  }
+  // Reopen a shot's plan: its objects (from their masks) with their keys, and its empty background.
+  async function restore(plan) {
+    m.busy = "Loading the shot's objects…"; renderSide();
+    try {
+      for (const l of plan.layers || []) {
+        const lay = layerFrom(await loadImg(mediaUrl(l.mask)), l.mask, l.name, l.keys);
+        if (lay) m.layers.push(lay);
+      }
+      m.sel = m.layers.length ? 0 : -1;
+      if (plan.plate) { m.plateImg = await loadImg(mediaUrl(plan.plate)); m.plateRef = plan.plate; m.showPlate = true; $("#mo-showplate").checked = true; }
+    } catch (e) { Media.toast(`Couldn't load all of the shot's objects: ${e.message}`); }
+    finally { if (m) { m.busy = ""; refresh(); } }
   }
 
-  return { open, _state: () => m };
+  return { open, layerFrames, _state: () => m };
 })();

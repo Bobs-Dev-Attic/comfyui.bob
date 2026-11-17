@@ -5,6 +5,22 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.70.0] - 2026-11-17
+
+### Added
+- **Objects in motion in Shots** (step 3 of h3-motion's layering technique). In One video per shot, a shot's Edit
+  window has an **Objects in motion** section: pick a picture (a reference picture or the first frame on the Inputs
+  step) and **🎬 Animate objects…**. The Animate objects window opens in a "Use for this shot" mode: find the objects,
+  make the empty background, key their paths (or use a tracked path) and how tightly to follow, then **Use for this
+  shot**; the Edit window comes back with the plan (🎬 Edit… reopens it with its objects, keys and background;
+  Remove drops it). The shot shows 🎬 in the list.
+- Such a shot renders with the Animate objects engine from that picture, its objects on their paths, with the
+  shot's own text (its `<Picture N>` tags become those subjects' descriptions in words, since this model takes no
+  reference pictures), length, quality and the run's shared seed. It doesn't take reference pictures, voices or the
+  last frame of the shot before, so it starts with a cut; the shot after it can still carry on from its last frame
+  or continue it without a cut. It takes its turn in a chained run, and the Shots preview shows its exact prompt.
+- Saved with the project as the shot's `motion` (docs/PROJECT_FORMAT.md).
+
 ## [0.69.0] - 2026-11-17
 
 ### Added

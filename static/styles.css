@@ -777,3 +777,9 @@ details.post-proc > .hint { margin: 0 0 10px; }
 .tr-scrub { flex: 1; }
 .mo-track select { flex: 1; min-width: 0; }
 @media (max-width: 760px) { .tr { grid-template-columns: 1fr; } }
+
+/* a shot's objects in motion (Shots › Edit) */
+.sm-mo { display: flex; gap: 10px; align-items: flex-start; }
+.sm-mo img { width: 96px; height: 64px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); flex: none; }
+.sm-mo-acts { display: flex; gap: 6px; margin-top: 6px; }
+.sm-motion .mo-find select { flex: 1; min-width: 0; }
