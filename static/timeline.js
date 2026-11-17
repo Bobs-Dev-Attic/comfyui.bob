@@ -2374,7 +2374,7 @@ const TL = (() => {
       ["Shift+M", "Mixer"], ["S (track header button)", "Solo the track"], ["Ctrl+S", "Save the project (when auto-save is off)"],
       ["G", "Use the frame at the playhead as a first frame"], ["Ctrl+E", "Render options…"], ["Ctrl+Shift+A", "Activity console (logs, time left)"], ["T (on the clock)", "Frames / seconds"]]],
     ["Results bin", [["1 – 5", "Rate the selected result"], ["0", "Clear the rating"], ["Shift+T", "Tags…"], ["Enter", "Add to the timeline"], ["← / →", "Previous / next result"]]],
-    ["Layout", [["Alt+G", "Show / hide the results gallery"], ["Alt+W", "Prompt tab: switch between the prompt and the Shot writer"], ["Alt+1 … Alt+4", "Default, Edit, Review, Bin layouts"], ["Alt+5 … Alt+9", "Your saved layouts"], ["?", "This list"]]],
+    ["Layout", [["Alt+G", "Show / hide the results gallery"], ["Alt+I", "Show / hide the result's details and controls over the viewer"], ["Alt+W", "Prompt tab: switch between the prompt and the Shot writer"], ["Alt+1 … Alt+4", "Default, Edit, Review, Bin layouts"], ["Alt+5 … Alt+9", "Your saved layouts"], ["?", "This list"]]],
   ];
   function showShortcuts() {
     const box = document.createElement("div");
@@ -2630,7 +2630,7 @@ const Monitor = {
     this.mode = mode;
     $("#program").hidden = mode !== "timeline";
     $("#viewer").hidden = mode === "timeline";
-    $("#meta").hidden = mode === "timeline" || !state.selected;
+    if (typeof Info !== "undefined") Info.sync();
     $$("#mon-seg button").forEach(b => b.classList.toggle("active", b.dataset.m === mode));
     if (mode === "result") { TL.pause(); $("#prog-video")?.pause(); }
     else { $$("#viewer video, #viewer audio").forEach(m => m.pause()); TL.syncProgram(); }
