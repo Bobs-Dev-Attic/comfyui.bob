@@ -1229,3 +1229,86 @@ def build_imgedit(
     stitched = g.add("ImageCompositeMasked", destination=o(src), source=o(stitched), x=0, y=0, resize_source=False, mask=o(soft))
     save = g.add("SaveImage", images=o(stitched), filename_prefix=prefix)
     return Built(graph=g.nodes, outputs=[save], image_inputs=inputs, info=info)
+
+
+# --------------------------------------------------------------------------- 3D
+
+# What Make 3D needs (ComfyUI's "Pixal3D / TRELLIS.2 image to model" template, its TRELLIS.2 branch).
+TRELLIS_FILES = {
+    "unet": "trellis_2_int8_convrot.safetensors",
+    "clip_vision": "dino_v3_L_naf_fp32.safetensors",
+    "shape_vae": "trellis_2_shape_vae_bf16.safetensors",
+    "texture_vae": "trellis_2_texture_vae_bf16.safetensors",
+}
+MAKE3D_QUALITY = {"standard": (200_000, 2048), "high": (700_000, 4096)}  # faces, texture size
+
+
+def build_make3d(files: dict[str, str], *, seed: int, quality: str = "standard", masked: bool = False,
+                 bg_model: str | None = None, prefix: str = "bob/3d") -> Built:
+    """A textured 3D model (GLB) of the object in one picture, with TRELLIS.2 as ComfyUI's template runs it:
+    structure -> shape (upsampled to 1536) -> texture, then remeshed, decimated, UV-unwrapped and baked (colour,
+    normal map, ambient occlusion). image_inputs: source (the picture) and, when ``masked``, mask (white = the
+    object); otherwise the background is removed with ``bg_model`` (BiRefNet)."""
+    g = Graph()
+    o = Graph.out
+    faces, tex = MAKE3D_QUALITY.get(quality, MAKE3D_QUALITY["standard"])
+    unet = g.add("UNETLoader", unet_name=files["unet"], weight_dtype="default")
+    vision = g.add("CLIPVisionLoader", clip_name=files["clip_vision"])
+    svae = g.add("VAELoader", vae_name=files["shape_vae"])
+    tvae = g.add("VAELoader", vae_name=files["texture_vae"])
+    src = g.add("LoadImage", image="")
+    inputs = {"source": src}
+    if masked:
+        mload = g.add("LoadImage", image="")
+        inputs["mask"] = mload
+        mask = g.add("ImageToMask", image=o(mload), channel="red")
+    else:
+        bg = g.add("LoadBackgroundRemovalModel", bg_removal_name=bg_model)
+        mask = g.add("RemoveBackground", bg_removal_model=o(bg), image=o(src))
+    crop = g.add("ImageCropToMask", images=o(src), masks=o(mask), width=1024, height=1024, pad_factor=1.1,
+                 grow_mask=0, background="#000000")
+    cond = g.add("Trellis2Conditioning", clip_vision_model=o(vision), image=o(crop))
+    pos, neg = o(cond, 0), o(cond, 1)
+    s = int(seed) % (2**32)
+    # structure
+    m1 = g.add("ModelSamplingSD3", model=o(g.add("RescaleCFG", model=o(g.add(
+        "CFGOverride", model=o(unet), cfg=1.0, start_percent=0.667, end_percent=1.0)), multiplier=0.7)), shift=5.0)
+    k1 = g.add("KSampler", model=o(m1), positive=pos, negative=neg, latent_image=o(g.add("EmptyTrellis2LatentStructure", batch_size=1)),
+               seed=s, steps=12, cfg=7.5, sampler_name="euler", scheduler="normal", denoise=1.0)
+    voxel = g.add("VaeDecodeStructureTrellis2", samples=o(k1), vae=o(svae), resolution="32")
+    # shape, then upsampled
+    stage = g.add("Trellis2ShapeStage", positive=pos, negative=neg, voxel=o(voxel))
+    m2 = g.add("RescaleCFG", model=o(g.add("CFGOverride", model=o(unet), cfg=1.0, start_percent=0.769, end_percent=1.0)),
+               multiplier=0.5)
+    k2 = g.add("KSampler", model=o(m2), positive=o(stage, 0), negative=o(stage, 1), latent_image=o(stage, 2),
+               seed=s + 1, steps=20, cfg=7.5, sampler_name="euler", scheduler="normal", denoise=1.0)
+    up = g.add("Trellis2UpsampleStage", positive=o(stage, 0), negative=o(stage, 1), shape_latent=o(k2), vae=o(svae),
+               target_resolution=1536)
+    k3 = g.add("KSampler", model=o(m2), positive=o(up, 0), negative=o(up, 1), latent_image=o(up, 2),
+               seed=s + 1, steps=12, cfg=7.5, sampler_name="euler", scheduler="simple", denoise=1.0)
+    shape = g.add("VaeDecodeShapeTrellis", samples=o(k3), vae=o(svae))
+    # texture
+    tstage = g.add("Trellis2TextureStage", positive=o(up, 0), negative=o(up, 1), shape_latent=o(k3))
+    k4 = g.add("KSampler", model=o(unet), positive=o(tstage, 0), negative=o(tstage, 1), latent_image=o(tstage, 2),
+               seed=s + 2, steps=12, cfg=1.0, sampler_name="euler", scheduler="normal", denoise=1.0)
+    colors = g.add("VaeDecodeTextureTrellis", samples=o(k4), vae=o(tvae), shape_subdivides=o(shape, 1))
+    # a clean, lighter mesh with a baked texture
+    info = g.add("GetMeshInfo", mesh=o(shape, 0))
+    remesh = g.add("RemeshMesh", mesh=o(info, 0), resolution=768, sign_mode="solid", **{"sign_mode.fill": 20.0,
+                   "sign_mode.qef": False}, band=1.0, project_back=0.0, fix_poles=False, smooth_iters=20,
+                   drop_small_components=0.01, precluster_max_verts=20_000_000)
+    low = g.add("MeshSmoothNormals", mesh=o(g.add("DecimateMesh", mesh=o(remesh), target_face_count=faces,
+                                                   placement_mode="midpoint")), crease_angle=180.0)
+    uv = g.add("UnwrapMesh", mesh=o(low), segmenter="pec", resolution=tex, padding=1, weld_distance=0.0002)
+    bake = g.add("BakeTextureFromVoxel", mesh=o(uv), voxel_colors=o(colors), texture_size=tex, reference_mesh=o(shape, 0))
+    normal = g.add("BakeNormalMapFromMesh", low_poly=o(uv), high_poly=o(remesh), resolution=min(tex, 2048),
+                   cage_distance=0.05, ignore_backfaces=True)
+    ao = g.add("BakeAmbientOcclusion", low_poly=o(uv), high_poly=o(remesh), resolution=1024, samples=64,
+               max_distance=0.71, strength=1.0, bias=0.01)
+    textured = g.add("ApplyTextureToMesh", mesh=o(uv), base_color=o(bake, 0), metallic=o(bake, 1), roughness=o(bake, 2),
+                     occlusion=o(ao), normal_map=o(normal))
+    final = g.add("MeshSmoothNormals", mesh=o(textured), crease_angle=180.0)
+    save = g.add("SaveGLB", mesh=o(final), filename_prefix=prefix)
+    preview = g.add("SaveImage", images=o(crop), filename_prefix=prefix + "_input")
+    return Built(graph=g.nodes, outputs=[save, preview], image_inputs=inputs,
+                 info={"model": "TRELLIS.2", "faces": faces, "texture": tex, "quality": quality})

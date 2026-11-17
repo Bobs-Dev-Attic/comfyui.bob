@@ -5,6 +5,27 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.72.0] - 2026-11-17
+
+### Added
+- **🧊 Make 3D**: a textured 3D model (GLB) of the object in a picture, with TRELLIS.2 (ComfyUI's "Pixal3D / TRELLIS.2
+  image to model" template, its TRELLIS.2 branch: structure, shape upsampled to 1536, texture, then remeshed,
+  decimated, UV-unwrapped, with colour, normal and ambient-occlusion maps baked).
+  - From a picture's menu in the results or on the Inputs step (the background is taken out with BiRefNet), or from an
+    object's right-click menu in Animate objects (that object's mask is used).
+  - Detail: Standard (200k faces, 2K texture) or High (700k faces, 4K texture).
+  - It's made in the background; ☰ › **3D models** lists the models (making, done or failed), with Open, Download .glb,
+    Make again (a new seed), Rename and Delete.
+- **3D viewer** for a model (WebGL 2, no libraries; reads the GLB itself): drag to orbit, right-drag or Shift+drag to
+  pan, wheel to zoom, F or double-click to frame; Texture, Clay and Wireframe looks, a floor grid, a turntable, and
+  Save picture of this view.
+- API: `POST /api/make3d`, `GET /api/models3d`, `PATCH` / `DELETE /api/models3d/{id}`; capability `editor.make3d`.
+
+- A model takes about 3 to 10 minutes on a 32 GB card, depending on the object (denser shapes take longer).
+
+### Changed
+- The auto-updater also waits while a 3D model is being made.
+
 ## [0.71.0] - 2026-11-17
 
 ### Added

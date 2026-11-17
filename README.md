@@ -86,6 +86,15 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
 - **🎯 Track an object** (a video's menu in the results): click an object (or name it) on any frame and SAM 3.1
   follows it for up to 15 s; misdetections are dropped, gaps filled and the path smoothed into a few keys. Save the
   path, then in Animate objects any object can **Use a tracked path** to move the same way. Needs the SAM 3.1 checkpoint.
+- **🧊 Make 3D** (a picture's menu in the results or on the Inputs step, or an object's right-click menu in Animate
+  objects): a textured 3D model (GLB) of the main object, or of the chosen object, with TRELLIS.2 as ComfyUI's
+  template runs it (shape, texture, then remeshed, UV-unwrapped and baked). It's made in the background in a few minutes;
+  ☰ › **3D models** lists them, and each opens in a small Blender-style viewer (drag to orbit, right-drag to pan, wheel to
+  zoom; Texture, Clay or Wireframe; a floor grid and turntable) or downloads as a `.glb` for Blender. The hidden sides
+  are made up by the model. Needs `trellis_2_int8_convrot` (diffusion_models), `trellis_2_shape_vae_bf16` and
+  `trellis_2_texture_vae_bf16` (vae), `dino_v3_L_naf_fp32` (clip_vision), from
+  [Comfy-Org/TRELLIS.2](https://huggingface.co/Comfy-Org/TRELLIS.2) and [Comfy-Org/Pixal3D](https://huggingface.co/Comfy-Org/Pixal3D),
+  plus BiRefNet (background_removal) for a whole picture. Models live in `data/models3d.json`, files in `outputs/3d/`.
 - **Objects in motion in a shot** (Shots › a shot's Edit window, One video per shot): give the shot a picture from the Inputs
   step and its objects' paths (the Animate objects window, in a "Use for this shot" mode). That shot then renders from the
   picture with the objects on their paths, with the shot's own text, length and settings; it can take a tracked path too.
@@ -285,6 +294,8 @@ Other features:
 - `app/projectfile.py`: the `project.json` schema (pydantic), migration, and JSON Schema export.
 - `app/media.py`: media sources, bookmarks, the thumbnail cache, the folder picker, probing and frame grabs.
 - `app/render.py`: renders a timeline to MP4 with ffmpeg.
+- `app/model3d.py`: Make 3D (TRELLIS.2 picture to GLB) and the list of 3D models; `static/model3d.js` is its window and
+  the GLB viewer (WebGL 2, no libraries).
 - `app/fcpxml.py`: exports a timeline as FCPXML 1.9 for DaVinci Resolve and Final Cut Pro.
 - `static/`: the UI (vanilla JS, no build step).
   - `shell.js`: the side panel steps, projects, settings persistence and the panel splitter.
