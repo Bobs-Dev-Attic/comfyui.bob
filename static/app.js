@@ -419,10 +419,12 @@ function renderRefs() {
     <div class="ref">
       <img src="${esc(r.url)}" alt="Reference ${i + 1}">
       <button type="button" class="tag" data-i="${i}" title="Insert into prompt">Picture ${i + 1}</button>
-      <button type="button" class="x" data-i="${i}" title="Remove">×</button>
+      ${r.desc ? `<span class="ref-desc" title="${esc(r.desc)}">✨</span>` : ""}
+      <button type="button" class="ref-more" data-i="${i}" title="Open, edit, describe or remove" aria-label="Picture ${i + 1} options" aria-haspopup="menu">⋯</button>
     </div>`).join("")
     + (state.refs.length < MAX_REFS ? `<div class="ref-add" id="ref-add" tabindex="0" role="button">+ Add<br>picture</div>` : "");
-  $$(".ref .x", box).forEach(b => b.onclick = () => { state.refs.splice(+b.dataset.i, 1); renderRefs(); });
+  $$(".ref .ref-more", box).forEach(b => b.onclick = () => RefTools.pictureMenu(+b.dataset.i, b));
+  $$(".ref img", box).forEach((im, i) => im.ondblclick = () => RefTools.pictureMenu(i, im.parentElement.querySelector(".ref-more")));
   Prompts.renderBar?.();
   $$(".ref .tag", box).forEach(b => b.onclick = () => insertAtCursor($("#prompt"), `<Picture ${+b.dataset.i + 1}>`));
   const add = $("#ref-add");
@@ -485,10 +487,10 @@ function renderArefs() {
       <button type="button" class="tag" data-i="${i}" title="Insert into prompt">Audio ${i + 1}</button>
       <audio controls preload="metadata" src="${esc(a.url)}"></audio>
       <span class="aref-name" title="${esc(a.ref)}">${esc(a.name || a.ref.split("/").pop())}</span>
-      <button type="button" class="x" data-i="${i}" title="Remove">×</button>
+      <button type="button" class="ref-more" data-i="${i}" title="Audio tools or remove" aria-label="Audio ${i + 1} options" aria-haspopup="menu">⋯</button>
     </div>`).join("")
     + (state.arefs.length < MAX_AREFS ? `<button type="button" class="aref-add" id="aref-add">＋ Add a voice recording</button>` : "");
-  $$(".aref .x", box).forEach(b => b.onclick = () => { state.arefs.splice(+b.dataset.i, 1); renderArefs(); });
+  $$(".aref .ref-more", box).forEach(b => b.onclick = () => RefTools.audioMenu(+b.dataset.i, b));
   $$(".aref .tag", box).forEach(b => b.onclick = () => insertAtCursor($("#prompt"), `<Audio ${+b.dataset.i + 1}>`));
   const add = $("#aref-add");
   if (add) add.onclick = () => $("#aref-input").click();

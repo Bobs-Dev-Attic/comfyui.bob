@@ -274,10 +274,12 @@ details.advanced .field + .field, details.advanced .row2 + .field { margin-top: 
   position: absolute; left: 4px; bottom: 4px; border: 0; border-radius: 6px; padding: 2px 6px; cursor: pointer;
   background: rgba(0,0,0,.65); color: #fff; font: 600 11px/1.4 inherit;
 }
-.ref .x {
-  position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; border-radius: 50%; border: 0;
-  background: rgba(0,0,0,.6); color: #fff; cursor: pointer; line-height: 1;
+.ref .ref-more {
+  position: absolute; top: 4px; right: 4px; width: 24px; height: 22px; border-radius: 7px; border: 0;
+  background: rgba(0,0,0,.6); color: #fff; cursor: pointer; line-height: 1; font-size: 15px;
 }
+.ref .ref-more:hover, .ref .ref-more[aria-expanded="true"], .ref .ref-more:focus-visible { background: var(--accent); outline: none; }
+.ref .ref-desc { position: absolute; top: 4px; left: 4px; font-size: 12px; background: rgba(0,0,0,.6); border-radius: 6px; padding: 1px 4px; cursor: help; }
 .ref-add {
   border: 1.5px dashed var(--line); display: grid; place-items: center; cursor: pointer; color: var(--faint);
   font-size: 12px; text-align: center; padding: 6px;
@@ -444,8 +446,27 @@ details.writer .field + .field, details.writer .row2 + .field, details.writer .f
 .aref .tag:hover { border-color: var(--accent); }
 .aref audio { grid-area: player; width: 100%; height: 32px; min-width: 0; }
 .aref-name { grid-area: name; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.aref .x { grid-area: x; border: 0; background: none; color: var(--muted); font-size: 18px; cursor: pointer; padding: 0 4px; }
-.aref .x:hover { color: var(--bad); }
+.aref .ref-more { grid-area: x; width: 30px; height: 30px; border-radius: 8px; border: 1px solid transparent; background: none; color: var(--muted); font-size: 18px; cursor: pointer; }
+.aref .ref-more:hover, .aref .ref-more[aria-expanded="true"] { background: var(--panel); border-color: var(--line); color: var(--text); }
+/* Inputs › picture view, Describe with AI, Audio tools (reftools.js) */
+.rt-view { display: grid; gap: 8px; padding: 12px; height: 100%; box-sizing: border-box; grid-template-rows: minmax(0, 1fr) auto; }
+.rt-view img { width: 100%; height: 100%; object-fit: contain; min-height: 0; }
+.rt-view .hint { margin: 0; }
+.rt-desc { display: grid; gap: 10px; padding: 14px 16px; }
+.rt-desc-top { display: grid; grid-template-columns: 120px 1fr; gap: 12px; align-items: start; }
+.rt-desc-top img { width: 120px; height: 120px; object-fit: cover; border-radius: 10px; }
+.rt-desc-top .hint { margin: 0 0 6px; }
+.rt-desc .rt-text { width: 100%; font: 13px/1.55 inherit; }
+.rt-audio { display: grid; gap: 10px; padding: 14px 16px; }
+.rt-audio > .hint { margin: 0; }
+.rt-player { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.rt-player audio { flex: 1; min-width: 220px; height: 36px; }
+.rt-tools { display: grid; gap: 6px; }
+.rt-row { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); font-size: 13px; cursor: pointer; }
+div.rt-row { grid-template-columns: minmax(0, 1fr) 160px 56px; cursor: default; }
+.rt-row small { color: var(--muted); }
+.rt-row output { font-size: 12px; color: var(--muted); text-align: right; }
+.rt-audio .rt-status { margin: 0; }
 .aref-add { border: 1px dashed var(--line); border-radius: 10px; background: none; color: var(--muted); padding: 10px; cursor: pointer; font: inherit; font-size: 13px; }
 .aref-add:hover { border-color: var(--accent); color: var(--text); }
 .check { display: inline-flex; gap: 8px; align-items: center; font-size: 13px; cursor: pointer; }

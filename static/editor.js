@@ -71,7 +71,8 @@ const Editor = (() => {
   }
 
   /* ---------------------------------------------------------------- open / close */
-  async function open(it) {
+  // opts.onSave(item): called with the saved result (e.g. the Inputs step swaps in the edited reference picture).
+  async function open(it, opts = {}) {
     const f = it?.files?.[0];
     if (!f || it.kind !== "image") return;
     if (ed) close(true);
@@ -82,7 +83,7 @@ const Editor = (() => {
     const stage = document.querySelector(".stage");
     const root = document.getElementById("editor");
     ed = {
-      item: it, project: it.project ?? state.project?.id ?? null, root, stage,
+      item: it, project: it.project ?? state.project?.id ?? null, root, stage, onSave: opts.onSave || null,
       base, ref: f.path, dirty: false,       // ref: a server copy of exactly this picture (null after a local edit)
       mask: mk(base.width, base.height), maskOn: false,
       hist: [], redo: [], tool: "select", zoom: 1, panX: 0, panY: 0,
@@ -757,7 +758,7 @@ const Editor = (() => {
       const { item } = await r.json();
       state.items.set(item.id, item); renderGallery();
       ed.item = item; ed.ref = item.files[0].path; ed.dirty = false; ed.ops = [];
-      Media.toast("Saved as a new result.");
+      if (ed.onSave) { try { ed.onSave(item); } catch {} } else Media.toast("Saved as a new result.");
     } catch (e) { Media.toast(`Couldn't save: ${e.message}`); }
   }
 

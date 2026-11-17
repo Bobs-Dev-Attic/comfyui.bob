@@ -41,7 +41,7 @@ versions can add fields without breaking older files.
 | `seed`, `steps` | number or string | `-1` / `""` mean random / automatic |
 | `batch` | 1–4 | Takes per run |
 | `turbo`, `enhance`, `fidelity` | boolean | Turbo LoRA, FLUX prompt upsampler, max reference detail |
-| `refs` | `[{ref, url}]` | H3 Reference pictures, in `<Picture N>` order |
+| `refs` | `[{ref, url, desc?}]` | H3 Reference pictures, in `<Picture N>` order; `desc` is the picture's description from ⋯ › Describe with AI |
 | `audios` | `[{ref, url}]` | H3 Reference sounds (voices to clone; a sound file or a video's soundtrack), in `<Audio N>` order, up to 3 |
 | `loras` | `[{name, strength}]` | LoRAs on the model, applied in order after the model (and H3's turbo LoRA). `name` is as ComfyUI lists it under `models/loras`; strength −4…4 |
 | `enhance_after` (request only) | object or `null` | Settings › After generating: the Enhance chain to run on the result when it's done |

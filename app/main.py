@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, appsettings, config, llm, media, modelpaths, models, projects, prompts, render, syscheck, updater, workflows
+from . import __version__, appsettings, audiotools, config, llm, media, modelpaths, models, projects, prompts, render, syscheck, updater, workflows
 from .comfy import ComfyService
 from .jobs import EnhanceOpts, GenerateRequest, JobManager, media_path
 
@@ -234,6 +234,94 @@ async def edit_select(req: SelectReq):
         raise HTTPException(502, "AI select returned nothing")
     rel = paths[0].relative_to(config.ROOT).as_posix()
     return {"mask": rel, "url": "/" + rel}
+
+
+# ------------------------------------------------------------------ Inputs: describe a picture, audio tools
+
+class DescribeReq(BaseModel):
+    ref: str
+    backend: str | None = None
+    url: str | None = None
+    model: str | None = None
+
+
+DESCRIBE_SYSTEM = (
+    "You describe a reference picture so a video or image model can recreate what is in it from text alone. "
+    "Write one detailed paragraph, 60-120 words, in plain present-tense English. Start with the main subject. "
+    "For a person: apparent age, build, face, hair (colour, length, style), skin tone, expression, clothing with colours "
+    "and materials, accessories and pose. For an object or place: shape, materials, colours, condition and surroundings. "
+    "Then the light, colour palette and camera view. Describe only what is visible; no guesses about names, story or "
+    "feelings, no lists, no 'the image shows'.")
+
+
+@app.post("/api/describe")
+async def describe_picture(req: DescribeReq):
+    """Describe with AI: a vision LLM writes a detailed description of a reference picture for prompts."""
+    path = media_path(req.ref)
+    if media.kind_of(path.name) != "image":
+        raise HTTPException(400, "Only pictures can be described")
+    try:
+        b = llm.make_backend(req.backend, req.url)
+        model = await b.pick(req.model or None, config.OLLAMA_MODEL if b.name == "ollama" else config.LLM_MODEL)
+        if not req.model and await b.vision(model) is False:  # Auto: the first model that can see pictures
+            for m in await b.models():
+                if await b.vision(m["name"]):
+                    model = m["name"]
+                    break
+        if await b.vision(model) is False:
+            raise HTTPException(400, f"{model} can't see pictures: pick a vision model (for example qwen3-vl) for the Prompt writer")
+        t0 = asyncio.get_running_loop().time()
+        raw = await b.chat(model, [{"role": "system", "content": DESCRIBE_SYSTEM},
+                                   {"role": "user", "content": "Describe this picture.", "images": [llm._image_b64(path, 1024)]}],
+                           {"type": "object", "properties": {"description": {"type": "string", "maxLength": 1400}},
+                            "required": ["description"]}, temperature=0.3)
+        text = str(json.loads(raw).get("description", "")).strip()
+    except llm.LLMError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(502, f"The model's answer wasn't usable: {exc}") from exc
+    if not text:
+        raise HTTPException(502, "The model returned no description")
+    return {"text": text, "model": model, "seconds": round(asyncio.get_running_loop().time() - t0, 1)}
+
+
+class AudioReq(BaseModel):
+    ref: str
+    opts: audiotools.AudioOpts = Field(default_factory=audiotools.AudioOpts)
+
+
+async def _isolate_voice(ref: str) -> Path:
+    if not jobs.has_node("DemucsVoiceIsolate"):
+        raise ValueError("Removing music needs the comfyui-demucs-voice-isolate nodes in ComfyUI")
+    g = workflows.Graph()
+    load = g.add("LoadAudio", audio="")
+    iso = g.add("DemucsVoiceIsolate", audio=[load, 0], stem="vocals")
+    save = g.add("SaveAudio", audio=[iso, 0], filename_prefix="bob/voice")
+    paths = await jobs.run_quick(workflows.Built(graph=g.nodes, outputs=[save], image_inputs={"aref": load}), {"aref": ref}, timeout=1800)
+    if not paths:
+        raise RuntimeError("Voice isolation returned nothing")
+    return paths[0]
+
+
+async def _audio(req: AudioReq, keep: bool) -> dict:
+    media_path(req.ref)  # raises if invalid
+    try:
+        return await audiotools.render(req.ref, req.opts, _isolate_voice, keep=keep)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - ffmpeg's or ComfyUI's own error text is the useful part
+        raise HTTPException(502, str(exc)[:500]) from exc
+
+
+@app.post("/api/audio/preview")
+async def audio_preview(req: AudioReq):
+    return await _audio(req, keep=False)
+
+
+@app.post("/api/audio/save")
+async def audio_save(req: AudioReq):
+    out = await _audio(req, keep=True)
+    return {**out, "name": Path(req.ref).stem + " (cleaned).flac", "kind": "audio"}
 
 
 @app.post("/api/edit/save")

@@ -253,7 +253,7 @@ function renderSummary() {
 }
 
 /* ------------------------------------------------------------------ settings that persist */
-function pickRef(f) { return f ? { ref: f.ref, url: f.url } : null; }
+function pickRef(f) { return f ? { ref: f.ref, url: f.url, ...(f.desc ? { desc: f.desc } : {}) } : null; }
 function collectSettings() {
   return {
     v: 1, kind: state.kind, engine: { ...state.engine },
