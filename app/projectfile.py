@@ -352,7 +352,7 @@ class Timeline(BaseModel):
     snap: bool = True
     transitions: list[Transition] = Field(default_factory=list)
     link_audio: bool = Field(True, description="adding a video with sound also puts its sound on an audio track")
-    link_audio_track: Literal["new", "free"] = Field("new", description="new = a new audio track for each video; free = the first free audio track")
+    link_audio_track: Literal["free", "own", "new"] = Field("free", description="free = the existing audio tracks (the first one free at that time; a new one only when all overlap); own = an audio track of its own for each video; new = older name, read as free")
     master: Master = Field(default_factory=Master)
     render: dict[str, Any] = Field(default_factory=dict, description="export settings: width, height, crf")
 

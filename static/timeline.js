@@ -46,7 +46,7 @@ const TL = (() => {
     return { fps: 24, tracks: [{ id: uid(), kind: "video", name: "V1", muted: false, locked: false, hidden: false, volume: 1, height: 56 },
       { id: uid(), kind: "audio", name: "A1", muted: false, locked: false, hidden: false, volume: 1, height: 44 }],
       clips: [], markers: [], playhead: 0, zoom: 60, range_in: null, range_out: null, snap: true, render: {},
-      transitions: [], link_audio: true, link_audio_track: "new", master: { volume: 1, loudness: null, limiter: true } };
+      transitions: [], link_audio: true, link_audio_track: "free", master: { volume: 1, loudness: null, limiter: true } };
   }
 
   /* ------------------------------------------------------------------ history and saving */
@@ -162,13 +162,15 @@ const TL = (() => {
   }
 
   /* Give a video clip a linked copy on an audio track and silence the video's own sound.
-     Project settings › "Sound goes on": "new" = an audio track of its own (an empty one, or a new
-     A# track), so each video's sound can be mixed separately; "free" = the first audio track
-     that's free at that time. */
+     Project settings › "Sound goes on": "free" (the default) = the existing audio tracks: the first one
+     that's free at that time, so videos added one after another line up on A1 under V1 (a new track
+     only when every audio track already has sound there); "own" = an audio track of its own (an empty
+     one, or a new A# track), so each video's sound can be mixed separately. "new" is the old name of
+     "own" from before 0.65 and reads as "free". */
   function linkSound(c) {
     const ok = t => t.kind === "audio" && !t.locked;
-    const at0 = tl.link_audio_track === "free"
-      ? tl.tracks.find(t => ok(t) && !tl.clips.some(x => x.track === t.id && x.start < end(c) && end(x) > c.start))
+    const at0 = tl.link_audio_track !== "own"
+      ? tl.tracks.find(t => ok(t) && !tl.clips.some(x => x.track === t.id && x.start < end(c) - 1e-6 && end(x) > c.start + 1e-6))
       : tl.tracks.find(t => ok(t) && !tl.clips.some(x => x.track === t.id));
     let at = at0;
     if (!at) {
@@ -2216,7 +2218,7 @@ const TL = (() => {
     updateReadouts();
   }
   function setLinkAudio(on, where) {
-    tl.link_audio = !!on; tl.link_audio_track = where === "free" ? "free" : "new";
+    tl.link_audio = !!on; tl.link_audio_track = where === "own" ? "own" : "free";
     save(); renderBar();
   }
 
@@ -2655,7 +2657,7 @@ const TL = (() => {
     tl = timeline && timeline.tracks?.length ? structuredClone(timeline) : blank();
     tl.transitions = tl.transitions || [];
     if (tl.link_audio == null) tl.link_audio = true;
-    if (!tl.link_audio_track) tl.link_audio_track = "new";
+    if (!tl.link_audio_track || tl.link_audio_track === "new") tl.link_audio_track = "free";
     if (!tl.master) tl.master = { volume: 1, loudness: null, limiter: true };
     Mix.applyMaster();
     selTrans = null;
