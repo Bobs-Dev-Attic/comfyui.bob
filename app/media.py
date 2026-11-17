@@ -257,6 +257,31 @@ def ffmpeg() -> str | None:
     return os.environ.get("BOB_FFMPEG") or shutil.which("ffmpeg")
 
 
+def playable_audio(ref: str) -> Path:
+    """The file's sound as Opus in WebM, for browsers that can't decode its own codec (AAC in MP4
+    on Chromium builds without proprietary codecs, like Avast Secure Browser). Cached next to the
+    thumbnails; timing matches the original from 0 s."""
+    src = resolve(ref)
+    st = src.stat()
+    key = hashlib.sha1(f"{src}|{st.st_size}|{st.st_mtime_ns}|opus1".encode()).hexdigest()
+    out = THUMB_DIR / key[:2] / f"{key}.webm"
+    if out.is_file():
+        return out
+    exe = ffmpeg()
+    if not exe:
+        raise MediaError("ffmpeg isn't installed")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_name(out.stem + ".tmp.webm")
+    r = subprocess.run([exe, "-nostdin", "-v", "error", "-y", "-i", str(src), "-vn", "-map", "0:a:0",
+                        "-c:a", "libopus", "-b:a", "160k", "-ar", "48000", str(tmp)],
+                       capture_output=True, timeout=600, creationflags=NO_WINDOW)
+    if r.returncode or not tmp.is_file():
+        tmp.unlink(missing_ok=True)
+        raise MediaError((r.stderr or b"").decode("utf-8", "replace").strip()[-300:] or "no sound in that file")
+    tmp.replace(out)
+    return out
+
+
 def peaks(ref: str) -> dict[str, Any]:
     """Sound levels for drawing a waveform graph: per bucket the peak and RMS level (0–255,
     linear), `rate` buckets per second of the file. Cached next to the thumbnails."""

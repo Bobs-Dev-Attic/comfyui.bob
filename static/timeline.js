@@ -584,7 +584,7 @@ const TL = (() => {
       }
       if (!((tl.master?.volume ?? 1) > 0)) return toast("No sound: the Master volume in the mixer is all the way down.");
       if (soundPeak > -90) return;  // something was heard
-      const elOf = c => track(c.track)?.kind === "audio" ? audioEls.get(c.id) : $("#prog-video");
+      const elOf = c => audioEls.get(c.id) || (track(c.track)?.kind === "audio" ? null : $("#prog-video"));
       // Not through Web Audio (no meter to read): fine as long as the elements play unmuted.
       if (Mix.info().ctx !== "running" && loud.every(c => { const el = elOf(c); return el && !Mix.routed(el) && !el.paused && !el.muted && el.readyState >= 2; })) return;
       const els = loud.map(c => {
@@ -649,15 +649,25 @@ const TL = (() => {
     showLayer(L2, pic?.b || null, t, live, look.b, !(pic?.type === "circleclose"));
     applyCamera(t);
     camEdit?.refresh?.();
-    // Audio tracks (and video clips placed on them for their sound).
-    const live_ids = new Set();
+    // Audio tracks (and video clips placed on them for their sound). In a browser that can't decode the
+    // file's sound (AAC without proprietary codecs), the sound of the pictured video clips plays from here too.
+    const live_ids = new Set(), shown = [c, pic?.b].filter(Boolean);
     for (const a of tl.clips) {
       const tr = track(a.track);
-      if (!tr || tr.kind !== "audio" || a.kind === "image" || !(a.start <= t && end(a) > t)) continue;
+      const sidecar = NO_AAC && tr?.kind === "video" && a.kind === "video" && !a.audio_off && shown.includes(a);
+      if (!tr || (tr.kind !== "audio" && !sidecar) || a.kind === "image" || !(a.start <= t && end(a) > t)) continue;
       live_ids.add(a.id);
       let el = audioEls.get(a.id);
-      if (!el) { el = new Audio(); el.preload = "auto"; audioEls.set(a.id, el); }
-      if (el.dataset.ref !== a.ref) { el.src = mediaUrl(a.ref); el.dataset.ref = a.ref; }
+      if (!el) {
+        el = new Audio(); el.preload = "auto"; audioEls.set(a.id, el);
+        // The browser can't play this file's sound: use the studio's Opus copy of it instead.
+        el.addEventListener("error", () => {
+          if (el.dataset.alt || !el.dataset.ref || ![3, 4].includes(el.error?.code)) return;
+          el.dataset.alt = "1"; el.src = altAudioUrl(el.dataset.ref);
+          if (playing) syncProgram(true);
+        });
+      }
+      if (el.dataset.ref !== a.ref) { delete el.dataset.alt; el.dataset.ref = a.ref; el.src = needsAlt(a.ref) ? (el.dataset.alt = "1", altAudioUrl(a.ref)) : mediaUrl(a.ref); }
       Mix.out(el, soundGain(a, t), panOf(a));
       const target = a.trim_in + (t - a.start);
       if (live) { if (Math.abs(el.currentTime - target) > 0.25) el.currentTime = target; if (el.paused) el.play().catch(() => {}); }
@@ -666,6 +676,11 @@ const TL = (() => {
     for (const [id, el] of audioEls) if (!live_ids.has(id)) { el.pause(); if (!clip(id)) audioEls.delete(id); }
   }
 
+  /* Chromium builds without proprietary codecs (Avast Secure Browser, plain Chromium) play H.264 pictures
+     but can't decode AAC sound, which is what H3 videos carry: their sound comes from the studio as Opus. */
+  const NO_AAC = (() => { try { return !new Audio().canPlayType('audio/mp4; codecs="mp4a.40.2"'); } catch { return false; } })();
+  const needsAlt = ref => NO_AAC && /\.(mp4|m4a|m4v|mov|aac)$/i.test(ref || "");
+  const altAudioUrl = ref => `/api/media/audio?path=${encodeURIComponent(ref)}`;
   function showLayer(L, c, t, live, look, onTop) {
     const { v, i } = L;
     for (const el of [v, i, L.fx]) { el.style.opacity = look.opacity; el.style.clipPath = look.clip; el.style.transform = look.transform; el.style.zIndex = onTop ? 2 : 1; }
@@ -678,7 +693,7 @@ const TL = (() => {
     }
     i.hidden = true; v.hidden = false;
     const target = c.trim_in + (t - c.start);
-    Mix.out(v, soundGain(c, t), panOf(c));
+    Mix.out(v, NO_AAC ? 0 : soundGain(c, t), panOf(c));  // without AAC its sound plays from an audio element
     if (v.dataset.ref !== c.ref) { v.src = mediaUrl(c.ref); v.dataset.ref = c.ref; v.currentTime = target; }
     if (live) {
       if (Math.abs(v.currentTime - target) > 0.2) v.currentTime = target;
