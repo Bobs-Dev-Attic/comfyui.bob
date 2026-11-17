@@ -5,6 +5,21 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.58.0] - 2026-11-17
+
+### Added
+- **A live log at the bottom of the Generate step**: the running generation (or the last one) with its status,
+  progress bar and every log line as it happens (building the workflow, sending it, each sampling step, saving), the
+  same lines as the Activity console; **Activity…** opens the console on it.
+
+### Fixed
+- **The Generate step's Shots row shows the prompt exactly as Generate sends it**: the whole multi-shot prompt, or each
+  shot's own prompt, in a scrolling box (it showed only the first shot's action before). When subject definitions are
+  still missing it says the vision model writes them when you press Generate.
+- Results, the queue, the Activity console, notifications, timeline clip names and the Enhance window name a result by
+  its first shot's text instead of the start of its prompt, which now opens with section names such as
+  `subject_definitions:`.
+
 ## [0.57.0] - 2026-11-17
 
 ### Added

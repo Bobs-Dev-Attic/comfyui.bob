@@ -24,7 +24,7 @@ const Activity = (() => {
     if (it.engine === "timeline") return `Render · ${it.info?.format?.split(" (")[0] || "timeline"}`;
     let name = it.engine;
     try { name = engineName(it.kind, it.engine); } catch {}
-    return `${name} · ${(it.params?.pose || it.params?.prompt || "").slice(0, 48) || it.kind}`;
+    return `${name} · ${(it.params?.pose || promptLabel(it.params?.prompt)).slice(0, 48) || it.kind}`;
   };
 
   /* ---------------------------------------------------------------- model */
@@ -131,7 +131,34 @@ const Activity = (() => {
 
   /* ---------------------------------------------------------------- console window */
   let raf = 0;
-  function schedule() { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => { renderChip(); if (win) renderWin(); }); }
+  function schedule() { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => { renderChip(); if (win) renderWin(); renderInline(); }); }
+
+  /* The Generate step's log: the running generation (or the most recent one), live. */
+  let inlineId = null;
+  function renderInline() {
+    const box = document.getElementById("gen-log");
+    if (!box) return;
+    const e = ordered().find(x => !x.local) || null;
+    box.hidden = !e;
+    if (!e || !box.offsetParent) return;
+    const pct = e.status === "done" ? 100 : typeof e.progress === "number" ? Math.round(e.progress * 100) : null;
+    const head = `<div class="gen-log-head"><b>Log</b><span class="gen-log-t">${esc(e.title)}</span>
+      <span class="s-${e.status}">${esc(stateText(e))}${e.message && BUSY.includes(e.status) ? ` · ${esc(e.message)}` : ""}</span>
+      <button type="button" class="link" data-gen-log="open">Activity…</button></div>
+      <div class="bar${e.status === "running" && !pct ? " indeterminate" : ""}"><i style="width:${pct ?? 0}%"></i></div>`;
+    const lines = e.log.map(l => `<div class="ln ${l.level || "info"}"><time>${clock(l.t)}</time><span>${esc(l.msg)}</span></div>`).join("")
+      || `<div class="ln"><span class="hint">No log lines yet.</span></div>`;
+    let lg = box.querySelector(".act-log");
+    const atEnd = !lg || lg.scrollTop + lg.clientHeight >= lg.scrollHeight - 8;
+    if (!lg || inlineId !== e.id) {
+      inlineId = e.id;
+      box.innerHTML = `<div class="gen-log-top">${head}</div><div class="act-log" aria-live="polite">${lines}</div>`;
+      lg = box.querySelector(".act-log"); lg.scrollTop = lg.scrollHeight;
+    } else {
+      box.querySelector(".gen-log-top").innerHTML = head;
+      if (lg.childElementCount !== e.log.length) { lg.innerHTML = lines; if (atEnd) lg.scrollTop = lg.scrollHeight; }
+    }
+  }
 
   function show(id) {
     if (id) selected = id;
@@ -240,7 +267,8 @@ const Activity = (() => {
     addEventListener("keydown", e => {
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "a") { e.preventDefault(); show(); }
     }, true);
-    setInterval(renderChip, 1000);
+    setInterval(() => { renderChip(); renderInline(); }, 1000);
+    document.addEventListener("click", ev => { if (ev.target.closest('[data-gen-log="open"]')) show(inlineId); });
   });
 
   return { onEvent, load, task, show, setQueue, eta: id => eta(entries.get(id)), get entries() { return entries; } };
