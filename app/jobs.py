@@ -77,8 +77,10 @@ async def submit_job(client: Any, wf: Any, preview_method: str | None) -> Any:
 
 class MotionLayer(BaseModel):
     mask: str = Field(..., max_length=2000)  # white = the object, on the first frame
-    # one entry per frame: [dx, dy, scale, flip] (dx, dy: the object's move as a share of the picture's width, height)
+    # one entry per frame: [dx, dy, scale, flip, rotation, flip upside down] (dx, dy: the object's move as a share of
+    # the picture's width and height; rotation in degrees, clockwise; the last two may be left out)
     frames: list[list[float]] = Field(..., min_length=1, max_length=400)
+    adjust: dict[str, float] | None = None  # the object's colour: hue (degrees), sat and bri (factors)
 
 
 class GenerateRequest(BaseModel):
@@ -128,6 +130,9 @@ class GenerateRequest(BaseModel):
     motion_layers: list[MotionLayer] = Field(default_factory=list, max_length=6)
     motion_hold: Literal["loose", "normal", "tight"] = "normal"
     motion_edge: int = Field(-1, ge=-1, le=64)  # -1 = automatic
+    # "composite": start H3 from the rough animation's first frame instead of the picture (an object changed at the
+    # start: moved, sized, turned, flipped, recoloured or partly erased)
+    motion_first: Literal["picture", "composite"] = "picture"
     enhance: bool = False  # Klein prompt upsampler / Krea 2 prompt expander
     lyrics: str = Field("", max_length=20000)  # Music 3
     batch: int = Field(1, ge=1, le=4)  # number of takes (seeds seed, seed+1, ...)
@@ -488,8 +493,8 @@ class JobManager:
                 media_path(lay.mask)
                 if len(lay.frames) < n:
                     raise ValueError(f"A layer has {len(lay.frames)} frames of path; {n} are needed for {req.seconds:g} s")
-                if any(len(f) != 4 for f in lay.frames):
-                    raise ValueError("Each frame of a layer's path is [dx, dy, scale, flip]")
+                if any(not 4 <= len(f) <= 6 for f in lay.frames):
+                    raise ValueError("Each frame of a layer's path is [dx, dy, scale, flip, rotation, flip upside down]")
             media_path(req.motion_plate)
         if req.continue_from:
             if req.engine != "h3ref":
@@ -680,6 +685,17 @@ class JobManager:
             # that was never uploaded ("Invalid image file").
             saved = copy.deepcopy(built.graph)
             wf = client.workflows.from_json(built.graph)
+            if req.engine == "motion":  # the rough animation, its mask and (when asked) its first frame, before the uploads
+                vids = {"motion_ref": config.UPLOAD_DIR / f"{item['id']}_motion.mp4",
+                        "motion_mask": config.UPLOAD_DIR / f"{item['id']}_motion_mask.mp4"}
+                first = config.UPLOAD_DIR / f"{item['id']}_motion_first.png" if req.motion_first == "composite" else None
+                info = await asyncio.to_thread(
+                    motion.render, req.first_frame, req.motion_plate, req.motion_layers, int(built.info["width"]),
+                    int(built.info["height"]), int(built.info["frames"]), vids["motion_ref"], vids["motion_mask"], first)
+                self.log(item, f"Drew the rough animation: {info['layers']} object(s), {info['frames']} frames"
+                         + (", starting from its own first frame" if first else ""))
+                if first:
+                    req = req.model_copy(update={"first_frame": first.relative_to(config.ROOT).as_posix()})
             for role, node_id in built.image_inputs.items():
                 field = "image"
                 if role == "edit_rect":  # the image editor's marked rectangle, made from the selection
@@ -690,11 +706,6 @@ class JobManager:
                 if role in ("motion_ref", "motion_mask"):  # motion layers: the rough animation and its mask, drawn here
                     vids = {"motion_ref": config.UPLOAD_DIR / f"{item['id']}_motion.mp4",
                             "motion_mask": config.UPLOAD_DIR / f"{item['id']}_motion_mask.mp4"}
-                    if not vids["motion_ref"].is_file():
-                        info = await asyncio.to_thread(
-                            motion.render, req.first_frame, req.motion_plate, req.motion_layers, int(built.info["width"]),
-                            int(built.info["height"]), int(built.info["frames"]), vids["motion_ref"], vids["motion_mask"])
-                        self.log(item, f"Drew the rough animation: {info['layers']} object(s), {info['frames']} frames")
                     wf.set_input(node_id, "file", client.assets.from_file(vids[role]))
                     sent = saved.get(str(node_id))
                     if sent:

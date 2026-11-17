@@ -5,6 +5,25 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.71.0] - 2026-11-17
+
+### Added
+- **Right-click an object in Animate objects** for its tools:
+  - **Size** and **Turn** (−180° to 180°, or ↺ / ↻ 90°), **Flip** and **Upside down**: keyed at the playhead like a
+    drag, so they change along the path (size and turn ease between keys, flips switch at a key). The side panel
+    has Turn and Upside down too.
+  - **Colour** of the whole object: hue, saturation and brightness, with Reset colour.
+  - **✎ Erase parts…**: a brush (size on the bar under the picture) that takes bits out of the object, such as
+    something SAM picked up by mistake; Done (or Esc) makes the object again from what's left.
+  - **🗑 Remove object**.
+- The server draws turns, upside-down flips and colour exactly as the preview does (same order and maths), and erased
+  parts are left out of the object's mask.
+- When an object is already changed at the start (moved, sized, turned, flipped, recoloured or partly erased), H3
+  starts from the rough animation's first frame instead of the untouched picture, so the shot opens the way it was
+  set up (`motion_first: "composite"`). Shots with objects in motion do the same.
+- Request fields: each `motion_layers` frame may add rotation and upside-down flip
+  (`[dx, dy, scale, flip, rotation, flip upside down]`), each layer an `adjust` (`hue`, `sat`, `bri`).
+
 ## [0.70.0] - 2026-11-17
 
 ### Added

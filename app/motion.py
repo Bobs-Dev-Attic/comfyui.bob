@@ -19,7 +19,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageFilter, ImageOps
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 from . import media
 
@@ -69,13 +69,48 @@ def auto_edge(first_frame: str, layers: list[Any], width: int, height: int) -> i
     return int(max(0, min(16, (smallest - 2 * TOKEN_PX) // 2)))
 
 
+def recolor(img: Image.Image, adjust: dict[str, float] | None) -> Image.Image:
+    """An object's colour (Animate objects' right-click menu): hue turned by `hue` degrees (in HSV), then saturation
+    and brightness as factors (PIL's Color and Brightness enhancers). The page draws its preview with the same steps."""
+    a = adjust or {}
+    hue, sat, bri = float(a.get("hue", 0) or 0), float(a.get("sat", 1) if a.get("sat") is not None else 1), float(a.get("bri", 1) if a.get("bri") is not None else 1)
+    if abs(hue) < 0.5 and abs(sat - 1) < 1e-3 and abs(bri - 1) < 1e-3:
+        return img
+    alpha = img.getchannel("A") if img.mode == "RGBA" else None
+    rgb = img.convert("RGB")
+    if abs(hue) >= 0.5:
+        h, s, v = rgb.convert("HSV").split()
+        shift = round(hue / 360 * 256) % 256
+        h = h.point(lambda x: (x + shift) % 256)
+        rgb = Image.merge("HSV", (h, s, v)).convert("RGB")
+    if abs(sat - 1) >= 1e-3:
+        rgb = ImageEnhance.Color(rgb).enhance(sat)
+    if abs(bri - 1) >= 1e-3:
+        rgb = ImageEnhance.Brightness(rgb).enhance(bri)
+    if alpha is not None:
+        rgb = rgb.convert("RGBA")
+        rgb.putalpha(alpha)
+    return rgb
+
+
+def frame_of(lay: Any, f: int) -> tuple[float, float, float, bool, float, bool]:
+    """A layer's frame: (dx, dy, scale, flipped left-right, rotation in degrees clockwise, flipped upside down)."""
+    v = list(lay.frames[min(f, len(lay.frames) - 1)]) + [0, 0, 1, 0, 0, 0][len(lay.frames[0]):]
+    dx, dy, s, fh, r, fv = (v + [0, 0, 1, 0, 0, 0])[:6]
+    return float(dx), float(dy), max(0.05, float(s)), bool(fh), float(r), bool(fv)
+
+
 def render(first_frame: str, plate: str, layers: list[Any], width: int, height: int, frames: int,
-           out_ref: Path, out_mask: Path) -> dict[str, Any]:
-    """Draw the rough animation and its mask video (frames x width x height, 24 fps)."""
+           out_ref: Path, out_mask: Path, out_first: Path | None = None) -> dict[str, Any]:
+    """Draw the rough animation and its mask video (frames x width x height, 24 fps); with out_first, also its first
+    frame as a picture (the first frame H3 starts from when the objects are changed at the start)."""
     exe = media.ffmpeg()
     if not exe:
         raise media.MediaError("ffmpeg isn't installed")
     src, cuts = load_layers(first_frame, [l.mask for l in layers])
+    for lay, cut in zip(layers, cuts):
+        if cut:
+            cut["cut"] = recolor(cut["cut"], getattr(lay, "adjust", None))
     iw, ih = src.size
     k, ox, oy = _fit(iw, ih, width, height)
     with Image.open(media.resolve(plate)) as p:
@@ -99,17 +134,25 @@ def render(first_frame: str, plate: str, layers: list[Any], width: int, height: 
             for lay, cut in zip(layers, cuts):
                 if not cut:
                     continue
-                dx, dy, s, flip = (lay.frames[min(f, len(lay.frames) - 1)] + [0, 0, 1, 0])[:4]
-                s = max(0.05, float(s))
+                dx, dy, s, fh, rot, fv = frame_of(lay, f)
                 x0, y0, x1, y1 = cut["box"]
                 cx, cy = (x0 + x1) / 2 + dx * iw, (y0 + y1) / 2 + dy * ih  # the object's centre, in the picture
                 w, h = max(1, round((x1 - x0) * k * s)), max(1, round((y1 - y0) * k * s))
                 img, hard = cut["cut"].resize((w, h), Image.Resampling.LANCZOS), cut["hard"].resize((w, h), Image.Resampling.NEAREST)
-                if flip:
+                # as the page draws it: flips, then the turn about the centre (canvas rotate = clockwise)
+                if fh:
                     img, hard = ImageOps.mirror(img), ImageOps.mirror(hard)
-                at = (round(ox + cx * k - w / 2), round(oy + cy * k - h / 2))
+                if fv:
+                    img, hard = ImageOps.flip(img), ImageOps.flip(hard)
+                if abs(rot) >= 0.05:
+                    img = img.rotate(-rot, resample=Image.Resampling.BICUBIC, expand=True)
+                    hard = hard.rotate(-rot, resample=Image.Resampling.NEAREST, expand=True)
+                at = (round(ox + cx * k - img.width / 2), round(oy + cy * k - img.height / 2))
                 frame.paste(img, at, img)
-                mask.paste(255, (at[0], at[1], at[0] + w, at[1] + h), hard)
+                mask.paste(255, (at[0], at[1], at[0] + hard.width, at[1] + hard.height), hard)
+            if f == 0 and out_first is not None:
+                out_first.parent.mkdir(parents=True, exist_ok=True)
+                frame.save(out_first, "PNG")
             ref_p.stdin.write(frame.tobytes())
             mask_p.stdin.write(mask.tobytes())
     finally:

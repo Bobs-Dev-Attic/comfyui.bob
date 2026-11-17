@@ -1041,7 +1041,7 @@ const Shots = (() => {
       if (motionOn(i)) {  // objects in motion: the motion engine, from the plan's picture
         const p = s.motion, secs = +s.seconds || 3;
         return { ...base, engine: "motion", prompt: prompt(i), seconds: secs, first_frame: p.picture.ref, last_frame: null, references: [],
-          ref_audios: [], motion_plate: p.plate, motion_layers: Motion.layerFrames(p, secs), motion_hold: p.hold || "normal",
+          ref_audios: [], motion_plate: p.plate, motion_layers: Motion.layerFrames(p, secs), motion_hold: p.hold || "normal", motion_first: Motion.firstOf(p),
           loras: [], unet: null, sampler: null, scheduler: null, cfg: null };
       }
       return { ...base, prompt: prompt(i), seconds: +s.seconds || 3, references: isR ? base.references : [], ref_audios: arefsFor([s]),

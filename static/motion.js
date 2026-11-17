@@ -28,16 +28,19 @@ const Motion = (() => {
   const dur = () => (frames() - 1) / FPS;
 
   /* ---------------------------------------------------------------- the path of a layer */
-  // keys: [{t, x, y, s, f}] by time; x, y: the move as a share of the picture's width and height; s: size; f: flipped.
+  // keys: [{t, x, y, s, f, r, v}] by time; x, y: the move as a share of the picture's width and height; s: size;
+  // f: flipped left to right; r: turned, in degrees clockwise; v: flipped upside down. Size and turn ease in a straight
+  // line between keys; the flips switch at a key.
+  const full = k => ({ r: 0, v: false, f: false, s: 1, x: 0, y: 0, ...k });
   function at(lay, t) {
     const K = lay.keys;
-    if (t <= K[0].t || K.length === 1) return { ...K[0] };
-    if (t >= K.at(-1).t) return { ...K.at(-1) };
+    if (t <= K[0].t || K.length === 1) return full(K[0]);
+    if (t >= K.at(-1).t) return full(K.at(-1));
     let i = 0; while (K[i + 1].t < t) i++;
-    const a = K[i], b = K[i + 1], u = (t - a.t) / Math.max(1e-6, b.t - a.t);
+    const a = full(K[i]), b = full(K[i + 1]), u = (t - a.t) / Math.max(1e-6, b.t - a.t);
     const p0 = K[i - 1] || a, p3 = K[i + 2] || b;
     const cr = (q0, q1, q2, q3) => 0.5 * ((2 * q1) + (-q0 + q2) * u + (2 * q0 - 5 * q1 + 4 * q2 - q3) * u * u + (-q0 + 3 * q1 - 3 * q2 + q3) * u * u * u);
-    return { t, x: cr(p0.x, a.x, b.x, p3.x), y: cr(p0.y, a.y, b.y, p3.y), s: a.s + (b.s - a.s) * u, f: a.f };
+    return { t, x: cr(p0.x, a.x, b.x, p3.x), y: cr(p0.y, a.y, b.y, p3.y), s: a.s + (b.s - a.s) * u, f: a.f, r: a.r + (b.r - a.r) * u, v: a.v };
   }
   function keyAt(lay, t, make) {
     const near = lay.keys.find(k => Math.abs(k.t - t) < 0.5 / FPS);
@@ -54,11 +57,25 @@ const Motion = (() => {
     const k = Math.min(W / m.pic.width, H / m.pic.height);
     return { k, ox: (W - m.pic.width * k) / 2, oy: (H - m.pic.height * k) / 2 };
   }
-  // A layer's box on screen at time t (for drawing and for picking it up).
+  // A layer on screen at time t: its centre, size (before the turn) and pose (for drawing and for picking it up).
   function placed(lay, t, v) {
     const p = at(lay, t), [x0, y0, x1, y1] = lay.box, iw = m.pic.width, ih = m.pic.height;
     const cx = (x0 + x1) / 2 + p.x * iw, cy = (y0 + y1) / 2 + p.y * ih, w = (x1 - x0) * p.s, h = (y1 - y0) * p.s;
-    return { p, x: v.ox + (cx - w / 2) * v.k, y: v.oy + (cy - h / 2) * v.k, w: w * v.k, h: h * v.k };
+    return { p, cx: v.ox + cx * v.k, cy: v.oy + cy * v.k, w: w * v.k, h: h * v.k, x: v.ox + (cx - w / 2) * v.k, y: v.oy + (cy - h / 2) * v.k };
+  }
+  // A screen point in the layer's own frame (before its turn, flips and size), relative to its centre, in screen px.
+  function local(b, sx, sy) {
+    const a = -b.p.r * Math.PI / 180, dx = sx - b.cx, dy = sy - b.cy;
+    let lx = dx * Math.cos(a) - dy * Math.sin(a), ly = dx * Math.sin(a) + dy * Math.cos(a);
+    if (b.p.f) lx = -lx;
+    if (b.p.v) ly = -ly;
+    return [lx, ly];
+  }
+  function drawLayer(g, lay, b) {
+    g.save();
+    g.translate(b.cx, b.cy); g.rotate(b.p.r * Math.PI / 180); g.scale(b.p.f ? -1 : 1, b.p.v ? -1 : 1);
+    g.drawImage(lay.show || lay.cut, -b.w / 2, -b.h / 2, b.w, b.h);
+    g.restore();
   }
   function draw() {
     if (!m?.canvas) return;
@@ -69,12 +86,11 @@ const Motion = (() => {
     if (!m.plateImg) { g.fillStyle = "rgba(0,0,0,.35)"; g.fillRect(v.ox, v.oy, m.pic.width * v.k, m.pic.height * v.k); }
     m.layers.forEach((lay, i) => {
       const b = placed(lay, m.t, v);
-      g.save();
-      if (b.p.f) { g.translate(b.x + b.w, b.y); g.scale(-1, 1); g.drawImage(lay.cut, 0, 0, b.w, b.h); }
-      else g.drawImage(lay.cut, b.x, b.y, b.w, b.h);
-      g.restore();
+      drawLayer(g, lay, b);
       if (i === m.sel && !m.playing) {
-        g.strokeStyle = lay.color; g.lineWidth = 2; g.setLineDash([6, 4]); g.strokeRect(b.x, b.y, b.w, b.h); g.setLineDash([]);
+        g.save(); g.translate(b.cx, b.cy); g.rotate(b.p.r * Math.PI / 180);
+        g.strokeStyle = lay.color; g.lineWidth = 2; g.setLineDash(m.erasing ? [2, 3] : [6, 4]); g.strokeRect(-b.w / 2, -b.h / 2, b.w, b.h); g.setLineDash([]);
+        g.restore();
         // the path, as dots every few frames
         g.fillStyle = lay.color;
         for (let f = 0; f < frames(); f += 3) { const q = placed(lay, f / FPS, v); g.fillRect(q.x + q.w / 2 - 1.5, q.y + q.h / 2 - 1.5, 3, 3); }
@@ -113,12 +129,16 @@ const Motion = (() => {
       $(".mo-path-h").textContent = `Path of ${lay.name}`;
       $(".mo-keys").innerHTML = lay.keys.map((q, j) => `<button type="button" class="chip-btn${Math.abs(q.t - m.t) < 0.5 / FPS ? " on" : ""}" data-key="${j}" title="Go to this key">${q.t.toFixed(2)} s</button>${j ? `<button type="button" class="set-x" data-act="del-key" data-key="${j}" title="Remove this key" aria-label="Remove the key at ${q.t.toFixed(2)} s">×</button>` : ""}`).join(" ");
       $("#mo-scale").value = String(cur.s); $(".mo-scale-v").textContent = `${Math.round(cur.s * 100)}%`;
-      $("#mo-flip").checked = !!cur.f;
-      $(".mo-keyhint").textContent = k ? `Key at ${k.t.toFixed(2)} s: drag the object, or change its size and flip.` : `No key at ${m.t.toFixed(2)} s: dragging the object or changing its size adds one.`;
+      $("#mo-rot").value = String(Math.round(cur.r)); $(".mo-rot-v").textContent = `${Math.round(cur.r)}°`;
+      $("#mo-flip").checked = !!cur.f; $("#mo-flipv").checked = !!cur.v;
+      $(".mo-keyhint").textContent = k ? `Key at ${k.t.toFixed(2)} s: drag the object, or right-click it for size, turn, flip, erase and colour.`
+        : `No key at ${m.t.toFixed(2)} s: dragging the object or changing it adds one. Right-click it for more.`;
     }
     const ok = m.layers.length && m.plateRef && !m.plateStale && !m.plateBusy;
     $('[data-act="generate"]').disabled = !ok || m.busy;
     const verb = m.onUse ? "Use for this shot" : "Generate";
+    $(".mo-erase-bar").hidden = !m.erasing;
+    if (m.erasing) $(".mo-erase-name").textContent = m.layers[m.erasing.i]?.name || "";
     $(".mo-foot-st").textContent = m.busy ? m.busy : !m.layers.length ? "Add an object to move." : !m.plateRef || m.plateStale ? `Make the empty background, then ${verb}.`
       : m.onUse ? "Ready: the shot renders with these objects and paths." : "Ready to generate.";
   }
@@ -142,8 +162,119 @@ const Motion = (() => {
       cg.drawImage(mc, x0, y0, cut.width, cut.height, 0, 0, cut.width, cut.height);
       cg.globalCompositeOperation = "source-in";
       cg.drawImage(m.pic, x0, y0, cut.width, cut.height, 0, 0, cut.width, cut.height);
-      return { name: name || `Object ${m.layers.length + 1}`, color: COLORS[m.layers.length % COLORS.length], mask, maskImg: mi,
-        box, cut, keys: keys?.length ? structuredClone(keys) : [{ t: 0, x: 0, y: 0, s: 1, f: false }] };
+      const maskCanvas = mk(W, H), mg = maskCanvas.getContext("2d");  // opaque white on black, for Erase parts
+      mg.fillStyle = "#000"; mg.fillRect(0, 0, W, H); mg.drawImage(mi, 0, 0, W, H);
+      return { name: name || `Object ${m.layers.length + 1}`, color: COLORS[m.layers.length % COLORS.length], mask, maskImg: mi, maskCanvas,
+        box, cut, show: null, adj: { hue: 0, sat: 1, bri: 1 }, edited: false, maskDirty: false,
+        keys: keys?.length ? structuredClone(keys) : [{ t: 0, x: 0, y: 0, s: 1, f: false, r: 0, v: false }] };
+  }
+
+  /* ---------------------------------------------------------------- colour (the server's motion.recolor, same steps) */
+  const adjDefault = a => !a || (Math.abs(a.hue || 0) < 0.5 && Math.abs((a.sat ?? 1) - 1) < 1e-3 && Math.abs((a.bri ?? 1) - 1) < 1e-3);
+  function recolor(lay) {
+    const a = lay.adj;
+    if (adjDefault(a)) { lay.show = null; return; }
+    const c = mk(lay.cut.width, lay.cut.height), g = c.getContext("2d");
+    g.drawImage(lay.cut, 0, 0);
+    const d = g.getImageData(0, 0, c.width, c.height), px = d.data, shift = Math.round((a.hue || 0) / 360 * 256) / 256;
+    for (let o = 0; o < px.length; o += 4) {
+      if (!px[o + 3]) continue;
+      let r = px[o] / 255, gg = px[o + 1] / 255, b = px[o + 2] / 255;
+      if (shift) {  // HSV hue turn, as PIL's HSV mode
+        const mx = Math.max(r, gg, b), mn = Math.min(r, gg, b), dv = mx - mn;
+        let h = 0;
+        if (dv) h = mx === r ? ((gg - b) / dv) / 6 : mx === gg ? ((b - r) / dv + 2) / 6 : ((r - gg) / dv + 4) / 6;
+        h = ((h + shift) % 1 + 1) % 1;
+        const s = mx ? dv / mx : 0, v = mx, i = Math.floor(h * 6), f = h * 6 - i, p = v * (1 - s), q = v * (1 - f * s), t = v * (1 - (1 - f) * s);
+        [r, gg, b] = [[v, t, p], [q, v, p], [p, v, t], [p, q, v], [t, p, v], [v, p, q]][i % 6];
+      }
+      if (Math.abs((a.sat ?? 1) - 1) >= 1e-3) {  // PIL ImageEnhance.Color: blend with the grey
+        const L = 0.299 * r + 0.587 * gg + 0.114 * b, k = a.sat;
+        r = L + (r - L) * k; gg = L + (gg - L) * k; b = L + (b - L) * k;
+      }
+      const br = a.bri ?? 1;  // PIL ImageEnhance.Brightness: a factor
+      px[o] = Math.max(0, Math.min(255, Math.round(r * br * 255)));
+      px[o + 1] = Math.max(0, Math.min(255, Math.round(gg * br * 255)));
+      px[o + 2] = Math.max(0, Math.min(255, Math.round(b * br * 255)));
+    }
+    g.putImageData(d, 0, 0);
+    lay.show = c;
+  }
+
+  /* ---------------------------------------------------------------- the object menu (right-click) */
+  function closeMenu() { m?.root.querySelector(".mo-menu")?.remove(); }
+  function openMenu(i, x, y) {
+    closeMenu();
+    m.sel = i; refresh();
+    const lay = m.layers[i], cur = at(lay, m.t), a = lay.adj;
+    const el = document.createElement("div");
+    el.className = "mo-menu"; el.setAttribute("role", "dialog"); el.setAttribute("aria-label", `${lay.name}: tools`);
+    const slider = (key, label, min, max, step, val, fmt) => `<label class="mo-ms"><span>${label}</span>
+      <input type="range" data-mm="${key}" min="${min}" max="${max}" step="${step}" value="${val}"><output>${fmt(val)}</output></label>`;
+    el.innerHTML = `<div class="mo-mh"><b>${esc(lay.name)}</b> <span class="hint">at ${m.t.toFixed(2)} s</span></div>
+      ${slider("s", "Size", 0.2, 3, 0.01, cur.s, v => `${Math.round(v * 100)}%`)}
+      ${slider("r", "Turn", -180, 180, 1, Math.round(cur.r), v => `${Math.round(v)}°`)}
+      <div class="mo-mrow"><button type="button" class="btn sm" data-mm="rot-90" title="Turn left 90°">↺ 90°</button><button type="button" class="btn sm" data-mm="rot+90" title="Turn right 90°">↻ 90°</button>
+        <button type="button" class="btn sm" data-mm="flip-h">⇋ Flip</button><button type="button" class="btn sm" data-mm="flip-v">⇵ Upside down</button></div>
+      <p class="hint mo-mnote">Size, turn and flips are keyed at the playhead.</p>
+      <div class="mo-mh2">Colour <span class="hint">the whole object</span></div>
+      ${slider("hue", "Hue", -180, 180, 1, a.hue, v => `${Math.round(v)}°`)}
+      ${slider("sat", "Saturation", 0, 2, 0.01, a.sat, v => `${Math.round(v * 100)}%`)}
+      ${slider("bri", "Brightness", 0.2, 2, 0.01, a.bri, v => `${Math.round(v * 100)}%`)}
+      <div class="mo-mrow"><button type="button" class="btn sm ghost" data-mm="color-reset">Reset colour</button></div>
+      <div class="mo-mrow mo-msep"><button type="button" class="btn sm" data-mm="erase">✎ Erase parts…</button>
+        <button type="button" class="btn sm ghost" data-mm="remove">🗑 Remove object</button></div>`;
+    m.root.appendChild(el);
+    const W = el.offsetWidth, H = el.offsetHeight;
+    el.style.left = `${Math.max(8, Math.min(x, window.innerWidth - W - 8))}px`;
+    el.style.top = `${Math.max(8, Math.min(y, window.innerHeight - H - 8))}px`;
+    el.addEventListener("input", e => {
+      const k = e.target.dataset.mm, val = +e.target.value; if (!k) return;
+      e.target.nextElementSibling.textContent = k === "s" || k === "sat" || k === "bri" ? `${Math.round(val * 100)}%` : `${Math.round(val)}°`;
+      if (k === "s" || k === "r") keyAt(lay, m.t, true)[k] = val;
+      else { lay.adj[k] = val; recolor(lay); }
+      refresh();
+    });
+    el.addEventListener("click", e => {
+      const k = e.target.closest("[data-mm]")?.dataset.mm; if (!k || e.target.type === "range") return;
+      if (k === "rot-90" || k === "rot+90") {
+        const key = keyAt(lay, m.t, true); key.r = Math.max(-180, Math.min(180, Math.round((key.r || 0) + (k === "rot+90" ? 90 : -90))));
+        if (Math.abs(key.r) === 180 && k === "rot+90") key.r = 180;
+        el.querySelector('[data-mm="r"]').value = String(key.r); el.querySelector('[data-mm="r"]').nextElementSibling.textContent = `${key.r}°`;
+      }
+      if (k === "flip-h") { const key = keyAt(lay, m.t, true); key.f = !full(key).f; }
+      if (k === "flip-v") { const key = keyAt(lay, m.t, true); key.v = !full(key).v; }
+      if (k === "color-reset") {
+        lay.adj = { hue: 0, sat: 1, bri: 1 }; recolor(lay);
+        for (const [n, v] of [["hue", 0], ["sat", 1], ["bri", 1]]) { const s = el.querySelector(`[data-mm="${n}"]`); s.value = String(v); s.dispatchEvent(new Event("input", { bubbles: true })); }
+      }
+      if (k === "erase") { closeMenu(); startErase(i); return; }
+      if (k === "remove") { closeMenu(); m.layers.splice(i, 1); m.sel = Math.min(m.sel, m.layers.length - 1); if (m.plateRef) m.plateStale = true; }
+      refresh();
+    });
+  }
+
+  /* ---------------------------------------------------------------- Erase parts: a brush that takes bits out of an object */
+  function startErase(i) { m.erasing = { i, size: m.erasing?.size || 24 }; m.picking = false; refresh(); }
+  function stopErase() { if (m.erasing) rebuild(m.erasing.i); m.erasing = null; refresh(); }
+  // After Erase parts, the object is made again from its edited mask, as the server will (its box may be smaller).
+  function rebuild(i) {
+    const lay = m.layers[i]; if (!lay?.maskDirty) return;
+    const nl = layerFrom(lay.maskCanvas, lay.mask, lay.name, lay.keys);
+    if (!nl) { m.layers.splice(i, 1); m.sel = Math.min(m.sel, m.layers.length - 1); Media.toast(`${lay.name} was erased completely, so it's gone.`); return; }
+    Object.assign(lay, { box: nl.box, cut: nl.cut, maskImg: nl.maskImg, maskCanvas: nl.maskCanvas });
+    recolor(lay);
+  }
+  function eraseAt(lay, sx, sy) {
+    const v = view(), b = placed(lay, m.t, v), [lx, ly] = local(b, sx, sy);
+    const sc = v.k * b.p.s, R = m.erasing.size / 2 / sc;  // the brush in picture pixels
+    const [x0, y0, x1, y1] = lay.box, px = lx / sc + (x1 - x0) / 2, py = ly / sc + (y1 - y0) / 2;
+    const cg = lay.cut.getContext("2d");
+    cg.save(); cg.globalCompositeOperation = "destination-out"; cg.beginPath(); cg.arc(px, py, R, 0, Math.PI * 2); cg.fill(); cg.restore();
+    const mg = lay.maskCanvas.getContext("2d");
+    mg.fillStyle = "#000"; mg.beginPath(); mg.arc(x0 + px, y0 + py, R, 0, Math.PI * 2); mg.fill();
+    lay.edited = lay.maskDirty = true;
+    recolor(lay);
   }
   async function addLayer(body, name) {
     m.busy = "Finding the object…"; renderSide();
@@ -199,15 +330,31 @@ const Motion = (() => {
 
   /* ---------------------------------------------------------------- plans (a shot's motion, Shots step) */
   // What a shot keeps: the picture, its empty background, each object's mask and keys, and how tightly to follow.
+  // Masks changed with Erase parts go up as new pictures before a render or a shot keeps them.
+  async function saveMasks() {
+    if (m.erasing) stopErase();
+    for (const l of m.layers) if (l.maskDirty) { l.mask = await upload(await blobOf(l.maskCanvas), "motion_object.png"); l.maskDirty = false; }
+  }
   const planOf = () => ({ picture: { ref: m.ref, url: m.url, name: m.name }, plate: m.plateRef, hold: m.hold,
-    layers: m.layers.map(l => ({ name: l.name, mask: l.mask, keys: structuredClone(l.keys) })) });
-  // The request's layers for `seconds` of a plan: each object's move, size and flip in every frame.
+    layers: m.layers.map(l => ({ name: l.name, mask: l.mask, keys: structuredClone(l.keys), adj: { ...l.adj }, edited: !!l.edited })) });
+  // The request's layers for `seconds` of a plan: each object's move, size, flips and turn in every frame, and colour.
   function layerFrames(plan, seconds) {
     const n = window.H3Prompt.h3Length(+seconds || 3);
-    return plan.layers.map(l => ({ mask: l.mask,
-      frames: Array.from({ length: n }, (_, f) => { const p = at(l, f / FPS); return [+p.x.toFixed(5), +p.y.toFixed(5), +p.s.toFixed(4), p.f ? 1 : 0]; }) }));
+    return plan.layers.map(l => ({ mask: l.mask, adjust: adjDefault(l.adj) ? null : { ...l.adj },
+      frames: Array.from({ length: n }, (_, f) => { const p = at(l, f / FPS); return [+p.x.toFixed(5), +p.y.toFixed(5), +p.s.toFixed(4), p.f ? 1 : 0, +p.r.toFixed(2), p.v ? 1 : 0]; }) }));
   }
-  function use() {
+  /* H3 starts from the picture, unless an object is already changed at the start (moved, sized, turned, flipped,
+     recoloured or partly erased): then from the rough animation's own first frame, so the two agree. */
+  function firstOf(plan) {
+    const changed = plan.layers.some(l => {
+      const p = at(l, 0);
+      return l.edited || !adjDefault(l.adj) || Math.abs(p.x) > 1e-4 || Math.abs(p.y) > 1e-4 || Math.abs(p.s - 1) > 1e-3 || Math.abs(p.r) > 0.05 || p.f || p.v;
+    });
+    return changed ? "composite" : "picture";
+  }
+  async function use() {
+    m.busy = "Saving…"; renderSide();
+    try { await saveMasks(); } catch (e) { Media.toast(`Couldn't save an erased object: ${e.message}`); m.busy = ""; return renderSide(); }
     const plan = planOf(), cb = m.onUse;
     cb?.(plan);  // first: closing the window may reopen the shot, which should show the plan
     m?.win.close();
@@ -217,15 +364,15 @@ const Motion = (() => {
   async function generate() {
     if (m.onUse) return use();
     const n = frames(), iw = m.pic.width, ih = m.pic.height;
-    const layers = m.layers.map(l => ({ mask: l.mask,
-      frames: Array.from({ length: n }, (_, f) => { const p = at(l, f / FPS); return [+p.x.toFixed(5), +p.y.toFixed(5), +p.s.toFixed(4), p.f ? 1 : 0]; }) }));
+    try { await saveMasks(); } catch (e) { return Media.toast(`Couldn't save an erased object: ${e.message}`); }
+    const plan = planOf(), layers = layerFrames(plan, m.seconds);
     const names = m.layers.map(l => l.name);
     const what = m.prompt.trim() || `${names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0]} move${names.length > 1 ? "" : "s"} through the scene.`;
     const prompt = `integrated_multimodal_description: [Shot 1] ${what.replace(/\s+/g, " ")} The camera holds a static shot.\n\noverall_soundscape: Natural sound of the scene.\n\nnon_diegetic_music: N/A`;
     m.busy = "Sending to H3…"; renderSide();
     try {
       await submit({ kind: "video", engine: "motion", prompt, seconds: n / FPS, aspect: "16:9", quality: m.quality, seed: -1, batch: 1, turbo: true,
-        first_frame: m.ref, motion_plate: m.plateRef, motion_layers: layers, motion_hold: m.hold, project: m.project });
+        first_frame: m.ref, motion_plate: m.plateRef, motion_layers: layers, motion_hold: m.hold, motion_first: firstOf(plan), project: m.project });
       Media.toast("Animate objects: queued. The video shows up in the gallery when it's done.");
     } finally { if (m) { m.busy = ""; renderSide(); } }
     void iw; void ih;
@@ -241,11 +388,23 @@ const Motion = (() => {
   }
   function hit(e) {
     const r = m.canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top, v = view();
-    for (let i = m.layers.length - 1; i >= 0; i--) { const b = placed(m.layers[i], m.t, v); if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return i; }
+    for (let i = m.layers.length - 1; i >= 0; i--) {
+      const b = placed(m.layers[i], m.t, v), [lx, ly] = local(b, x, y);
+      if (Math.abs(lx) <= b.w / 2 && Math.abs(ly) <= b.h / 2) return i;
+    }
     return -1;
   }
   function onDown(e) {
-    if (m.busy || m.playing) return;
+    if (m.busy || m.playing || e.button === 2) return;
+    closeMenu();
+    if (m.erasing) {
+      const lay = m.layers[m.erasing.i]; if (!lay) return stopErase();
+      const r = m.canvas.getBoundingClientRect(), paint = ev => { eraseAt(lay, ev.clientX - r.left, ev.clientY - r.top); draw(); };
+      paint(e);
+      const up = () => { window.removeEventListener("pointermove", paint); window.removeEventListener("pointerup", up); refresh(); };
+      window.addEventListener("pointermove", paint); window.addEventListener("pointerup", up);
+      return;
+    }
     const r = m.canvas.getBoundingClientRect(), v = view();
     const px = (e.clientX - r.left - v.ox) / v.k, py = (e.clientY - r.top - v.oy) / v.k;
     if (m.picking) {
@@ -299,6 +458,9 @@ const Motion = (() => {
           <input type="range" class="mo-scrub" min="0" step="${1 / FPS}" value="0" aria-label="Time">
           <span class="mo-time"></span>
         </div>
+        <div class="mo-erase-bar" hidden>✎ Erasing parts of <b class="mo-erase-name"></b>: paint over what to take out.
+          <label>Brush <input type="range" id="mo-brush" min="6" max="80" step="1" value="24"></label>
+          <button type="button" class="btn sm primary" data-act="erase-done">Done</button></div>
       </div>
       <aside class="mo-side">
         <section><h3>Objects</h3>
@@ -314,7 +476,8 @@ const Motion = (() => {
           <p class="hint mo-keyhint"></p>
           <div class="mo-keys"></div>
           <div class="field"><label for="mo-scale">Size <span class="mo-scale-v"></span></label><input type="range" id="mo-scale" min="0.2" max="3" step="0.01"></div>
-          <label class="check"><input type="checkbox" id="mo-flip"> Flipped</label>
+          <div class="field"><label for="mo-rot">Turn <span class="mo-rot-v"></span></label><input type="range" id="mo-rot" min="-180" max="180" step="1"></div>
+          <label class="check"><input type="checkbox" id="mo-flip"> Flipped</label> <label class="check"><input type="checkbox" id="mo-flipv"> Upside down</label>
           <div class="field mo-track"><label for="mo-track">Use a tracked path <span class="opt">from 🎯 Track an object, on a video</span></label>
             <div class="mo-find"><select id="mo-track"></select><button type="button" class="btn sm" data-act="apply-track">Use</button></div></div></section>
         <section${shot ? " hidden" : ""}><h3>Shot</h3>
@@ -349,6 +512,7 @@ const Motion = (() => {
       if (a === "del-layer") { m.layers.splice(+b.dataset.i, 1); m.sel = Math.min(m.sel, m.layers.length - 1); if (m.plateRef) m.plateStale = true; return refresh(); }
       if (a === "del-key") { m.layers[m.sel].keys.splice(+b.dataset.key, 1); return refresh(); }
       if (a === "apply-track") return applyTrack($("#mo-track").value);
+      if (a === "erase-done") return stopErase();
       if (b.dataset.key != null) { m.t = m.layers[m.sel].keys[+b.dataset.key].t; return refresh(); }
       if (b.dataset.i != null) { m.sel = +b.dataset.i; return refresh(); }
     });
@@ -357,6 +521,9 @@ const Motion = (() => {
       if (e.target.classList.contains("mo-scrub")) { m.t = Math.round(+e.target.value * FPS) / FPS; m.playing = false; return refresh(); }
       if (id === "mo-scale" && lay) { keyAt(lay, m.t, true).s = +e.target.value; return refresh(); }
       if (id === "mo-flip" && lay) { keyAt(lay, m.t, true).f = e.target.checked; return refresh(); }
+      if (id === "mo-flipv" && lay) { keyAt(lay, m.t, true).v = e.target.checked; return refresh(); }
+      if (id === "mo-rot" && lay) { keyAt(lay, m.t, true).r = +e.target.value; return refresh(); }
+      if (id === "mo-brush" && m.erasing) { m.erasing.size = +e.target.value; return; }
       if (id === "mo-showplate") { m.showPlate = e.target.checked; return draw(); }
       if (id === "mo-sec") { m.seconds = Math.max(2, Math.min(10, +e.target.value || 3)); m.t = Math.min(m.t, dur()); return refresh(); }
       if (id === "mo-q") m.quality = e.target.value;
@@ -365,6 +532,14 @@ const Motion = (() => {
     });
     root.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.id === "mo-word") { e.preventDefault(); root.querySelector('[data-act="find"]').click(); } });
     m.canvas.addEventListener("pointerdown", onDown);
+    m.canvas.addEventListener("contextmenu", e => {
+      e.preventDefault();
+      if (m.busy || m.playing) return;
+      const i = hit(e);
+      if (i >= 0) openMenu(i, e.clientX, e.clientY); else closeMenu();
+    });
+    m.root.addEventListener("pointerdown", e => { if (!e.target.closest(".mo-menu, .mo-canvas")) closeMenu(); });
+    m.root.addEventListener("keydown", e => { if (e.key === "Escape" && (m.root.querySelector(".mo-menu") || m.erasing)) { e.stopPropagation(); closeMenu(); stopErase(); } }, true);
     new ResizeObserver(() => m && draw()).observe(m.canvas);
     if (shot) { const h = root.querySelector("#mo-hold2"); if (h) h.value = opts.plan?.hold || "normal"; m.hold = opts.plan?.hold || "normal"; }
     refresh();
@@ -377,7 +552,7 @@ const Motion = (() => {
     try {
       for (const l of plan.layers || []) {
         const lay = layerFrom(await loadImg(mediaUrl(l.mask)), l.mask, l.name, l.keys);
-        if (lay) m.layers.push(lay);
+        if (lay) { lay.adj = { hue: 0, sat: 1, bri: 1, ...(l.adj || {}) }; lay.edited = !!l.edited; recolor(lay); m.layers.push(lay); }
       }
       m.sel = m.layers.length ? 0 : -1;
       if (plan.plate) { m.plateImg = await loadImg(mediaUrl(plan.plate)); m.plateRef = plan.plate; m.showPlate = true; $("#mo-showplate").checked = true; }
@@ -385,5 +560,5 @@ const Motion = (() => {
     finally { if (m) { m.busy = ""; refresh(); } }
   }
 
-  return { open, layerFrames, _state: () => m };
+  return { open, layerFrames, firstOf, _state: () => m };
 })();
