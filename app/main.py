@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, appsettings, audiotools, config, llm, media, modelpaths, models, projects, prompts, render, syscheck, tracking, updater, workflows
+from . import __version__, appsettings, audiotools, config, llm, media, model3d, modelpaths, models, projects, prompts, render, syscheck, tracking, updater, workflows
 from .comfy import ComfyService
 from .jobs import EnhanceOpts, GenerateRequest, JobManager, media_path
 
@@ -47,6 +47,7 @@ async def lifespan(_: FastAPI):
     result = await asyncio.to_thread(projects.backup_all)
     logging.getLogger("bob.projects").info("startup backup: %s", result)
     await comfy.start()
+    model3d.recover()
     # Settings › Updates: check GitHub for a newer version now and then (and install it when idle, if Automatic).
     update_task = asyncio.create_task(updater.loop(_rendering))
     yield
@@ -314,6 +315,81 @@ async def tracks_delete(track_id: str):
     return {"ok": True}
 
 
+# ------------------------------------------------------------------ Make 3D (app/model3d.py)
+
+MAKE3D_NODES = {"Trellis2Conditioning", "Trellis2ShapeStage", "Trellis2TextureStage", "VaeDecodeTextureTrellis",
+                "RemeshMesh", "UnwrapMesh", "BakeTextureFromVoxel", "ApplyTextureToMesh", "SaveGLB", "ImageCropToMask"}
+_MAKE3D_FOLDER = {"unet": "diffusion_models", "clip_vision": "clip_vision", "shape_vae": "vae", "texture_vae": "vae"}
+
+
+def _make3d_missing(installed: dict[str, list[str]], nodes: set[str]) -> list[str]:
+    have = lambda folder, name: any(n.replace("\\", "/").rsplit("/", 1)[-1].lower() == name.lower() for n in installed.get(folder, []))  # noqa: E731
+    missing = [name for k, name in workflows.TRELLIS_FILES.items() if not have(_MAKE3D_FOLDER[k], name)]
+    return missing + sorted(MAKE3D_NODES - nodes)
+
+
+def _installed_name(installed: dict[str, list[str]], folder: str, name: str) -> str:
+    return next((n for n in installed.get(folder, []) if n.replace("\\", "/").rsplit("/", 1)[-1].lower() == name.lower()), name)
+
+
+class Make3DReq(BaseModel):
+    source: str = Field(..., max_length=2000)  # a picture
+    mask: str | None = Field(None, max_length=2000)  # white = the object (from Animate objects); none = remove the background
+    name: str = Field("3D model", max_length=120)
+    project: str | None = Field(None, max_length=200)
+    quality: Literal["standard", "high"] = "standard"
+    seed: int | None = None
+
+
+@app.post("/api/make3d")
+async def make3d(req: Make3DReq):
+    """Start making a textured 3D model (GLB) of the object in a picture; it's made in the background."""
+    installed = await comfy.installed_models(refresh=True)
+    try:
+        nodes = await comfy.node_types()
+    except Exception:  # noqa: BLE001
+        nodes = set()
+    missing = _make3d_missing(installed, nodes)
+    if missing:
+        raise HTTPException(409, "Make 3D needs these in ComfyUI: " + ", ".join(missing))
+    for ref in [req.source] + ([req.mask] if req.mask else []):
+        try:
+            if media.kind_of(ref) != "image" or not media_path(ref).is_file():
+                raise HTTPException(400, "Make 3D works from a picture")
+        except (media.MediaError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+    bg = installed.get("background_removal") or []
+    if not req.mask and not bg:
+        raise HTTPException(409, "Taking the background out needs a background-removal model (BiRefNet) in ComfyUI")
+    files = {k: _installed_name(installed, _MAKE3D_FOLDER[k], n) for k, n in workflows.TRELLIS_FILES.items()}
+    return model3d.start(jobs, files, source=req.source, mask=req.mask, name=req.name, project=req.project,
+                         quality=req.quality, seed=req.seed, bg_model=bg[0] if bg else None)
+
+
+@app.get("/api/models3d")
+async def models3d_list(project: str | None = None):
+    return {"models": model3d.list_models(project)}
+
+
+class Model3DPatch(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+
+
+@app.patch("/api/models3d/{model_id}")
+async def models3d_rename(model_id: str, req: Model3DPatch):
+    m = model3d.rename(model_id, req.name)
+    if not m:
+        raise HTTPException(404, "No such 3D model")
+    return m
+
+
+@app.delete("/api/models3d/{model_id}")
+async def models3d_delete(model_id: str):
+    if not model3d.delete(model_id):
+        raise HTTPException(404, "No such 3D model")
+    return {"ok": True}
+
+
 # ------------------------------------------------------------------ Inputs: describe a picture, audio tools
 
 class DescribeReq(BaseModel):
@@ -455,6 +531,8 @@ async def capabilities(refresh: bool = False):
     editor["erase"] = editor["crop"] and (editor["qwen"] or editor["h3image"])
     # Animate objects (motion layers): AI select, Erase, H3 and ComfyUI-vlo's Time-to-Move.
     editor["motion"] = editor["select"] and editor["erase"] and engines["h3"]["ready"] and "vloTimeToMove" in nodes
+    # Make 3D: TRELLIS.2 and ComfyUI's mesh nodes (and background removal for a whole picture).
+    editor["make3d"] = _make3d_missing(installed, nodes) == []
     return {
         "editor": editor,
         "engines": engines,
@@ -601,7 +679,7 @@ async def write_prompt(req: WritePromptRequest):
 # ------------------------------------------------------------------ prompt catalog + live rewrite
 
 def _rendering() -> bool:
-    return any(i.get("status") in ("queued", "running", "submitting") for i in jobs.list())
+    return model3d.busy() or any(i.get("status") in ("queued", "running", "submitting") for i in jobs.list())
 
 
 @app.get("/api/prompts")

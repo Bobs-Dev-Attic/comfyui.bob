@@ -223,6 +223,7 @@ const Motion = (() => {
       ${slider("bri", "Brightness", 0.2, 2, 0.01, a.bri, v => `${Math.round(v * 100)}%`)}
       <div class="mo-mrow"><button type="button" class="btn sm ghost" data-mm="color-reset">Reset colour</button></div>
       <div class="mo-mrow mo-msep"><button type="button" class="btn sm" data-mm="erase">✎ Erase parts…</button>
+        <button type="button" class="btn sm" data-mm="make3d" title="A textured 3D model of this object (TRELLIS.2)">🧊 Make 3D…</button>
         <button type="button" class="btn sm ghost" data-mm="remove">🗑 Remove object</button></div>`;
     m.root.appendChild(el);
     const W = el.offsetWidth, H = el.offsetHeight;
@@ -249,6 +250,12 @@ const Motion = (() => {
         for (const [n, v] of [["hue", 0], ["sat", 1], ["bri", 1]]) { const s = el.querySelector(`[data-mm="${n}"]`); s.value = String(v); s.dispatchEvent(new Event("input", { bubbles: true })); }
       }
       if (k === "erase") { closeMenu(); startErase(i); return; }
+      if (k === "make3d") {
+        closeMenu();
+        saveMasks().then(() => Model3D.start({ ref: m.ref, url: m.url, mask: lay.mask, name: lay.name }))
+          .catch(err => Media.toast(`Couldn't save the object: ${err.message}`));
+        return;
+      }
       if (k === "remove") { closeMenu(); m.layers.splice(i, 1); m.sel = Math.min(m.sel, m.layers.length - 1); if (m.plateRef) m.plateStale = true; }
       refresh();
     });
