@@ -196,8 +196,15 @@ const Shots = (() => {
   }
   /* The full-reference prompt for `list` (the shots in this video: one, or all of them in a multi-shot video); shot
      numbers and speaker IDs follow that video. */
-  function refPrompt(list, style) {
+  /* Continuity (one video per shot, H3 Reference): from shot 2 on, the last frame of the shot before goes to H3 as one
+     more, hidden picture, after the Inputs' pictures so their numbers stay (cont = {pic: its <Picture N>, prev: the
+     shot before, setting: the place carried forward}). Following MiniMax's guide, a picture that only sets the scene is
+     defined as a <Subject N> rather than a picture entry. It is cited in the shot itself as well, because H3 shows a
+     reference only when the text asks for it (EDITS-WITH-AI's measurements), and the previous shot's action goes in the
+     summary so the story carries on. */
+  function refPrompt(list, style, cont = null) {
     const H = P(), ids = new Map();
+    if (cont?.setting && list[0] && !list[0].rawOn && !(list[0].setting || "").trim()) list = [{ ...list[0], setting: cont.setting }, ...list.slice(1)];
     list.forEach((s, k) => { if (!s.rawOn && (s.dialogue || "").trim() && !ids.has(speakerKey(s, k))) ids.set(speakerKey(s, k), ids.size + 1); });
     const n = list.length, T = list.reduce((a, s) => a + (+s.seconds || 0), 0);
     const pics = state.refs.map((r, k) => k + 1), voices = audiosFor(list);  // labels are renumbered at the end
@@ -207,6 +214,9 @@ const Shots = (() => {
       return d ? `<Subject ${p}> is the subject of <Picture ${p}>: ${d.charAt(0).toLowerCase() + d.slice(1)}.`
         : `<Subject ${p}> is the main subject of <Picture ${p}>, kept exactly as it appears there.`;
     });
+    const K = cont?.pic;
+    if (K) defs.push(`<Subject ${K}> is the place in <Picture ${K}>, the last frame of the previous shot: the same location, set dressing, `
+      + "lighting, time of day and colour grade carry on in this shot, and the people keep the clothes, hair, make-up and props they have there.");
     // Whose voice each recording is: the subject who speaks with it in this video (a voice picked on the line),
     // else the subject with the same number.
     const owner = new Map();
@@ -225,18 +235,23 @@ const Shots = (() => {
     const who = pics.map(p => `<Subject ${p}>`);
     const whoText = who.length > 1 ? `${who.slice(0, -1).join(", ")} and ${who.at(-1)}` : who[0] || "the subject";
     const opening = list[0] && !list[0].rawOn ? oneLine(subj(resolveText(list[0].action))).split(/\s+/).slice(0, 40).join(" ") : "";
+    const prevAction = K && cont.prev && !cont.prev.rawOn ? oneLine(subj(cont.prev.action)).split(/\s+/).slice(0, 30).join(" ") : "";
     const voiceRoles = voices.filter(a => ownerOf(a)).map(a => `<Audio ${a}> as the voice-timbre reference for <Subject ${ownerOf(a)}>`);
     const summary = `[${tasks.join(" + ")}] The target video is ${n === 1 ? "a single" : `a ${n}-shot`} ${T.toFixed(1)}-second scene with ${whoText}`
-      + (voiceRoles.length ? `, using ${voiceRoles.join(" and ")}` : "") + "." + (opening ? ` It opens as ${opening.charAt(0).toLowerCase() + opening.slice(1)}.` : "");
+      + (voiceRoles.length ? `, using ${voiceRoles.join(" and ")}` : "") + "." + (opening ? ` It opens as ${opening.charAt(0).toLowerCase() + opening.slice(1)}.` : "")
+      + (K ? ` It follows straight on from the previous shot${prevAction ? `, in which ${prevAction.charAt(0).toLowerCase() + prevAction.slice(1)}` : ""}; <Picture ${K}> is that shot's last frame.` : "");
     // retention_analysis
     const retention = [
       ...pics.map(p => [p, appearsIn(p, list)]).filter(([, at]) => at.length).map(([p, at]) =>
         `<Subject ${p}> (appears in ${at.map(k => `[Shot ${k + 1}]`).join(", ")}): fully_preserved - the identity, face, hair, build and appearance from <Picture ${p}> are retained.`),
+      ...(K ? [`<Subject ${K}> (appears in [Shot 1]): partially_preserved - the location, lighting, time of day, colour grade and the people's clothes continue from <Picture ${K}>; the framing, camera angle and action follow this shot.`] : []),
       ...voices.map(a => `<Audio ${a}>: reference - its voice timbre ${ownerOf(a) ? `guides the delivery of <Subject ${ownerOf(a)}>` : "guides the spoken delivery"} without copying the original signal.`),
     ];
     // the main field: integrated_multimodal_description (the guide calls it detailed_description in reference mode; this studio uses the base name, by choice)
     let t = 0;
-    const body = list.map((s, k) => { const txt = `[Shot ${k + 1}] ${shotText(s, k, t, n, ids)}`; t += +s.seconds || 0; return txt; }).join("\n");
+    let body = list.map((s, k) => { const txt = `[Shot ${k + 1}] ${shotText(s, k, t, n, ids)}`; t += +s.seconds || 0; return txt; }).join("\n");
+    // after the framing: the text has to ask for the place, or H3 leaves the reference out
+    if (K) body = body.replace(/^(\[Shot 1\] [^.]*\.)/, `$1 It is the same place as <Subject ${K}>, in the same light, a moment later.`);
     const look = oneLine(style);
     const out = [`subject_definitions:\n${defs.join("\n")}`, `summary:\n${summary}`, `retention_analysis:\n${retention.join("\n")}`,
       `integrated_multimodal_description:\nThe target video's look: ${look.charAt(0).toLowerCase() + look.slice(1)}.\n${body}`, audioFields("\n")].join("\n\n");
@@ -255,7 +270,7 @@ const Shots = (() => {
     return `integrated_multimodal_description: ${body}\n\n${audioFields()}`;
   }
   // One shot's own prompt (one video per shot), or the whole multi-shot prompt (only = null).
-  function prompt(only = null) {
+  function prompt(only = null, withCont = true) {
     const sh = state.shots, H = P();
     const style = H.sentence(sh.style || "") || "Cinematic live-action, natural light.";
     if (only != null) {
@@ -263,7 +278,20 @@ const Shots = (() => {
       if (s.rawOn && s.raw.trim()) return Prompts.final(s.raw);  // its own prompt: tags and {a|b} resolved, tidied
     }
     const all = resolveShots(sh.list), list = only != null ? [all[only]] : all;
-    return isRef() ? refPrompt(list, style) : basePrompt(list, style);
+    if (!isRef()) return basePrompt(list, style);
+    const cont = withCont && only != null && carries(only) ? { pic: contPic(), prev: all[only - 1], setting: carriedSetting(all, only) } : null;
+    return refPrompt(list, style, cont);
+  }
+  /* Continuity between the videos of "One video per shot" (H3 Reference, two or more shots, on by default): the shots
+     render one after another, each with the last frame of the one before as a hidden reference picture. A shot with
+     its own prompt doesn't take it (its text can't cite it), nor does any shot once the Inputs hold all 9 pictures. */
+  const chainOn = () => isRef() && state.shots?.mode === "each" && state.shots.list.length > 1 && state.shots.continuity !== false;
+  const contPic = () => state.refs.length + 1;
+  const carries = i => chainOn() && i > 0 && state.refs.length < 9 && !(state.shots.list[i].rawOn && state.shots.list[i].raw.trim());
+  // A shot with no Where of its own keeps the last place written before it: the place in words is what H3 follows most.
+  function carriedSetting(all, i) {
+    for (let k = i - 1; k >= 0; k--) if (!all[k].rawOn && (all[k].setting || "").trim()) return all[k].setting.trim();
+    return "";
   }
   // Describe with AI every reference picture that has no definition yet (for Generate and the Subjects section).
   async function describeMissing(onEach = () => {}) {
@@ -322,6 +350,8 @@ const Shots = (() => {
     const ideaN = document.getElementById("shots-idea-n"); if (ideaN) ideaN.value = sh.ideaShots || "";
     const am = document.getElementById("shots-automatch"); if (am) am.checked = sh.autoMatch !== false;
     const atl = document.getElementById("shots-autotl"); if (atl) atl.checked = sh.autoTimeline !== false;
+    const cont = document.getElementById("shots-cont");
+    if (cont) { cont.checked = sh.continuity !== false; cont.closest("label").hidden = !(isRef() && sh.mode === "each" && sh.list.length > 1); }
     const ideaS = document.getElementById("shots-idea-s"); if (ideaS && document.activeElement !== ideaS) ideaS.value = sh.ideaSeconds || 10;
     renderCreat();
     renderSubjects();
@@ -353,7 +383,7 @@ const Shots = (() => {
     if (empty.length) warn.push(`Shot${empty.length > 1 ? "s" : ""} ${empty.join(", ")} ${empty.length > 1 ? "are" : "is"} empty.`);
     document.getElementById("shots-hint").innerHTML = `${sh.mode === "multi"
       ? `Generate makes <b>one ${T.toFixed(1)} s video</b> from these shots.`
-      : n > 1 ? `Generate makes <b>${n} videos</b>, one per shot${sh.autoTimeline !== false ? ", and puts them on the timeline in order" : ""}.` : "Generate makes <b>one video</b> from this shot."}${sh.autoTimeline !== false && (sh.mode === "multi" || n === 1) ? " It goes on the timeline when it's done." : ""} ${warn.map(w => `<span class="warn">⚠ ${esc(w)}</span>`).join(" ")}`;
+      : n > 1 ? `Generate makes <b>${n} videos</b>, one per shot${chainOn() ? ", one after another, each starting from the last frame of the one before" : ""}${sh.autoTimeline !== false ? ", and puts them on the timeline in order" : ""}.` : "Generate makes <b>one video</b> from this shot."}${sh.autoTimeline !== false && (sh.mode === "multi" || n === 1) ? " It goes on the timeline when it's done." : ""} ${warn.map(w => `<span class="warn">⚠ ${esc(w)}</span>`).join(" ")}`;
     document.getElementById("shots-prompt").textContent = previewText();
   }
   function renderBanner() {
@@ -803,6 +833,7 @@ const Shots = (() => {
       if (id === "subjects-on") { sh.subjectsOn = e.target.checked; return changed(); }
       if (id === "shots-automatch") { sh.autoMatch = e.target.checked; return scheduleSave(); }
       if (id === "shots-autotl") { sh.autoTimeline = e.target.checked; return changed(); }
+      if (id === "shots-cont") { sh.continuity = e.target.checked; return changed(); }
       const map = { "shots-style": "style", "shots-sound": "soundscape", "shots-music": "music", "shots-idea": "idea" };
       if (map[id]) { sh[map[id]] = e.target.value; scheduleSave(); if (id !== "shots-idea") document.getElementById("shots-prompt").textContent = previewText(); return; }
       if (id === "shots-creat") { sh.creativity = +e.target.value; renderCreat(); scheduleSave(); }
@@ -938,10 +969,29 @@ const Shots = (() => {
       if (isR && !req.references.length && !(req.ref_audios || []).length) { err.textContent = "Add reference pictures on the Inputs step."; return; }
       return submitOne(req);
     }
+    // Every shot of the run draws from one seed: the seed weighs a lot in H3, so the shots look more alike.
+    if (!(+base.seed >= 0)) base = { ...base, seed: Math.floor(Math.random() * 2 ** 31) };
+    // Continuity: shot 1 now, each next one when the one before is done, with its last frame (onItem → advance).
+    if (chainOn()) {
+      const steps = sh.list.map((s, i) => ({ ...reqFor(i), batch: 1, seed: base.seed,
+        cont: carries(i) ? prompt(i) : null, prompt: prompt(i, false) }));
+      const bad = steps.findIndex(r => isR && !r.references.length && !(r.ref_audios || []).length);
+      if (bad >= 0) { err.textContent = `Shot ${bad + 1} has no reference pictures.`; return; }
+      const first = steps.shift(); delete first.cont;
+      let items;
+      try { ({ items } = await api("/api/generate", { method: "POST", body: JSON.stringify(first) })); }
+      catch (e) { err.textContent = `Shot 1: ${e.message}`; return; }
+      for (const it of items) { state.items.set(it.id, it); Activity.onEvent({ type: "item", item: it }); }
+      pending.set(items[0].id, { ids: [items[0].id], project: state.project?.id ?? "experiment", place: autoTl, steps, total: sh.list.length });
+      savePending();
+      renderGallery(); renderQueue(); select(items[0].id);
+      Media.toast(`Shot 1 of ${sh.list.length} queued. Each next shot starts when the one before is done, from its last frame${autoTl ? "; they go on the timeline in order" : ""}.`);
+      return;
+    }
     // one per shot: submit them in order, then place the results on the timeline in order
     const ids = [];
     for (let i = 0; i < sh.list.length; i++) {
-      const req = { ...reqFor(i), batch: 1 };
+      const req = { ...reqFor(i), batch: 1, seed: base.seed };
       if (isR && !req.references.length && !(req.ref_audios || []).length) { err.textContent = `Shot ${i + 1} has no reference pictures.`; return; }
       try {
         const { items } = await api("/api/generate", { method: "POST", body: JSON.stringify(req) });
@@ -950,20 +1000,72 @@ const Shots = (() => {
       } catch (e) { err.textContent = `Shot ${i + 1}: ${e.message}`; break; }
     }
     if (!ids.length) return;
-    if (autoTl) { pending.set(ids[0], { ids, project: state.project?.id ?? "experiment" }); savePending(); }
+    if (autoTl) { pending.set(ids[0], { ids, project: state.project?.id ?? "experiment", place: true }); savePending(); }
     renderGallery(); renderQueue(); select(ids[0]);
     Media.toast(autoTl ? `${ids.length} shots queued: they go on the timeline in order when all are done.` : `${ids.length} shots queued.`);
   }
   // Called for every studio item update: when a whole batch is done, lay it out on the timeline.
+  const FINAL = ["done", "failed", "cancelled"];
+  const videoOf = x => x?.status === "done" ? (x.files || []).find(f => /^video\//.test(f.content_type || "")) || x.files?.[0] : null;
+  /* A chained run (Continuity): its last shot is finished, so queue the next one with that shot's last frame as the
+     hidden picture. A failed shot hands on nothing (the next one goes without the frame); a cancelled one stops the run. */
+  async function advance(key, b, last) {
+    if (b.busy && Date.now() - b.busy < 120000) return;
+    b.busy = Date.now(); savePending();
+    try {
+      if (last.status === "cancelled") {
+        Media.toast(`Shot ${b.ids.length} was cancelled, so the ${b.steps.length} shot${b.steps.length > 1 ? "s" : ""} after it won't be made.`);
+        b.steps = []; return;
+      }
+      const step = b.steps[0], k = b.ids.length + 1;
+      let req = { ...step }; delete req.cont;
+      const f = videoOf(last);
+      if (step.cont && f) {
+        try {
+          const fr = await api("/api/media/frame", { method: "POST", body: JSON.stringify({ path: f.path, t: 1e6 }) });
+          req = { ...req, prompt: step.cont, references: [...(req.references || []), fr.ref] };
+        } catch (e) { Media.toast(`Couldn't take shot ${k - 1}'s last frame (${e.message}); shot ${k} goes without it.`); }
+      }
+      const { items } = await api("/api/generate", { method: "POST", body: JSON.stringify(req) });
+      for (const x of items) { state.items.set(x.id, x); Activity.onEvent({ type: "item", item: x }); }
+      b.steps.shift(); b.ids.push(items[0].id);
+      renderGallery(); renderQueue();
+      Media.toast(`Shot ${k} of ${b.total} queued${req.prompt === step.cont ? `, carrying on from shot ${k - 1}'s last frame` : ""}.`);
+    } catch (e) {
+      Media.toast(`Shot ${b.ids.length + 1} couldn't be queued: ${e.message}. The rest of the run stopped.`);
+      b.steps = [];
+    } finally {
+      b.busy = 0; savePending();
+      if (!b.steps.length) finish(key, b);
+    }
+  }
+  // A chained run that was waiting when the page closed: carry on once the studio's items are in.
+  function resume() {
+    for (const [key, b] of pending) {
+      if (!b.steps?.length) continue;
+      const last = state.items.get(b.ids.at(-1));
+      if (last && FINAL.includes(last.status)) advance(key, b, last);
+    }
+  }
   async function onItem(it) {
     if (matchWaiting && !rendering()) setTimeout(() => { if (matchWaiting && !rendering()) matchShots(); }, 500);
     for (const [key, b] of pending) {
       if (!b.ids.includes(it.id)) continue;
+      if (b.steps?.length) {  // a chained run: the next shot when this, its last one so far, is finished
+        if (it.id === b.ids.at(-1) && FINAL.includes(it.status)) advance(key, b, it);
+        return;
+      }
+      return finish(key, b, it);
+    }
+  }
+  async function finish(key, b, it = null) {
+    {
       // `it` is newer than state.items here (the studio stores it after telling us)
-      const all = b.ids.map(id => (id === it.id ? it : state.items.get(id)));
-      if (all.some(x => !x || !["done", "failed", "cancelled"].includes(x.status))) return;
+      const all = b.ids.map(id => (id === it?.id ? it : state.items.get(id)));
+      if (all.some(x => !x || !FINAL.includes(x.status))) return;
       pending.delete(key);
       savePending();
+      if (b.place === false) return;
       let okItems = all.filter(x => x.status === "done" && x.files?.length);
       if (b.one) okItems = okItems.slice(0, 1);  // takes of one video: only the first good one
       if ((state.project?.id ?? "experiment") !== b.project || !TL.model || !okItems.length) return;
@@ -983,7 +1085,8 @@ const Shots = (() => {
   // Exactly what Generate sends: the multi-shot prompt, or each shot's own prompt.
   function previewText() {
     const sh = state.shots;
-    return sh.mode === "multi" || sh.list.length === 1 ? prompt() : sh.list.map((_, i) => `── Shot ${i + 1} ──\n${prompt(i)}`).join("\n\n");
+    return sh.mode === "multi" || sh.list.length === 1 ? prompt() : sh.list.map((_, i) =>
+      `── Shot ${i + 1}${carries(i) ? ` · carries on from shot ${i}'s last frame (sent as <Picture ${contPic()}>)` : ""} ──\n${prompt(i)}`).join("\n\n");
   }
   function describe() {
     if (!upgraded()) return { text: "", first: "", empty: 0, prompt: "", missing: 0 };
@@ -1002,5 +1105,5 @@ const Shots = (() => {
     return only ? 0 : sh.list.length - 1;
   }
 
-  return { init, render, renderBanner, prompt, previewText, on, ready, generate, onItem, ensure, describe, openModal, reuse, describeMissing };
+  return { init, render, renderBanner, prompt, previewText, on, ready, generate, onItem, resume, ensure, describe, openModal, reuse, describeMissing };
 })();
