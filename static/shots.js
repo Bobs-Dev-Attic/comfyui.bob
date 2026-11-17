@@ -102,6 +102,23 @@ const Shots = (() => {
        picture defines a person, object or place; it isn't a frame), each voice recording an <Audio N> voice-timbre
        reference, and whoever speaks gets a stable speaker ID (S1), (S2)… in order of first speaking.
      In a shot's fields people are tagged as <Picture N>; in reference mode those become <Subject N>. */
+  /* Prompt syntax in the fields (Where, What happens, Spoken line), as on the Prompt step: this prompt's own tags
+     (<hero>), {a|b} choices (weights as {2::a|b}), <list>, <maybe> and preset lists. The preview rolls with the
+     Prompt step's preview seed (🎲 re-roll there); each Generate rolls afresh, once for all its shots, so a tag used in
+     two shots picks the same thing. <Picture N>, <Audio N> and <Subject N> are H3's own and pass through. */
+  let rollSeed = null;
+  // Every shot's three fields go through ONE resolve, joined by a separator, so a tag is rolled once for the whole video
+  // (the same <pet> in every shot and line) while each {a|b} gets its own roll.
+  const RS = "\u001e", RF = ["setting", "action", "dialogue"];
+  function resolveShots(all) {
+    const parts = all.flatMap(s => RF.map(f => (s.rawOn ? "" : String(s[f] || "")).replaceAll(RS, " ")));
+    const joined = parts.join(RS);
+    if (typeof Prompts === "undefined" || !Prompts.hasSyntax(joined)) return all;
+    const out = Prompts.resolve(joined, rollSeed == null ? {} : { seed: rollSeed }).split(RS);
+    if (out.length !== parts.length) return all;  // a choice spanned two fields: leave them as written
+    return all.map((s, i) => s.rawOn ? s : { ...s, setting: out[i * 3], action: out[i * 3 + 1], dialogue: out[i * 3 + 2] });
+  }
+  const resolveText = t => t;  // fields arrive resolved (resolveShots)
   const subj = t => isRef() ? String(t || "").replace(/<Picture (\d+)>/g, "<Subject $1>") : String(t || "");
   // Speaker IDs in order of first speaking: a picked speaker (one subject) keeps one ID; an unnamed one gets its own per shot.
   function speakerIds() {
@@ -125,9 +142,10 @@ const Shots = (() => {
     const framing = H.shotHead(s.angle, (s.framing || "medium shot").trim());
     const head = k > 0 && n > 1 ? `At ${fmtT(start)}, ${framing}` : framing[0].toUpperCase() + framing.slice(1);
     const parts = [`${head}.`];
-    if (s.setting.trim()) parts.push(H.sentence(subj(s.setting)));
-    if (s.action.trim()) parts.push(H.sentence(subj(s.action)));
-    const line = H.cleanDialogue(s.dialogue || "", H.dialogueBudget(+s.seconds || 3));
+    const setting = resolveText(s.setting).trim(), action = resolveText(s.action).trim();
+    if (setting) parts.push(H.sentence(subj(setting)));
+    if (action) parts.push(H.sentence(subj(action)));
+    const line = H.cleanDialogue(resolveText(s.dialogue), H.dialogueBudget(+s.seconds || 3));
     if (line) {
       const sid = ids.get(speakerKey(s, k)), v = voiceFor(s);
       const who = speakerOf(s) ? subj(s.speaker) : "The speaker";
@@ -179,7 +197,7 @@ const Shots = (() => {
     const tasks = ["reference generation", ...(voices.length ? ["audio reference"] : [])];
     const who = pics.map(p => `<Subject ${p}>`);
     const whoText = who.length > 1 ? `${who.slice(0, -1).join(", ")} and ${who.at(-1)}` : who[0] || "the subject";
-    const opening = list[0] && !list[0].rawOn ? oneLine(subj(list[0].action)).split(/\s+/).slice(0, 40).join(" ") : "";
+    const opening = list[0] && !list[0].rawOn ? oneLine(subj(resolveText(list[0].action))).split(/\s+/).slice(0, 40).join(" ") : "";
     const voiceRoles = voices.filter(a => a <= pics.length).map(a => `<Audio ${a}> as the voice-timbre reference for <Subject ${a}>`);
     const summary = `[${tasks.join(" + ")}] The target video is ${n === 1 ? "a single" : `a ${n}-shot`} ${T.toFixed(1)}-second scene with ${whoText}`
       + (voiceRoles.length ? `, using ${voiceRoles.join(" and ")}` : "") + "." + (opening ? ` It opens as ${opening.charAt(0).toLowerCase() + opening.slice(1)}.` : "");
@@ -214,7 +232,7 @@ const Shots = (() => {
       const s = sh.list[only];
       if (s.rawOn && s.raw.trim()) return Prompts.final(s.raw);  // its own prompt: tags and {a|b} resolved, tidied
     }
-    const list = only != null ? [sh.list[only]] : sh.list;
+    const all = resolveShots(sh.list), list = only != null ? [all[only]] : all;
     return isRef() ? refPrompt(list, style) : basePrompt(list, style);
   }
   // Describe with AI every reference picture that has no definition yet (for Generate and the Subjects section).
@@ -565,6 +583,15 @@ const Shots = (() => {
     const voices = state.arefs.map((_, k) => `<Audio ${k + 1}>`);
     const speakerVoice = speakerOf(s) ? voiceFor({ ...s, voice: "" }) : "";
     const rawOn = s.rawOn, busy = modal.busy;
+    // Chips that insert a tag into a field: the reference pictures (hover for the picture) and this prompt's own tags.
+    const tagChips = field => {
+      const pics = isRef() ? state.refs.map((r, k) => `<span class="pic-chip">
+          <button type="button" class="chip-btn" data-tag="<Picture ${k + 1}>" data-for="${field}" title="Insert <Picture ${k + 1}>">Picture ${k + 1}</button>
+          <span class="pic-pop"><button type="button" data-sm="goto-inputs" title="Open the Inputs step"><img src="${esc(r.url)}" alt="Picture ${k + 1}"><span>Picture ${k + 1} · Inputs ›</span></button></span></span>`) : [];
+      const own = Object.keys(state.promptTags || {}).map(k => `<button type="button" class="chip-btn own" data-tag="<${esc(k)}>" data-for="${field}" title="Insert your tag <${esc(k)}>">&lt;${esc(k)}&gt;</button>`);
+      own.push(`<button type="button" class="chip-btn add" data-sm="new-tag" title="Make a tag: a name for text you reuse, or a list to pick from at random">＋ Tag</button>`);
+      return `<span class="shot-tags">${[...pics, ...own].join("")}</span>`;
+    };
     const preview = multi ? prompt() : prompt(i);
     box.innerHTML = `
       <header class="sm-head">
@@ -604,17 +631,16 @@ const Shots = (() => {
               <div class="field"><label>Camera move</label><input list="shot-cams" data-sf="camera" value="${esc(s.camera)}" placeholder="holds a static shot"></div>
             </div>
             <div class="field"><label>Where <span class="opt">place and light</span></label><input data-sf="setting" value="${esc(s.setting)}" placeholder="A rain-soaked back alley at night, neon signs further down"></div>
-            <div class="field"><div class="sm-lbl">What happens ${isRef() && state.refs.length ? `<span class="shot-tags">${state.refs.map((r, k) => `<span class="pic-chip">
-                <button type="button" class="chip-btn" data-tag="<Picture ${k + 1}>" data-for="action" title="Insert <Picture ${k + 1}>">Picture ${k + 1}</button>
-                <span class="pic-pop"><button type="button" data-sm="goto-inputs" title="Open the Inputs step"><img src="${esc(r.url)}" alt="Picture ${k + 1}"><span>Picture ${k + 1} · Inputs ›</span></button></span></span>`).join("")}</span>` : ""}</div>
+            <div class="field"><div class="sm-lbl">What happens ${tagChips("action")}</div>
               <textarea rows="3" data-sf="action" placeholder="${isRef() ? "The woman from <Picture 1> turns around and smiles" : "The woman turns around and smiles"}">${esc(s.action)}</textarea></div>
-            <div class="row2">
-              <div class="field"><label>Spoken line <span class="opt">optional</span></label><input data-sf="dialogue" value="${esc(s.dialogue)}" placeholder="See you tomorrow."></div>
-              <div class="sm-say">
+            <div class="field"><div class="sm-lbl">Spoken line <span class="opt">optional</span> ${tagChips("dialogue")}</div>
+              <textarea rows="3" data-sf="dialogue" placeholder="See you tomorrow.">${esc(s.dialogue)}</textarea></div>
+            <div class="sm-say">
                 ${isRef() ? `<div class="field"><label>Speaker</label><select data-sf="speaker" title="Which reference picture's person says the line" ${state.refs.length ? "" : "disabled"}>${opt("", "Anyone", s.speaker)}${state.refs.map((_, k) => opt(`<Picture ${k + 1}>`, `<Picture ${k + 1}>`, s.speaker)).join("")}</select></div>` : ""}
                 <div class="field"><label>Voice</label><select data-sf="voice" ${voices.length ? "" : "disabled title='Add reference sounds on the Inputs step to choose a voice'"}>${opt("", speakerVoice ? `Speaker's · ${speakerVoice}` : "Any", s.voice)}${voices.map(v => opt(v, v, s.voice)).join("")}</select></div>
-              </div>
             </div>
+            <p class="hint sm-syntax">In Where, What happens and Spoken line: your tags (＋ Tag),
+              <code>{a|b}</code> choices, <code>&lt;list&gt;</code> and <code>&lt;maybe&gt;</code> are filled in when the prompt is built; the preview shows one roll.</p>
             <label class="sm-check"><input type="checkbox" data-sf="rawOn"${rawOn ? " checked" : ""}> Write the prompt myself <span class="opt">this shot sends the text below instead of the fields above</span></label>
             ${rawOn ? `<div class="field"><textarea rows="6" data-sf="raw" class="sm-raw" placeholder="The whole prompt for this shot, in H3's format">${esc(s.raw)}</textarea>
               <p class="hint">${multi ? `In one multi-shot video this text becomes Shot ${i + 1}'s description.` : "Tags like <Picture 1> and {a|b} choices work as on the Prompt step."}</p></div>` : ""}
@@ -690,6 +716,7 @@ const Shots = (() => {
     if (a === "add") { modal.i = add(); return renderModal(true); }
     if (a === "delete") return remove(i);
     if (a === "goto-inputs") { closeModal(); return showStep("inputs"); }
+    if (a === "new-tag") return Prompts.editTag(null, () => { if (modal) renderModal(); });
     if (a === "copy") { try { await navigator.clipboard.writeText(modal.root.querySelector(".sm-prompt").textContent); Media.toast("Prompt copied."); } catch {} return; }
     if (a === "ai-undo") { const u = undo.get(s.id); if (u) { Object.assign(s, u); undo.delete(s.id); changed(); } return; }
     if (a === "ai-write" || a === "ai-enhance") {
@@ -811,6 +838,10 @@ const Shots = (() => {
   const savePending = () => { try { localStorage.setItem(PKEY, JSON.stringify([...pending])); } catch {} };
   try { for (const [k, v] of JSON.parse(localStorage.getItem(PKEY) || "[]")) pending.set(k, v); } catch {}
   async function generate(base) {
+    rollSeed = Math.floor(Math.random() * 1e9);  // one roll of {a|b} and tags for every shot of this run
+    try { return await generateRun(base); } finally { rollSeed = null; }
+  }
+  async function generateRun(base) {
     const sh = ensure(), isR = base.engine === "h3ref", err = document.getElementById("form-error");
     err.textContent = "";
     const empty = sh.list.findIndex(s => !hasContent(s));

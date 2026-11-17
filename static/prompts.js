@@ -545,7 +545,8 @@ const Prompts = (() => {
       if (a === "text") w.close();
     });
   }
-  function editTag(name = null) {
+  // onDone: called after a save or delete (the Shots step's edit window redraws its tag chips).
+  function editTag(name = null, onDone = null) {
     const tags = state.promptTags ||= {};
     const cur = name != null ? tags[name] : null;
     const vals = cur == null ? "" : Array.isArray(cur) ? cur.join("\n") : typeof cur === "string" ? cur : JSON.stringify(cur, null, 2);
@@ -563,7 +564,7 @@ const Prompts = (() => {
     foot.addEventListener("click", e => {
       const a = e.target.closest("[data-a]")?.dataset.a;
       if (!a) return;
-      if (a === "del") { delete tags[name]; afterTags(); w.close(); return; }
+      if (a === "del") { delete tags[name]; afterTags(); w.close(); onDone?.(); return; }
       if (a !== "ok") { w.close(); return; }
       const n = slug($('[data-f="name"]', box).value) || "";
       if (!n) { Media.toast("Give the tag a name."); return; }
@@ -571,7 +572,7 @@ const Prompts = (() => {
       if (name != null && n !== name) delete tags[name];
       tags[n] = lines.length > 1 ? lines : lines[0] || "";
       if (name == null) insertAtCursor(ta(), `<${n}>`);
-      afterTags(); w.close();
+      afterTags(); w.close(); onDone?.();
     });
   }
   function afterTags() { renderTags(); renderLive(); scheduleSave(); }
@@ -862,5 +863,5 @@ const Prompts = (() => {
   }
 
   return { creativity: () => S.creativity, init, refresh, resolve, shape, final, hasSyntax, catalog, presetsWin, accept, dismiss, profile,
-    renderBar: () => renderTags(), setMode, toggleWriter, writerAvailable, readyToGenerate, _S: S };
+    renderBar: () => renderTags(), editTag, setMode, toggleWriter, writerAvailable, readyToGenerate, _S: S };
 })();
