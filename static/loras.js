@@ -87,7 +87,7 @@ const Loras = (() => {
           ${r.triggers?.length ? `<div class="lora-trig">${r.triggers.slice(0, 6).map(t => `<button type="button" class="chip-btn lora-tw" data-tw="${esc(t)}" title="Insert into the prompt">${esc(t)}</button>`).join("")}</div>` : ""}
         </div>
         <label class="lora-str" title="Strength from -10 to 10: 1 = full, 0.5 = half, negative = away from it">
-          <input type="number" min="${STR_MIN}" max="${STR_MAX}" step="0.1" value="${l.strength}" data-k="num" aria-label="Strength">
+          <input type="number" min="${STR_MIN}" max="${STR_MAX}" step="0.05" value="${l.strength}" data-k="num" aria-label="Strength">
         </label>
         <button type="button" class="ex-btn lora-more" data-lx="menu" title="More" aria-label="More for ${esc(path)}" aria-haspopup="menu">⋯</button>
       </div>`;
@@ -258,7 +258,7 @@ const Loras = (() => {
       <div class="ex-status"></div>`;
     const foot = document.createElement("div");
     foot.innerHTML = `<span class="ex-foot-label">Strength</span>
-      <input type="range" class="lx-str" min="-2" max="2" step="0.05" value="1" aria-label="Strength"><input type="number" class="lx-strn" min="-10" max="10" step="0.1" value="1" aria-label="Strength">
+      <input type="range" class="lx-str" min="-2" max="2" step="0.05" value="1" aria-label="Strength"><input type="number" class="lx-strn" min="-10" max="10" step="0.05" value="1" aria-label="Strength">
       <span class="ex-gap"></span>
       <button type="button" class="btn sm primary" data-act="add" disabled>Add</button><button type="button" class="btn sm" data-act="close">Close</button>`;
     if (rep !== null) {  // replacing a row keeps its strength: no strength box

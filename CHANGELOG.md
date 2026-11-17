@@ -5,6 +5,18 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.43.1] - 2026-11-16
+
+### Fixed
+- **Generate did nothing in a project with a LoRA at a strength like 0.75.** The LoRA strength box only allowed steps
+  of 0.1, so the browser counted 0.75 (which the slider can set) as invalid and silently refused to submit the form;
+  the box is on the LoRAs step, so it couldn't even point at it. The form no longer leaves validation to the browser
+  (Bob checks the values itself), and LoRA strengths go in steps of 0.05.
+
+### Added
+- Generate presses (sent, stopped and why, refused) and page script errors are written to the server log, to find
+  the cause when Generate seems to do nothing.
+
 ## [0.43.0] - 2026-11-16
 
 ### Added

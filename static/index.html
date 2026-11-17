@@ -57,7 +57,9 @@
 
       <div class="side-body">
         <header class="step-head"><h2 id="step-title"></h2><p id="step-sub"></p></header>
-        <form id="form" autocomplete="off">
+        <!-- novalidate: Bob checks the values itself; the browser would silently refuse to submit over a hidden field
+             (e.g. a LoRA strength between its steps on another step) -->
+        <form id="form" autocomplete="off" novalidate>
           <!-- 1 · Project -->
           <section class="step" data-step="project" role="tabpanel">
             <div class="proj-card" id="proj-card"></div>

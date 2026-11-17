@@ -2,4 +2,4 @@
 
 # Single source of truth for the release version (semver). Bump it with every
 # release and add a matching entry to CHANGELOG.md.
-__version__ = "0.43.0"
+__version__ = "0.43.1"
