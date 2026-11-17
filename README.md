@@ -166,7 +166,10 @@ Other features:
 - **Live model view** (under the prompt, every model): as you type, the prompt is tidied for the selected model and
   checked. FLUX and Krea lose weights like `(word:1.2)` and filler such as "masterpiece, 8k"; H3 dialogue gets
   `[English]`; notes flag negations for H3, `<Picture N>` tags beyond the references you added, a missing camera move
-  or sound, and overlong prompts. **What the model gets** shows the exact text Generate sends (Tidy can be turned off).
+  or sound, and overlong prompts. H3 shot lists (`[Shot N] At 00:SS.mmm, …`) are checked against the clip length:
+  shots are renumbered and times written on whole frames; start times past the clip's end or out of order, spoken
+  words that don't fit a shot (about 2.5 a second), very short shots, too many shots, and missing
+  `overall_soundscape:` / `non_diegetic_music:` lines are flagged. **What the model gets** shows the exact text Generate sends (Tidy can be turned off).
 - **✨ Live rewrite:** after a short pause in typing, a local LLM rewrites the prompt in the selected model's own format
   (a natural-language paragraph for FLUX and Krea, a style line plus `[Shot N]` lines and sound for H3, a style
   caption for Music 3) and streams it in under the prompt; **Tab** accepts it (Ctrl+Z undoes), **Esc** dismisses it.

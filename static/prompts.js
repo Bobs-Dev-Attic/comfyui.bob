@@ -164,11 +164,76 @@ const Prompts = (() => {
       }
       if (prof === "h3video" || prof === "h3ref") {
         if (s && !/camera/i.test(s)) notes.push(["Add a camera move (e.g. “The camera pushes in slowly”)", "tip"]);
-        if (s && !/soundscape|sound|music/i.test(s)) notes.push(["Describe the sound too: H3 renders it with the picture", "tip"]);
+        if (/^\s*\[Shot\s*\d+\]/im.test(s)) s = shotList(s, notes);
+        else {
+          if (s && !/soundscape|sound|music/i.test(s)) notes.push(["Describe the sound too: H3 renders it with the picture", "tip"]);
+          const clip = clipSeconds(), said = spoken(s), budget = Math.max(2, Math.floor(clip * 2.5));
+          if (said > budget) notes.push([`${said} spoken words won't fit in ${fmtSec(clip)}: about ${budget} do (2.5 words a second)`, "warn"]);
+        }
+      }
+      if (prof === "h3sound" && s) {
+        if (!/^\s*overall_soundscape\s*:/im.test(s)) notes.push(["Start with “overall_soundscape:” and the ambience and effects in order", "tip"]);
+        if (!/^\s*non_diegetic_music\s*:/im.test(s)) notes.push(["Add a “non_diegetic_music:” line (the score, or N/A)", "tip"]);
       }
     }
     if (prof === "music" && words(s) > 40) notes.push([`${words(s)} words: the style caption works best under 30`, "tip"]);
     return { text: s, notes };
+  }
+
+  /* ------------------------------------------------------------ H3 shot lists
+     "[Shot 1] … [Shot 2] At 00:04.000, …" plus overall_soundscape: / non_diegetic_music: lines. Numbers
+     and times are put right (times on whole frames, as 00:SS.mmm); the rest is checked against the clip
+     length from Settings: start times inside the clip and in order, spoken words that fit each shot (about
+     2.5 a second), shots long enough to read, and the two sound lines. */
+  const FPS = 24;
+  const clipSeconds = () => h3Frames(+$("#seconds").value || 5) / FPS;
+  const fmtSec = t => `${Math.round(t * 10) / 10} s`;
+  const fmtTime = t => `${String(Math.floor(t / 60)).padStart(2, "0")}:${(t % 60).toFixed(3).padStart(6, "0")}`;
+  const spoken = text => [...text.matchAll(/<d>([\s\S]*?)<\/d>/g)].reduce((n, m) => n + words(m[1].replace(/^\s*\[[^\]]*\]/, "")), 0);
+  function shotList(s, notes) {
+    const clip = clipSeconds();
+    // Split into [head, "[Shot n]", body, "[Shot m]", body, …]; the sound lines live in the last body.
+    const parts = s.split(/^(\s*\[Shot\s*\d+\])/im);
+    const n = (parts.length - 1) / 2;
+    let renumbered = false, retimed = false;
+    const shots = [];
+    for (let k = 0; k < n; k++) {
+      const tag = parts[1 + 2 * k], want = `[Shot ${k + 1}]`;
+      if (tag.trim() !== want) { parts[1 + 2 * k] = tag.replace(/\[Shot\s*\d+\]/i, want); renumbered = true; }
+      let body = parts[2 + 2 * k];
+      const m = body.match(/^\s*At\s+(?:(\d+):)?(\d+(?:\.\d+)?)\s*(?:s\b)?\s*,?[ \t]*/i);
+      let start = k === 0 ? 0 : null;
+      if (m) {
+        start = Math.round(((+m[1] || 0) * 60 + +m[2]) * FPS) / FPS;
+        const fixed = ` At ${fmtTime(start)}, `;
+        if (m[0] !== fixed) { body = fixed + body.slice(m[0].length).replace(/^\s+/, ""); retimed = true; }
+      }
+      parts[2 + 2 * k] = body;
+      shots.push({ start, body });
+    }
+    s = parts.join("");
+    if (renumbered) notes.push(["Shots numbered 1, 2, 3… in order", "fix"]);
+    if (retimed) notes.push(["Shot times written as 00:SS.mmm on whole frames", "fix"]);
+    shots.forEach((x, k) => {
+      if (k > 0 && x.start == null) notes.push([`Shot ${k + 1} has no start time: begin it with “At ${fmtTime(Math.round(k * clip / n * FPS) / FPS)}, ”`, "warn"]);
+    });
+    const known = shots.map((x, k) => ({ ...x, k })).filter(x => x.start != null);
+    known.forEach((x, i) => {
+      if (x.start >= clip) notes.push([`Shot ${x.k + 1} starts at ${fmtSec(x.start)}, after the clip ends (${fmtSec(clip)}): lower it or make the clip longer in Settings`, "warn"]);
+      else if (i > 0 && x.start <= known[i - 1].start) notes.push([`Shot ${x.k + 1} starts before or with shot ${known[i - 1].k + 1}: times must go up`, "warn"]);
+    });
+    // Each shot runs to the next known start (or the clip's end).
+    known.forEach((x, i) => {
+      const end = Math.min(clip, i + 1 < known.length ? known[i + 1].start : clip), len = end - x.start;
+      if (len <= 0 || x.start >= clip) return;
+      if (len < 1) notes.push([`Shot ${x.k + 1} lasts ${fmtSec(len)}: too short to read; give it at least a second`, "tip"]);
+      const said = spoken(shots[x.k].body.split(/^\s*(overall_soundscape|non_diegetic_music)\s*:/im)[0]), budget = Math.max(2, Math.floor(len * 2.5));
+      if (said > budget) notes.push([`Shot ${x.k + 1}: ${said} spoken words in ${fmtSec(len)}; about ${budget} fit`, "warn"]);
+    });
+    if (n > Math.max(1, Math.floor(clip / 1.5))) notes.push([`${n} shots in ${fmtSec(clip)} is a lot: H3 needs about 1.5 s or more per shot`, "tip"]);
+    if (!/^\s*overall_soundscape\s*:/im.test(s)) notes.push(["Add an “overall_soundscape:” line after the shots (ambience and effects, in order)", "warn"]);
+    if (!/^\s*non_diegetic_music\s*:/im.test(s)) notes.push(["Add a “non_diegetic_music:” line (the score, or N/A)", "tip"]);
+    return s;
   }
 
   /* What Generate sends: the resolved template, tidied for the model (when Tidy is on). */
@@ -536,6 +601,7 @@ const Prompts = (() => {
       if (a === "insert") { insertAtCursor(ta(), `<${name}>`); ta().dispatchEvent(new Event("input", { bubbles: true })); }
     });
     $("#btn-catalog").onclick = catalog;
+    $("#seconds").addEventListener("input", () => renderLive());  // H3 checks depend on the clip length
     load().then(renderLive).catch(() => {});
     renderTags(); renderLive();
   }
