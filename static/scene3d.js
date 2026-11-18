@@ -310,6 +310,8 @@ const Scene3D = (() => {
     cone: { label: "Cone", icon: "△", dims: [0.8, 1.2, 0.8] },
     plane: { label: "Plane", icon: "▱", dims: [2, 0, 2] },
     torus: { label: "Ring", icon: "◎", dims: [1, 0.3, 1] },
+    // a standing person (a mannequin) facing the camera (+Z), 1.74 m tall: a stand-in for someone in a photo or video
+    figure: { label: "Person", icon: "🧍", dims: [0.67, 1.74, 0.29] },
   };
   const PRIM_COLOR = "#c9c4ba";
   // A shape's triangles about the origin: positions, normals, indices.
@@ -344,6 +346,39 @@ const Scene3D = (() => {
         for (let j = 0; j < SEG; j++) I.push(c0, c0 + 1 + j, c0 + 2 + j);
       };
       cap(-0.5, 0.5, -1); if (rt) cap(0.5, rt, 1);
+    } else if (kind === "figure") {
+      // A mannequin of rounded parts, in metres from the feet up, facing +Z (the small nose shows which way).
+      const ell = (c, r, R = 12, S = 18) => {  // an ellipsoid: centre, radii
+        const b = P.length / 3;
+        for (let i = 0; i <= R; i++) for (let j = 0; j <= S; j++) {
+          const th = i / R * Math.PI, ph = j / S * 2 * Math.PI, u = [Math.sin(th) * Math.cos(ph), Math.cos(th), Math.sin(th) * Math.sin(ph)];
+          v([c[0] + u[0] * r[0], c[1] + u[1] * r[1], c[2] + u[2] * r[2]], norm([u[0] / r[0], u[1] / r[1], u[2] / r[2]]));
+        }
+        for (let i = 0; i < R; i++) for (let j = 0; j < S; j++) { const a = b + i * (S + 1) + j, d = a + S + 1; I.push(a, d, a + 1, a + 1, d, d + 1); }
+      };
+      const limb = (a, b, r, rb = r) => {  // a rounded limb from a to b (radius r at a, rb at b)
+        const S = 16, d = norm(sub(b, a)), u = norm(cross(d, Math.abs(d[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0])), w = cross(d, u), b0 = P.length / 3;
+        for (let j = 0; j <= S; j++) {
+          const ph = j / S * 2 * Math.PI, n = addv(mulv(u, Math.cos(ph)), mulv(w, Math.sin(ph)));
+          v(addv(a, mulv(n, r)), n); v(addv(b, mulv(n, rb)), n);
+        }
+        for (let j = 0; j < S; j++) { const k = b0 + j * 2; I.push(k, k + 2, k + 1, k + 1, k + 2, k + 3); }
+        ell(a, [r, r, r], 8, 16); ell(b, [rb, rb, rb], 8, 16);
+      };
+      ell([0, 1.62, 0], [0.095, 0.12, 0.105]);                  // head
+      ell([0, 1.605, 0.1], [0.022, 0.03, 0.03], 6, 10);          // nose
+      limb([0, 1.44, 0], [0, 1.53, 0], 0.05);                    // neck
+      ell([0, 1.3, 0], [0.2, 0.17, 0.12]);                       // chest
+      ell([0, 1.1, 0], [0.15, 0.14, 0.1]);                       // waist
+      ell([0, 0.94, 0], [0.17, 0.1, 0.11]);                      // hips
+      for (const sx of [-1, 1]) {
+        limb([sx * 0.2, 1.41, 0], [sx * 0.26, 1.13, 0], 0.052, 0.045);        // upper arm
+        limb([sx * 0.26, 1.13, 0], [sx * 0.29, 0.86, 0.03], 0.043, 0.035);   // forearm
+        ell([sx * 0.3, 0.79, 0.04], [0.035, 0.07, 0.045], 8, 12);          // hand
+        limb([sx * 0.09, 0.9, 0], [sx * 0.1, 0.5, 0.01], 0.078, 0.058);     // thigh
+        limb([sx * 0.1, 0.5, 0.01], [sx * 0.1, 0.09, 0], 0.056, 0.042);     // shin
+        ell([sx * 0.1, 0.045, 0.06], [0.05, 0.04, 0.11], 8, 12);           // foot
+      }
     } else {  // torus (a ring lying flat)
       const R = 0.35, r = 0.15, M = 20;
       for (let i = 0; i <= SEG; i++) for (let j = 0; j <= M; j++) {
@@ -1453,7 +1488,7 @@ const Scene3D = (() => {
     ["beige", [216, 196, 158]], ["brown", [122, 76, 40]], ["green", [52, 162, 62]], ["dark green", [30, 90, 42]], ["teal", [30, 150, 150]],
     ["light blue", [130, 190, 240]], ["blue", [40, 90, 210]], ["navy", [26, 36, 92]], ["purple", [122, 62, 172]], ["pink", [240, 130, 182]]];
   const colorName = hex => { const c = hexRgb(hex).map(v => v * 255); return COLORS.reduce((b, x) => { const d = Math.hypot(c[0] - x[1][0], c[1] - x[1][1], c[2] - x[1][2]); return d < b[1] ? [x[0], d] : b; }, ["", Infinity])[0]; };
-  const SHAPE = { cube: "cube", sphere: "sphere", cylinder: "cylinder", cone: "cone", plane: "flat panel", torus: "ring" };
+  const SHAPE = { cube: "cube", sphere: "sphere", cylinder: "cylinder", cone: "cone", plane: "flat panel", torus: "ring", figure: "human figure" };
   const ORD = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth"];
   const bare = t => String(t || "").trim().replace(/^(a|an|the|some)\s+/i, "");
   // Where an object is in the frame of `cam` at time t: u, v (0..1 across and down), its distance, or off: out of view.

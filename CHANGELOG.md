@@ -5,6 +5,15 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.89.0] - 2026-11-18
+
+### Added
+- **🧍 Person** in 3D scenes (on the tool bar's Add row and in the right-click menu): a standing mannequin, 1.74 m tall,
+  facing the camera, with a small nose so you can tell which way it faces. Like the other shapes it has a colour, a
+  size (width, height, depth) and the move, rotate and resize gizmos, and it can be keyed. The photo and video models
+  are told about it as, e.g., “the red human figure on the left”; give it a Becomes (“a woman in a yellow raincoat”)
+  or a Picture to say who it should be.
+
 ## [0.88.0] - 2026-11-18
 
 ### Added
