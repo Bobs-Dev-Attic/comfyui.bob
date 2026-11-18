@@ -5,6 +5,13 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.96.0] - 2026-11-18
+
+### Changed
+- **Depth map PNGs are plain 8-bit greyscale** (one channel, no alpha), this frame and the full-size sequence alike,
+  as depth ControlNet tools expect; the grey levels are unchanged and the files are several times smaller. (A browser
+  without CompressionStream still gets the RGBA PNGs from before.)
+
 ## [0.95.0] - 2026-11-18
 
 ### Added
