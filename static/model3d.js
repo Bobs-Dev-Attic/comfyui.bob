@@ -460,17 +460,18 @@ const Model3D = (() => {
       for (const p of prims) {
         for (let k = 0; k < p.pos.length; k += 3) for (let c = 0; c < 3; c++) { lo[c] = Math.min(lo[c], p.pos[k + c]); hi[c] = Math.max(hi[c], p.pos[k + c]); }
         const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
-        const attr = (name, data, n) => { const loc = gl.getAttribLocation(prog, name); if (loc < 0) return; const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, n, gl.FLOAT, false, 0, 0); };
+        const bufs = [];
+        const attr = (name, data, n) => { const loc = gl.getAttribLocation(prog, name); if (loc < 0) return; const b = gl.createBuffer(); bufs.push(b); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, n, gl.FLOAT, false, 0, 0); };
         const fixed = (name, vals) => { const loc = gl.getAttribLocation(prog, name); if (loc >= 0) { gl.disableVertexAttribArray(loc); gl["vertexAttrib" + vals.length + "f"](loc, ...vals); } };
         attr("aPos", p.pos, 3);
         p.nrm ? attr("aNrm", p.nrm, 3) : fixed("aNrm", [0, 0, 0]);
         p.uv ? attr("aUv", p.uv, 2) : fixed("aUv", [0, 0]);
         p.col ? attr("aCol", p.col.data, p.col.n) : fixed("aCol", [1, 1, 1, 1]);
         const idx = p.idx || Uint32Array.from({ length: p.pos.length / 3 }, (_, i) => i);
-        const ib = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+        const ib = gl.createBuffer(); bufs.push(ib); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
         gl.bindVertexArray(null);
         tris += idx.length / 3;
-        parts.push({ vao, count: idx.length, base: p.base, gtex: tex(p.tex), gao: tex(p.ao), fixedCol: !p.col });
+        parts.push({ vao, bufs, count: idx.length, base: p.base, gtex: tex(p.tex), gao: tex(p.ao), fixedCol: !p.col, ownTex: [p.tex && "gtex", p.ao && "gao"].filter(Boolean) });
       }
       if (!keep) for (const p of prims) { delete p.pos; delete p.nrm; delete p.uv; delete p.idx; }
       return { parts, lo, hi, tris };
@@ -527,7 +528,15 @@ const Model3D = (() => {
     }
     const texture = img => tex(img);
     const free = t => t && gl.deleteTexture(t);
-    return { upload, begin, draw, lines, depthPass, texture, free };
+    // Let go of a mesh made by upload() (its buffers, and textures of its own), e.g. a Person's pose that's no longer shown.
+    function drop(mesh) {
+      for (const p of mesh?.parts || []) {
+        gl.deleteVertexArray(p.vao); (p.bufs || []).forEach(b => gl.deleteBuffer(b));
+        for (const k of p.ownTex || []) if (p[k]) gl.deleteTexture(p[k]);
+      }
+      if (mesh) mesh.parts = [];
+    }
+    return { upload, begin, draw, lines, depthPass, texture, free, drop };
   }
 
   return { start, openList, view, download, _parseGLB: parseGLB,

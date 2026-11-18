@@ -57,12 +57,14 @@ const Scene3D = (() => {
     const a = K[i], b = K[i + 1], p0 = K[i - 1] || a, p3 = K[i + 2] || b, u = (t - a.t) / Math.max(1e-6, b.t - a.t), out = { t };
     for (const k of Object.keys(a)) {
       if (k === "t") continue;
+      if (typeof a[k] === "string" || typeof b[k] !== typeof a[k]) { out[k] = u < 0.5 || b[k] === undefined ? a[k] : b[k]; continue; }
       if (Array.isArray(a[k])) out[k] = a[k].map((v, j) => smooth.includes(k) ? cr(p0[k][j], v, b[k][j], p3[k][j], u) : v + (b[k][j] - v) * u);
       else out[k] = smooth.includes(k) ? cr(p0[k], a[k], b[k], p3[k], u) : a[k] + (b[k] - a[k]) * u;
     }
     return out;
   }
-  const baseOf = o => ({ pos: o.pos.slice(), yaw: o.yaw || 0, pitch: o.pitch || 0, roll: o.roll || 0, scale: o.scale });
+  const baseOf = o => ({ pos: o.pos.slice(), yaw: o.yaw || 0, pitch: o.pitch || 0, roll: o.roll || 0, scale: o.scale,
+    ...(o.prim === "figure" ? { pose: o.pose || "standing" } : {}) });
   const normKeys = K => (K || []).map(k => ({ pitch: 0, roll: 0, ...k }));
   // An object's pose at time t.
   function poseAt(o, t) { return o.keys?.length ? interp(o.keys, t, ["pos"]) : baseOf(o); }
@@ -77,7 +79,7 @@ const Scene3D = (() => {
     Object.assign(k, f);
     fromFirstKey(o);
   }
-  function fromFirstKey(o) { const k = o.keys[0]; Object.assign(o, { pos: k.pos.slice(), yaw: k.yaw, pitch: k.pitch || 0, roll: k.roll || 0, scale: k.scale }); }
+  function fromFirstKey(o) { const k = o.keys[0]; Object.assign(o, { pos: k.pos.slice(), yaw: k.yaw, pitch: k.pitch || 0, roll: k.roll || 0, scale: k.scale, ...(k.pose ? { pose: k.pose } : {}) }); }
   const camOf = c => ({ yaw: c.yaw, pitch: c.pitch, dist: c.dist, target: c.target.slice() });
   function camAt(t) { const c = interp(s.camKeys, t, ["yaw", "pitch", "dist", "target"]); return { ...camOf(c), dist: Math.max(s.bg.dmed * 0.02, c.dist) }; }
   // The playhead moved: the camera goes back on its path.
@@ -175,7 +177,7 @@ const Scene3D = (() => {
   // the middle of its box.
   function matOf(o, P = poseAt(o, s.t)) {
     const lo = o.mesh.lo, hi = o.mesh.hi, st = o.stretch || [1, 1, 1];
-    const c = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2], hc = (hi[1] - lo[1]) / 2 * st[1] * P.scale;
+    const pv = o.mesh.pivot, c = [pv ? pv[0] : (lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, pv ? pv[2] : (lo[2] + hi[2]) / 2], hc = (hi[1] - lo[1]) / 2 * st[1] * P.scale;
     return mul4(mul4(mul4(mul4(T(P.pos[0], P.pos[1] + hc, P.pos[2]), rotOf(P)), S(P.scale)), SV(st)), T(-c[0], -c[1], -c[2]));
   }
   const boxCorners = (o, M = matOf(o)) => { const lo = o.mesh.lo, hi = o.mesh.hi, c = []; for (let k = 0; k < 8; k++) c.push(xf(M, [k & 1 ? hi[0] : lo[0], k & 2 ? hi[1] : lo[1], k & 4 ? hi[2] : lo[2]], 1)); return c; };
@@ -336,10 +338,59 @@ const Scene3D = (() => {
     tpose: { label: "T-pose", says: "with arms out to the sides", arms: { R: [[1, 0, 0], [1, 0, 0]], L: [[1, 0, 0], [1, 0, 0]] } },
   };
   // A shape's own size (its box before stretching), e.g. a Person sitting is shorter and deeper than standing.
+  const NAT = new Map();
   function natDims(kind, pose) {
+    const id = `${kind}|${pose}`;
+    if (NAT.has(id)) return NAT.get(id).slice();
     const { P } = shapeOf(kind, pose), lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
     for (let i = 0; i < P.length; i += 3) for (let c = 0; c < 3; c++) { lo[c] = Math.min(lo[c], P[i + c]); hi[c] = Math.max(hi[c], P[i + c]); }
-    return [0, 1, 2].map(c => +(hi[c] - lo[c]).toFixed(3));
+    const d = [0, 1, 2].map(c => +(hi[c] - lo[c]).toFixed(3));
+    NAT.set(id, d);
+    return d.slice();
+  }
+  /* Poses in motion: a Person's keys can carry a pose; between two of them the arms and legs blend (each bone's
+     direction, eased in and out), and the person's mesh is rebuilt for the frame (kept in a small cache). */
+  function fullPose(name) {
+    const p = POSES[name] || POSES.standing, st = POSES.standing, a = p.arms || st.arms, l = p.legs || st.legs;
+    return { arms: { R: a.R, L: a.L }, legs: { R: l.R, L: l.L } };
+  }
+  function blendPose(na, nb, u) {
+    const A = fullPose(na), B = fullPose(nb), out = { arms: {}, legs: {} };
+    for (const g of ["arms", "legs"]) for (const side of ["R", "L"]) {
+      const x = A[g][side], y = B[g][side];
+      out[g][side] = [0, 1].map(i => { const p = norm(x[i]), q = norm(y[i]); return norm([0, 1, 2].map(c => p[c] + (q[c] - p[c]) * u)); });
+      const flag = u < 0.5 ? x[2] : y[2]; if (flag) out[g][side].push(flag);
+    }
+    return out;
+  }
+  // A Person's pose at time t: { name } on or past a key, or { a, b, u } between two keys with different poses.
+  function postureAt(o, t) {
+    const K = (o.keys || []).filter(k => k.pose);
+    if (!K.length) return { name: o.pose || "standing" };
+    if (t <= K[0].t) return { name: K[0].pose };
+    if (t >= K.at(-1).t) return { name: K.at(-1).pose };
+    let i = 0; while (K[i + 1].t < t) i++;
+    const a = K[i], b = K[i + 1];
+    if (a.pose === b.pose) return { name: a.pose };
+    const u = (t - a.t) / Math.max(1e-6, b.t - a.t);
+    return { a: a.pose, b: b.pose, u: u * u * (3 - 2 * u) };
+  }
+  const postureName = ps => ps.name || (ps.u < 0.5 ? ps.a : ps.b);
+  // The mesh a Person shows at time t (swapped in before drawing); others keep theirs.
+  function figureMesh(o, t) {
+    if (o.prim !== "figure" || !(o.keys || []).some(k => k.pose)) return;
+    const ps = postureAt(o, t), q = ps.name ? null : Math.round(ps.u * 48) / 48;
+    const id = `${o.pose}|${o.dims}|${o.tilt}|${ps.name || `${ps.a}>${ps.b}@${q}`}`;
+    if (o._pmKey === id && o.mesh) return;
+    o._pm ||= new Map();
+    let m = o._pm.get(id);
+    if (!m) {
+      m = primMesh(o, ps.name || blendPose(ps.a, ps.b, q));
+      o._pm.set(id, m);
+      for (const [k, old] of o._pm) { if (o._pm.size <= 64) break; if (old !== o.mesh) s.gpu.drop?.(old); o._pm.delete(k); }
+    }
+    m.parts[0].base = [...hexRgb(o.color || PRIM_COLOR), 1];
+    o.mesh = m; o._pmKey = id;
   }
   // A shape's triangles about the origin: positions, normals, indices.
   function shapeOf(kind, pose = "standing") {
@@ -400,7 +451,7 @@ const Scene3D = (() => {
       ell([0, 0.94, 0], [0.17, 0.1, 0.11]);                      // hips
       // Arms and legs follow the pose: a direction for each bone, x pointing out from the body. The person faces +Z,
       // so their right side is -X and their left +X.
-      const P0 = POSES[pose] || POSES.standing;
+      const P0 = pose && typeof pose === "object" ? pose : POSES[pose] || POSES.standing;
       for (const [side, sx] of [["R", -1], ["L", 1]]) {
         const bone = d => norm([d[0] * sx, d[1], d[2]]);
         const arm = P0.arms?.[side] || POSES.standing.arms.R, leg = P0.legs?.[side] || POSES.standing.legs.R;
@@ -423,21 +474,25 @@ const Scene3D = (() => {
   }
   // A primitive object's mesh: its shape stretched to its size (dims), tilted, in its colour; the anchor is the bottom
   // middle of its box, as for a model.
-  function primMesh(o) {
-    const { P, N, I } = shapeOf(o.prim, o.pose), n = P.length / 3, dims = o.dims || PRIMS[o.prim].dims;
+  function primMesh(o, posture = null) {
+    const fig = o.prim === "figure", { P, N, I } = shapeOf(o.prim, posture || o.pose), n = P.length / 3, dims = o.dims || PRIMS[o.prim].dims;
     const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
     for (let i = 0; i < n; i++) for (let c = 0; c < 3; c++) { lo[c] = Math.min(lo[c], P[i * 3 + c]); hi[c] = Math.max(hi[c], P[i * 3 + c]); }
+    // A Person: the size fields are its base pose's box, so a blended or keyed pose keeps the same scale (not stretched to
+    // fill that box), and it's drawn about its own pelvis line (x = z = 0) rather than its box's middle.
+    if (fig) { const nd = natDims("figure", o.pose || "standing"); for (let c = 0; c < 3; c++) { if (c !== 1) { lo[c] = -nd[c] / 2; hi[c] = nd[c] / 2; } else hi[c] = lo[c] + nd[c]; } }
     const k = [0, 1, 2].map(c => hi[c] - lo[c] > 1e-9 ? Math.max(0.01, dims[c]) / (hi[c] - lo[c]) : 1);
     const [ax, az] = (o.tilt || [0, 0]).map(x => x * rad), cx = Math.cos(ax), sx = Math.sin(ax), cz = Math.cos(az), sz = Math.sin(az);
     const turn = q => { const y1 = q[1] * cx - q[2] * sx, z1 = q[1] * sx + q[2] * cx; return [q[0] * cz - y1 * sz, q[0] * sz + y1 * cz, z1]; };
-    const pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3);
+    const pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3), mid = fig ? [0, (lo[1] + hi[1]) / 2, 0] : [0, 1, 2].map(c => (lo[c] + hi[c]) / 2);
     for (let i = 0; i < n; i++) {
-      const p = turn([0, 1, 2].map(c => (P[i * 3 + c] - (lo[c] + hi[c]) / 2) * k[c]));
+      const p = turn([0, 1, 2].map(c => (P[i * 3 + c] - mid[c]) * k[c]));
       const q = turn(norm([0, 1, 2].map(c => N[i * 3 + c] / k[c])));
       pos.set(p, i * 3); nrm.set(q, i * 3);
     }
     const mesh = s.gpu.upload([{ pos, nrm, uv: null, col: null, idx: new Uint32Array(I), base: [...hexRgb(o.color || PRIM_COLOR), 1], tex: null, ao: null }]);
     mesh.anchor = [(mesh.lo[0] + mesh.hi[0]) / 2, mesh.lo[1], (mesh.lo[2] + mesh.hi[2]) / 2];
+    if (fig) { const pv = turn([0, 0, 0]); mesh.pivot = pv; mesh.anchor = [pv[0], mesh.lo[1], pv[2]]; }
     return mesh;
   }
   // Add a shape: in an empty scene at its real size in front of the camera (or at `at`); in a picture, where the
@@ -1047,6 +1102,7 @@ const Scene3D = (() => {
     const [W, H] = r?.size || frameSize();
     if (s.cv.width !== W || s.cv.height !== H) { s.cv.width = W; s.cv.height = H; }
     const t = r ? r.t : s.t, cam = r?.cam || s.cam;
+    for (const o of s.objs) figureMesh(o, t);
     const { e, VP } = viewProj(W, H, cam), y = (cam.yaw - 40) * rad, key = [Math.sin(y) * 0.6, 0.85, Math.cos(y) * 0.6 + 0.3];
     if (r?.proj) {  // the photo painted onto the scene from its camera; what that camera couldn't see is a hole
       const P = { ...r.proj, mask: !!r.mask };
@@ -1326,10 +1382,16 @@ const Scene3D = (() => {
       }
       const po = s.objs[s.sel];
       if (po?.prim === "figure" && id === "s3-pose") {
-        // A new pose changes the person's own box (sitting is shorter and deeper): keep any stretch the user gave it.
-        const from = natDims("figure", po.pose || "standing"), to = natDims("figure", e.target.value), d = po.dims || from;
-        po.dims = [0, 1, 2].map(c => +(to[c] * (from[c] > 1e-6 ? d[c] / from[c] : 1)).toFixed(3));
-        po.pose = e.target.value; po.mesh = primMesh(po); return changed(po);
+        // At the playhead, like moving it: a key there once it has keys (or the playhead isn't at the start).
+        const before = po.pose || "standing";
+        editPose(po, { pose: e.target.value });
+        const after = po.pose || "standing";
+        if (after !== before) {
+          // Its base pose changed its own box (sitting is shorter and deeper): keep any stretch the user gave it.
+          const from = natDims("figure", before), to = natDims("figure", after), d = po.dims || from;
+          po.dims = [0, 1, 2].map(c => +(to[c] * (from[c] > 1e-6 ? d[c] / from[c] : 1)).toFixed(3));
+        }
+        po._pmKey = null; po.mesh = primMesh(po); figureMesh(po, s.t); return changed(po);
       }
       if (po?.prim && ["s3-dw", "s3-dh", "s3-dd"].includes(id)) {
         const R = s.root, dim = x => Math.max(0.01, Math.min(500, +R.querySelector(x).value || 0.01));
@@ -1442,7 +1504,7 @@ const Scene3D = (() => {
       root.querySelector('[data-act="replace"]').hidden = !!o.prim;
       const pf = root.querySelector(".s3-prim"); pf.hidden = !o.prim;
       root.querySelector(".s3-posef").hidden = o.prim !== "figure";
-      if (o.prim === "figure") root.querySelector("#s3-pose").value = o.pose || "standing";
+      if (o.prim === "figure") root.querySelector("#s3-pose").value = postureName(postureAt(o, s.t));
       if (o.prim) {
         const d = o.dims || PRIMS[o.prim].dims, act = document.activeElement;
         if (act !== root.querySelector("#s3-color")) root.querySelector("#s3-color").value = o.color || PRIM_COLOR;
@@ -1544,7 +1606,7 @@ const Scene3D = (() => {
     return { u, v, d: Math.hypot(p[0] - e[0], p[1] - e[1], p[2] - e[2]), off: u < -0.05 || u > 1.05 || v < -0.15 || v > 1.15 };
   }
   // Every shown object as the models see it at time t through cam: { o, looks, where, seen, becomes, off }.
-  function cast(t, cam) {
+  function cast(t, cam, video = false) {
     const list = s.objs.filter(o => o.mesh && o.pos && !o.hidden).map(o => ({ o, at: seenAt(o, t, cam) })).filter(x => x.at);
     const ds = list.filter(x => !x.at.off).map(x => x.at.d).sort((a, b) => a - b), med = ds[ds.length >> 1];
     for (const x of list) {
@@ -1561,15 +1623,22 @@ const Scene3D = (() => {
     for (const x of list) { const k = `${x.looks}|${x.where}`; groups.set(k, [...(groups.get(k) || []), x]); }
     for (const g of groups.values()) if (g.length > 1) g.sort((a, b) => a.at.u - b.at.u).forEach((x, i) => { x.looks = `${ORD[i] || `#${i + 1}`} ${x.looks} from the left`; });
     for (const x of list) {
-      const pose = x.o.prim === "figure" ? POSES[x.o.pose]?.says : "";
-      x.seen = `the ${x.looks}${x.off ? "" : ` ${x.where}`}${pose ? `, ${pose}` : ""}`;
+      let pose = "";
+      if (x.o.prim === "figure") {
+        const seq = video ? (x.o.keys || []).filter(k => k.pose).map(k => k.pose).filter((p, i, a) => i === 0 || p !== a[i - 1]) : [];
+        pose = seq.length > 1 ? seq.map(p => POSES[p]?.says || "standing").join(", then ") : POSES[seq[0] || postureName(postureAt(x.o, t))]?.says || "";
+      }
+      x.pose = pose;
+      x.seen = `the ${x.looks}${x.off ? "" : ` ${x.where}`}${pose ? `, ${pose},` : ""}`;
     }
     return list;
   }
   // "the wooden crate (the red cube on the left)", or just what it looks like when it Becomes nothing; with its picture
   // as <Picture k> (a render on H3 Reference), "the wooden crate from <Picture 2> (the red cube on the left)".
-  const refOf = (x, k = 0) => k ? `the ${x.becomes ? bare(x.becomes) : x.o.name.trim().toLowerCase()} from <Picture ${k}> (${x.seen})`
-    : x.becomes ? `the ${bare(x.becomes)} (${x.seen})` : x.seen;
+  const refOf = (x, k = 0) => k ? `the ${x.becomes ? bare(x.becomes) : x.o.name.trim().toLowerCase()} from <Picture ${k}> (${tidy(x.seen)})`
+    : x.becomes ? `the ${bare(x.becomes)} (${tidy(x.seen)})` : x.seen;
+  // A pose's closing comma before a full stop, semicolon or bracket goes: "…, sitting,." -> "…, sitting."
+  const tidy = t => String(t).replace(/,\s*([.;:!?)]|$)/g, "$1").replace(/,\s*,/g, ",");
   // The objects whose pictures go to H3 Reference, in order (<Picture 2>...; the first frame is <Picture 1>).
   const picObjs = () => s.objs.filter(o => o.mesh && o.pos && !o.hidden && o.picture).slice(0, 8);
   const refsReady = () => !!state.caps?.engines?.h3ref?.ready;
@@ -1594,7 +1663,7 @@ const Scene3D = (() => {
       if (k >= 0) return `${x.seen} becomes ${x.becomes ? `the ${bare(x.becomes)} from ${tag(k + 2)}` : `what is in ${tag(k + 2)}`}`;
       return x.becomes ? `${x.seen} becomes ${x.becomes}` : x.seen;
     };
-    return ` The objects in it: ${list.map(one).join("; ")}.`;
+    return tidy(` The objects in it: ${list.map(one).join("; ")}.`);
   }
   // Generate photo's pictures: the objects in view that have one, as many as the edit model takes besides the render.
   const PHOTO_PICS = { qwen: 2, h3image: 8 };  // workflows.EDIT_EXTRA_REFS
@@ -1603,14 +1672,14 @@ const Scene3D = (() => {
   // The video's text: tags expanded, and what the other objects are (as the first frame shows them).
   function videoText(what, refs = false) {
     const pics = refs ? picObjs() : [], picOf = x => { const i = pics.indexOf(x.o); return i < 0 ? 0 : i + 2; };
-    const list = cast(0, camForRender(0)), r = expandTags(what, list, picOf);
+    const list = cast(0, camForRender(0), true), r = expandTags(what, list, picOf);
     const rest = list.filter(x => !r.used.includes(x) && (picOf(x) || (x.becomes && !x.off)));
     const cap = t => t[0].toUpperCase() + t.slice(1);
     const extra = rest.map(x => picOf(x) ? `${cap(x.seen)} looks like <Picture ${picOf(x)}>${x.becomes ? `: ${x.becomes}` : ""}.` : `${cap(x.seen)} is ${x.becomes}.`).join(" ");
     let text = r.text.trim();
     if (text) text = cap(text);
     if (text && !/[.!?]$/.test(text)) text += ".";
-    return { text: [text, extra].filter(Boolean).join(" "), unknown: r.unknown };
+    return { text: tidy([text, extra].filter(Boolean).join(" ")), unknown: r.unknown };
   }
   // The {Name} chips over a text box, and the preview of what the model reads under it.
   function tagChips() {
