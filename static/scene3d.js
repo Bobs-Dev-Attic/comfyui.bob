@@ -15,6 +15,11 @@
 
    An empty scene (☰ › 3D scenes › New empty scene) has no picture: a floor 1.6 units (metres) under the camera with a
    1 m grid, a sky colour and, if chosen, a picture far behind as a backdrop; its lens and shape (aspect) are set here.
+   The tool bar adds primitive shapes (cube, sphere, cylinder, cone, plane, ring), made here with a colour and a size,
+   and picks what dragging an object does (move, raise, rotate, resize). Right-click an object for its menu (move,
+   raise, rotate or resize it following the mouse until a click, turn it 90°, size it up or down, set it down on the
+   ground, duplicate, rename, hide, delete); right-click the ground to add a shape there. Keys: G move, L raise,
+   R rotate, S resize, Shift+D duplicate, Del delete, Esc cancel.
    📷 Generate photo draws what the camera frames (the frame on the view) and has the image editor's whole-picture edit
    (Qwen Image Edit 2511 or MiniMax H3 Image) make a photograph of it, keeping the layout. */
 "use strict";
@@ -25,6 +30,7 @@ const Scene3D = (() => {
   let s = null;        // the open scene window
   let list = null;     // the open scenes list
   let models = [];     // /api/models3d, refreshed while any is being made
+  let startModal = () => {}, endModal = () => {};  // set by wire(): an object following the mouse
 
   const uid = () => Math.random().toString(36).slice(2, 10);
   const FPS = 24;
@@ -207,7 +213,7 @@ const Scene3D = (() => {
     const bg = s.bg, m = o.mesh, hgt = Math.max(1e-6, m.hi[1] - m.lo[1]), dep = (m.hi[2] - m.lo[2]);
     if (bg.empty && !o.mask) {  // a model's longest side is 1 unit: 1 m, on the floor in front, beside the others
       const n = s.objs.filter(x => x !== o && x.pos).length, side = n % 2 ? 1 : -1;
-      const scale = 1 / Math.max(1e-6, hgt, m.hi[0] - m.lo[0], dep);
+      const scale = o.prim ? 1 : 1 / Math.max(1e-6, hgt, m.hi[0] - m.lo[0], dep);
       return { pos: [n ? side * Math.ceil(n / 2) * 1.2 : 0, bg.floor, -3.5], yaw: 0, scale };
     }
     let info = null;
@@ -242,6 +248,11 @@ const Scene3D = (() => {
   async function loadObjects() {
     await refreshModels();
     for (const o of s.objs) {
+      if (o.prim) {
+        if (!o.mesh) { o.mesh = primMesh(o); o.state = "ok"; }
+        if (!o.pos || !o.scale) { await place(o); save(); }
+        s.dirty = true; continue;
+      }
       if (o.mesh || !o.model) continue;
       const md = models.find(x => x.id === o.model);
       if (!md) { o.state = "missing"; continue; }
@@ -257,11 +268,189 @@ const Scene3D = (() => {
     if (s.objs.some(o => o.state === "running")) s.poll = setTimeout(() => s && loadObjects(), 4000);
   }
 
+  /* ---------------------------------------------------------------- primitive shapes */
+  const PRIMS = {
+    cube: { label: "Cube", icon: "▢", dims: [1, 1, 1] },
+    sphere: { label: "Sphere", icon: "◯", dims: [1, 1, 1] },
+    cylinder: { label: "Cylinder", icon: "⌭", dims: [0.6, 1.2, 0.6] },
+    cone: { label: "Cone", icon: "△", dims: [0.8, 1.2, 0.8] },
+    plane: { label: "Plane", icon: "▱", dims: [2, 0, 2] },
+    torus: { label: "Ring", icon: "◎", dims: [1, 0.3, 1] },
+  };
+  const PRIM_COLOR = "#c9c4ba";
+  // A shape's triangles about the origin: positions, normals, indices.
+  function shapeOf(kind) {
+    const P = [], N = [], I = [], SEG = 40;
+    const v = (p, n) => { P.push(...p); N.push(...n); return P.length / 3 - 1; };
+    if (kind === "cube" || kind === "plane") {
+      const faces = kind === "plane" ? [[1, 1]] : [[0, 1], [0, -1], [1, 1], [1, -1], [2, 1], [2, -1]];
+      for (const [ax, sg] of faces) {
+        const n = [0, 0, 0], u = [0, 0, 0], w = [0, 0, 0]; n[ax] = sg; u[(ax + 1) % 3] = 1; w[(ax + 2) % 3] = 1;
+        const c = kind === "plane" ? [0, 0, 0] : n.map(x => x * 0.5), pt = (a, b) => c.map((x, j) => x + (u[j] * a + w[j] * b) * 0.5);
+        const i = v(pt(-1, -1), n); v(pt(1, -1), n); v(pt(1, 1), n); v(pt(-1, 1), n);
+        I.push(i, i + 1, i + 2, i, i + 2, i + 3);
+      }
+    } else if (kind === "sphere") {
+      const R = 20;
+      for (let i = 0; i <= R; i++) for (let j = 0; j <= SEG; j++) {
+        const th = i / R * Math.PI, ph = j / SEG * 2 * Math.PI, n = [Math.sin(th) * Math.cos(ph), Math.cos(th), Math.sin(th) * Math.sin(ph)];
+        v(n.map(x => x * 0.5), n);
+      }
+      for (let i = 0; i < R; i++) for (let j = 0; j < SEG; j++) { const a = i * (SEG + 1) + j, b = a + SEG + 1; I.push(a, b, a + 1, a + 1, b, b + 1); }
+    } else if (kind === "cylinder" || kind === "cone") {
+      const rt = kind === "cone" ? 0 : 0.5, b0 = P.length / 3;
+      for (let j = 0; j <= SEG; j++) {
+        const ph = j / SEG * 2 * Math.PI, c = Math.cos(ph), sn = Math.sin(ph), n = norm([c, 0.5 - rt, sn]);
+        v([c * 0.5, -0.5, sn * 0.5], n); v([c * rt, 0.5, sn * rt], n);
+      }
+      for (let j = 0; j < SEG; j++) { const a = b0 + j * 2; I.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+      const cap = (y, r, ny) => {
+        const c0 = v([0, y, 0], [0, ny, 0]);
+        for (let j = 0; j <= SEG; j++) { const ph = j / SEG * 2 * Math.PI; v([Math.cos(ph) * r, y, Math.sin(ph) * r], [0, ny, 0]); }
+        for (let j = 0; j < SEG; j++) I.push(c0, c0 + 1 + j, c0 + 2 + j);
+      };
+      cap(-0.5, 0.5, -1); if (rt) cap(0.5, rt, 1);
+    } else {  // torus (a ring lying flat)
+      const R = 0.35, r = 0.15, M = 20;
+      for (let i = 0; i <= SEG; i++) for (let j = 0; j <= M; j++) {
+        const a = i / SEG * 2 * Math.PI, b = j / M * 2 * Math.PI, n = [Math.cos(b) * Math.cos(a), Math.sin(b), Math.cos(b) * Math.sin(a)];
+        v([(R + r * Math.cos(b)) * Math.cos(a), r * Math.sin(b), (R + r * Math.cos(b)) * Math.sin(a)], n);
+      }
+      for (let i = 0; i < SEG; i++) for (let j = 0; j < M; j++) { const a = i * (M + 1) + j, b = a + M + 1; I.push(a, b, a + 1, a + 1, b, b + 1); }
+    }
+    return { P, N, I };
+  }
+  // A primitive object's mesh: its shape stretched to its size (dims), tilted, in its colour; the anchor is the bottom
+  // middle of its box, as for a model.
+  function primMesh(o) {
+    const { P, N, I } = shapeOf(o.prim), n = P.length / 3, dims = o.dims || PRIMS[o.prim].dims;
+    const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < n; i++) for (let c = 0; c < 3; c++) { lo[c] = Math.min(lo[c], P[i * 3 + c]); hi[c] = Math.max(hi[c], P[i * 3 + c]); }
+    const k = [0, 1, 2].map(c => hi[c] - lo[c] > 1e-9 ? Math.max(0.01, dims[c]) / (hi[c] - lo[c]) : 1);
+    const [ax, az] = (o.tilt || [0, 0]).map(x => x * rad), cx = Math.cos(ax), sx = Math.sin(ax), cz = Math.cos(az), sz = Math.sin(az);
+    const turn = q => { const y1 = q[1] * cx - q[2] * sx, z1 = q[1] * sx + q[2] * cx; return [q[0] * cz - y1 * sz, q[0] * sz + y1 * cz, z1]; };
+    const pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      const p = turn([0, 1, 2].map(c => (P[i * 3 + c] - (lo[c] + hi[c]) / 2) * k[c]));
+      const q = turn(norm([0, 1, 2].map(c => N[i * 3 + c] / k[c])));
+      pos.set(p, i * 3); nrm.set(q, i * 3);
+    }
+    const mesh = s.gpu.upload([{ pos, nrm, uv: null, col: null, idx: new Uint32Array(I), base: [...hexRgb(o.color || PRIM_COLOR), 1], tex: null, ao: null }]);
+    mesh.anchor = [(mesh.lo[0] + mesh.hi[0]) / 2, mesh.lo[1], (mesh.lo[2] + mesh.hi[2]) / 2];
+    return mesh;
+  }
+  // Add a shape: in an empty scene at its real size in front of the camera (or at `at`); in a picture, where the
+  // background is in the middle of the view, a third of the picture tall.
+  async function addPrim(kind, at = null) {
+    if (!s?.bg || !PRIMS[kind]) return;
+    const d = PRIMS[kind], n = s.objs.filter(o => o.prim === kind).length;
+    const o = { id: uid(), name: n ? `${d.label} ${n + 1}` : d.label, model: null, mask: null, prim: kind, color: PRIM_COLOR,
+      dims: d.dims.slice(), tilt: [0, 0], pos: null, yaw: 0, scale: null, keys: [] };
+    o.mesh = primMesh(o); o.state = "ok";
+    s.objs.push(o); s.sel = s.objs.length - 1;
+    await place(o);
+    if (at) o.pos = at.slice();
+    save(); renderSide(); s.dirty = true;
+  }
+  // Where a ray first meets the background: the floor of an empty scene, or the picture's depth surface (marched:
+  // a point is behind the surface once it's deeper than what the picture's camera sees in its direction).
+  function surfaceHit(ray) {
+    const bg = s.bg;
+    if (bg.empty) {
+      if (ray.d[1] > -1e-4) return null;
+      const t = (bg.floor - ray.o[1]) / ray.d[1];
+      return t > 0 && t < 80 ? addv(ray.o, mulv(ray.d, t)) : null;
+    }
+    const t0 = bg.dmed * 0.002, t1 = bg.dmed * 12, N = 400;
+    for (let i = 0; i <= N; i++) {
+      const p = addv(ray.o, mulv(ray.d, t0 * Math.pow(t1 / t0, i / N))), d = -p[2];
+      if (d <= 1e-6) continue;
+      const u = 0.5 + p[0] / d / (2 * bg.t), v = 0.5 - p[1] / d / (2 * bg.tv);
+      if (u < 0 || u > 1 || v < 0 || v > 1) continue;
+      const q = pointAt(bg, u, v);
+      if (d >= -q[2]) return q;
+    }
+    return null;
+  }
+
+  /* ---------------------------------------------------------------- object actions (tool bar, menu, keys) */
+  const TOOLS = { move: "✥ Move", lift: "↕ Raise", rotate: "⟳ Rotate", scale: "⤢ Resize" };
+  function changed(o) { save(); renderSide(); s.dirty = true; }
+  function nudge(o, f) {
+    if (!o?.mesh || !o.pos) return;
+    const P = poseAt(o, s.t);
+    editPose(o, f.yaw != null ? { yaw: P.yaw + f.yaw } : { scale: P.scale * f.k });
+    changed(o);
+  }
+  // Set an object down on whatever is below it (the floor, or the picture's ground).
+  function dropDown(o) {
+    if (!o?.mesh || !o.pos) return;
+    const P = poseAt(o, s.t), up = s.bg.empty ? 0.01 : s.bg.dmed * 0.01;
+    const hit = surfaceHit({ o: [P.pos[0], P.pos[1] + up, P.pos[2]], d: [0, -1, 0] });
+    if (!hit) return Media.toast("There's no ground under it.");
+    editPose(o, { pos: [P.pos[0], hit[1], P.pos[2]] }); changed(o);
+  }
+  function duplicate(o) {
+    if (!o?.mesh || !o.pos) return;
+    const P = poseAt(o, s.t), w = (o.mesh.hi[0] - o.mesh.lo[0]) * P.scale * 1.2 || 1, y = s.cam.yaw * rad;
+    const off = [Math.cos(y) * w, 0, -Math.sin(y) * w], move = p => addv(p, off);
+    const c = { id: uid(), name: `${o.name} copy`, model: o.model, mask: o.mask, prim: o.prim, color: o.color, dims: o.dims?.slice(), tilt: o.tilt?.slice(),
+      pos: move(o.pos), yaw: o.yaw || 0, scale: o.scale, auto_scale: o.auto_scale, hidden: false,
+      keys: (o.keys || []).map(k => ({ ...k, pos: move(k.pos) })), state: "ok" };
+    c.mesh = o.prim ? primMesh(c) : o.mesh;
+    s.objs.push(c); s.sel = s.objs.length - 1; changed(c);
+  }
+  function rename(o) { const n = prompt("Name (for a photo, say what it should become: a wooden crate, a red sofa)", o.name); if (!n?.trim()) return; o.name = n.trim().slice(0, 120); changed(o); }
+  function select(i) { if (s.sel !== i) { s.sel = i; renderSide(); s.dirty = true; } }
+  // A shape's size, tilt and colour are in the side panel: show it.
+  function focusShape() { const el = s.root.querySelector(".s3-prim"); el?.scrollIntoView({ block: "nearest" }); el?.querySelector("input")?.focus(); }
+  function objMenu(i, x, y, px, py) {
+    const o = s.objs[i]; if (!o) return;
+    select(i);
+    const ok = !!(o.mesh && o.pos);
+    Media.menu(x, y, [
+      ok && ["✥ Move  (G)", () => startModal("move", px, py)],
+      ok && ["↕ Raise or lower  (L)", () => startModal("lift", px, py)],
+      ok && ["⟳ Rotate  (R)", () => startModal("rotate", px, py)],
+      ok && ["⤢ Resize  (S)", () => startModal("scale", px, py)],
+      ok && ["↶ Turn 90° left", () => nudge(o, { yaw: 90 })],
+      ok && ["↷ Turn 90° right", () => nudge(o, { yaw: -90 })],
+      ok && ["＋ Bigger", () => nudge(o, { k: 1.25 })],
+      ok && ["－ Smaller", () => nudge(o, { k: 0.8 })],
+      ok && ["⬇ Set it down on the ground", () => dropDown(o)],
+      o.prim && ["📐 Size, tilt and colour…", () => focusShape()],
+      ok && ["⧉ Duplicate  (Shift+D)", () => duplicate(o)],
+      ["✎ Rename…", () => rename(o)],
+      [o.hidden ? "👁 Show" : "🙈 Hide", () => { o.hidden = !o.hidden; changed(o); }],
+      ["🗑 Delete  (Del)", () => { select(i); removeSel(); }],
+    ].filter(Boolean));
+  }
+  function modelMenu(x, y, at = null) {
+    const done = models.filter(m => m.status === "done");
+    if (!done.length) return Media.toast("No 3D models yet: right-click a picture and choose 🧊 Make 3D.");
+    const mine = done.filter(m => m.source === s.sc.picture), rest = done.filter(m => m.source !== s.sc.picture);
+    Media.menu(x, y, [...mine, ...rest].slice(0, 40).map(m => [`🧊 ${m.name}`, () => addModel(m.id, at)]));
+  }
+  function spaceMenu(x, y, px, py) {
+    const at = surfaceHit(rayAt(px, py));
+    Media.menu(x, y, [
+      ...Object.entries(PRIMS).map(([k, d]) => [`${d.icon} Add a ${d.label.toLowerCase()}${at ? " here" : ""}`, () => addPrim(k, at)]),
+      ["🧊 Add a 3D model…", () => modelMenu(x, y, at)],
+      [s.bg.empty ? "🎥 Back to the start view" : "🎥 Back to the picture's camera", () => toShot()],
+    ]);
+  }
+  function renderTools() {
+    const R = s.root, o = s.objs[s.sel], ok = !!(o?.mesh && o.pos);
+    R.querySelectorAll("[data-tool]").forEach(b => { b.classList.toggle("on", b.dataset.tool === s.tool); b.setAttribute("aria-pressed", String(b.dataset.tool === s.tool)); });
+    R.querySelectorAll("[data-needsel]").forEach(b => { b.disabled = b.dataset.needsel === "any" ? !o : !ok; });
+  }
+
   /* ---------------------------------------------------------------- saving */
   function save() {
     clearTimeout(s.saveT);
     const id = s.id;
-    const objects = s.objs.map(o => ({ id: o.id, name: o.name, model: o.model, mask: o.mask, pos: o.pos, yaw: o.yaw || 0, scale: o.scale, auto_scale: o.auto_scale, hidden: !!o.hidden, keys: o.keys || [] }));
+    const objects = s.objs.map(o => ({ id: o.id, name: o.name, model: o.model, mask: o.mask, pos: o.pos, yaw: o.yaw || 0, scale: o.scale, auto_scale: o.auto_scale, hidden: !!o.hidden, keys: o.keys || [],
+      ...(o.prim ? { prim: o.prim, color: o.color || PRIM_COLOR, dims: o.dims || PRIMS[o.prim].dims, tilt: o.tilt || [0, 0] } : {}) }));
     const body = JSON.stringify({ objects, seconds: +s.seconds || 5, camera_keys: s.camKeys, photos: s.photos,
       ...(s.sc.kind === "empty" ? { aspect: s.sc.aspect, lens: s.sc.lens, backdrop: s.sc.backdrop } : {}) });
     s.saveT = setTimeout(() => api(`/api/scenes/${id}`, { method: "PATCH", body }).catch(e => Media.toast(`Couldn't save the scene: ${e.message}`)), 500);
@@ -275,7 +464,24 @@ const Scene3D = (() => {
     const root = document.createElement("div");
     root.className = "s3";
     root.innerHTML = `
-      <div class="s3-stage"><div class="s3-box"><canvas class="m3-canvas s3-canvas" tabindex="0" aria-label="The 3D scene: drag an object to move it, drag elsewhere to orbit, wheel to zoom"></canvas>
+      <div class="s3-stage">
+        <div class="s3-tools" role="toolbar" aria-label="Scene tools">
+          <div class="s3-tg" role="group" aria-label="Add"><span class="s3-tl">Add</span>
+            ${Object.entries(PRIMS).map(([k, d]) => `<button type="button" class="s3-tb" data-act="prim" data-prim="${k}" title="Add a ${d.label.toLowerCase()} (right-click the ground to add it there)"><span aria-hidden="true">${d.icon}</span><span class="s3-tx"> ${d.label}</span></button>`).join("")}
+            <button type="button" class="s3-tb" data-act="models" title="Add one of your 3D models (🧊 Make 3D)"><span aria-hidden="true">🧊</span><span class="s3-tx"> Model</span></button></div>
+          <div class="s3-tg" role="group" aria-label="Dragging an object"><span class="s3-tl">Drag to</span>
+            <button type="button" class="s3-tb" data-tool="move" title="Drag an object over the ground (G)">✥<span class="s3-tx"> Move</span></button>
+            <button type="button" class="s3-tb" data-tool="lift" title="Drag an object up or down (L, or Shift+drag)">↕<span class="s3-tx"> Raise</span></button>
+            <button type="button" class="s3-tb" data-tool="rotate" title="Drag an object left or right to turn it (R)">⟳<span class="s3-tx"> Rotate</span></button>
+            <button type="button" class="s3-tb" data-tool="scale" title="Drag an object right or up to make it bigger (S)">⤢<span class="s3-tx"> Resize</span></button></div>
+          <div class="s3-tg" role="group" aria-label="The selected object">
+            <button type="button" class="s3-tb" data-act="turnl" data-needsel="1" title="Turn it 90° left">↶</button>
+            <button type="button" class="s3-tb" data-act="turnr" data-needsel="1" title="Turn it 90° right">↷</button>
+            <button type="button" class="s3-tb" data-act="floor" data-needsel="1" title="Set it down on the ground">⬇</button>
+            <button type="button" class="s3-tb" data-act="dup" data-needsel="1" title="Duplicate it (Shift+D)">⧉</button>
+            <button type="button" class="s3-tb" data-act="remove" data-needsel="any" title="Delete it (Del)">🗑</button></div>
+        </div>
+        <div class="s3-box"><canvas class="m3-canvas s3-canvas" tabindex="0" aria-label="The 3D scene: drag an object to move it, drag elsewhere to orbit, wheel to zoom"></canvas>
         <div class="m3-hud hint s3-hud">Making the background…</div><div class="s3-frame" aria-hidden="true"></div></div>
         <div class="mo-transport">
           <button type="button" class="btn sm" data-act="play" title="Play (Space)">▶</button>
@@ -309,6 +515,11 @@ const Scene3D = (() => {
         <section class="s3-sel" hidden><h3 class="s3-sel-h"></h3>
           <div class="field"><label for="s3-yaw">Turn <span class="s3-yaw-v"></span></label><input type="range" id="s3-yaw" min="-180" max="180" step="1"></div>
           <div class="field"><label for="s3-size">Size <span class="s3-size-v"></span></label><input type="range" id="s3-size" min="0.2" max="3" step="0.01"></div>
+          <div class="s3-prim" hidden>
+            <div class="row2"><div class="field"><label for="s3-color">Colour</label><input type="color" id="s3-color"></div>
+              <div class="field"><label for="s3-tilt">Stands</label><select id="s3-tilt"><option value="0,0">Upright</option><option value="90,0">Tipped forward</option><option value="0,90">On its side</option><option value="180,0">Upside down</option></select></div></div>
+            <div class="field"><label>Size <span class="opt s3-unit"></span></label>
+              <div class="s3-dims"><label>W <input type="number" id="s3-dw" min="0.01" max="500" step="0.1"></label><label>H <input type="number" id="s3-dh" min="0.01" max="500" step="0.1"></label><label>D <input type="number" id="s3-dd" min="0.01" max="500" step="0.1"></label></div></div></div>
           <div class="mo-row"><button type="button" class="btn sm" data-act="replace" title="Stand it where it was in the picture again">↺ Put back</button>
             <button type="button" class="btn sm ghost" data-act="hide">Hide</button><button type="button" class="btn sm ghost" data-act="remove">Remove</button></div>
           <p class="hint s3-objhint"></p>
@@ -316,7 +527,7 @@ const Scene3D = (() => {
       </aside>`;
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
-    foot.innerHTML = `<span class="hint s3-foot">Drag: orbit · Right-drag: pan · Wheel: zoom</span><button type="button" class="btn ghost" data-act="pic" title="Save the view as it is drawn here">💾 Save view</button>
+    foot.innerHTML = `<span class="hint s3-foot">Drag: orbit · Right-drag: pan · Wheel: zoom · Right-click: menu</span><button type="button" class="btn ghost" data-act="pic" title="Save the view as it is drawn here">💾 Save view</button>
       <button type="button" class="btn" data-act="photo" title="A photograph of what the camera frames, made by the image editor's edit model">📷 Generate photo…</button>
       <button type="button" class="btn primary" data-act="render" title="Make the video with H3, following this scene">🎬 Render video…</button>`;
     const win = WM.open({ id: "scene3d", title: `🏞 ${sc.name}`, content: root, footer: foot, width: 1100, height: 720, minWidth: 720, minHeight: 480,
@@ -324,7 +535,7 @@ const Scene3D = (() => {
     const cv = root.querySelector(".s3-canvas"), hud = root.querySelector(".s3-hud");
     const gl = cv.getContext("webgl2", { antialias: true, preserveDrawingBuffer: true });
     s = { id: sc.id, sc, win, root, cv, hud, gl, gpu: gl ? G().gpu(gl) : null, objs: (sc.objects || []).map(o => ({ ...o })), sel: -1, dirty: true,
-      cam: { yaw: 0, pitch: 0, dist: 1, target: [0, 0, -1] }, showBg: true, clay: false, bg: null,
+      cam: { yaw: 0, pitch: 0, dist: 1, target: [0, 0, -1] }, showBg: true, clay: false, bg: null, tool: "move", modal: null, mouse: null,
       t: 0, seconds: +sc.seconds || 5, camKeys: (sc.camera_keys || []).slice().sort((a, b) => a.t - b.t), camFree: false,
       photos: (sc.photos || []).slice() };
     if (!gl) { hud.textContent = "This browser has no WebGL 2, so the scene can't be shown."; return; }
@@ -625,34 +836,70 @@ const Scene3D = (() => {
   function wire(root, foot) {
     const cv = s.cv;
     let drag = null;
+    const hint = txt => { const h = foot.querySelector(".s3-foot"); h.textContent = txt || "Drag: orbit · Right-drag: pan · Wheel: zoom · Right-click: menu"; };
+    // An object being moved, raised, turned or sized, by a drag or following the mouse (from the menu or G/L/R/S).
+    function grab(mode, i, px, py, cx, cy) {
+      const o = s.objs[i], P = poseAt(o, s.t), ray = rayAt(px, py), t = (P.pos[1] - ray.o[1]) / (ray.d[1] || 1e-9);
+      const at = addv(ray.o, mulv(ray.d, t));
+      return { mode, o, x: cx, y: cy, off: Math.abs(ray.d[1]) > 1e-4 && t > 0 ? sub(P.pos, at) : [0, 0, 0], dist: Math.hypot(...sub(P.pos, eye())),
+        snap: JSON.stringify({ pos: o.pos, yaw: o.yaw || 0, scale: o.scale, keys: o.keys || [] }) };
+    }
+    function step(g, e) {
+      const r = cv.getBoundingClientRect(), o = g.o, P = poseAt(o, s.t), dx = e.clientX - g.x, dy = e.clientY - g.y;
+      if (g.mode === "move") {
+        const ray = rayAt(e.clientX - r.left, e.clientY - r.top);
+        if (Math.abs(ray.d[1]) > 1e-4) {
+          const t = (P.pos[1] - ray.o[1]) / ray.d[1];
+          if (t > 0 && t < s.bg.dmed * 40) { const at = addv(ray.o, mulv(ray.d, t)); editPose(o, { pos: [at[0] + g.off[0], P.pos[1], at[2] + g.off[2]] }); g.moved = true; }
+        }
+      } else if (g.mode === "lift") {
+        const k = g.dist * 2 * tanY(cv.clientWidth, cv.clientHeight) / cv.clientHeight;
+        editPose(o, { pos: [P.pos[0], P.pos[1] - dy * k, P.pos[2]] }); g.moved = true;
+      } else if (g.mode === "rotate") { editPose(o, { yaw: P.yaw + dx * 0.5 }); g.moved = true; }
+      else if (g.mode === "scale") { editPose(o, { scale: Math.max(1e-5, P.scale * Math.exp((dx - dy) * 0.006)) }); g.moved = true; }
+      g.x = e.clientX; g.y = e.clientY; s.dirty = true;
+    }
+    startModal = (mode, px, py) => {
+      const o = s.objs[s.sel]; if (!o?.mesh || !o.pos) return;
+      if (s.playing) stop();
+      const r = cv.getBoundingClientRect();
+      if (px == null) ({ px, py } = s.mouse || { px: cv.clientWidth / 2, py: cv.clientHeight / 2 });
+      s.modal = grab(mode, s.sel, px, py, r.left + px, r.top + py);
+      hint(`${TOOLS[mode]} ${o.name}: move the mouse, then click to keep it (Esc or right-click: cancel)`);
+      cv.focus();
+    };
+    endModal = keep => {
+      const g = s.modal; if (!g) return;
+      s.modal = null; hint();
+      if (keep) { if (g.moved) save(); } else Object.assign(g.o, JSON.parse(g.snap));
+      renderSide(); s.dirty = true;
+    };
     cv.addEventListener("contextmenu", e => e.preventDefault());
     cv.addEventListener("pointerdown", e => {
       if (!s?.bg) return;
-      cv.focus(); cv.setPointerCapture(e.pointerId);
+      cv.focus();
+      if (s.modal) { e.preventDefault(); endModal(e.button === 0); return; }
+      cv.setPointerCapture(e.pointerId);
       const r = cv.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
       const hit = e.button === 0 ? pick(px, py) : -1;
       if (hit >= 0) {
-        if (s.sel !== hit) { s.sel = hit; renderSide(); }
+        select(hit);
         if (s.playing) stop();
-        const o = s.objs[hit], P = poseAt(o, s.t), ray = rayAt(px, py), t = (P.pos[1] - ray.o[1]) / (ray.d[1] || 1e-9);
-        const at = addv(ray.o, mulv(ray.d, t));
-        drag = { mode: e.shiftKey ? "lift" : "move", y: e.clientY, off: sub(P.pos, at), dist: Math.hypot(...sub(P.pos, eye())) };
-      } else { drag = { mode: e.button === 0 && !e.shiftKey ? "orbit" : "pan", x: e.clientX, y: e.clientY }; if (s.camKeys.length) { s.camFree = true; renderCam(); } }
+        drag = grab(e.shiftKey ? "lift" : s.tool, hit, px, py, e.clientX, e.clientY);
+      } else drag = { mode: e.button === 0 && !e.shiftKey ? "orbit" : "pan", x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, right: e.button === 2 };
       s.dirty = true;
     });
     cv.addEventListener("pointermove", e => {
+      const r = cv.getBoundingClientRect();
+      s.mouse = { px: e.clientX - r.left, py: e.clientY - r.top };
+      if (s.modal) return step(s.modal, e);
       if (!drag) return;
-      const r = cv.getBoundingClientRect(), o = s.objs[s.sel];
-      if (drag.mode === "move" && o) {
-        const ray = rayAt(e.clientX - r.left, e.clientY - r.top), P = poseAt(o, s.t);
-        if (Math.abs(ray.d[1]) > 1e-4) {
-          const t = (P.pos[1] - ray.o[1]) / ray.d[1];
-          if (t > 0 && t < s.bg.dmed * 40) { const at = addv(ray.o, mulv(ray.d, t)); editPose(o, { pos: [at[0] + drag.off[0], P.pos[1], at[2] + drag.off[2]] }); drag.moved = true; }
-        }
-      } else if (drag.mode === "lift" && o) {
-        const k = drag.dist * 2 * tanY(cv.clientWidth, cv.clientHeight) / cv.clientHeight, P = poseAt(o, s.t);
-        editPose(o, { pos: [P.pos[0], P.pos[1] - (e.clientY - drag.y) * k, P.pos[2]] }); drag.y = e.clientY; drag.moved = true;
-      } else if (drag.mode === "orbit") {
+      if (drag.o) return step(drag, e);
+      if (!drag.went) {  // a click (or a right-click for the menu) until it moves a little
+        if (Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 4) return;
+        drag.went = true; if (s.camKeys.length) { s.camFree = true; renderCam(); }
+      }
+      if (drag.mode === "orbit") {
         s.cam.yaw -= (e.clientX - drag.x) * 0.3; s.cam.pitch = Math.max(-89, Math.min(89, s.cam.pitch + (e.clientY - drag.y) * 0.3));
         drag.x = e.clientX; drag.y = e.clientY;
       } else if (drag.mode === "pan") {
@@ -663,21 +910,43 @@ const Scene3D = (() => {
       }
       s.dirty = true;
     });
-    cv.addEventListener("pointerup", () => { if (drag?.moved) { save(); renderSide(); } drag = null; });
+    cv.addEventListener("pointerup", e => {
+      const d = drag; drag = null;
+      if (d?.moved) { save(); renderSide(); }
+      if (d?.right && !d.went) {  // a right-click: the object's menu, or the ground's
+        const r = cv.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top, hit = pick(px, py);
+        if (hit >= 0) objMenu(hit, e.clientX, e.clientY, px, py); else spaceMenu(e.clientX, e.clientY, px, py);
+      }
+    });
     cv.addEventListener("wheel", e => { e.preventDefault(); if (!s?.bg) return; s.cam.dist = Math.max(s.bg.dmed * 0.05, Math.min(s.bg.dmed * 20, s.cam.dist * Math.exp(e.deltaY * 0.0012))); s.dirty = true; }, { passive: false });
     cv.addEventListener("keydown", e => {
       const o = s.objs[s.sel];
-      if ((e.key === "Delete" || e.key === "Backspace") && o) { e.preventDefault(); removeSel(); }
-      else if (e.key === "Escape") { s.sel = -1; renderSide(); s.dirty = true; }
+      if (s.modal) { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); endModal(false); } else if (e.key === "Enter") { e.preventDefault(); endModal(true); } return; }
+      const k = e.key.toLowerCase(), byKey = { g: "move", l: "lift", r: "rotate", s: "scale" }[k];
+      if (byKey && o && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) { e.preventDefault(); startModal(byKey); }
+      else if (k === "d" && e.shiftKey && o) { e.preventDefault(); duplicate(o); }
+      else if ((e.key === "Delete" || e.key === "Backspace") && o) { e.preventDefault(); removeSel(); }
+      else if (e.key === "Escape" && s.sel >= 0) { e.stopPropagation(); s.sel = -1; renderSide(); s.dirty = true; }
       else if (e.key === " ") { e.preventDefault(); play(); }
+    });
+    root.querySelector(".s3-objs").addEventListener("contextmenu", e => {
+      const li = e.target.closest("[data-i]"); if (!li) return;
+      e.preventDefault(); objMenu(+li.dataset.i, e.clientX, e.clientY);
     });
     const all = [root, foot];
     all.forEach(el => el.addEventListener("click", e => {
-      const b = e.target.closest("[data-act],[data-i]"); if (!b || !s) return;
+      const b = e.target.closest("[data-act],[data-tool],[data-i]"); if (!b || !s) return;
       const a = b.dataset.act, o = s.objs[s.sel];
       if (a === "shot") { if (s.bg) toShot(); return; }
       if (a === "pic") { draw(); s.cv.toBlob(bl => { const x = document.createElement("a"); x.href = URL.createObjectURL(bl); x.download = `${s.sc.name}_view.png`; x.click(); setTimeout(() => URL.revokeObjectURL(x.href), 4000); }); return; }
       if (a === "add") return addModel();
+      if (a === "prim") return addPrim(b.dataset.prim);
+      if (a === "models") { const r = b.getBoundingClientRect(); return modelMenu(r.left, r.bottom + 4); }
+      if (b.dataset.tool) { s.tool = b.dataset.tool; renderTools(); return; }
+      if (a === "turnl") return nudge(o, { yaw: 90 });
+      if (a === "turnr") return nudge(o, { yaw: -90 });
+      if (a === "floor") return dropDown(o);
+      if (a === "dup") return duplicate(o);
       if (a === "render") return renderDialog();
       if (a === "photo") return photoDialog();
       if (a === "bd-pick") return s.root.querySelector(".s3-bdfile").click();
@@ -725,11 +994,20 @@ const Scene3D = (() => {
         } catch (err) { Media.toast(`Backdrop: ${err.message}`); }
         return;
       }
+      const po = s.objs[s.sel];
+      if (po?.prim && ["s3-tilt", "s3-dw", "s3-dh", "s3-dd"].includes(id)) {
+        const R = s.root, dim = x => Math.max(0.01, Math.min(500, +R.querySelector(x).value || 0.01));
+        po.tilt = R.querySelector("#s3-tilt").value.split(",").map(Number);
+        po.dims = [dim("#s3-dw"), po.prim === "plane" ? 0 : dim("#s3-dh"), dim("#s3-dd")];
+        po.mesh = primMesh(po); return changed(po);
+      }
+      if (po?.prim && id === "s3-color") return changed(po);
       const k = e.target.dataset.opt; if (!k) return;
       s[k] = e.target.checked; s.dirty = true;
     });
     root.addEventListener("input", e => {
       const o = s.objs[s.sel]; if (!o) return;
+      if (e.target.id === "s3-color" && o.prim) { o.color = e.target.value; o.mesh.parts[0].base = [...hexRgb(o.color), 1]; s.dirty = true; return; }
       if (e.target.id === "s3-yaw") { editPose(o, { yaw: +e.target.value }); root.querySelector(".s3-yaw-v").textContent = `${+e.target.value}°`; }
       if (e.target.id === "s3-size") { editPose(o, { scale: (o.auto_scale || o.scale) * +e.target.value }); root.querySelector(".s3-size-v").textContent = `${Math.round(+e.target.value * 100)}%`; }
       s.dirty = true;
@@ -748,12 +1026,14 @@ const Scene3D = (() => {
     const o = s.objs[s.sel]; if (!o) return;
     s.objs.splice(s.sel, 1); s.sel = -1; save(); renderSide(); s.dirty = true;
   }
-  async function addModel() {
-    const id = s.root.querySelector(".s3-add").value; if (!id) return;
+  async function addModel(id = s.root.querySelector(".s3-add").value, at = null) {
+    if (!id) return;
     const md = models.find(x => x.id === id); if (!md) return;
-    s.objs.push({ id: uid(), name: md.name, model: md.id, mask: md.source === s.sc.picture ? md.mask : null, pos: null, yaw: 0, scale: null });
+    const o = { id: uid(), name: md.name, model: md.id, mask: md.source === s.sc.picture && !at ? md.mask : null, pos: null, yaw: 0, scale: null };
+    s.objs.push(o);
     s.sel = s.objs.length - 1;
     await loadObjects();
+    if (at && o.pos) { o.pos = at.slice(); save(); s.dirty = true; }
   }
   async function make3d(i) {
     const o = s.objs[i]; if (!o?.mask) return;
@@ -769,10 +1049,10 @@ const Scene3D = (() => {
     if (!s) return;
     renderTime(); renderCam();
     const root = s.root;
-    const st = o => o.state === "running" ? `<span class="hint">making… </span>` : o.state === "failed" ? `<span class="hint">failed</span>`
+    const st = o => o.prim ? (o.hidden ? `<span class="hint">hidden</span>` : "") : o.state === "running" ? `<span class="hint">making… </span>` : o.state === "failed" ? `<span class="hint">failed</span>`
       : o.state === "missing" ? `<span class="hint">model deleted</span>` : !o.model ? `<button type="button" class="btn sm" data-act="make3d" data-i="${s.objs.indexOf(o)}">🧊 Make 3D</button>` : o.hidden ? `<span class="hint">hidden</span>` : "";
-    root.querySelector(".s3-objs").innerHTML = s.objs.length ? s.objs.map((o, i) => `<li data-i="${i}" class="${i === s.sel ? "sel" : ""}" tabindex="0"><b>${esc(o.name)}</b> ${st(o)}</li>`).join("")
-      : `<li class="hint">No objects yet: add a 3D model below.</li>`;
+    root.querySelector(".s3-objs").innerHTML = s.objs.length ? s.objs.map((o, i) => `<li data-i="${i}" class="${i === s.sel ? "sel" : ""}" tabindex="0" title="Right-click for its menu"><b>${o.prim ? `<span aria-hidden="true">${PRIMS[o.prim].icon}</span> ` : ""}${esc(o.name)}</b> ${st(o)}</li>`).join("")
+      : `<li class="hint">No objects yet: add a shape from the tool bar, or a 3D model below.</li>`;
     const opts = models.filter(m => m.status === "done");
     const mine = opts.filter(m => m.source === s.sc.picture), other = opts.filter(m => m.source !== s.sc.picture);
     root.querySelector(".s3-add").innerHTML = `<option value="">Add a 3D model…</option>` +
@@ -786,12 +1066,22 @@ const Scene3D = (() => {
       const yaw = Math.round(P.yaw || 0), size = o.auto_scale && P.scale ? P.scale / o.auto_scale : 1;
       const K = o.keys || [];
       root.querySelector(".s3-objhint").textContent = K.length ? `Moving it, turning it or sizing it keys it at ${s.t.toFixed(2)} s.`
-        : "Drag it over the ground (Shift+drag: up or down). Move the playhead and drag it again to make it move.";
+        : `Drag it to ${TOOLS[s.tool].slice(2).toLowerCase()} it (Shift+drag: up or down); right-click it for more. Move the playhead and change it again to make it move.`;
       root.querySelector(".s3-objkeys").innerHTML = K.map((q, j) => `<button type="button" class="chip-btn${near(q.t, s.t) ? " on" : ""}" data-act="obj-key" data-k="${j}">${q.t.toFixed(2)} s</button><button type="button" class="set-x" data-act="del-obj-key" data-k="${j}" aria-label="Remove the key at ${q.t.toFixed(2)} s">×</button>`).join(" ");
       Object.assign(root.querySelector("#s3-yaw"), { value: String(yaw), disabled: !o.mesh }); root.querySelector(".s3-yaw-v").textContent = `${yaw}°`;
       Object.assign(root.querySelector("#s3-size"), { value: String(size), disabled: !o.mesh }); root.querySelector(".s3-size-v").textContent = `${Math.round(size * 100)}%`;
       root.querySelector('[data-act="hide"]').textContent = o.hidden ? "Show" : "Hide";
+      root.querySelector('[data-act="replace"]').hidden = !!o.prim;
+      const pf = root.querySelector(".s3-prim"); pf.hidden = !o.prim;
+      if (o.prim) {
+        const d = o.dims || PRIMS[o.prim].dims, act = document.activeElement;
+        if (act !== root.querySelector("#s3-color")) root.querySelector("#s3-color").value = o.color || PRIM_COLOR;
+        root.querySelector("#s3-tilt").value = (o.tilt || [0, 0]).join(",");
+        [["#s3-dw", 0], ["#s3-dh", 1], ["#s3-dd", 2]].forEach(([q, j]) => { const el = root.querySelector(q); if (el !== act) el.value = String(+d[j].toFixed(3)); el.disabled = o.prim === "plane" && j === 1; });
+        root.querySelector(".s3-unit").textContent = s.bg?.empty ? "metres, before Size %" : "scene units, before Size %";
+      }
     }
+    renderTools();
   }
 
   /* ---------------------------------------------------------------- empty scenes */
@@ -871,7 +1161,9 @@ const Scene3D = (() => {
   // A photo of the scene at time t through `cam` (queued with the edit model); it's remembered on the scene.
   async function makePhoto(size, t, cam, look, model) {
     const ref = await uploadFrame(size, t, cam, "scene_view.png");
-    const items = await submit({ kind: "image", engine: "imgedit", edit_op: "instruct", source: ref, prompt: photoPrompt(look), edit_model: model,
+    const names = s.objs.filter(o => o.mesh && o.pos && !o.hidden).map(o => o.name);
+    const prompt = photoPrompt(look) + (names.length ? ` The objects in it: ${names.join(", ")}.` : "");
+    const items = await submit({ kind: "image", engine: "imgedit", edit_op: "instruct", source: ref, prompt, edit_model: model,
       seed: -1, batch: 1, project: s.sc.project });
     if (!items?.length) throw new Error("The edit model didn't take it (the reason is on the Generate step)");
     s.photos.push({ id: items[0].id, t, cam: camOf(cam) });
@@ -987,6 +1279,6 @@ const Scene3D = (() => {
     requestAnimationFrame(step); renderTime();
   }
 
-  return { create, createEmpty, open, openList, onItem, resume, _state: () => s, _draw: (r = null) => s && s.bg && draw(r),
+  return { create, createEmpty, open, openList, onItem, resume, _state: () => s, _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
     _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
 })();
