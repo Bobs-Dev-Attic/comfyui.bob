@@ -564,6 +564,15 @@ class JobManager:
                 media_path(req.edit_mask)
             if req.edit_op in ("replace", "prompt", "instruct") and not req.prompt.strip():
                 raise ValueError("Say what should be there")
+            if req.references:
+                if req.edit_op != "instruct":
+                    raise ValueError("More pictures are for an edit of the whole picture")
+                most = workflows.EDIT_EXTRA_REFS[req.edit_model]
+                if len(req.references) > most:
+                    raise ValueError(f"{workflows.EDIT_MODELS[req.edit_model]} takes at most {most} more pictures")
+                for ref in req.references:
+                    if media.kind_of(media_path(ref).name) != "image":
+                        raise ValueError("The extra pictures must be pictures")
         if req.engine == "angles":
             if req.kind != "image":
                 raise ValueError("Angles makes pictures")
@@ -675,6 +684,7 @@ class JobManager:
             return workflows.build_imgedit(
                 req.edit_op, files if req.edit_op != "remove_bg" else None, prompt=req.prompt, strength=req.edit_strength,
                 seed=seed, steps=req.steps, background=req.edit_bg, bg_model=(files or {}).get("bg_model"), edit_model=req.edit_model, prefix=prefix,
+                references=len(req.references) if req.edit_op == "instruct" else 0,
             )
         if req.engine == "klein":
             mp = workflows.KLEIN_QUALITY.get(req.quality, 1.0)

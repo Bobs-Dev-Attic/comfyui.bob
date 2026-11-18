@@ -1074,10 +1074,20 @@ def build_track(sam_ckpt: str, *, first: int, count: int, width: int, height: in
 EDIT_MODELS = {"qwen": "Qwen Image Edit 2511", "h3image": "MiniMax H3 Image"}
 
 
-def _edit_model(g: Graph, which: str, files: dict, ref: Any, text: Any, *, seed: int, steps: int | None) -> tuple[list, dict]:
+# Pictures an instruction edit can take besides the one it edits: Qwen Image Edit 2511 has three image inputs,
+# MiniMax H3 Image nine. The edited picture is Picture 1 and these are Picture 2... (in H3's prompts <Picture 2>).
+EDIT_EXTRA_REFS = {"qwen": 2, "h3image": 8}
+
+
+def _edit_model(g: Graph, which: str, files: dict, ref: Any, text: Any, *, seed: int, steps: int | None,
+                extra: list | None = None) -> tuple[list, dict]:
     """An instruction edit of one picture (``ref``, a node) with the chosen model -> (decoded image output, info).
-    The result's size is the model's own; callers scale it back."""
+    ``extra``: more pictures (nodes) the instruction can point at as Picture 2... The result's size is the model's
+    own; callers scale it back."""
     o = Graph.out
+    extra = list(extra or [])
+    if len(extra) > EDIT_EXTRA_REFS[which]:
+        raise ValueError(f"{EDIT_MODELS[which]} takes at most {EDIT_EXTRA_REFS[which]} more pictures")
     if which == "h3image":
         # MiniMax H3 Image as ComfyUI's "Image Edit" template runs it: 6 distilled steps at cfg 1;
         # the picture conditions the text encoder and is anchored as a reference latent.
@@ -1085,7 +1095,7 @@ def _edit_model(g: Graph, which: str, files: dict, ref: Any, text: Any, *, seed:
         clip = g.add("CLIPLoader", clip_name=files["clip"], type="minimax", device="default")
         vae = g.add("VAELoader", vae_name=files["vae"])
         cond = g.add("MiniMaxH3ImageConditioning", clip=o(clip), vae=o(vae), prompt=text, width=0, height=0,
-                     **{"images.image_1": o(ref)})
+                     **{"images.image_1": o(ref)}, **{f"images.image_{i + 2}": o(x) for i, x in enumerate(extra)})
         neg = g.add("ConditioningZeroOut", conditioning=o(cond, 0))
         n_steps = 6
         sampled = g.add("KSampler", model=o(unet), positive=o(cond, 0), negative=o(neg), latent_image=o(cond, 1),
@@ -1100,8 +1110,9 @@ def _edit_model(g: Graph, which: str, files: dict, ref: Any, text: Any, *, seed:
         model = g.add("LoraLoaderModelOnly", model=o(model), lora_name=files["lightning_lora"], strength_model=1.0)
     model = g.add("ModelSamplingAuraFlow", model=o(model), shift=3.1)
     model = g.add("CFGNorm", model=o(model), strength=1.0)
-    pos = g.add("TextEncodeQwenImageEditPlus", clip=o(clip), prompt=text, vae=o(vae), image1=o(ref))
-    neg = g.add("TextEncodeQwenImageEditPlus", clip=o(clip), prompt="", vae=o(vae), image1=o(ref))
+    more = {f"image{i + 2}": o(x) for i, x in enumerate(extra)}
+    pos = g.add("TextEncodeQwenImageEditPlus", clip=o(clip), prompt=text, vae=o(vae), image1=o(ref), **more)
+    neg = g.add("TextEncodeQwenImageEditPlus", clip=o(clip), prompt="", vae=o(vae), image1=o(ref), **more)
     pos = g.add("FluxKontextMultiReferenceLatentMethod", conditioning=o(pos), reference_latents_method="index_timestep_zero")
     neg = g.add("FluxKontextMultiReferenceLatentMethod", conditioning=o(neg), reference_latents_method="index_timestep_zero")
     n_steps = 4 if fast else int(steps or 20)
@@ -1123,6 +1134,7 @@ def build_imgedit(
     bg_model: str | None = None,
     edit_model: str = "qwen",
     prefix: str = "bob/edit",
+    references: int = 0,
 ) -> Built:
     """One AI edit of a picture. image_inputs: source; edit_mask for the selection ops; and
     edit_rect (the selection's bounding rectangle, made by jobs) for replace.
@@ -1136,7 +1148,8 @@ def build_imgedit(
       remove_bg  BiRefNet (core RemoveBackground) when a background-removal model is installed,
                else rembg's u2net; the background becomes transparent, white or black.
       instruct The whole picture edited by an instruction ("make it night"), no selection; the
-               result is scaled back to the picture's size.
+               result is scaled back to the picture's size. With `references` (image_inputs ref_0...),
+               more pictures the instruction names as Picture 2... (a 3D scene's object pictures).
     edit_model picks the model for erase, replace and instruct: "qwen" (Qwen Image Edit 2511) or
     "h3image" (MiniMax H3 Image, 6 steps).
     """
@@ -1169,7 +1182,14 @@ def build_imgedit(
         size = g.add("GetImageSize", image=o(src))
         ref = g.add("ImageScaleToTotalPixels", image=o(src), upscale_method="lanczos",
                     megapixels=1.0 if edit_model == "qwen" else 4.0, resolution_steps=32)
-        decoded, model_info = _edit_model(g, edit_model, files, ref, prompt.strip(), seed=seed, steps=steps)
+        extra = []
+        for i in range(references):
+            load = g.add("LoadImage", image="")
+            inputs[f"ref_{i}"] = load
+            extra.append(g.add("ImageScaleToTotalPixels", image=o(load), upscale_method="lanczos", megapixels=1.0, resolution_steps=32))
+        decoded, model_info = _edit_model(g, edit_model, files, ref, prompt.strip(), seed=seed, steps=steps, extra=extra)
+        if references:
+            model_info["references"] = references
         out = g.add("ImageScale", image=decoded, upscale_method="lanczos", width=o(size, 0), height=o(size, 1), crop="disabled")
         save = g.add("SaveImage", images=o(out), filename_prefix=prefix)
         return Built(graph=g.nodes, outputs=[save], image_inputs=inputs, info={"op": op, **model_info, "final_prompt": prompt.strip()})

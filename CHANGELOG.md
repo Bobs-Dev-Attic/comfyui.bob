@@ -5,6 +5,19 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.88.0] - 2026-11-18
+
+### Added
+- **📷 Generate photo uses the objects' pictures too** (“Use the objects' pictures”, on by default when an object in
+  view has one). The render is Picture 1 and the objects' pictures are Picture 2 on: MiniMax H3 Image takes up to 8 of
+  them (named <Picture 2>…), Qwen Image Edit 2511 up to 2 (named Picture 2…); the window says which object is which
+  picture and which are left out. The edit model is told, e.g., “the red cube on the left becomes the golden retriever
+  from <Picture 2>”. A render's “new photo of the first frame” uses them when the render does.
+
+### Fixed
+- Generate photo told the edit model to keep every object's shape and colour exactly, which fought against Becomes. When
+  an object becomes something, only where it is and its size are kept.
+
 ## [0.87.0] - 2026-11-18
 
 ### Added
