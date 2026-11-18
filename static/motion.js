@@ -449,6 +449,55 @@ const Motion = (() => {
     if (m) renderSide();
   }
 
+  /* 📷 Generate photo: the picture as it is at the playhead (the empty background when there is one, each object where
+     it is, turned, flipped and recoloured), at the picture's own size, made into one natural photograph by the image
+     editor's whole-picture edit (Qwen Image Edit 2511 or MiniMax H3 Image). */
+  function frameAt(t) {
+    const c = document.createElement("canvas"); c.width = m.pic.width; c.height = m.pic.height;
+    const g = c.getContext("2d"), v = { k: 1, ox: 0, oy: 0 };
+    g.drawImage(m.plateImg && !m.plateStale ? m.plateImg : m.pic, 0, 0, m.pic.width, m.pic.height);
+    for (const lay of m.layers) drawLayer(g, lay, placed(lay, t, v));
+    return c;
+  }
+  function photoDialog() {
+    if (!m.layers.length) return Media.toast("Add an object and move it first: the photo is the picture with your objects where you put them.");
+    const ed = state.caps?.editor || {}, models = [ed.qwen !== false && ["qwen", "Qwen Image Edit 2511"], ed.h3image && ["h3image", "MiniMax H3 Image"]].filter(Boolean);
+    if (!models.length) return Media.toast("Generate photo needs an edit model: Qwen Image Edit 2511 or MiniMax H3 Image.");
+    let keep = "";
+    try { keep = localStorage.getItem("bob.motionPhotoLook") || ""; } catch { /* none */ }
+    const plate = m.plateImg && !m.plateStale;
+    const box = document.createElement("div");
+    box.className = "m3-make";
+    box.innerHTML = `<p class="hint">The picture at ${m.t.toFixed(2)} s, with the objects where you put them, made into one natural photograph: the edit model
+        blends them in (light, shadows, edges) and keeps everything where it is. The photo shows up in the gallery.</p>
+      ${plate ? "" : `<p class="hint">⚠ There's no empty background yet, so a moved object still shows at its old place too. Make the empty background first for a clean photo.</p>`}
+      <div class="field"><label for="mop-look">How it should look <span class="opt">optional</span></label>
+        <textarea id="mop-look" rows="3" placeholder="Natural light, shot on 35 mm film.">${esc(keep)}</textarea></div>
+      <div class="field"><label for="mop-model">Model</label><select id="mop-model">${models.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></div>`;
+    const foot = document.createElement("div");
+    foot.className = "wm-foot-row";
+    foot.innerHTML = `<span class="hint mop-st"></span><button type="button" class="btn ghost" data-a="cancel">Cancel</button><button type="button" class="btn primary" data-a="go">📷 Generate</button>`;
+    const win = WM.open({ id: "motion-photo", title: `Photo · ${m.name}`, content: box, footer: foot, width: 500, height: plate ? 360 : 410, modal: true });
+    foot.querySelector('[data-a="cancel"]').onclick = () => win.close();
+    foot.querySelector('[data-a="go"]').onclick = async e => {
+      e.target.disabled = true;
+      const st = foot.querySelector(".mop-st"), look = box.querySelector("#mop-look").value.trim();
+      try { localStorage.setItem("bob.motionPhotoLook", look); } catch { /* not kept */ }
+      try {
+        st.textContent = "Drawing the picture…";
+        const ref = await upload(await blobOf(frameAt(m.t)), "animate_objects_frame.png");
+        const prompt = "Make this picture one realistic, natural photograph: blend every object into the scene with matching light, "
+          + "shadows and edges, and keep each object exactly where it is, at its size, angle and colour." + (look ? ` ${look}` : "");
+        st.textContent = "Sending to the edit model…";
+        const items = await submit({ kind: "image", engine: "imgedit", edit_op: "instruct", source: ref, prompt,
+          edit_model: box.querySelector("#mop-model").value, seed: -1, batch: 1, project: m.project });
+        if (!items?.length) throw new Error("The edit model didn't take it (the reason is on the Generate step)");
+        win.close();
+        Media.toast("Animate objects: the photo is being made. It shows up in the gallery.");
+      } catch (err) { st.textContent = ""; e.target.disabled = false; Media.toast(`Photo: ${err.message}`); }
+    };
+  }
+
   /* The picture as a 3D scene (scene3d.js): its objects, with any 3D models already made from them, over the empty
      background when there is one. */
   async function openScene() {
@@ -516,7 +565,7 @@ const Motion = (() => {
       </aside>`;
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
-    foot.innerHTML = `<span class="mo-foot-st hint"></span>${shot ? "" : `<button type="button" class="btn" data-act="scene3d" title="The picture in depth with these objects as 3D models, to keyframe and render (🏞 3D scene)">🏞 3D scene…</button>`}<button type="button" class="btn primary" data-act="generate">${shot ? "Use for this shot" : "Generate"}</button>`;
+    foot.innerHTML = `<span class="mo-foot-st hint"></span>${shot ? "" : `<button type="button" class="btn" data-act="photo" title="A photograph of the picture as it is at the playhead, with the objects where you put them (the image editor's edit model)">📷 Generate photo…</button>`}${shot ? "" : `<button type="button" class="btn" data-act="scene3d" title="The picture in depth with these objects as 3D models, to keyframe and render (🏞 3D scene)">🏞 3D scene…</button>`}<button type="button" class="btn primary" data-act="generate">${shot ? "Use for this shot" : "Generate"}</button>`;
     const win = WM.open({ id: "motion", title: `Animate objects · ${src.name || src.ref.split("/").pop()}`, content: root, footer: foot,
       width: 1100, height: 720, minWidth: 760, minHeight: 520, onClose: () => { m = null; opts.onClose?.(); } });
     m = { win, root: win.el, canvas: root.querySelector(".mo-canvas"), pic, ref: src.ref, url: src.url, name: src.name || src.ref.split("/").pop(),
@@ -532,6 +581,7 @@ const Motion = (() => {
       if (a === "pick") { m.picking = !m.picking; return refresh(); }
       if (a === "plate") return makePlate();
       if (a === "scene3d") return openScene();
+      if (a === "photo") return photoDialog();
       if (a === "generate") return generate();
       if (a === "del-layer") { m.layers.splice(+b.dataset.i, 1); m.sel = Math.min(m.sel, m.layers.length - 1); if (m.plateRef) m.plateStale = true; return refresh(); }
       if (a === "del-key") { m.layers[m.sel].keys.splice(+b.dataset.key, 1); return refresh(); }
