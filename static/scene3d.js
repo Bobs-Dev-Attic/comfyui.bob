@@ -1400,8 +1400,9 @@ const Scene3D = (() => {
       if (a === "depth") {
         const r = b.getBoundingClientRect();
         return Media.menu(r.left, r.top - 8, [
-          [`This frame${s.camKeys.length ? ` (${s.t.toFixed(2)} s)` : ""}: PNG`, () => saveDepth(false)],
-          [`The whole clip (${frameCount()} frames): video`, () => saveDepth(true)],
+          [`This frame${s.camKeys.length ? ` (${s.t.toFixed(2)} s)` : ""}: PNG`, () => saveDepth("frame")],
+          [`The whole clip (${frameCount()} frames): video`, () => saveDepth("video")],
+          [`The whole clip (${frameCount()} frames): full-size PNGs in a .zip`, () => saveDepth("pngs")],
         ]);
       }
       if (a === "photo") return photoDialog();
@@ -1871,7 +1872,34 @@ const Scene3D = (() => {
     g.putImageData(im, 0, 0);
     return c;
   }
-  async function saveDepth(clip) {
+  // A .zip of files stored as they are (PNGs are compressed already): [{name, bytes}] -> Blob.
+  const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  const crc32 = b => { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = CRC[(c ^ b[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
+  function zipStore(files) {
+    const parts = [], dir = [], enc = new TextEncoder();
+    const now = new Date(), dt = ((now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1)) & 0xFFFF,
+      dd = (((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate()) & 0xFFFF;
+    let off = 0;
+    for (const f of files) {
+      const name = enc.encode(f.name), crc = crc32(f.bytes), n = f.bytes.length;
+      const h = new DataView(new ArrayBuffer(30));
+      [[0, 0x04034b50, 4], [4, 20, 2], [6, 0, 2], [8, 0, 2], [10, dt, 2], [12, dd, 2], [14, crc, 4], [18, n, 4], [22, n, 4], [26, name.length, 2], [28, 0, 2]]
+        .forEach(([o, v, w]) => w === 4 ? h.setUint32(o, v, true) : h.setUint16(o, v, true));
+      const c = new DataView(new ArrayBuffer(46));
+      [[0, 0x02014b50, 4], [4, 20, 2], [6, 20, 2], [8, 0, 2], [10, 0, 2], [12, dt, 2], [14, dd, 2], [16, crc, 4], [20, n, 4], [24, n, 4],
+        [28, name.length, 2], [30, 0, 2], [32, 0, 2], [34, 0, 2], [36, 0, 2], [38, 0, 4], [42, off, 4]]
+        .forEach(([o, v, w]) => w === 4 ? c.setUint32(o, v, true) : c.setUint16(o, v, true));
+      parts.push(h, name, f.bytes); dir.push(c, name);
+      off += 30 + name.length + n;
+    }
+    const size = dir.reduce((a, x) => a + x.byteLength, 0), e = new DataView(new ArrayBuffer(22));
+    [[0, 0x06054b50, 4], [4, 0, 2], [6, 0, 2], [8, files.length, 2], [10, files.length, 2], [12, size, 4], [16, off, 4], [20, 0, 2]]
+      .forEach(([o, v, w]) => w === 4 ? e.setUint32(o, v, true) : e.setUint16(o, v, true));
+    return new Blob([...parts, ...dir, e], { type: "application/zip" });
+  }
+  // mode: "frame" (this frame, PNG), "video" (the clip, 75% size) or "pngs" (the clip, full-size PNGs in a .zip)
+  async function saveDepth(mode) {
+    const clip = mode !== "frame";
     if (!s?.bg) return;
     const A = s.bg.aspect, W = Math.round((A >= 1 ? 1280 : 1280 * A) / 8) * 8, H = Math.round(W / A / 8) * 8, size = [W, H];
     const base = (s.sc.name || "scene").replace(/[^\w-]+/g, "_").slice(0, 40) || "scene";
@@ -1883,16 +1911,30 @@ const Scene3D = (() => {
         depthCanvas(z, size, range).toBlob(bl => { const u = URL.createObjectURL(bl); save(u, `${base}_depth.png`); setTimeout(() => URL.revokeObjectURL(u), 4000); }, "image/png");
         return;
       }
-      const n = frameCount(), sizeV = [Math.round(W * 0.75 / 2) * 2, Math.round(H * 0.75 / 2) * 2];
+      const n = frameCount(), sizeM = [Math.round(W * 0.75 / 2) * 2, Math.round(H * 0.75 / 2) * 2], sizeV = mode === "pngs" ? size : sizeM;
       Media.toast(`Depth map: measuring ${n} frames…`);
       let near = Infinity, far = 0;
       for (let f = 0; f < n; f++) {
-        const r = depthRange(depthDistances(sizeV, f / FPS, camForRender(f / FPS)));
+        const r = depthRange(depthDistances(sizeM, f / FPS, camForRender(f / FPS)));  // measured smaller: same range
         if (r) { near = Math.min(near, r[0]); far = Math.max(far, r[1]); }
         if (f % 8 === 0) await new Promise(res => setTimeout(res));
         if (!s) return;
       }
       if (!isFinite(near)) return Media.toast("Nothing in view to measure.");
+      if (mode === "pngs") {
+        const files = [];
+        for (let f = 0; f < n; f++) {
+          const c = depthCanvas(depthDistances(sizeV, f / FPS, camForRender(f / FPS)), sizeV, [near, far]);
+          const bl = await new Promise(res => c.toBlob(res, "image/png"));
+          files.push({ name: `${base}_depth_${String(f).padStart(5, "0")}.png`, bytes: new Uint8Array(await bl.arrayBuffer()) });
+          if (f % 8 === 0) Media.toast(`Depth map: frame ${f + 1} of ${n}…`);
+          if (!s) return;
+        }
+        const u = URL.createObjectURL(zipStore(files));
+        save(u, `${base}_depth_png.zip`); setTimeout(() => URL.revokeObjectURL(u), 60000);
+        Media.toast(`Depth map saved: ${n} PNGs, ${sizeV[0]}×${sizeV[1]}, ${FPS} fps.`);
+        return;
+      }
       const fd = new FormData();
       for (let f = 0; f < n; f++) {
         const c = depthCanvas(depthDistances(sizeV, f / FPS, camForRender(f / FPS)), sizeV, [near, far]);

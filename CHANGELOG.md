@@ -5,6 +5,13 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.95.0] - 2026-11-18
+
+### Added
+- **Save depth map › The whole clip: full-size PNGs in a .zip.** Every frame of the clip as its own PNG at full size
+  (1280 px on the long side), numbered from 00000 at the scene's 24 fps, with the same brightness range throughout,
+  for depth ControlNet workflows that load an image sequence.
+
 ## [0.94.0] - 2026-11-18
 
 ### Added
