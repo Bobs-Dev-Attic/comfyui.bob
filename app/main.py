@@ -403,6 +403,11 @@ class SceneObject(BaseModel):
     color: str | None = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
     dims: list[float] | None = Field(None, min_length=3, max_length=3)
     tilt: list[float] | None = Field(None, min_length=2, max_length=2)
+    # turned about X (pitch) and Z (roll) too, in degrees (yaw, pitch, roll: Euler, Y then X then Z), and stretched along
+    # its own axes (not keyed)
+    pitch: float = 0
+    roll: float = 0
+    stretch: list[float] | None = Field(None, min_length=3, max_length=3)
     # its motion: [{t (seconds), pos, yaw, scale}] by time; none = it stays where it is
     keys: list[dict[str, Any]] = Field(default_factory=list, max_length=500)
 
