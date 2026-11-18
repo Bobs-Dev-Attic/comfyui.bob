@@ -5,6 +5,18 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.91.0] - 2026-11-18
+
+### Added
+- **A Person's pose can change over time.** Pick a pose with the playhead anywhere but the start (or once it has keys)
+  and it's keyed there, like moving it; between two keys the arms and legs move smoothly from one pose to the next
+  (standing → sitting → waving). The Pose list shows the pose at the playhead. The video model is told the sequence,
+  e.g. “the grey human figure in the middle, standing, then sitting, then waving with the right hand,”.
+
+### Changed
+- A Person keeps the same scale whatever its pose, standing on its own centre line, so it doesn't slide when an arm
+  goes up; its feet (or knees) stay on the ground.
+
 ## [0.90.0] - 2026-11-18
 
 ### Added
