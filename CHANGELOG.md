@@ -5,6 +5,12 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.76.0] - 2026-11-17
+
+### Added
+- **🧊 Make 3D…** buttons on a picture in the gallery (the result's buttons, next to 🔄 Angles…) and on the Media page
+  (the selection bar with one picture selected, and the picture's right-click menu).
+
 ## [0.75.1] - 2026-11-17
 
 ### Added
