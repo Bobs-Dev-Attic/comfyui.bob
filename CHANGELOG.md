@@ -5,6 +5,12 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.79.0] - 2026-11-17
+
+### Added
+- **🏞** buttons on the Inputs step: on the first and last frame (when there's a picture in them, next to its ×) and
+  on each reference picture (next to its ⋯). Each opens that picture as a 3D scene.
+
 ## [0.78.0] - 2026-11-17
 
 ### Added
