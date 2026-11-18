@@ -396,11 +396,18 @@ function sceneOf(ref, url) {
   Scene3D.create({ ref, url, name: ref.split("/").pop().replace(/\.[^.]+$/, "") });
 }
 
+// An Inputs picture as a 3D model (model3d.js).
+function make3dOf(ref, url) {
+  if (typeof Model3D === "undefined") return;
+  Model3D.start({ ref, url, name: ref.split("/").pop().replace(/\.[^.]+$/, "") });
+}
+
 function initDrops() {
   const input = $("#file-input");
   for (const drop of $$(".drop")) {
     const role = drop.dataset.role;
-    drop.addEventListener("click", e => { if (e.target.classList.contains("x") || e.target.classList.contains("s3b")) return; state.pickRole = role; input.click(); });
+    drop.addEventListener("click", e => { if (["x", "s3b", "m3b"].some(c => e.target.classList.contains(c))) return; state.pickRole = role; input.click(); });
+    $(".m3b", drop).addEventListener("click", e => { e.stopPropagation(); const f = state.frames[role]; if (f) make3dOf(f.ref, f.url); });
     $(".s3b", drop).addEventListener("click", e => { e.stopPropagation(); const f = state.frames[role]; if (f) sceneOf(f.ref, f.url); });
     drop.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); state.pickRole = role; input.click(); } });
     $(".x", drop).addEventListener("click", e => { e.stopPropagation(); clearFrame(role); });
@@ -442,11 +449,13 @@ function renderRefs() {
       <button type="button" class="tag" data-i="${i}" title="Insert into prompt">Picture ${i + 1}</button>
       ${r.desc ? `<span class="ref-desc" title="${esc(r.desc)}">✨</span>` : ""}
       <button type="button" class="s3b" data-i="${i}" title="Open Picture ${i + 1} as a 3D scene" aria-label="Open Picture ${i + 1} as a 3D scene">🏞</button>
+      <button type="button" class="m3b" data-i="${i}" title="Make a 3D model of the main object in Picture ${i + 1}" aria-label="Make a 3D model from Picture ${i + 1}">🧊</button>
       <button type="button" class="ref-more" data-i="${i}" title="Open, edit, describe or remove" aria-label="Picture ${i + 1} options" aria-haspopup="menu">⋯</button>
     </div>`).join("")
     + (state.refs.length < MAX_REFS ? `<div class="ref-add" id="ref-add" tabindex="0" role="button">+ Add<br>picture</div>` : "");
   $$(".ref .ref-more", box).forEach(b => b.onclick = () => RefTools.pictureMenu(+b.dataset.i, b));
   $$(".ref .s3b", box).forEach(b => b.onclick = () => { const r = state.refs[+b.dataset.i]; if (r) sceneOf(r.ref, r.url); });
+  $$(".ref .m3b", box).forEach(b => b.onclick = () => { const r = state.refs[+b.dataset.i]; if (r) make3dOf(r.ref, r.url); });
   $$(".ref img", box).forEach((im, i) => im.ondblclick = () => RefTools.pictureMenu(i, im.parentElement.querySelector(".ref-more")));
   Prompts.renderBar?.();
   $$(".ref .tag", box).forEach(b => b.onclick = () => insertAtCursor($("#prompt"), `<Picture ${+b.dataset.i + 1}>`));

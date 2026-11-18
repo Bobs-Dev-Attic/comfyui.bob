@@ -90,7 +90,8 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   object's right-click menu in Animate objects): a textured 3D model (GLB) of the main object, or of the chosen object, with TRELLIS.2 as ComfyUI's
   template runs it (shape, texture, then remeshed, UV-unwrapped and baked). It's made in the background in a few minutes;
   ☰ › **3D models** lists them, and each opens in a small Blender-style viewer (drag to orbit, right-drag to pan, wheel to
-  zoom; Texture, Clay or Wireframe; a floor grid and turntable) or downloads as a `.glb` for Blender. The hidden sides
+  zoom; Texture, Clay or Wireframe; a floor grid and turntable), opens in your 3D app (🖥 Open in 3D app: what Windows
+  uses for .glb, such as Blender), shows in Explorer (📂 Show in folder), or downloads as a `.glb`. The hidden sides
   are made up by the model. Needs `trellis_2_int8_convrot` (diffusion_models), `trellis_2_shape_vae_bf16` and
   `trellis_2_texture_vae_bf16` (vae), `dino_v3_L_naf_fp32` (clip_vision), from
   [Comfy-Org/TRELLIS.2](https://huggingface.co/Comfy-Org/TRELLIS.2) and [Comfy-Org/Pixal3D](https://huggingface.co/Comfy-Org/Pixal3D),

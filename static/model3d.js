@@ -83,12 +83,20 @@ const Model3D = (() => {
     refreshList();
   }
 
+  // On this PC: the .glb in the app Windows opens it with (Blender, 3D Viewer...), or in Explorer.
+  async function openOnPc(m, how) {
+    try { await api(`/api/models3d/${m.id}/open`, { method: "POST", body: JSON.stringify({ how }) }); }
+    catch (e) { Media.toast(e.message); }
+  }
+
   function download(m) { const a = document.createElement("a"); a.href = m.glb_url; a.download = `${m.name.replace(/[\\/:*?"<>|]+/g, "_") || m.id}.glb`; a.click(); }
 
   function itemMenu(m, x, y) {
     if (!m) return;
     Media.menu(x, y, [
       m.status === "done" && ["🧊 Open in the 3D viewer", () => view(m)],
+      m.status === "done" && ["🖥 Open in your 3D app (Blender…)", () => openOnPc(m, "app")],
+      m.status === "done" && ["📂 Show in folder", () => openOnPc(m, "folder")],
       m.status === "done" && ["⬇ Download .glb (for Blender)", () => download(m)],
       m.status !== "running" && ["↻ Make again (a new seed)", async () => {
         try { await api("/api/make3d", { method: "POST", body: JSON.stringify({ source: m.source, mask: m.mask, name: m.name, quality: m.quality, project: m.project }) }); refreshList(); }
@@ -244,6 +252,8 @@ const Model3D = (() => {
     foot.className = "wm-foot-row";
     foot.innerHTML = `<span class="hint">${esc(m.model || "TRELLIS.2")} · ${esc(m.quality || "")} detail · seed ${m.seed ?? "?"}</span>
       <button type="button" class="btn ghost" data-a="shot">📷 Save picture of this view</button>
+      <button type="button" class="btn ghost" data-a="folder" title="Show the .glb file in Explorer">📂 Show in folder</button>
+      <button type="button" class="btn" data-a="app" title="Open the .glb in the app Windows uses for it (Blender, 3D Viewer…)">🖥 Open in 3D app</button>
       <button type="button" class="btn primary" data-a="dl">⬇ Download .glb</button>`;
     let ro = null;
     const v = { m, raf: 0, look: 0, grid: true, spin: false, yaw: 35, pitch: 18, dist: 3, target: [0, 0, 0], radius: 1, floor: 0, prims: [], dirty: true };
@@ -251,6 +261,8 @@ const Model3D = (() => {
       onClose: () => { cancelAnimationFrame(v.raf); v.closed = true; ro?.disconnect(); } });
     const cv = box.querySelector(".m3-canvas"), hud = box.querySelector(".m3-hud");
     foot.querySelector('[data-a="dl"]').onclick = () => download(m);
+    foot.querySelector('[data-a="app"]').onclick = () => openOnPc(m, "app");
+    foot.querySelector('[data-a="folder"]').onclick = () => openOnPc(m, "folder");
     foot.querySelector('[data-a="shot"]').onclick = () => { draw(); cv.toBlob(b => { const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = `${m.name}_view.png`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); }); };
     box.querySelector(".m3-seg").onclick = e => { const b = e.target.closest("[data-look]"); if (!b) return; v.look = +b.dataset.look; box.querySelectorAll("[data-look]").forEach(x => x.classList.toggle("on", x === b)); v.dirty = true; };
     box.querySelector(".m3-bar").onchange = e => { const k = e.target.dataset.opt; if (k) { v[k] = e.target.checked; v.dirty = true; } };
