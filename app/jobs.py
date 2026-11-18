@@ -409,7 +409,9 @@ class JobManager:
                     else [models.ALL_SETS["krea2"]])
         else:
             sets = ([models.ALL_SETS["h3"], models.ALL_SETS["klein"]] if req.engine == "reshoot"
-                    else [models.ALL_SETS["h3"]] if req.engine == "motion" else [models.ALL_SETS[req.engine]])
+                    # a 3D scene with object pictures renders on H3 Reference (workflows.build_motion)
+                    else [models.ALL_SETS["h3ref" if req.references else "h3"]] if req.engine == "motion"
+                    else [models.ALL_SETS[req.engine]])
         files: dict[str, Any] = {}
         for mset in sets:
             resolved = models.resolve(mset, installed)
@@ -515,6 +517,15 @@ class JobManager:
                     raise ValueError("Each frame of a layer's path is [dx, dy, scale, flip, rotation, flip upside down]")
             if not req.motion_video:
                 media_path(req.motion_plate)
+            if req.references:
+                if not req.motion_video:
+                    raise ValueError("Object pictures are for a 3D scene's render")
+                if len(req.references) > workflows.H3_MAX_REFS - 1:
+                    raise ValueError(f"A scene render takes at most {workflows.H3_MAX_REFS - 1} object pictures")
+                if not self.has_node("MiniMaxH3ReferenceToVideo"):
+                    raise ValueError("Object pictures need H3 Reference (MiniMaxH3ReferenceToVideo) in ComfyUI")
+                for ref in req.references:
+                    media_path(ref)
         if req.continue_from:
             if req.engine != "h3ref":
                 raise ValueError("Continuing a video without a cut needs H3 Reference")
@@ -658,6 +669,7 @@ class JobManager:
             return workflows.build_motion(
                 files, prompt=req.prompt, width=w, height=h, seconds=req.seconds, seed=seed, turbo=req.turbo, steps=req.steps,
                 hold=req.motion_hold, edge=edge, prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras],
+                references=len(req.references),
             )
         if req.engine == "imgedit":
             return workflows.build_imgedit(
