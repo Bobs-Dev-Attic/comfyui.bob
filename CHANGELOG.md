@@ -5,6 +5,13 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.78.0] - 2026-11-17
+
+### Added
+- **🏞 3D scene…** button in the Animate objects window's footer, next to Generate (the side panel's 3D section was
+  easy to miss): it opens the picture as a 3D scene with its objects, any 3D models already made from them, and the
+  empty background when there is one.
+
 ## [0.77.0] - 2026-11-17
 
 ### Added

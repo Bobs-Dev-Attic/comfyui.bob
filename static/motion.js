@@ -516,7 +516,7 @@ const Motion = (() => {
       </aside>`;
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
-    foot.innerHTML = `<span class="mo-foot-st hint"></span><button type="button" class="btn primary" data-act="generate">${shot ? "Use for this shot" : "Generate"}</button>`;
+    foot.innerHTML = `<span class="mo-foot-st hint"></span>${shot ? "" : `<button type="button" class="btn" data-act="scene3d" title="The picture in depth with these objects as 3D models, to keyframe and render (🏞 3D scene)">🏞 3D scene…</button>`}<button type="button" class="btn primary" data-act="generate">${shot ? "Use for this shot" : "Generate"}</button>`;
     const win = WM.open({ id: "motion", title: `Animate objects · ${src.name || src.ref.split("/").pop()}`, content: root, footer: foot,
       width: 1100, height: 720, minWidth: 760, minHeight: 520, onClose: () => { m = null; opts.onClose?.(); } });
     m = { win, root: win.el, canvas: root.querySelector(".mo-canvas"), pic, ref: src.ref, url: src.url, name: src.name || src.ref.split("/").pop(),
