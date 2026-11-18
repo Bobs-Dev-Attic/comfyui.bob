@@ -314,8 +314,35 @@ const Scene3D = (() => {
     figure: { label: "Person", icon: "🧍", dims: [0.67, 1.74, 0.29] },
   };
   const PRIM_COLOR = "#c9c4ba";
+  /* The Person's poses: for each side (R, L), the direction of the upper arm and forearm, and of the thigh and shin
+     ("back": the foot lies behind, as when kneeling). x points out from the body, y up, z forward. `says` is how the
+     photo and video models are told about it. */
+  const POSES = {
+    standing: { label: "Standing", says: "", arms: { R: [[0.12, -1, 0], [0.08, -1, 0.08]], L: [[0.12, -1, 0], [0.08, -1, 0.08]] },
+      legs: { R: [[0.02, -1, 0.02], [0, -1, -0.02]], L: [[0.02, -1, 0.02], [0, -1, -0.02]] } },
+    walking: { label: "Walking", says: "walking",
+      arms: { R: [[0.08, -1, 0.35], [0.05, -0.8, 0.6]], L: [[0.08, -1, -0.35], [0.05, -1, 0.1]] },
+      legs: { R: [[0.02, -1, -0.3], [0, -1, -0.45]], L: [[0.02, -1, 0.4], [0, -1, 0.05]] } },
+    running: { label: "Running", says: "running",
+      arms: { R: [[0.1, -0.6, 0.8], [0, 0.8, 0.6]], L: [[0.1, -0.7, -0.7], [0, -0.9, 0.4]] },
+      legs: { R: [[0.03, -1, -0.35], [0, -0.3, -1]], L: [[0.03, -0.6, 0.8], [0, -1, 0.05]] } },
+    sitting: { label: "Sitting", says: "sitting", arms: { R: [[0.1, -1, 0.25], [0.05, -0.25, 1]], L: [[0.1, -1, 0.25], [0.05, -0.25, 1]] },
+      legs: { R: [[0.06, 0, 1], [0, -1, 0.05]], L: [[0.06, 0, 1], [0, -1, 0.05]] } },
+    kneeling: { label: "Kneeling", says: "kneeling", legs: { R: [[0.03, -1, 0.15], [0, -0.1, -1], "back"], L: [[0.03, -1, 0.15], [0, -0.1, -1], "back"] } },
+    waving: { label: "Waving", says: "waving with the right hand", arms: { R: [[1, 0.25, 0.1], [0.1, 1, 0.15]], L: [[0.12, -1, 0], [0.08, -1, 0.08]] } },
+    pointing: { label: "Pointing", says: "pointing ahead with the right arm", arms: { R: [[0.12, 0.05, 1], [0.1, 0.05, 1]], L: [[0.12, -1, 0], [0.08, -1, 0.08]] } },
+    arms_up: { label: "Arms raised", says: "with both arms raised", arms: { R: [[0.35, 1, 0.05], [0.15, 1, 0]], L: [[0.35, 1, 0.05], [0.15, 1, 0]] } },
+    hips: { label: "Hands on hips", says: "with hands on hips", arms: { R: [[0.75, -0.65, -0.15], [-0.75, -0.45, 0.25]], L: [[0.75, -0.65, -0.15], [-0.75, -0.45, 0.25]] } },
+    tpose: { label: "T-pose", says: "with arms out to the sides", arms: { R: [[1, 0, 0], [1, 0, 0]], L: [[1, 0, 0], [1, 0, 0]] } },
+  };
+  // A shape's own size (its box before stretching), e.g. a Person sitting is shorter and deeper than standing.
+  function natDims(kind, pose) {
+    const { P } = shapeOf(kind, pose), lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < P.length; i += 3) for (let c = 0; c < 3; c++) { lo[c] = Math.min(lo[c], P[i + c]); hi[c] = Math.max(hi[c], P[i + c]); }
+    return [0, 1, 2].map(c => +(hi[c] - lo[c]).toFixed(3));
+  }
   // A shape's triangles about the origin: positions, normals, indices.
-  function shapeOf(kind) {
+  function shapeOf(kind, pose = "standing") {
     const P = [], N = [], I = [], SEG = 40;
     const v = (p, n) => { P.push(...p); N.push(...n); return P.length / 3 - 1; };
     if (kind === "cube" || kind === "plane") {
@@ -371,13 +398,18 @@ const Scene3D = (() => {
       ell([0, 1.3, 0], [0.2, 0.17, 0.12]);                       // chest
       ell([0, 1.1, 0], [0.15, 0.14, 0.1]);                       // waist
       ell([0, 0.94, 0], [0.17, 0.1, 0.11]);                      // hips
-      for (const sx of [-1, 1]) {
-        limb([sx * 0.2, 1.41, 0], [sx * 0.26, 1.13, 0], 0.052, 0.045);        // upper arm
-        limb([sx * 0.26, 1.13, 0], [sx * 0.29, 0.86, 0.03], 0.043, 0.035);   // forearm
-        ell([sx * 0.3, 0.79, 0.04], [0.035, 0.07, 0.045], 8, 12);          // hand
-        limb([sx * 0.09, 0.9, 0], [sx * 0.1, 0.5, 0.01], 0.078, 0.058);     // thigh
-        limb([sx * 0.1, 0.5, 0.01], [sx * 0.1, 0.09, 0], 0.056, 0.042);     // shin
-        ell([sx * 0.1, 0.045, 0.06], [0.05, 0.04, 0.11], 8, 12);           // foot
+      // Arms and legs follow the pose: a direction for each bone, x pointing out from the body. The person faces +Z,
+      // so their right side is -X and their left +X.
+      const P0 = POSES[pose] || POSES.standing;
+      for (const [side, sx] of [["R", -1], ["L", 1]]) {
+        const bone = d => norm([d[0] * sx, d[1], d[2]]);
+        const arm = P0.arms?.[side] || POSES.standing.arms.R, leg = P0.legs?.[side] || POSES.standing.legs.R;
+        const sh = [sx * 0.2, 1.41, 0], el = addv(sh, mulv(bone(arm[0]), 0.29)), wr = addv(el, mulv(bone(arm[1]), 0.27));
+        limb(sh, el, 0.052, 0.045); limb(el, wr, 0.043, 0.035);  // upper arm, forearm
+        ell(addv(wr, mulv(bone(arm[1]), 0.055)), [0.042, 0.055, 0.042], 8, 12);  // hand
+        const hp = [sx * 0.09, 0.9, 0], kn = addv(hp, mulv(bone(leg[0]), 0.41)), an = addv(kn, mulv(bone(leg[1]), 0.41));
+        limb(hp, kn, 0.078, 0.058); limb(kn, an, 0.056, 0.042);  // thigh, shin
+        ell(addv(an, leg[2] === "back" ? [0, -0.01, -0.07] : [0, -0.035, 0.06]), [0.05, 0.04, 0.11], 8, 12);  // foot
       }
     } else {  // torus (a ring lying flat)
       const R = 0.35, r = 0.15, M = 20;
@@ -392,7 +424,7 @@ const Scene3D = (() => {
   // A primitive object's mesh: its shape stretched to its size (dims), tilted, in its colour; the anchor is the bottom
   // middle of its box, as for a model.
   function primMesh(o) {
-    const { P, N, I } = shapeOf(o.prim), n = P.length / 3, dims = o.dims || PRIMS[o.prim].dims;
+    const { P, N, I } = shapeOf(o.prim, o.pose), n = P.length / 3, dims = o.dims || PRIMS[o.prim].dims;
     const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
     for (let i = 0; i < n; i++) for (let c = 0; c < 3; c++) { lo[c] = Math.min(lo[c], P[i * 3 + c]); hi[c] = Math.max(hi[c], P[i * 3 + c]); }
     const k = [0, 1, 2].map(c => hi[c] - lo[c] > 1e-9 ? Math.max(0.01, dims[c]) / (hi[c] - lo[c]) : 1);
@@ -414,7 +446,8 @@ const Scene3D = (() => {
     if (!s?.bg || !PRIMS[kind]) return;
     const d = PRIMS[kind], n = s.objs.filter(o => o.prim === kind).length;
     const o = { id: uid(), name: n ? `${d.label} ${n + 1}` : d.label, model: null, mask: null, prim: kind, color: PRIM_COLOR,
-      dims: d.dims.slice(), tilt: [0, 0], pos: null, yaw: 0, scale: null, keys: [] };
+      dims: kind === "figure" ? natDims("figure", "standing") : d.dims.slice(), tilt: [0, 0], pos: null, yaw: 0, scale: null, keys: [],
+      ...(kind === "figure" ? { pose: "standing" } : {}) };
     o.mesh = primMesh(o); o.state = "ok";
     s.objs.push(o); s.sel = s.objs.length - 1;
     await place(o);
@@ -579,7 +612,7 @@ const Scene3D = (() => {
     if (!o?.mesh || !o.pos) return;
     const P = poseAt(o, s.t), w = (o.mesh.hi[0] - o.mesh.lo[0]) * P.scale * 1.2 || 1, y = s.cam.yaw * rad;
     const off = [Math.cos(y) * w, 0, -Math.sin(y) * w], move = p => addv(p, off);
-    const c = { id: uid(), name: `${o.name} copy`, becomes: o.becomes || "", picture: o.picture || null, model: o.model, mask: o.mask, prim: o.prim, color: o.color, dims: o.dims?.slice(), tilt: o.tilt?.slice(),
+    const c = { id: uid(), name: `${o.name} copy`, becomes: o.becomes || "", picture: o.picture || null, model: o.model, mask: o.mask, prim: o.prim, ...(o.pose ? { pose: o.pose } : {}), color: o.color, dims: o.dims?.slice(), tilt: o.tilt?.slice(),
       pos: move(o.pos), yaw: o.yaw || 0, pitch: o.pitch || 0, roll: o.roll || 0, stretch: o.stretch?.slice(), scale: o.scale, auto_scale: o.auto_scale, hidden: false,
       keys: (o.keys || []).map(k => ({ ...k, pos: move(k.pos) })), state: "ok" };
     c.mesh = o.prim ? primMesh(c) : o.mesh;
@@ -650,7 +683,7 @@ const Scene3D = (() => {
     s.objs = d.objects.map(x => {
       const o = { ...x, keys: normKeys(x.keys) }, p = old.find(q => q.id === x.id);
       if (x.prim) {
-        o.mesh = p?.mesh && p.prim === x.prim && sameArr(p.dims, x.dims) && sameArr(p.tilt, x.tilt) ? p.mesh : primMesh(o);
+        o.mesh = p?.mesh && p.prim === x.prim && (p.pose || "") === (x.pose || "") && sameArr(p.dims, x.dims) && sameArr(p.tilt, x.tilt) ? p.mesh : primMesh(o);
         o.mesh.parts[0].base = [...hexRgb(o.color || PRIM_COLOR), 1]; o.state = "ok";
       } else {
         const q = p?.mesh && p.model === x.model ? p : old.find(z => z.mesh && z.model && z.model === x.model);
@@ -681,7 +714,8 @@ const Scene3D = (() => {
   /* ---------------------------------------------------------------- saving */
   const objectsOut = () => s.objs.map(o => ({ id: o.id, name: o.name, becomes: (o.becomes || "").trim(), picture: o.picture || null, model: o.model, mask: o.mask, pos: o.pos, yaw: o.yaw || 0, pitch: o.pitch || 0, roll: o.roll || 0,
     stretch: o.stretch || null, scale: o.scale, auto_scale: o.auto_scale, hidden: !!o.hidden, keys: o.keys || [],
-    ...(o.prim ? { prim: o.prim, color: o.color || PRIM_COLOR, dims: o.dims || PRIMS[o.prim].dims, tilt: o.tilt || [0, 0] } : {}) }));
+    ...(o.prim ? { prim: o.prim, color: o.color || PRIM_COLOR, dims: o.dims || PRIMS[o.prim].dims, tilt: o.tilt || [0, 0] } : {}),
+    ...(o.prim === "figure" ? { pose: o.pose || "standing" } : {}) }));
   function save() {
     clearTimeout(s.saveT);
     record();
@@ -764,6 +798,7 @@ const Scene3D = (() => {
             <div class="s3-dims"><label>X <input type="number" id="s3-rx" step="5"></label><label>Y <input type="number" id="s3-ry" step="5"></label><label>Z <input type="number" id="s3-rz" step="5"></label></div></div>
           <div class="field"><label for="s3-size">Size <span class="s3-size-v"></span></label><input type="range" id="s3-size" min="0.2" max="3" step="0.01"></div>
           <div class="s3-prim" hidden>
+            <div class="field s3-posef" hidden><label for="s3-pose">Pose</label><select id="s3-pose">${Object.entries(POSES).map(([k, p]) => `<option value="${k}">${p.label}</option>`).join("")}</select></div>
             <div class="field"><label for="s3-color">Colour</label><input type="color" id="s3-color"></div>
             <div class="field"><label>Size <span class="opt s3-unit"></span></label>
               <div class="s3-dims"><label>W <input type="number" id="s3-dw" min="0.01" max="500" step="0.1"></label><label>H <input type="number" id="s3-dh" min="0.01" max="500" step="0.1"></label><label>D <input type="number" id="s3-dd" min="0.01" max="500" step="0.1"></label></div></div></div>
@@ -1290,6 +1325,12 @@ const Scene3D = (() => {
         return;
       }
       const po = s.objs[s.sel];
+      if (po?.prim === "figure" && id === "s3-pose") {
+        // A new pose changes the person's own box (sitting is shorter and deeper): keep any stretch the user gave it.
+        const from = natDims("figure", po.pose || "standing"), to = natDims("figure", e.target.value), d = po.dims || from;
+        po.dims = [0, 1, 2].map(c => +(to[c] * (from[c] > 1e-6 ? d[c] / from[c] : 1)).toFixed(3));
+        po.pose = e.target.value; po.mesh = primMesh(po); return changed(po);
+      }
       if (po?.prim && ["s3-dw", "s3-dh", "s3-dd"].includes(id)) {
         const R = s.root, dim = x => Math.max(0.01, Math.min(500, +R.querySelector(x).value || 0.01));
         po.dims = [dim("#s3-dw"), po.prim === "plane" ? 0 : dim("#s3-dh"), dim("#s3-dd")];
@@ -1400,6 +1441,8 @@ const Scene3D = (() => {
       root.querySelector('[data-act="hide"]').textContent = o.hidden ? "Show" : "Hide";
       root.querySelector('[data-act="replace"]').hidden = !!o.prim;
       const pf = root.querySelector(".s3-prim"); pf.hidden = !o.prim;
+      root.querySelector(".s3-posef").hidden = o.prim !== "figure";
+      if (o.prim === "figure") root.querySelector("#s3-pose").value = o.pose || "standing";
       if (o.prim) {
         const d = o.dims || PRIMS[o.prim].dims, act = document.activeElement;
         if (act !== root.querySelector("#s3-color")) root.querySelector("#s3-color").value = o.color || PRIM_COLOR;
@@ -1517,7 +1560,10 @@ const Scene3D = (() => {
     const groups = new Map();
     for (const x of list) { const k = `${x.looks}|${x.where}`; groups.set(k, [...(groups.get(k) || []), x]); }
     for (const g of groups.values()) if (g.length > 1) g.sort((a, b) => a.at.u - b.at.u).forEach((x, i) => { x.looks = `${ORD[i] || `#${i + 1}`} ${x.looks} from the left`; });
-    for (const x of list) x.seen = `the ${x.looks}${x.off ? "" : ` ${x.where}`}`;
+    for (const x of list) {
+      const pose = x.o.prim === "figure" ? POSES[x.o.pose]?.says : "";
+      x.seen = `the ${x.looks}${x.off ? "" : ` ${x.where}`}${pose ? `, ${pose}` : ""}`;
+    }
     return list;
   }
   // "the wooden crate (the red cube on the left)", or just what it looks like when it Becomes nothing; with its picture

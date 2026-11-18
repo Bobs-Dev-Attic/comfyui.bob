@@ -5,6 +5,14 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.90.0] - 2026-11-18
+
+### Added
+- **Poses for the Person** in 3D scenes (Pose, on its panel): Standing, Walking, Running, Sitting, Kneeling, Waving,
+  Pointing, Arms raised, Hands on hips and T-pose. The person keeps its feet (or knees) on the ground and any stretch
+  you gave it; sitting is shorter and deeper than standing, so seat it on a cube. The photo and video models are told
+  the pose too, e.g. “the red human figure on the left, sitting”. Waving and pointing use the person's right arm.
+
 ## [0.89.0] - 2026-11-18
 
 ### Added
