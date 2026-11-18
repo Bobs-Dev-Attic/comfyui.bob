@@ -265,13 +265,18 @@ details.advanced .field + .field, details.advanced .row2 + .field { margin-top: 
 }
 .drop.has .x { display: block; }
 /* Open as a 3D scene (a keyframe or a reference picture on the Inputs step) */
-.drop .s3b, .ref .s3b {
+.drop .s3b, .ref .s3b, .drop .m3b, .ref .m3b {
   position: absolute; border: 0; background: rgba(0,0,0,.6); color: #fff; cursor: pointer; line-height: 1; font-size: 12px;
 }
 .drop .s3b { top: 6px; right: 34px; width: 24px; height: 22px; border-radius: 7px; display: none; }
 .drop.has .s3b { display: block; }
-.ref .s3b { top: 4px; right: 32px; width: 24px; height: 22px; border-radius: 7px; }
-.drop .s3b:hover, .ref .s3b:hover, .drop .s3b:focus-visible, .ref .s3b:focus-visible { background: var(--accent); outline: none; }
+.drop .m3b { top: 6px; right: 62px; width: 24px; height: 22px; border-radius: 7px; display: none; }
+.drop.has .m3b { display: block; }
+/* a reference card is narrow: 🧊 🏞 ⋯ along the top (its ✨ moves down a row), its label at the bottom */
+.ref .s3b { top: 4px; right: 30px; width: 22px; height: 22px; border-radius: 7px; }
+.ref .m3b { top: 4px; right: 54px; width: 22px; height: 22px; border-radius: 7px; }
+.drop .s3b:hover, .ref .s3b:hover, .drop .s3b:focus-visible, .ref .s3b:focus-visible,
+.drop .m3b:hover, .ref .m3b:hover, .drop .m3b:focus-visible, .ref .m3b:focus-visible { background: var(--accent); outline: none; }
 
 .refs { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
 .ref, .ref-add {
@@ -287,7 +292,7 @@ details.advanced .field + .field, details.advanced .row2 + .field { margin-top: 
   background: rgba(0,0,0,.6); color: #fff; cursor: pointer; line-height: 1; font-size: 15px;
 }
 .ref .ref-more:hover, .ref .ref-more[aria-expanded="true"], .ref .ref-more:focus-visible { background: var(--accent); outline: none; }
-.ref .ref-desc { position: absolute; top: 4px; left: 4px; font-size: 12px; background: rgba(0,0,0,.6); border-radius: 6px; padding: 1px 4px; cursor: help; }
+.ref .ref-desc { position: absolute; top: 30px; left: 4px; font-size: 12px; background: rgba(0,0,0,.6); border-radius: 6px; padding: 1px 4px; cursor: help; }
 .ref-add {
   border: 1.5px dashed var(--line); display: grid; place-items: center; cursor: pointer; color: var(--faint);
   font-size: 12px; text-align: center; padding: 6px;

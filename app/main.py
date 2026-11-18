@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import random
 import subprocess
 import uuid
@@ -463,6 +464,31 @@ async def scenes_delete(scene_id: str):
     if not model3d.delete_scene(scene_id):
         raise HTTPException(404, "No such 3D scene")
     return {"ok": True}
+
+
+class Model3DOpen(BaseModel):
+    how: Literal["app", "folder"] = "app"
+
+
+@app.post("/api/models3d/{model_id}/open")
+async def models3d_open(model_id: str, req: Model3DOpen):
+    """On this PC: open a 3D model's .glb with the app Windows uses for it (Blender, 3D Viewer...), or show it in
+    Explorer. Only the studio's own model files, by id."""
+    m = model3d.get(model_id)
+    if not m or m.get("status") != "done" or not m.get("glb"):
+        raise HTTPException(404, "No such 3D model")
+    path = (config.ROOT / m["glb"]).resolve()
+    if not path.is_file() or model3d.OUT_DIR.resolve() not in path.parents:
+        raise HTTPException(404, "The model's file isn't there anymore")
+    try:
+        if req.how == "folder":
+            subprocess.Popen(["explorer.exe", f"/select,{path}"], creationflags=media.NO_WINDOW)
+        else:
+            os.startfile(str(path))  # noqa: S606 - the user's own file, with their own default app
+    except OSError as exc:
+        raise HTTPException(409, "No app is set to open .glb files: download it and open it in Blender, or install "
+                                 "one (Windows' 3D Viewer opens them too)" if req.how == "app" else str(exc)) from exc
+    return {"ok": True, "path": str(path)}
 
 
 @app.delete("/api/models3d/{model_id}")

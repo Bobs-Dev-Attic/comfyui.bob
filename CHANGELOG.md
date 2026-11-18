@@ -5,6 +5,19 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.80.0] - 2026-11-17
+
+### Added
+- **🧊** buttons on the Inputs step, next to 🏞: on the first and last frame (when there's a picture in them) and on
+  each reference picture. Each starts Make 3D for that picture.
+- A finished 3D model opens on this PC: **🖥 Open in 3D app** (the app Windows uses for .glb files, such as Blender;
+  Windows asks which app when none is set) and **📂 Show in folder** (Explorer, with the file selected), in the 3D
+  viewer's footer and in the model's ⋯ menu in 🧊 3D models. Only the studio's own model files, by id.
+- API: `POST /api/models3d/{id}/open` with `how` `app` or `folder`.
+
+### Changed
+- A reference picture's buttons sit in one row along the top (🧊 🏞 ⋯); its ✨ marker moves down a row.
+
 ## [0.79.0] - 2026-11-17
 
 ### Added
