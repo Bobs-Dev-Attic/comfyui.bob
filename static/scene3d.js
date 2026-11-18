@@ -262,7 +262,7 @@ const Scene3D = (() => {
     clearTimeout(s.saveT);
     const id = s.id;
     const objects = s.objs.map(o => ({ id: o.id, name: o.name, model: o.model, mask: o.mask, pos: o.pos, yaw: o.yaw || 0, scale: o.scale, auto_scale: o.auto_scale, hidden: !!o.hidden, keys: o.keys || [] }));
-    const body = JSON.stringify({ objects, seconds: +s.seconds || 5, camera_keys: s.camKeys,
+    const body = JSON.stringify({ objects, seconds: +s.seconds || 5, camera_keys: s.camKeys, photos: s.photos,
       ...(s.sc.kind === "empty" ? { aspect: s.sc.aspect, lens: s.sc.lens, backdrop: s.sc.backdrop } : {}) });
     s.saveT = setTimeout(() => api(`/api/scenes/${id}`, { method: "PATCH", body }).catch(e => Media.toast(`Couldn't save the scene: ${e.message}`)), 500);
   }
@@ -325,7 +325,8 @@ const Scene3D = (() => {
     const gl = cv.getContext("webgl2", { antialias: true, preserveDrawingBuffer: true });
     s = { id: sc.id, sc, win, root, cv, hud, gl, gpu: gl ? G().gpu(gl) : null, objs: (sc.objects || []).map(o => ({ ...o })), sel: -1, dirty: true,
       cam: { yaw: 0, pitch: 0, dist: 1, target: [0, 0, -1] }, showBg: true, clay: false, bg: null,
-      t: 0, seconds: +sc.seconds || 5, camKeys: (sc.camera_keys || []).slice().sort((a, b) => a.t - b.t), camFree: false };
+      t: 0, seconds: +sc.seconds || 5, camKeys: (sc.camera_keys || []).slice().sort((a, b) => a.t - b.t), camFree: false,
+      photos: (sc.photos || []).slice() };
     if (!gl) { hud.textContent = "This browser has no WebGL 2, so the scene can't be shown."; return; }
     s.ro = new ResizeObserver(() => { if (s) s.dirty = true; }); s.ro.observe(cv);
     wire(root, foot);
@@ -405,13 +406,13 @@ const Scene3D = (() => {
     return base;
   }
 
-  async function renderVideo(kind, size, n, progress) {
+  async function renderVideo(kind, size, n, progress, proj = null) {
     const fd = new FormData();
-    const mask = kind === "mask" ? (cameraMoves() ? "all" : "objects") : null;
+    const mask = kind === "mask" ? (proj ? "proj" : cameraMoves() ? "all" : "objects") : null;
     for (let f = 0; f < n; f++) {
       if (!s) throw new Error("The scene was closed");
       const t = f / FPS;
-      draw({ size, t, cam: camForRender(t), mask });
+      draw({ size, t, cam: camForRender(t), mask, proj });
       // toDataURL is synchronous: toBlob's callback (and setTimeout) crawl when the tab is in the background
       const url = (mask ? s.cv : fillHoles(s.cv, size[0], size[1])).toDataURL(mask ? "image/png" : "image/jpeg", 0.92), bin = atob(url.slice(url.indexOf(",") + 1));
       const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
@@ -431,6 +432,13 @@ const Scene3D = (() => {
     if (!state.caps?.editor?.motion && state.caps?.editor) return Media.toast("Rendering a scene needs H3 and ComfyUI-vlo (vloTimeToMove), as Animate objects does.");
     const moving = s.objs.filter(o => o.mesh && !o.hidden && o.keys?.length > 1).map(o => o.name);
     const noPic = !s.sc.picture, pic = !noPic && startsAsPicture();
+    // the scene's photos that are done; one taken at 0 s from where the video's camera starts matches its first frame
+    const cam0 = camForRender(0);
+    const photos = s.photos.map(p => ({ ...p, it: state.items.get(p.id) })).filter(p => p.it?.status === "done" && p.it.files?.length)
+      .map(p => ({ ...p, match: Math.abs(p.t) < 0.5 / FPS && camDiff(p.cam, cam0) < 0.02 })).reverse();
+    const best = photos.find(p => p.match);
+    const startDefault = pic ? "picture" : best ? `photo:${best.id}` : editModels().length ? "newphoto" : "composite";
+    const when = it => new Date((it.finished || it.created) * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     const box = document.createElement("div");
     box.className = "m3-make";
     box.innerHTML = `<p class="hint">H3 makes the video from the picture, following this scene's rough animation (Time-to-Move, as in Animate objects):
@@ -439,42 +447,82 @@ const Scene3D = (() => {
         <textarea id="s3r-what" rows="3" placeholder="${esc(moving.length ? `${moving.join(" and ")} move${moving.length > 1 ? "" : "s"} across the scene.` : "The scene comes to life.")}"></textarea></div>
       <div class="row2"><div class="field"><label for="s3r-q">Quality</label><select id="s3r-q"><option value="draft">Draft</option><option value="standard" selected>Standard</option><option value="full">Full</option></select></div>
         <div class="field"><label for="s3r-hold">Follow the plan</label><select id="s3r-hold"><option value="loose">Loosely</option><option value="normal" selected>Normally</option><option value="tight">Tightly</option></select></div></div>
-      <div class="field"${noPic ? " hidden" : ""}><label for="s3r-first">Start from</label><select id="s3r-first">
-        <option value="picture"${pic ? " selected" : ""}>The picture (the scene starts as the picture)</option>
-        <option value="composite"${pic ? "" : " selected"}>The scene's first frame${pic ? "" : " (the camera starts elsewhere)"}</option></select></div>
+      <div class="field"><label for="s3r-first">Start from</label><select id="s3r-first">
+        ${noPic ? "" : `<option value="picture">The picture${pic ? " (the scene starts as the picture)" : " (the camera starts elsewhere)"}</option>`}
+        ${editModels().length ? `<option value="newphoto">A new photo of the first frame (made first, about a minute, then the video)</option>` : ""}
+        ${photos.map(p => `<option value="photo:${p.id}">The photo from ${when(p.it)}${p.match ? " (the first frame)" : " (another view: the video may jump)"}</option>`).join("")}
+        <option value="composite">The scene's first frame as drawn (plain)</option></select></div>
+      <div class="field s3r-lookf"><label for="s3r-look">How the photo should look <span class="opt">optional</span></label>
+        <textarea id="s3r-look" rows="2" placeholder="Soft daylight, shot on 35 mm film.">${esc(lastLook())}</textarea></div>
       <label class="check"><input type="checkbox" id="s3r-tl"${autoTl() ? " checked" : ""}> Add it to the timeline when it's done</label>`;
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
     foot.innerHTML = `<span class="hint s3r-st"></span><button type="button" class="btn ghost" data-a="cancel">Cancel</button><button type="button" class="btn primary" data-a="go">🎬 Render</button>`;
-    const win = WM.open({ id: "scene3d-render", title: `Render · ${s.sc.name}`, content: box, footer: foot, width: 520, height: 470, modal: true });
-    const st = foot.querySelector(".s3r-st");
+    const win = WM.open({ id: "scene3d-render", title: `Render · ${s.sc.name}`, content: box, footer: foot, width: 540, height: 560, modal: true });
+    const st = foot.querySelector(".s3r-st"), firstSel = box.querySelector("#s3r-first"), holdSel = box.querySelector("#s3r-hold");
+    // From a photo, H3 is held to the plain rough animation only loosely, so the photo's look carries through.
+    const syncStart = () => {
+      const v = firstSel.value, photo = v === "newphoto" || v.startsWith("photo:");
+      box.querySelector(".s3r-lookf").hidden = v !== "newphoto";
+      if (photo && !holdSel.dataset.touched) holdSel.value = "loose";
+      if (!photo && !holdSel.dataset.touched) holdSel.value = "normal";
+    };
+    firstSel.value = startDefault; syncStart();
+    firstSel.onchange = syncStart; holdSel.onchange = () => { holdSel.dataset.touched = "1"; };
     foot.querySelector('[data-a="cancel"]').onclick = () => win.close();
     foot.querySelector('[data-a="go"]').onclick = async e => {
       e.target.disabled = true;
       // the picture's aspect, longest side 960 (the server fits it to the render's size)
       const n = frameCount(), W = Math.round((s.bg.aspect >= 1 ? 960 : 960 * s.bg.aspect) / 2) * 2, H = Math.round(W / s.bg.aspect / 2) * 2;
       const keep = [s.cv.width, s.cv.height];
+      let proj = null;
       try {
+        const start = firstSel.value;
+        // From a photo, the rough animation is the photo painted onto the scene from the camera it was taken from, so
+        // H3 starts from something that looks like the photo (not the plain render).
+        let photoPath = null;
+        if (start === "newphoto") {
+          const look = box.querySelector("#s3r-look").value.trim();
+          try { localStorage.setItem("bob.scenePhotoLook", look); } catch { /* not kept */ }
+          st.textContent = "Making the photo of the first frame (about a minute; keep this open)…";
+          const A = s.bg.aspect, PW = Math.round((A >= 1 ? 1280 : 1280 * A) / 8) * 8, PH = Math.round(PW / A / 8) * 8;
+          const photo = await makePhoto([PW, PH], 0, camForRender(0), look, editModels()[0][0]);
+          const it = await waitItem(photo.id);
+          photoPath = (it.files || []).find(f => /^image\//.test(f.content_type || ""))?.path || it.files?.[0]?.path;
+          if (it.status !== "done" || !photoPath) throw new Error("The photo didn't come out");
+          st.textContent = "Painting the photo onto the scene…";
+          proj = await prepareProjection(photoPath, 0, camForRender(0));
+        } else if (start.startsWith("photo:")) {
+          const p = s.photos.find(x => x.id === start.slice(6)), it = state.items.get(start.slice(6));
+          photoPath = it?.files?.[0]?.path;
+          if (!p || !photoPath) throw new Error("That photo isn't there anymore");
+          st.textContent = "Painting the photo onto the scene…";
+          proj = await prepareProjection(photoPath, p.t, p.cam);
+        }
         st.textContent = "Drawing the rough animation…";
-        const ref = await renderVideo("ref", [W, H], n, (f, N) => { st.textContent = `Drawing the rough animation: frame ${f + 1} of ${N}`; });
-        const mask = await renderVideo("mask", [W, H], n, (f, N) => { st.textContent = `Drawing its mask: frame ${f + 1} of ${N}`; });
+        const ref = await renderVideo("ref", [W, H], n, (f, N) => { st.textContent = `Drawing the rough animation: frame ${f + 1} of ${N}`; }, proj);
+        const mask = await renderVideo("mask", [W, H], n, (f, N) => { st.textContent = `Drawing its mask: frame ${f + 1} of ${N}`; }, proj);
         st.textContent = "Sending to H3…";
         const what = box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder;
         const cam = cameraMoves() ? "The camera moves smoothly through the scene." : "The camera holds a static shot.";
         const prompt = `integrated_multimodal_description: [Shot 1] ${what.replace(/\s+/g, " ")} ${cam}\n\noverall_soundscape: Natural sound of the scene.\n\nnon_diegetic_music: N/A`;
         const toTl = box.querySelector("#s3r-tl").checked;
         try { localStorage.setItem("bob.sceneAutoTl", toTl ? "1" : "0"); } catch { /* not kept */ }
-        // an empty scene has no picture: H3 starts from the scene's own first frame
-        const first = noPic ? await uploadFrame([W, H], 0, camForRender(0), "scene_first.png") : s.sc.picture;
-        const items = await submit({ kind: "video", engine: "motion", prompt, seconds: n / FPS, aspect: "16:9", quality: box.querySelector("#s3r-q").value,
-          seed: -1, batch: 1, turbo: true, first_frame: first, motion_video: ref, motion_video_mask: mask,
-          motion_hold: box.querySelector("#s3r-hold").value, motion_first: noPic ? "picture" : box.querySelector("#s3r-first").value, project: s.sc.project });
+        const req = { kind: "video", engine: "motion", prompt, seconds: n / FPS, aspect: "16:9", quality: box.querySelector("#s3r-q").value,
+          seed: -1, batch: 1, turbo: true, first_frame: null, motion_video: ref, motion_video_mask: mask,
+          motion_hold: holdSel.value, motion_first: "picture", project: s.sc.project };
+        if (photoPath) req.first_frame = photoPath;
+        else if (start === "picture") req.first_frame = s.sc.picture;
+        else if (noPic) req.first_frame = await uploadFrame([W, H], 0, camForRender(0), "scene_first.png");  // as drawn
+        else { req.first_frame = s.sc.picture; req.motion_first = "composite"; }
+        if (!req.first_frame) throw new Error("That photo isn't there anymore");
+        const items = await submit(req);
         if (!items?.length) throw new Error("H3 didn't take it (the reason is on the Generate step)");
         if (toTl) Shots.placeWhenDone(items, s.sc.project);
         win.close();
         Media.toast(`3D scene: queued. ${toTl ? "It goes on the timeline when it's done." : "The video shows up in the gallery when it's done."}`);
       } catch (err) { st.textContent = ""; e.target.disabled = false; Media.toast(`Render: ${err.message}`); }
-      finally { if (s) { s.cv.width = keep[0]; s.cv.height = keep[1]; s.dirty = true; } }
+      finally { freeProjection(proj); if (s) { s.cv.width = keep[0]; s.cv.height = keep[1]; s.dirty = true; } }
     };
   }
 
@@ -494,6 +542,17 @@ const Scene3D = (() => {
     if (s.cv.width !== W || s.cv.height !== H) { s.cv.width = W; s.cv.height = H; }
     const t = r ? r.t : s.t, cam = r?.cam || s.cam;
     const { e, VP } = viewProj(W, H, cam), y = (cam.yaw - 40) * rad, key = [Math.sin(y) * 0.6, 0.85, Math.cos(y) * 0.6 + 0.3];
+    if (r?.proj) {  // the photo painted onto the scene from its camera; what that camera couldn't see is a hole
+      const P = { ...r.proj, mask: !!r.mask };
+      s.gpu.begin(W, H, [0, 0, 0], r.mask ? 1 : 0);
+      s.gpu.draw(s.bgMesh, { VP, M: ID, M0: ID, eye: e, key, proj: P });
+      s.gpu.draw(P.sphere, { VP, M: ID, M0: ID, eye: e, key, proj: P });
+      for (const o of s.objs) {
+        if (!o.mesh || !o.pos || o.hidden) continue;
+        s.gpu.draw(o.mesh, { VP, M: matOf(o, poseAt(o, t)), M0: matOf(o, poseAt(o, P.t0)), eye: e, key, proj: P });
+      }
+      return;
+    }
     const sky = s.bg.empty ? hexRgb(s.sc.backdrop?.sky || "#c9d3de") : null;
     if (sky && r?.mask) s.gpu.begin(W, H, [0, 0, 0], 1);  // the open sky is H3's to make
     else if (sky) s.gpu.begin(W, H, sky, 1);
@@ -805,12 +864,25 @@ const Scene3D = (() => {
   }
 
   /* ---------------------------------------------------------------- 📷 Generate photo */
+  const photoPrompt = look => "Turn this 3D render into a realistic photograph. Keep the composition, the camera angle, and the position, size, "
+    + "shape and colour of every object exactly as they are; give the surfaces real materials, light and shadows." + (look ? ` ${look}` : "");
+  const lastLook = () => { try { return localStorage.getItem("bob.scenePhotoLook") || ""; } catch { return ""; } };
+  const editModels = () => { const ed = state.caps?.editor || {}; return [ed.qwen !== false && ["qwen", "Qwen Image Edit 2511"], ed.h3image && ["h3image", "MiniMax H3 Image"]].filter(Boolean); };
+  // A photo of the scene at time t through `cam` (queued with the edit model); it's remembered on the scene.
+  async function makePhoto(size, t, cam, look, model) {
+    const ref = await uploadFrame(size, t, cam, "scene_view.png");
+    const items = await submit({ kind: "image", engine: "imgedit", edit_op: "instruct", source: ref, prompt: photoPrompt(look), edit_model: model,
+      seed: -1, batch: 1, project: s.sc.project });
+    if (!items?.length) throw new Error("The edit model didn't take it (the reason is on the Generate step)");
+    s.photos.push({ id: items[0].id, t, cam: camOf(cam) });
+    save();
+    return items[0];
+  }
   function photoDialog() {
     if (!s?.bg) return;
-    const ed = state.caps?.editor || {}, models = [ed.qwen !== false && ["qwen", "Qwen Image Edit 2511"], ed.h3image && ["h3image", "MiniMax H3 Image"]].filter(Boolean);
+    const models = editModels();
     if (!models.length) return Media.toast("Generate photo needs an edit model: Qwen Image Edit 2511 or MiniMax H3 Image.");
-    let keep = "";
-    try { keep = localStorage.getItem("bob.scenePhotoLook") || ""; } catch { /* none */ }
+    const keep = lastLook();
     const box = document.createElement("div");
     box.className = "m3-make";
     box.innerHTML = `<p class="hint">Draws what the camera frames${s.camKeys.length ? ` (at ${s.t.toFixed(2)} s)` : ""} and has the edit model turn it into a photograph,
@@ -829,20 +901,60 @@ const Scene3D = (() => {
       try { localStorage.setItem("bob.scenePhotoLook", look); } catch { /* not kept */ }
       const A = s.bg.aspect, W = Math.round((A >= 1 ? 1280 : 1280 * A) / 8) * 8, H = Math.round(W / A / 8) * 8, size0 = [s.cv.width, s.cv.height];
       try {
-        st.textContent = "Drawing the view…";
-        const ref = await uploadFrame([W, H], s.t, s.cam, "scene_view.png");
-        const prompt = "Turn this 3D render into a realistic photograph. Keep the composition, the camera angle, and the position, size, "
-          + "shape and colour of every object exactly as they are; give the surfaces real materials, light and shadows." + (look ? ` ${look}` : "");
-        st.textContent = "Sending to the edit model…";
-        const items = await submit({ kind: "image", engine: "imgedit", edit_op: "instruct", source: ref, prompt, edit_model: box.querySelector("#s3p-model").value,
-          seed: -1, batch: 1, project: s.sc.project });
-        if (!items?.length) throw new Error("The edit model didn't take it (the reason is on the Generate step)");
+        st.textContent = "Drawing the view and sending it to the edit model…";
+        await makePhoto([W, H], s.t, s.cam, look, box.querySelector("#s3p-model").value);
         win.close();
         Media.toast("3D scene: the photo is being made. It shows up in the gallery.");
       } catch (err) { st.textContent = ""; e.target.disabled = false; Media.toast(`Photo: ${err.message}`); }
       finally { if (s) { s.cv.width = size0[0]; s.cv.height = size0[1]; s.dirty = true; } }
     };
   }
+
+  /* ---------------------------------------------------------------- waiting for a photo */
+  const FINAL = ["done", "failed", "cancelled"];
+  const waiters = new Map();  // item id -> resolve
+  function onItem(it) { const w = waiters.get(it?.id); if (w && FINAL.includes(it.status)) { waiters.delete(it.id); w(it); } }
+  function resume() { /* nothing waits across a reload: a photo-started video is made with the scene open */ }
+  async function waitItem(id, minutes = 15) {
+    const t0 = Date.now();
+    const done = new Promise(res => waiters.set(id, res));
+    while (Date.now() - t0 < minutes * 60000) {
+      const it = state.items.get(id);
+      if (it && FINAL.includes(it.status)) { waiters.delete(id); return it; }
+      const r = await Promise.race([done, new Promise(res => setTimeout(() => res(null), 2000))]);
+      if (r) return r;
+      if (!s) { waiters.delete(id); throw new Error("The scene was closed before the photo was done"); }
+    }
+    waiters.delete(id);
+    throw new Error("The photo is taking too long");
+  }
+
+  /* ---------------------------------------------------------------- projecting a photo onto the scene */
+  // A rough sphere around a point, far out: in a projected frame every pixel then has a surface to carry the photo.
+  function sphereMesh(c, R) {
+    const pos = [], idx = [], N = 24, M = 48;
+    for (let i = 0; i <= N; i++) for (let j = 0; j <= M; j++) {
+      const th = i / N * Math.PI, ph = j / M * 2 * Math.PI;
+      pos.push(c[0] + R * Math.sin(th) * Math.cos(ph), c[1] + R * Math.cos(th), c[2] + R * Math.sin(th) * Math.sin(ph));
+    }
+    for (let i = 0; i < N; i++) for (let j = 0; j < M; j++) { const a = i * (M + 1) + j, b = a + M + 1; idx.push(a, b, a + 1, a + 1, b, b + 1); }
+    return s.gpu.upload([{ pos: new Float32Array(pos), nrm: null, uv: null, col: null, idx: new Uint32Array(idx), base: [1, 1, 1, 1], tex: null, ao: null }]);
+  }
+  // The photo (a media ref) as seen from `cam` at time t0: its texture, that camera's depth, and its projection.
+  async function prepareProjection(photoRef, t0, cam) {
+    const img = await createImageBitmap(await (await fetch(`/api/media/file?path=${encodeURIComponent(photoRef)}`)).blob());
+    const A = s.bg.aspect, near = s.bg.dmed * 0.01, far = s.bg.dmed * 50, e0 = eyeOf(cam);
+    const VP0 = mul4(perspective(2 * Math.atan(s.bg.tv), A, near, far), lookAt(e0, cam.target, [0, 1, 0]));
+    const sphere = sphereMesh(e0, far * 0.8);
+    const W0 = Math.min(2048, img.width), H0 = Math.round(W0 / A);
+    const depth = s.gpu.depthPass(W0, H0, d => {
+      const o0 = { VP: VP0, eye: e0, key: [0, 1, 0] };
+      d(s.bgMesh, { ...o0, M: ID }); d(sphere, { ...o0, M: ID });
+      for (const o of s.objs) if (o.mesh && o.pos && !o.hidden) d(o.mesh, { ...o0, M: matOf(o, poseAt(o, t0)) });
+    });
+    return { VP0, near, far, t0, sphere, depth, photo: s.gpu.texture(img) };
+  }
+  function freeProjection(P) { if (!P || !s) return; s.gpu.free(P.depth); s.gpu.free(P.photo); }
 
   /* ---------------------------------------------------------------- time */
   function renderTime() {
@@ -875,6 +987,6 @@ const Scene3D = (() => {
     requestAnimationFrame(step); renderTime();
   }
 
-  return { create, createEmpty, open, openList, _state: () => s, _draw: (r = null) => s && s.bg && draw(r),
-    _render: (kind, size, n) => renderVideo(kind, size, n, () => {}), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
+  return { create, createEmpty, open, openList, onItem, resume, _state: () => s, _draw: (r = null) => s && s.bg && draw(r),
+    _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
 })();

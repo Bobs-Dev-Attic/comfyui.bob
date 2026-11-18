@@ -186,7 +186,16 @@ class JobManager:
     def _save(self) -> None:
         tmp = config.HISTORY_FILE.with_suffix(".tmp")
         tmp.write_text(json.dumps(list(self.items.values()), indent=1), "utf-8")
-        tmp.replace(config.HISTORY_FILE)
+        # On Windows the swap fails while another program has history.json open for a moment (antivirus, a backup,
+        # a script reading it): try again for up to about two seconds before giving up.
+        for attempt in range(20):
+            try:
+                tmp.replace(config.HISTORY_FILE)
+                return
+            except PermissionError:
+                if attempt == 19:
+                    raise
+                time.sleep(0.1)
 
     # ------------------------------------------------------------------ pub/sub
     def subscribe(self) -> asyncio.Queue:

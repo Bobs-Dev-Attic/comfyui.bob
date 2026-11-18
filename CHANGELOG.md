@@ -5,6 +5,28 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.82.0] - 2026-11-17
+
+### Added
+- **A 3D scene's video can start from a photo** (Render video › Start from):
+  - **A new photo of the first frame**: the scene's first frame is turned into a photograph (as 📷 Generate photo does,
+    with an optional look), then the video is made from it. The dialog waits for the photo (about a minute) with the
+    scene open.
+  - **An earlier photo** of the scene, labelled when it was taken from another view than the video starts with.
+  - Chosen by default: a photo of the first frame when there is one, else a new photo (or the picture, for a scene
+    that starts as its picture). Starting from a photo sets "Follow the plan" to Loosely.
+- **Projection mapping** for a photo-started video: the rough animation H3 follows is the photo painted onto the
+  scene from the camera it was taken from (floor, background, a far sphere for the rest, and each object in its pose at
+  that moment), so it moves with the 3D but looks like the photo; frame 0 is the photo. What that camera couldn't see
+  (an object's hidden side, the floor it uncovers) is a hole, filled with the colours around it and left to H3 by the
+  mask. Before this, H3 followed the plain render and the video turned back into it after the first frame.
+- Photos made in a scene are remembered with the time and camera they were taken from (`photos` on the scene).
+
+### Fixed
+- A finished result could be marked failed with "Access is denied … history.json" when another program had the
+  history file open at that moment (antivirus, a backup, a script reading it): the save now retries for up to about
+  two seconds.
+
 ## [0.81.0] - 2026-11-17
 
 ### Added

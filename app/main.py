@@ -420,6 +420,8 @@ class ScenePatch(BaseModel):
     aspect: Literal["16:9", "9:16", "1:1", "4:3", "21:9"] | None = None
     lens: float | None = Field(None, ge=10, le=300)
     backdrop: dict[str, Any] | None = None
+    # photos made from the scene (📷 Generate photo): [{id (the result), t, cam: {yaw, pitch, dist, target}}]
+    photos: list[dict[str, Any]] | None = Field(None, max_length=200)
 
 
 @app.post("/api/scenes")

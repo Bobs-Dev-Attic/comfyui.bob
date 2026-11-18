@@ -401,14 +401,30 @@ const Model3D = (() => {
      Many meshes, each with its own model matrix; the background is drawn unlit (its texture is the picture). */
   const SVS = `#version 300 es
     in vec3 aPos; in vec3 aNrm; in vec2 aUv; in vec4 aCol;
-    uniform mat4 uVP; uniform mat4 uM; out vec3 vNrm; out vec2 vUv; out vec4 vCol; out vec3 vPos;
-    void main() { vec4 w = uM * vec4(aPos, 1.0); vPos = w.xyz; vNrm = mat3(uM) * aNrm; vUv = aUv; vCol = aCol; gl_Position = uVP * w; }`;
+    uniform mat4 uVP; uniform mat4 uM; uniform mat4 uVP0; uniform mat4 uM0;
+    out vec3 vNrm; out vec2 vUv; out vec4 vCol; out vec3 vPos; out vec4 vP0;
+    void main() { vec4 w = uM * vec4(aPos, 1.0); vPos = w.xyz; vNrm = mat3(uM) * aNrm; vUv = aUv; vCol = aCol; gl_Position = uVP * w;
+      vP0 = uVP0 * uM0 * vec4(aPos, 1.0); }`;
   const SFS = `#version 300 es
     precision highp float;
-    in vec3 vNrm; in vec2 vUv; in vec4 vCol; in vec3 vPos; out vec4 o;
+    in vec3 vNrm; in vec2 vUv; in vec4 vCol; in vec3 vPos; in vec4 vP0; out vec4 o;
     uniform sampler2D uTex; uniform sampler2D uAo; uniform int uHasTex; uniform int uHasAo; uniform int uMode; uniform int uUnlit;
     uniform vec4 uBase; uniform vec3 uEye; uniform vec3 uKey; uniform vec3 uTint; uniform vec4 uSolid;
+    // projection mapping: the photo seen from its camera (uVP0, the point's pose then uM0); uDepth0 is what that camera
+    // saw first (its depth), so surfaces it couldn't see get nothing (holes: see-through, or black in a mask)
+    uniform int uProj; uniform int uProjMask; uniform sampler2D uPhoto; uniform sampler2D uDepth0; uniform vec2 uNF;
+    float lin(float d) { float z = d * 2.0 - 1.0; return 2.0 * uNF.x * uNF.y / (uNF.y + uNF.x - z * (uNF.y - uNF.x)); }
     void main() {
+      if (uProj == 1) {
+        vec4 hole = uProjMask == 1 ? vec4(0.0, 0.0, 0.0, 1.0) : vec4(0.0);
+        if (vP0.w <= 0.0) { o = hole; return; }
+        vec3 n0 = vP0.xyz / vP0.w;
+        if (abs(n0.x) > 1.0 || abs(n0.y) > 1.0) { o = hole; return; }
+        float seen = lin(texture(uDepth0, n0.xy * 0.5 + 0.5).r), here = lin(n0.z * 0.5 + 0.5);
+        if (here > seen * 1.01 + 0.02) { o = hole; return; }
+        o = uProjMask == 1 ? vec4(1.0) : vec4(texture(uPhoto, vec2(n0.x * 0.5 + 0.5, 0.5 - n0.y * 0.5)).rgb, 1.0);
+        return;
+      }
       if (uSolid.a > 0.5) { o = vec4(uSolid.rgb, 1.0); return; }  // one flat colour (a mask)
       vec4 c = uBase * vCol;
       if (uHasTex == 1 && uMode == 0) c *= texture(uTex, vUv);
@@ -471,6 +487,13 @@ const Model3D = (() => {
       gl.uniform3fv(U("uEye"), o.eye); gl.uniform3fv(U("uKey"), o.key); gl.uniform1i(U("uMode"), o.look || 0);
       gl.uniform1i(U("uUnlit"), o.unlit ? 1 : 0); gl.uniform3fv(U("uTint"), o.tint || [0, 0, 0]);
       gl.uniform4fv(U("uSolid"), o.solid ? [...o.solid, 1] : [0, 0, 0, 0]);
+      const P = o.proj;
+      gl.uniform1i(U("uProj"), P ? 1 : 0); gl.uniform1i(U("uProjMask"), P?.mask ? 1 : 0);
+      gl.uniformMatrix4fv(U("uVP0"), false, P ? P.VP0 : o.VP); gl.uniformMatrix4fv(U("uM0"), false, P ? (o.M0 || o.M) : o.M);
+      gl.uniform2fv(U("uNF"), P ? [P.near, P.far] : [0.1, 100]);
+      gl.uniform1i(U("uPhoto"), 2); gl.uniform1i(U("uDepth0"), 3);
+      gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, P?.photo || null);
+      gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, P?.depth || null);
       gl.uniform1i(U("uTex"), 0); gl.uniform1i(U("uAo"), 1);
       for (const p of mesh.parts) {
         gl.uniform4fv(U("uBase"), p.base); gl.uniform1i(U("uHasTex"), p.gtex ? 1 : 0); gl.uniform1i(U("uHasAo"), p.gao ? 1 : 0);
@@ -489,7 +512,22 @@ const Model3D = (() => {
       gl.drawArrays(gl.LINES, 0, pts.length / 3);
       gl.bindVertexArray(null); gl.deleteBuffer(b); gl.deleteVertexArray(vao);
     }
-    return { upload, begin, draw, lines };
+    // What a camera sees, as depth: run fn(draw) into a W x H depth texture; returns the texture.
+    function depthPass(W, H, fn) {
+      const tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT32F, W, H, 0, gl.DEPTH_COMPONENT, gl.FLOAT, null);
+      for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.NEAREST], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+      const fb = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, tex, 0);
+      gl.drawBuffers([gl.NONE]); gl.readBuffer(gl.NONE);
+      gl.viewport(0, 0, W, H); gl.enable(gl.DEPTH_TEST); gl.clear(gl.DEPTH_BUFFER_BIT);
+      fn(draw);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.deleteFramebuffer(fb);
+      return tex;
+    }
+    const texture = img => tex(img);
+    const free = t => t && gl.deleteTexture(t);
+    return { upload, begin, draw, lines, depthPass, texture, free };
   }
 
   return { start, openList, view, download, _parseGLB: parseGLB,
