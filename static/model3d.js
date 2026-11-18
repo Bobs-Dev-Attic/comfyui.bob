@@ -413,6 +413,10 @@ const Model3D = (() => {
     // projection mapping: the photo seen from its camera (uVP0, the point's pose then uM0); uDepth0 is what that camera
     // saw first (its depth), so surfaces it couldn't see get nothing (holes: see-through, or black in a mask)
     uniform int uProj; uniform int uProjMask; uniform sampler2D uPhoto; uniform sampler2D uDepth0; uniform vec2 uNF;
+    // fitting the photo: uCut is where the moving objects really are in it (r: as found, g: grown a little). A moving
+    // object found there (uFit.x > 0) takes the photo from where it really is (n0 * uFit.xy + uFit.zw) and only what's
+    // found; everything else leaves those spots as holes, so no copy of it stays behind.
+    uniform int uHasCut; uniform sampler2D uCut; uniform vec4 uFit;
     // depth out (a 3D scene's Save depth map): the distance along the camera's forward axis (xyz) over w, as a 24-bit
     // number in RGB; 0 is left for "nothing here" (the sky)
     uniform vec4 uDepthOut;
@@ -427,10 +431,19 @@ const Model3D = (() => {
         vec4 hole = uProjMask == 1 ? vec4(0.0, 0.0, 0.0, 1.0) : vec4(0.0);
         if (vP0.w <= 0.0) { o = hole; return; }
         vec3 n0 = vP0.xyz / vP0.w;
-        if (abs(n0.x) > 1.0 || abs(n0.y) > 1.0) { o = hole; return; }
-        float seen = lin(texture(uDepth0, n0.xy * 0.5 + 0.5).r), here = lin(n0.z * 0.5 + 0.5);
-        if (here > seen * 1.01 + 0.02) { o = hole; return; }
-        o = uProjMask == 1 ? vec4(1.0) : vec4(texture(uPhoto, vec2(n0.x * 0.5 + 0.5, 0.5 - n0.y * 0.5)).rgb, 1.0);
+        vec2 q = n0.xy;
+        if (uHasCut == 1 && uFit.x > 0.0) {
+          // a moving object found in the photo: every side of it takes the photo of it there (its back the colours of
+          // its front: the camera saw no more of it), so as it turns while it moves it stays itself, not a hole
+          q = n0.xy * uFit.xy + uFit.zw;
+          if (abs(q.x) > 1.0 || abs(q.y) > 1.0 || textureLod(uCut, vec2(q.x * 0.5 + 0.5, 0.5 - q.y * 0.5), 0.0).r < 0.5) { o = hole; return; }
+        } else {
+          if (abs(n0.x) > 1.0 || abs(n0.y) > 1.0) { o = hole; return; }
+          float seen = lin(texture(uDepth0, n0.xy * 0.5 + 0.5).r), here = lin(n0.z * 0.5 + 0.5);
+          if (here > seen * 1.01 + 0.02) { o = hole; return; }
+          if (uHasCut == 1 && textureLod(uCut, vec2(q.x * 0.5 + 0.5, 0.5 - q.y * 0.5), 0.0).g > 0.5) { o = hole; return; }
+        }
+        o = uProjMask == 1 ? vec4(1.0) : vec4(texture(uPhoto, vec2(q.x * 0.5 + 0.5, 0.5 - q.y * 0.5)).rgb, 1.0);
         return;
       }
       if (uSolid.a > 0.5) { o = vec4(uSolid.rgb, 1.0); return; }  // one flat colour (a mask)
@@ -504,6 +517,8 @@ const Model3D = (() => {
       gl.uniform1i(U("uPhoto"), 2); gl.uniform1i(U("uDepth0"), 3);
       gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, P?.photo || null);
       gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, P?.depth || null);
+      gl.uniform1i(U("uHasCut"), P?.cut ? 1 : 0); gl.uniform1i(U("uCut"), 4); gl.uniform4fv(U("uFit"), o.fit || [0, 0, 0, 0]);
+      gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, P?.cut || null);
       gl.uniform1i(U("uTex"), 0); gl.uniform1i(U("uAo"), 1);
       for (const p of mesh.parts) {
         gl.uniform4fv(U("uBase"), p.base); gl.uniform1i(U("uHasTex"), p.gtex ? 1 : 0); gl.uniform1i(U("uHasAo"), p.gao ? 1 : 0);

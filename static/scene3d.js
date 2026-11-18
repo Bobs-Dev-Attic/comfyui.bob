@@ -1092,7 +1092,8 @@ const Scene3D = (() => {
     foot.innerHTML = `<span class="hint s3r-st"></span><button type="button" class="btn ghost" data-a="cancel">Cancel</button><button type="button" class="btn primary" data-a="go">🎬 Render</button>`;
     const win = WM.open({ id: "scene3d-render", title: `Render · ${s.sc.name}`, content: box, footer: foot, width: 560, height: 660, modal: true });
     const useRefs = () => !!box.querySelector("#s3r-refs")?.checked;
-    wireTags(box, box.querySelector("#s3r-what"), () => videoText(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder, useRefs()));
+    const fromPhoto = () => { const v = box.querySelector("#s3r-first").value; return v === "newphoto" || v.startsWith("photo:"); };
+    wireTags(box, box.querySelector("#s3r-what"), () => videoText(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder, useRefs(), fromPhoto()));
     box.querySelector("#s3r-refs")?.addEventListener("change", () => box.querySelector("#s3r-what").dispatchEvent(new Event("input")));
     const st = foot.querySelector(".s3r-st"), firstSel = box.querySelector("#s3r-first"), holdSel = box.querySelector("#s3r-hold");
     // From a photo, H3 is held to the plain rough animation only loosely, so the photo's look carries through.
@@ -1101,6 +1102,7 @@ const Scene3D = (() => {
       box.querySelector(".s3r-lookf").hidden = v !== "newphoto";
       if (photo && !holdSel.dataset.touched) holdSel.value = "loose";
       if (!photo && !holdSel.dataset.touched) holdSel.value = "normal";
+      box.querySelector("#s3r-what").dispatchEvent(new Event("input"));  // what H3 reads follows the start
     };
     firstSel.value = startDefault; syncStart();
     firstSel.onchange = syncStart; holdSel.onchange = () => { holdSel.dataset.touched = "1"; };
@@ -1126,19 +1128,19 @@ const Scene3D = (() => {
           photoPath = (it.files || []).find(f => /^image\//.test(f.content_type || ""))?.path || it.files?.[0]?.path;
           if (it.status !== "done" || !photoPath) throw new Error("The photo didn't come out");
           st.textContent = "Painting the photo onto the scene…";
-          proj = await prepareProjection(photoPath, 0, camForRender(0));
+          proj = await prepareProjection(photoPath, 0, camForRender(0), m => { st.textContent = m; });
         } else if (start.startsWith("photo:")) {
           const p = s.photos.find(x => x.id === start.slice(6)), it = state.items.get(start.slice(6));
           photoPath = it?.files?.[0]?.path;
           if (!p || !photoPath) throw new Error("That photo isn't there anymore");
           st.textContent = "Painting the photo onto the scene…";
-          proj = await prepareProjection(photoPath, p.t, p.cam);
+          proj = await prepareProjection(photoPath, p.t, p.cam, m => { st.textContent = m; });
         }
         st.textContent = "Drawing the rough animation…";
         const ref = await renderVideo("ref", [W, H], n, (f, N) => { st.textContent = `Drawing the rough animation: frame ${f + 1} of ${N}`; }, proj);
         const mask = await renderVideo("mask", [W, H], n, (f, N) => { st.textContent = `Drawing its mask: frame ${f + 1} of ${N}`; }, proj);
         st.textContent = "Sending to H3…";
-        const what = videoText(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder, useRefs()).text;
+        const what = videoText(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder, useRefs(), fromPhoto()).text;
         const cam = cameraMoves() ? "The camera moves smoothly through the scene." : "The camera holds a static shot.";
         const prompt = `integrated_multimodal_description: [Shot 1] ${what.replace(/\s+/g, " ")} ${cam}\n\noverall_soundscape: Natural sound of the scene.\n\nnon_diegetic_music: N/A`;
         const toTl = box.querySelector("#s3r-tl").checked;
@@ -1186,7 +1188,7 @@ const Scene3D = (() => {
       s.gpu.draw(P.sphere, { VP, M: ID, M0: ID, eye: e, key, proj: P });
       for (const o of s.objs) {
         if (!o.mesh || !o.pos || o.hidden) continue;
-        s.gpu.draw(o.mesh, { VP, M: matOf(o, poseAt(o, t)), M0: matOf(o, poseAt(o, P.t0)), eye: e, key, proj: P });
+        s.gpu.draw(o.mesh, { VP, M: matOf(o, fitPose(o, t, P)), M0: matOf(o, fitPose(o, P.t0, P)), eye: e, key, proj: P, fit: P.fits?.[o.id] });
       }
       return;
     }
@@ -1696,7 +1698,9 @@ const Scene3D = (() => {
     return { u, v, d: Math.hypot(p[0] - e[0], p[1] - e[1], p[2] - e[2]), off: u < -0.05 || u > 1.05 || v < -0.15 || v > 1.15 };
   }
   // Every shown object as the models see it at time t through cam: { o, looks, where, seen, becomes, off }.
-  function cast(t, cam, video = false) {
+  // photo: the video starts from a photo, where the stand-ins are what they become (a Person a real person), so they're
+  // told by that and where they are, never by the grey shape they are in the scene.
+  function cast(t, cam, video = false, photo = false) {
     const list = s.objs.filter(o => o.mesh && o.pos && !o.hidden).map(o => ({ o, at: seenAt(o, t, cam) })).filter(x => x.at);
     const ds = list.filter(x => !x.at.off).map(x => x.at.d).sort((a, b) => a - b), med = ds[ds.length >> 1];
     for (const x of list) {
@@ -1707,6 +1711,7 @@ const Scene3D = (() => {
       if (!a.off && ds.length > 1 && a.d < med * 0.7) x.where += ", in front";
       else if (!a.off && ds.length > 1 && a.d > med * 1.4) x.where += ", at the back";
       x.becomes = (x.o.becomes || "").trim();
+      if (photo && (x.becomes || x.o.prim === "figure")) { x.looks = x.becomes ? bare(x.becomes) : "person"; x.photo = true; }
     }
     // Two that would read the same are told apart left to right.
     const groups = new Map();
@@ -1728,7 +1733,7 @@ const Scene3D = (() => {
   }
   // "the wooden crate (the red cube on the left)", or just what it looks like when it Becomes nothing; with its picture
   // as <Picture k> (a render on H3 Reference), "the wooden crate from <Picture 2> (the red cube on the left)".
-  const refOf = (x, k = 0) => k ? `the ${x.becomes ? bare(x.becomes) : x.o.name.trim().toLowerCase()} from <Picture ${k}> (${tidy(x.seen)})`
+  const refOf = (x, k = 0) => x.photo && !k ? `the ${x.looks}${x.off ? "" : ` (${[x.where, x.pose].filter(Boolean).join(", ")})`}` : k ? `the ${x.becomes ? bare(x.becomes) : x.o.name.trim().toLowerCase()} from <Picture ${k}> (${tidy(x.seen)})`
     : x.becomes ? `the ${bare(x.becomes)} (${tidy(x.seen)})` : x.seen;
   // A pose's closing comma before a full stop, semicolon or bracket goes: "…, sitting,." -> "…, sitting."
   const tidy = t => String(t).replace(/,\s*([.;:!?)]|$)/g, "$1").replace(/,\s*,/g, ",");
@@ -1770,10 +1775,11 @@ const Scene3D = (() => {
   const depthOk = model => model === "qwen";
   const lastDepth = () => { try { return localStorage.getItem("bob.scenePhotoDepth") === "1"; } catch { return false; } };
   // The video's text: tags expanded, and what the other objects are (as the first frame shows them).
-  function videoText(what, refs = false) {
+  function videoText(what, refs = false, photo = false) {
     const pics = refs ? picObjs() : [], picOf = x => { const i = pics.indexOf(x.o); return i < 0 ? 0 : i + 2; };
-    const list = cast(0, camForRender(0), true), r = expandTags(what, list, picOf);
-    const rest = list.filter(x => !r.used.includes(x) && (picOf(x) || (x.becomes && !x.off)));
+    const list = cast(0, camForRender(0), true, photo), r = expandTags(what, list, picOf);
+    // from a photo, what an object becomes is already in the first frame
+    const rest = list.filter(x => !r.used.includes(x) && (picOf(x) || (x.becomes && !x.off && !x.photo)));
     const cap = t => t[0].toUpperCase() + t.slice(1);
     const extra = rest.map(x => picOf(x) ? `${cap(x.seen)} looks like <Picture ${picOf(x)}>${x.becomes ? `: ${x.becomes}` : ""}.` : `${cap(x.seen)} is ${x.becomes}.`).join(" ");
     let text = r.text.trim();
@@ -2004,7 +2010,7 @@ const Scene3D = (() => {
       + " and colour), so no mannequin or plain 3D shape is left in the photo"
       : "and the position, size, shape and colour of every object exactly as they are")
     + (person ? `${free ? "; each" : ", except that each"} human figure is a real person, not a mannequin` : "")
-    + ". Give the surfaces real materials, light and shadows." + (look ? ` ${look[0].toUpperCase()}${look.slice(1)}${/[.!?]$/.test(look) ? "" : "."}` : "");
+    + ". Add no people or large objects that the render doesn't have. Give the surfaces real materials, light and shadows." + (look ? ` ${look[0].toUpperCase()}${look.slice(1)}${/[.!?]$/.test(look) ? "" : "."}` : "");
   // The whole text for a photo at t through cam: `pics` are the objects' pictures, `d` 1 when the depth map goes along.
   function photoText(t, cam, look, model, pics = [], d = 0) {
     const tag = PIC_TAG[model] || PIC_TAG.qwen, seen = cast(t, cam).filter(x => !x.off);
@@ -2128,20 +2134,173 @@ const Scene3D = (() => {
     return s.gpu.upload([{ pos: new Float32Array(pos), nrm: null, uv: null, col: null, idx: new Uint32Array(idx), base: [1, 1, 1, 1], tex: null, ao: null }]);
   }
   // The photo (a media ref) as seen from `cam` at time t0: its texture, that camera's depth, and its projection.
-  async function prepareProjection(photoRef, t0, cam) {
+  async function prepareProjection(photoRef, t0, cam, say = () => {}) {
     const img = await createImageBitmap(await (await fetch(`/api/media/file?path=${encodeURIComponent(photoRef)}`)).blob());
     const A = s.bg.aspect, near = s.bg.dmed * 0.01, far = s.bg.dmed * 50, e0 = eyeOf(cam);
     const VP0 = mul4(perspective(2 * Math.atan(s.bg.tv), A, near, far), lookAt(e0, cam.target, [0, 1, 0]));
     const sphere = sphereMesh(e0, far * 0.8);
     const W0 = Math.min(2048, img.width), H0 = Math.round(W0 / A);
-    const depth = s.gpu.depthPass(W0, H0, d => {
+    for (const o of s.objs) figureMesh(o, t0);  // a Person in its pose at t0
+    const P = { VP0, near, far, t0, sphere };
+    try { await fitToPhoto(P, photoRef, e0, say); } catch (err) { console.warn("Fitting the photo:", err); }
+    P.depth = s.gpu.depthPass(W0, H0, d => {
       const o0 = { VP: VP0, eye: e0, key: [0, 1, 0] };
       d(s.bgMesh, { ...o0, M: ID }); d(sphere, { ...o0, M: ID });
-      for (const o of s.objs) if (o.mesh && o.pos && !o.hidden) d(o.mesh, { ...o0, M: matOf(o, poseAt(o, t0)) });
+      for (const o of s.objs) if (o.mesh && o.pos && !o.hidden) d(o.mesh, { ...o0, M: matOf(o, fitPose(o, t0, P)) });
     });
-    return { VP0, near, far, t0, sphere, depth, photo: s.gpu.texture(img) };
+    P.photo = s.gpu.texture(img);
+    return P;
   }
-  function freeProjection(P) { if (!P || !s) return; s.gpu.free(P.depth); s.gpu.free(P.photo); }
+  // An object's pose in a video painted from a photo: moved and sized onto where the photo has it (P.moves).
+  function fitPose(o, t, P) {
+    const q = poseAt(o, t), F = P?.moves?.[o.id];
+    if (F) { q.pos = [q.pos[0] + F.d[0], q.pos[1], q.pos[2] + F.d[2]]; q.scale = (q.scale ?? 1) * F.k; }
+    return q;
+  }
+  function freeProjection(P) { if (!P || !s) return; s.gpu.free(P.depth); s.gpu.free(P.photo); s.gpu.free(P.cut); }
+
+  // The edit model seldom puts a moving object exactly on its stand-in, so painting the photo on as it is makes the
+  // stand-in walk off with the wrong pixels (H3 then draws the mannequin) and leaves the real thing behind, standing
+  // on the ground. So each moving object is looked for in the photo (SAM 3, near its stand-in), and its whole path is
+  // moved over the ground and its size changed so it starts where, and as big as, the photo has it (P.moves). It then
+  // carries only what was found (P.fits), and what was found, grown a little, is a hole on everything else (P.cut),
+  // for H3 to fill in once it has gone. Without SAM 3, or when nothing is found, as before.
+  async function fitToPhoto(P, photoRef, e0, say) {
+    const moving = s.objs.filter(o => o.mesh && o.pos && !o.hidden && o.keys?.length > 1).slice(0, 8);
+    if (!moving.length) return;
+    const A = s.bg.aspect, W = 768, H = Math.round(W / A), N = W * H;
+    // which stand-in covers each pixel at t0 (1 + its index; 0: none), top row first; pose(o) is where it is
+    const whoAt = pose => {
+      const raw = s.gpu.capture(W, H, d => {
+        const o0 = { VP: P.VP0, eye: e0, key: [0, 1, 0] }, black = [0, 0, 0];
+        d(s.bgMesh, { ...o0, M: ID, solid: black });
+        for (const o of s.objs) if (o.mesh && o.pos && !o.hidden) {
+          const i = moving.indexOf(o);
+          d(o.mesh, { ...o0, M: matOf(o, pose(o)), solid: i < 0 ? black : [(i + 1) / 255, 0, 0] });
+        }
+      });
+      const a = new Uint8Array(N);
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) a[y * W + x] = raw[((H - 1 - y) * W + x) * 4];
+      return a;
+    };
+    // its silhouette in such a picture: the biggest piece (a stray pixel or two would stretch the box), or null
+    const silOf = (a, i) => {
+      const me = new Uint8Array(N); for (let c = 0; c < N; c++) me[c] = a[c] === i + 1 ? 1 : 0;
+      const big = components(me, W, H).sort((p, q) => q.cells.length - p.cells.length)[0];
+      if (!big || big.cells.length < 40) return null;
+      me.fill(0); for (const c of big.cells) me[c] = 1;
+      return { me, box: boxOf(me, W, H, v => v === 1) };
+    };
+    const who = whoAt(o => poseAt(o, P.t0)), found_ = {};
+    const found = new Uint8Array(N), fits = {}, moves = {}, inv = inv4(P.VP0);
+    // the point on the level y = h seen at pixel (x, y), or null
+    const ground = (x, y, h) => {
+      const at = z => { const v = [x / W * 2 - 1, 1 - y / H * 2, z], w = inv[3] * v[0] + inv[7] * v[1] + inv[11] * v[2] + inv[15]; return xf(inv, v, 1).map(c => c / w); };
+      const a = at(-1), b = at(1), u = (h - a[1]) / (b[1] - a[1]);
+      return isFinite(u) && u > 0 ? [a[0] + (b[0] - a[0]) * u, h, a[2] + (b[2] - a[2]) * u] : null;
+    };
+    const img = await createImageBitmap(await (await fetch(`/api/media/file?path=${encodeURIComponent(photoRef)}`)).blob());
+    const kx = img.width / W, ky = img.height / H;
+    const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+    const cx = cv.getContext("2d", { willReadFrequently: true });
+    for (const [i, o] of moving.entries()) {
+      const sil = silOf(who, i);
+      if (!sil) continue;  // not in the photo's view
+      const { me, box: sb } = sil;
+      say(`Finding ${o.name} in the photo…`);
+      const bw = sb.x1 - sb.x0, bh = sb.y1 - sb.y0;
+      const bx0 = Math.max(0, sb.x0 - 0.75 * bw), bx1 = Math.min(W, sb.x1 + 0.75 * bw), by0 = Math.max(0, sb.y0 - 0.35 * bh), by1 = Math.min(H, sb.y1 + 0.35 * bh);
+      const text = o.prim === "figure" ? "person" : bare(o.becomes) || o.name;
+      let r;
+      try {
+        r = await api("/api/edit/select", { method: "POST", body: JSON.stringify({ source: photoRef, text, threshold: 0.4,
+          box: { x: Math.round(bx0 * kx), y: Math.round(by0 * ky), width: Math.round((bx1 - bx0) * kx), height: Math.round((by1 - by0) * ky) } }) });
+      } catch (err) { if (/SAM 3/.test(err.message)) return; continue; }  // no SAM 3: no fitting at all
+      const m = await createImageBitmap(await (await fetch(r.url)).blob());
+      cx.clearRect(0, 0, W, H); cx.drawImage(m, 0, 0, W, H);
+      const px = cx.getImageData(0, 0, W, H).data, mine = new Uint8Array(N);
+      for (let y = Math.floor(by0); y < by1; y++) for (let x = Math.floor(bx0); x < bx1; x++) mine[y * W + x] = px[(y * W + x) * 4] > 127 ? 1 : 0;
+      // SAM may find more than one (another person the edit model added): keep what touches the stand-in, else the biggest
+      const parts = components(mine, W, H), touch = parts.filter(p => p.cells.some(c => me[c]));
+      const keep = touch.length ? touch : parts.sort((a, b) => b.cells.length - a.cells.length).slice(0, 1);
+      if (!keep.length) continue;
+      const pick = new Uint8Array(N); for (const p of keep) for (const c of p.cells) pick[c] = 1;
+      const pb = boxOf(pick, W, H, v => v === 1), pw = pb.x1 - pb.x0, ph = pb.y1 - pb.y0;
+      const area = (pw * ph) / (bw * bh);
+      if (area < 0.2 || area > 5) continue;  // not the same thing
+      // Where its feet are, on the ground through the photo's camera: at the stand-in's, and at what was found. A side
+      // the frame cuts off is no guide, so the other one is lined up; feet out of the frame: left as it is.
+      if (sb.y1 >= H - 1 || pb.y1 >= H - 1) continue;
+      const ax = sb.x0 <= 1 && sb.x1 < W - 1 ? [sb.x1, pb.x1] : sb.x1 >= W - 1 && sb.x0 > 1 ? [sb.x0, pb.x0] : [(sb.x0 + sb.x1) / 2, (pb.x0 + pb.x1) / 2];
+      const p0 = poseAt(o, P.t0), hs = ground(ax[0], sb.y1, p0.pos[1]), hp = ground(ax[1], pb.y1, p0.pos[1]);
+      if (!hs || !hp) continue;
+      const d = [hp[0] - hs[0], 0, hp[2] - hs[2]], tall = (o.mesh.hi[1] - o.mesh.lo[1]) * (o.stretch?.[1] || 1) * (p0.scale ?? 1);
+      if (Math.hypot(d[0], d[2]) > 3 * tall) continue;  // too far to be it
+      // as tall as found, allowing for the new distance (a frame edge across either: the size stays)
+      const far0 = Math.hypot(...p0.pos.map((v, j) => v - e0[j])), far1 = Math.hypot(...p0.pos.map((v, j) => v + d[j] - e0[j]));
+      const k = sb.y0 <= 1 || pb.y0 <= 1 ? 1 : Math.min(2, Math.max(0.5, ph / bh * far1 / far0));
+      moves[o.id] = { d, k }; found_[o.id] = { pb, pick };
+    }
+    if (!Object.keys(moves).length) return;
+    // Moved, its shape still isn't the photo's (a mannequin side on, a person facing the camera): every bit of it
+    // takes the photo from the same place in what was found (its box onto that box), so it carries only that. A side
+    // of it the frame cuts off is taken from its 3D box.
+    P.moves = moves;
+    const who2 = whoAt(o => fitPose(o, P.t0, P)), px = x => x / W * 2 - 1, py = y => 1 - y / H * 2;
+    for (const [i, o] of moving.entries()) {
+      const pb = found_[o.id]?.pb, sil = pb && silOf(who2, i);
+      if (!sil) { delete moves[o.id]; continue; }
+      const b = sil.box, M = matOf(o, fitPose(o, P.t0, P));
+      const cs = boxCorners(o, M).map(c => { const v = xf(P.VP0, c, 1), w = P.VP0[3] * c[0] + P.VP0[7] * c[1] + P.VP0[11] * c[2] + P.VP0[15]; return [v[0] / w, v[1] / w]; });
+      const x0 = b.x0 <= 1 ? Math.min(...cs.map(c => c[0])) : px(b.x0), x1 = b.x1 >= W - 1 ? Math.max(...cs.map(c => c[0])) : px(b.x1);
+      const y1 = b.y0 <= 1 ? Math.max(...cs.map(c => c[1])) : py(b.y0), y0 = b.y1 >= H - 1 ? Math.min(...cs.map(c => c[1])) : py(b.y1);
+      const sx = (px(pb.x1) - px(pb.x0)) / (x1 - x0), sy = (py(pb.y0) - py(pb.y1)) / (y1 - y0);
+      fits[o.id] = [sx, sy, px(pb.x0) - x0 * sx, py(pb.y1) - y0 * sy];
+      const pick = found_[o.id].pick; for (let c = 0; c < N; c++) if (pick[c]) found[c] = 1;
+    }
+    if (!Object.keys(fits).length) { delete P.moves; return; }
+    // r: what was found, its gaps closed (between an arm and the body); g: grown, a bit more downwards (its shadow)
+    const R = Math.round(W * 0.012) + 2, r2 = Math.round(R / 2);
+    const shut = grow(grow(found, W, H, r2, r2, r2).map(v => 1 - v), W, H, r2, r2, r2).map(v => 1 - v);
+    for (let c = 0; c < N; c++) found[c] = shut[c];
+    const grown = grow(found, W, H, R, R, 2 * R);
+    const cut = new ImageData(W, H);
+    for (let c = 0; c < N; c++) { cut.data[c * 4] = found[c] * 255; cut.data[c * 4 + 1] = grown[c] * 255; cut.data[c * 4 + 3] = 255; }
+    P.cut = s.gpu.texture(cut); P.fits = fits;
+  }
+  // a 0/1 picture grown by rx across, up pixels up and down pixels down (a box)
+  function grow(a, W, H, rx, up, down) {
+    const row = new Uint8Array(a.length), out = new Uint8Array(a.length);
+    for (let y = 0; y < H; y++) {
+      let last = -1e9; for (let x = 0; x < W; x++) { if (a[y * W + x]) last = x; row[y * W + x] = x - last <= rx ? 1 : 0; }
+      last = 1e9; for (let x = W - 1; x >= 0; x--) { if (a[y * W + x]) last = x; if (last - x <= rx) row[y * W + x] = 1; }
+    }
+    for (let x = 0; x < W; x++) {
+      let last = -1e9; for (let y = 0; y < H; y++) { if (row[y * W + x]) last = y; out[y * W + x] = y - last <= down ? 1 : 0; }
+      last = 1e9; for (let y = H - 1; y >= 0; y--) { if (row[y * W + x]) last = y; if (last - y <= up) out[y * W + x] = 1; }
+    }
+    return out;
+  }
+  // the box around the pixels where test(v) holds: { x0, y0, x1, y1 (exclusive), n }, or null
+  function boxOf(a, W, H, test) {
+    let x0 = W, y0 = H, x1 = -1, y1 = -1, n = 0;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (test(a[y * W + x])) { n++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    return n ? { x0, y0, x1: x1 + 1, y1: y1 + 1, n } : null;
+  }
+  // the connected pieces of a 0/1 picture: [{ cells: [index…] }]
+  function components(a, W, H) {
+    const seen = new Uint8Array(a.length), out = [];
+    for (let c0 = 0; c0 < a.length; c0++) {
+      if (!a[c0] || seen[c0]) continue;
+      const cells = [c0]; seen[c0] = 1;
+      for (let k = 0; k < cells.length; k++) {
+        const c = cells[k], x = c % W;
+        for (const d of [x > 0 ? c - 1 : -1, x < W - 1 ? c + 1 : -1, c - W, c + W]) if (d >= 0 && d < a.length && a[d] && !seen[d]) { seen[d] = 1; cells.push(d); }
+      }
+      out.push({ cells });
+    }
+    return out;
+  }
 
   /* ---------------------------------------------------------------- time */
   function renderTime() {
