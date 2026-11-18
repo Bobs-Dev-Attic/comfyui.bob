@@ -86,8 +86,8 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
 - **🎯 Track an object** (a video's menu in the results): click an object (or name it) on any frame and SAM 3.1
   follows it for up to 15 s; misdetections are dropped, gaps filled and the path smoothed into a few keys. Save the
   path, then in Animate objects any object can **Use a tracked path** to move the same way. Needs the SAM 3.1 checkpoint.
-- **🧊 Make 3D** (a picture's menu in the results or on the Inputs step, or an object's right-click menu in Animate
-  objects): a textured 3D model (GLB) of the main object, or of the chosen object, with TRELLIS.2 as ComfyUI's
+- **🧊 Make 3D** (a picture's button in the gallery, its menu in the results, the Media page or the Inputs step, or an
+  object's right-click menu in Animate objects): a textured 3D model (GLB) of the main object, or of the chosen object, with TRELLIS.2 as ComfyUI's
   template runs it (shape, texture, then remeshed, UV-unwrapped and baked). It's made in the background in a few minutes;
   ☰ › **3D models** lists them, and each opens in a small Blender-style viewer (drag to orbit, right-drag to pan, wheel to
   zoom; Texture, Clay or Wireframe; a floor grid and turntable) or downloads as a `.glb` for Blender. The hidden sides
