@@ -1747,16 +1747,17 @@ const Scene3D = (() => {
   }
   // The photo: every object in view, and what it becomes.
   // With pictures (`pics`, from photoPics), an object with one "becomes the golden retriever from Picture 2".
-  function photoObjects(t, cam, pics = [], model = "qwen", first = 2) {
+  function photoObjects(t, cam, pics = [], model = "qwen", first = 2, free = false) {
     const list = cast(t, cam).filter(x => !x.off);
     if (!list.length) return "";
     const tag = PIC_TAG[model] || PIC_TAG.qwen;
     const one = x => {
       const k = pics.indexOf(x.o);
       if (k >= 0) return `${x.seen} becomes ${x.becomes ? `the ${bare(x.becomes)} from ${tag(k + first)}` : `what is in ${tag(k + first)}`}`;
-      return x.becomes ? `${x.seen} becomes ${x.becomes}` : x.seen;
+      // a Person with nothing said is still a real person: Qwen keeps what it isn't told to change, the mannequin included
+      return x.becomes ? `${x.seen} becomes ${x.becomes}` : x.o.prim === "figure" ? `${x.seen} becomes a real person` : x.seen;
     };
-    return tidy(` The objects in it: ${list.map(one).join("; ")}.`);
+    return tidy(` ${free ? "The stand-ins to replace" : "The objects in it"}: ${list.map(one).join("; ")}.`);
   }
   // Generate photo's pictures: the objects in view that have one, as many as the edit model takes besides the render.
   const PHOTO_PICS = { qwen: 2, h3image: 8 };  // workflows.EDIT_EXTRA_REFS
@@ -1994,11 +1995,24 @@ const Scene3D = (() => {
   }
 
   /* ---------------------------------------------------------------- 📷 Generate photo */
-  // `changes`: some objects become something else (Becomes or a picture), so only where they are and their size is kept.
-  const photoPrompt = (look, first = "", changes = false) => `Turn ${first ? `${first}, a 3D render,` : "this 3D render"} into a realistic photograph. Keep the composition, the camera angle, `
-    + (changes ? "and the position and size of every object; an object that becomes something takes that look, and the others keep their shape and colour"
+  // `free`: something says what the objects are (the look text, a Becomes or a picture), so they're stand-ins that keep
+  // only where they are, their size and pose; with nothing said they keep their shape and colour too. `person`: a human
+  // figure in view, which is always a real person, never the grey mannequin.
+  const photoPrompt = (look, first = "", free = false, person = false) => `Turn ${first ? `${first}, a 3D render,` : "this 3D render"} into a realistic photograph. Keep the composition, the camera angle, `
+    + (free ? "and the position, size and pose of every object. The objects are simple 3D stand-ins to replace, not to keep: put the real thing"
+      + " the text below says is there in each one's place, at its size (one the text doesn't name becomes a fitting real object of its shape"
+      + " and colour), so no mannequin or plain 3D shape is left in the photo"
       : "and the position, size, shape and colour of every object exactly as they are")
-    + "; give the surfaces real materials, light and shadows." + (look ? ` ${look}` : "");
+    + (person ? `${free ? "; each" : ", except that each"} human figure is a real person, not a mannequin` : "")
+    + ". Give the surfaces real materials, light and shadows." + (look ? ` ${look[0].toUpperCase()}${look.slice(1)}${/[.!?]$/.test(look) ? "" : "."}` : "");
+  // The whole text for a photo at t through cam: `pics` are the objects' pictures, `d` 1 when the depth map goes along.
+  function photoText(t, cam, look, model, pics = [], d = 0) {
+    const tag = PIC_TAG[model] || PIC_TAG.qwen, seen = cast(t, cam).filter(x => !x.off);
+    const said = expandTags(look, cast(t, cam)).text.trim();
+    const free = !!said || pics.length > 0 || seen.some(x => x.becomes);
+    const person = seen.some(x => x.o.prim === "figure" && !x.becomes && !pics.includes(x.o));
+    return photoPrompt(said, pics.length || d ? tag(1) : "", free, person) + (d ? depthLine(tag, model) : "") + photoObjects(t, cam, pics, model, 2 + d, free);
+  }
   const lastLook = () => { try { return localStorage.getItem("bob.scenePhotoLook") || ""; } catch { return ""; } };
   const EDIT_NAMES = { qwen: "Qwen Image Edit 2511", h3image: "MiniMax H3 Image" };
   const editModels = () => { const ed = state.caps?.editor || {}; return [ed.qwen !== false && ["qwen", "Qwen Image Edit 2511"], ed.h3image && ["h3image", "MiniMax H3 Image"]].filter(Boolean); };
@@ -2011,11 +2025,9 @@ const Scene3D = (() => {
       const z = depthDistances(size, t, cam), r = depthRange(z);
       if (r) depthRef = await uploadBlob(new Blob([await grayPNG(depthGray(z, r), size[0], size[1])], { type: "image/png" }), "scene_depth.png");
     }
-    const off = depthRef ? 1 : 0, tag = PIC_TAG[model] || PIC_TAG.qwen;
+    const off = depthRef ? 1 : 0;
     const pics = usePics ? photoPics(t, cam, model, off) : [];
-    const changes = pics.length > 0 || cast(t, cam).some(x => !x.off && x.becomes);
-    const prompt = photoPrompt(expandTags(look, cast(t, cam)).text, pics.length || depthRef ? tag(1) : "", changes)
-      + (depthRef ? depthLine(tag, model) : "") + photoObjects(t, cam, pics, model, 2 + off);
+    const prompt = photoText(t, cam, look, model, pics, off);
     const refs = [depthRef, ...pics.map(o => o.picture)].filter(Boolean);
     const items = await submit({ kind: "image", engine: "imgedit", edit_op: "instruct", source: ref, prompt, edit_model: model,
       ...(refs.length ? { references: refs } : {}),
@@ -2029,13 +2041,16 @@ const Scene3D = (() => {
     if (!s?.bg) return;
     const models = editModels();
     if (!models.length) return Media.toast("Generate photo needs an edit model: Qwen Image Edit 2511 or MiniMax H3 Image.");
-    const keep = lastLook();
+    const keep = lastLook(), inView = cast(s.t, s.cam).filter(x => !x.off);
     const box = document.createElement("div");
     box.className = "m3-make";
     box.innerHTML = `<p class="hint">Draws what the camera frames${s.camKeys.length ? ` (at ${s.t.toFixed(2)} s)` : ""} and has the edit model turn it into a photograph,
         keeping where everything is. The photo shows up in the gallery.</p>
       <div class="field"><label for="s3p-look">How it should look <span class="opt">optional</span></label>
         <textarea id="s3p-look" rows="3" placeholder="${s.bg.empty ? "On a sunny beach at golden hour, shot on 35 mm film." : "Soft daylight, shot on 35 mm film."}">${esc(keep)}</textarea></div>
+      ${inView.length ? `<div class="field"><span class="s3p-lbl">What each object becomes <span class="opt">the edit model keeps an object as it is unless it's told</span></span>
+        <div class="s3p-bec">${inView.map(x => `<label class="s3p-row"><span>${x.o.prim ? `${PRIMS[x.o.prim].icon} ` : ""}${esc(x.o.name)}</span>
+          <input type="text" maxlength="200" data-oid="${esc(x.o.id)}" value="${esc(x.o.becomes || "")}" placeholder="${x.o.prim === "figure" ? "a real person (say who: a woman in a red coat…)" : x.o.prim ? `keeps its look (a ${SHAPE[x.o.prim]}); say what it is: a pile of trash…` : "keeps its look; say what it is…"}"></label>`).join("")}</div></div>` : ""}
       <div class="field"><label for="s3p-model">Model</label><select id="s3p-model">${models.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></div>
       <label class="check s3p-depthf" title="Sends a depth map of the view along (Qwen only): it holds the layout and shapes when the look changes a lot, e.g. a whole new setting or style"><input type="checkbox" id="s3p-depth"${lastDepth() ? " checked" : ""}> Use the depth map <span class="opt">keeps the layout in a big restyle</span></label>
       ${cast(s.t, s.cam).some(x => !x.off && x.o.picture) ? `<label class="check"><input type="checkbox" id="s3p-pics" checked> Use the objects' pictures</label>` : ""}
@@ -2043,7 +2058,7 @@ const Scene3D = (() => {
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
     foot.innerHTML = `<span class="hint s3p-st"></span><button type="button" class="btn ghost" data-a="cancel">Cancel</button><button type="button" class="btn primary" data-a="go">📷 Generate</button>`;
-    const win = WM.open({ id: "scene3d-photo", title: `Photo · ${s.sc.name}`, content: box, footer: foot, width: 540, height: 520, modal: true });
+    const win = WM.open({ id: "scene3d-photo", title: `Photo · ${s.sc.name}`, content: box, footer: foot, width: 540, height: 600, modal: true });
     const usePics = () => !!box.querySelector("#s3p-pics")?.checked, model = () => box.querySelector("#s3p-model").value;
     const useDepth = () => depthOk(model()) && !!box.querySelector("#s3p-depth")?.checked;
     // What the edit model is told, and which picture is which (it follows the model: Qwen takes 2 more pictures, H3 Image 8).
@@ -2051,13 +2066,19 @@ const Scene3D = (() => {
       const m = model(), d = useDepth() ? 1 : 0, pics = usePics() ? photoPics(s.t, s.cam, m, d) : [], tag = PIC_TAG[m];
       box.querySelector(".s3p-depthf").hidden = !depthOk(m);
       const all = cast(s.t, s.cam).filter(x => !x.off && x.o.picture).length;
-      box.querySelector(".s3-said").innerHTML = (s.objs.some(o => o.mesh && o.pos && !o.hidden) || d
-        ? `It's told: ${esc((pics.length || d ? `${tag(1)} is the render.` : "") + (d ? depthLine(tag, m) : "") + photoObjects(s.t, s.cam, pics, m, 2 + d)).trim() || "nothing about the objects (none in view)"}` : "")
+      box.querySelector(".s3-said").innerHTML = `It's told: “${esc(photoText(s.t, s.cam, box.querySelector("#s3p-look").value, m, pics, d))}”`
         + (pics.length ? ` ${pics.map((o, i) => `${esc(o.name)} is ${esc(tag(i + 2 + d))}`).join(", ")}.` : "")
         + (usePics() && all > pics.length ? ` <span class="warn">${EDIT_NAMES[m]} takes ${PHOTO_PICS[m]} picture${PHOTO_PICS[m] === 1 ? "" : "s"} besides the render${d ? ", one of them the depth map" : ""}: ${all - pics.length} object picture${all - pics.length === 1 ? "" : "s"} left out.</span>` : "")
-        + (s.objs.some(o => o.mesh && !o.hidden && !(o.becomes || "").trim() && !o.picture) ? " Give an object a <b>Becomes</b> or a <b>Picture</b> (on its panel) to say what it should turn into." : "");
+;
     };
+    // An object's Becomes, typed here: the same field as on its panel, saved with the scene.
+    box.querySelector(".s3p-bec")?.addEventListener("input", e => {
+      const o = e.target.dataset.oid && s.objs.find(q => q.id === e.target.dataset.oid); if (!o) return;
+      o.becomes = e.target.value.slice(0, 200); told();
+    });
+    box.querySelector(".s3p-bec")?.addEventListener("change", e => { if (e.target.dataset.oid) { save(); renderSide(); } });
     box.addEventListener("change", told);
+    box.querySelector("#s3p-look").addEventListener("input", told);
     told();
     foot.querySelector('[data-a="cancel"]').onclick = () => win.close();
     foot.querySelector('[data-a="go"]').onclick = async e => {
