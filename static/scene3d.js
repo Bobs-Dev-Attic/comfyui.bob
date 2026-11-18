@@ -921,7 +921,7 @@ const Scene3D = (() => {
           try { localStorage.setItem("bob.scenePhotoLook", look); } catch { /* not kept */ }
           st.textContent = "Making the photo of the first frame (about a minute; keep this open)…";
           const A = s.bg.aspect, PW = Math.round((A >= 1 ? 1280 : 1280 * A) / 8) * 8, PH = Math.round(PW / A / 8) * 8;
-          const photo = await makePhoto([PW, PH], 0, camForRender(0), look, editModels()[0][0]);
+          const photo = await makePhoto([PW, PH], 0, camForRender(0), look, editModels()[0][0], useRefs());
           const it = await waitItem(photo.id);
           photoPath = (it.files || []).find(f => /^image\//.test(f.content_type || ""))?.path || it.files?.[0]?.path;
           if (it.status !== "done" || !photoPath) throw new Error("The photo didn't come out");
@@ -1503,11 +1503,22 @@ const Scene3D = (() => {
     return { text: out, unknown, used: list.filter(x => new RegExp(`\\{\\s*${x.o.name.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\}`, "i").test(text)) };
   }
   // The photo: every object in view, and what it becomes.
-  function photoObjects(t, cam) {
+  // With pictures (`pics`, from photoPics), an object with one "becomes the golden retriever from Picture 2".
+  function photoObjects(t, cam, pics = [], model = "qwen") {
     const list = cast(t, cam).filter(x => !x.off);
     if (!list.length) return "";
-    return ` The objects in it: ${list.map(x => x.becomes ? `${x.seen} becomes ${x.becomes}` : x.seen).join("; ")}.`;
+    const tag = PIC_TAG[model] || PIC_TAG.qwen;
+    const one = x => {
+      const k = pics.indexOf(x.o);
+      if (k >= 0) return `${x.seen} becomes ${x.becomes ? `the ${bare(x.becomes)} from ${tag(k + 2)}` : `what is in ${tag(k + 2)}`}`;
+      return x.becomes ? `${x.seen} becomes ${x.becomes}` : x.seen;
+    };
+    return ` The objects in it: ${list.map(one).join("; ")}.`;
   }
+  // Generate photo's pictures: the objects in view that have one, as many as the edit model takes besides the render.
+  const PHOTO_PICS = { qwen: 2, h3image: 8 };  // workflows.EDIT_EXTRA_REFS
+  const PIC_TAG = { qwen: k => `Picture ${k}`, h3image: k => `<Picture ${k}>` };  // how each model names its pictures
+  const photoPics = (t, cam, model) => cast(t, cam).filter(x => !x.off && x.o.picture).map(x => x.o).slice(0, PHOTO_PICS[model] ?? 2);
   // The video's text: tags expanded, and what the other objects are (as the first frame shows them).
   function videoText(what, refs = false) {
     const pics = refs ? picObjs() : [], picOf = x => { const i = pics.indexOf(x.o); return i < 0 ? 0 : i + 2; };
@@ -1583,15 +1594,22 @@ const Scene3D = (() => {
   }
 
   /* ---------------------------------------------------------------- 📷 Generate photo */
-  const photoPrompt = look => "Turn this 3D render into a realistic photograph. Keep the composition, the camera angle, and the position, size, "
-    + "shape and colour of every object exactly as they are; give the surfaces real materials, light and shadows." + (look ? ` ${look}` : "");
+  // `changes`: some objects become something else (Becomes or a picture), so only where they are and their size is kept.
+  const photoPrompt = (look, first = "", changes = false) => `Turn ${first ? `${first}, a 3D render,` : "this 3D render"} into a realistic photograph. Keep the composition, the camera angle, `
+    + (changes ? "and the position and size of every object; an object that becomes something takes that look, and the others keep their shape and colour"
+      : "and the position, size, shape and colour of every object exactly as they are")
+    + "; give the surfaces real materials, light and shadows." + (look ? ` ${look}` : "");
   const lastLook = () => { try { return localStorage.getItem("bob.scenePhotoLook") || ""; } catch { return ""; } };
+  const EDIT_NAMES = { qwen: "Qwen Image Edit 2511", h3image: "MiniMax H3 Image" };
   const editModels = () => { const ed = state.caps?.editor || {}; return [ed.qwen !== false && ["qwen", "Qwen Image Edit 2511"], ed.h3image && ["h3image", "MiniMax H3 Image"]].filter(Boolean); };
   // A photo of the scene at time t through `cam` (queued with the edit model); it's remembered on the scene.
-  async function makePhoto(size, t, cam, look, model) {
+  async function makePhoto(size, t, cam, look, model, usePics = false) {
     const ref = await uploadFrame(size, t, cam, "scene_view.png");
-    const prompt = photoPrompt(expandTags(look, cast(t, cam)).text) + photoObjects(t, cam);
+    const pics = usePics ? photoPics(t, cam, model) : [];
+    const changes = pics.length > 0 || cast(t, cam).some(x => !x.off && x.becomes);
+    const prompt = photoPrompt(expandTags(look, cast(t, cam)).text, pics.length ? PIC_TAG[model](1) : "", changes) + photoObjects(t, cam, pics, model);
     const items = await submit({ kind: "image", engine: "imgedit", edit_op: "instruct", source: ref, prompt, edit_model: model,
+      ...(pics.length ? { references: pics.map(o => o.picture) } : {}),
       seed: -1, batch: 1, project: s.sc.project });
     if (!items?.length) throw new Error("The edit model didn't take it (the reason is on the Generate step)");
     s.photos.push({ id: items[0].id, t, cam: camOf(cam) });
@@ -1610,11 +1628,25 @@ const Scene3D = (() => {
       <div class="field"><label for="s3p-look">How it should look <span class="opt">optional</span></label>
         <textarea id="s3p-look" rows="3" placeholder="${s.bg.empty ? "On a sunny beach at golden hour, shot on 35 mm film." : "Soft daylight, shot on 35 mm film."}">${esc(keep)}</textarea></div>
       <div class="field"><label for="s3p-model">Model</label><select id="s3p-model">${models.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></div>
-      <p class="hint s3-said">${s.objs.some(o => o.mesh && o.pos && !o.hidden) ? `It's told: ${esc(photoObjects(s.t, s.cam).trim()) || "nothing about the objects (none in view)"}` : ""}${s.objs.some(o => o.mesh && !o.hidden && !(o.becomes || "").trim()) ? " Give an object a <b>Becomes</b> (on its panel) to say what it should turn into." : ""}</p>`;
+      ${cast(s.t, s.cam).some(x => !x.off && x.o.picture) ? `<label class="check"><input type="checkbox" id="s3p-pics" checked> Use the objects' pictures</label>` : ""}
+      <p class="hint s3-said"></p>`;
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
     foot.innerHTML = `<span class="hint s3p-st"></span><button type="button" class="btn ghost" data-a="cancel">Cancel</button><button type="button" class="btn primary" data-a="go">📷 Generate</button>`;
-    const win = WM.open({ id: "scene3d-photo", title: `Photo · ${s.sc.name}`, content: box, footer: foot, width: 520, height: 460, modal: true });
+    const win = WM.open({ id: "scene3d-photo", title: `Photo · ${s.sc.name}`, content: box, footer: foot, width: 540, height: 520, modal: true });
+    const usePics = () => !!box.querySelector("#s3p-pics")?.checked, model = () => box.querySelector("#s3p-model").value;
+    // What the edit model is told, and which picture is which (it follows the model: Qwen takes 2 more pictures, H3 Image 8).
+    const told = () => {
+      const m = model(), pics = usePics() ? photoPics(s.t, s.cam, m) : [];
+      const all = cast(s.t, s.cam).filter(x => !x.off && x.o.picture).length;
+      box.querySelector(".s3-said").innerHTML = (s.objs.some(o => o.mesh && o.pos && !o.hidden)
+        ? `It's told: ${esc((pics.length ? `${PIC_TAG[m](1)} is the render. ` : "") + photoObjects(s.t, s.cam, pics, m).trim()) || "nothing about the objects (none in view)"}` : "")
+        + (pics.length ? ` ${pics.map((o, i) => `${esc(o.name)} is ${esc(PIC_TAG[m](i + 2))}`).join(", ")}.` : "")
+        + (pics.length && all > pics.length ? ` <span class="warn">${EDIT_NAMES[m]} takes ${pics.length} picture${pics.length === 1 ? "" : "s"} besides the render: ${all - pics.length} left out.</span>` : "")
+        + (s.objs.some(o => o.mesh && !o.hidden && !(o.becomes || "").trim() && !o.picture) ? " Give an object a <b>Becomes</b> or a <b>Picture</b> (on its panel) to say what it should turn into." : "");
+    };
+    box.addEventListener("change", told);
+    told();
     foot.querySelector('[data-a="cancel"]').onclick = () => win.close();
     foot.querySelector('[data-a="go"]').onclick = async e => {
       e.target.disabled = true;
@@ -1623,7 +1655,7 @@ const Scene3D = (() => {
       const A = s.bg.aspect, W = Math.round((A >= 1 ? 1280 : 1280 * A) / 8) * 8, H = Math.round(W / A / 8) * 8, size0 = [s.cv.width, s.cv.height];
       try {
         st.textContent = "Drawing the view and sending it to the edit model…";
-        await makePhoto([W, H], s.t, s.cam, look, box.querySelector("#s3p-model").value);
+        await makePhoto([W, H], s.t, s.cam, look, model(), usePics());
         win.close();
         Media.toast("3D scene: the photo is being made. It shows up in the gallery.");
       } catch (err) { st.textContent = ""; e.target.disabled = false; Media.toast(`Photo: ${err.message}`); }
