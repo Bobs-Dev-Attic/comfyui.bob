@@ -5,6 +5,22 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.86.0] - 2026-11-18
+
+### Added
+- **Becomes**, for each object in a 3D scene (on its panel, and shown in the objects list): what the photo and the video
+  should make of it, e.g. “a wooden crate” or “a golden retriever”. The models only see the render, so this tells them
+  what a grey cube really is.
+- **The models are told about objects by what they can see.** Each object is described by its colour and shape (or a
+  3D model's name), where it is in the frame at that moment (left, middle or right; in front or at the back), and what
+  it becomes. Two that would read the same are told apart left to right. 📷 Generate photo sends, e.g., “The objects in
+  it: the red cube on the left becomes a golden retriever; the blue sphere on the right.”, and its window shows that line.
+- **{Name} in 🎬 Render's text.** Chips over “What happens” insert an object's tag, and it is sent as that object's
+  description: “{Dog} runs to {Ball}” becomes “The golden retriever (the red cube on the left) runs to the blue sphere
+  on the right.”, so it stays tied to the right shape after you move or rename things. Objects with a Becomes that the
+  text doesn't mention are added as “The red cube on the left is a golden retriever.” A preview under the text shows what
+  H3 reads and flags a name that matches no object.
+
 ## [0.85.0] - 2026-11-18
 
 ### Added

@@ -25,7 +25,10 @@
    rings to turn it about each axis (gimbal: Y is upright, X turns with it, Z with both), and handles to stretch it
    along its own axes (the middle ball sizes all of it). Ctrl while dragging one snaps (0.1 m, 15°, 10%).
    📷 Generate photo draws what the camera frames (the frame on the view) and has the image editor's whole-picture edit
-   (Qwen Image Edit 2511 or MiniMax H3 Image) make a photograph of it, keeping the layout. */
+   (Qwen Image Edit 2511 or MiniMax H3 Image) make a photograph of it, keeping the layout.
+   The models only see pictures, so each object is told to them by what they can see: "the red cube on the left", with
+   what it Becomes (a field per object: "a wooden crate"). In 🎬 Render's text, {Name} stands for an object and is sent
+   as that description, e.g. "the wooden crate (the red cube on the left)". */
 "use strict";
 
 const Scene3D = (() => {
@@ -538,13 +541,13 @@ const Scene3D = (() => {
     if (!o?.mesh || !o.pos) return;
     const P = poseAt(o, s.t), w = (o.mesh.hi[0] - o.mesh.lo[0]) * P.scale * 1.2 || 1, y = s.cam.yaw * rad;
     const off = [Math.cos(y) * w, 0, -Math.sin(y) * w], move = p => addv(p, off);
-    const c = { id: uid(), name: `${o.name} copy`, model: o.model, mask: o.mask, prim: o.prim, color: o.color, dims: o.dims?.slice(), tilt: o.tilt?.slice(),
+    const c = { id: uid(), name: `${o.name} copy`, becomes: o.becomes || "", model: o.model, mask: o.mask, prim: o.prim, color: o.color, dims: o.dims?.slice(), tilt: o.tilt?.slice(),
       pos: move(o.pos), yaw: o.yaw || 0, pitch: o.pitch || 0, roll: o.roll || 0, stretch: o.stretch?.slice(), scale: o.scale, auto_scale: o.auto_scale, hidden: false,
       keys: (o.keys || []).map(k => ({ ...k, pos: move(k.pos) })), state: "ok" };
     c.mesh = o.prim ? primMesh(c) : o.mesh;
     s.objs.push(c); s.sel = s.objs.length - 1; changed(c);
   }
-  function rename(o) { const n = prompt("Name (for a photo, say what it should become: a wooden crate, a red sofa)", o.name); if (!n?.trim()) return; o.name = n.trim().slice(0, 120); changed(o); }
+  function rename(o) { const n = prompt("Name (its label here, and {Name} in a render's text; what it should become goes in Becomes)", o.name); if (!n?.trim()) return; o.name = n.trim().slice(0, 120); changed(o); }
   function select(i) { if (s.sel !== i) { s.sel = i; renderSide(); s.dirty = true; } }
   // A shape's size, tilt and colour are in the side panel: show it.
   function focusShape() { const el = s.root.querySelector(".s3-prim"); el?.scrollIntoView({ block: "nearest" }); el?.querySelector("input")?.focus(); }
@@ -638,7 +641,7 @@ const Scene3D = (() => {
   }
 
   /* ---------------------------------------------------------------- saving */
-  const objectsOut = () => s.objs.map(o => ({ id: o.id, name: o.name, model: o.model, mask: o.mask, pos: o.pos, yaw: o.yaw || 0, pitch: o.pitch || 0, roll: o.roll || 0,
+  const objectsOut = () => s.objs.map(o => ({ id: o.id, name: o.name, becomes: (o.becomes || "").trim(), model: o.model, mask: o.mask, pos: o.pos, yaw: o.yaw || 0, pitch: o.pitch || 0, roll: o.roll || 0,
     stretch: o.stretch || null, scale: o.scale, auto_scale: o.auto_scale, hidden: !!o.hidden, keys: o.keys || [],
     ...(o.prim ? { prim: o.prim, color: o.color || PRIM_COLOR, dims: o.dims || PRIMS[o.prim].dims, tilt: o.tilt || [0, 0] } : {}) }));
   function save() {
@@ -710,6 +713,9 @@ const Scene3D = (() => {
         <section><h3>Objects</h3><ul class="mo-layers s3-objs"></ul>
           <div class="mo-find"><select class="s3-add" aria-label="A 3D model to add"></select><button type="button" class="btn sm" data-act="add">Add</button></div></section>
         <section class="s3-sel" hidden><h3 class="s3-sel-h"></h3>
+          <div class="field"><label for="s3-becomes">Becomes <span class="opt">in the photo and the video</span></label>
+            <input type="text" id="s3-becomes" maxlength="200" placeholder="a wooden crate, a golden retriever…"
+              title="What the photo and the video should make of it. The models only see its shape and colour; this says what it really is."></div>
           <div class="field"><label>Rotation <span class="opt">degrees</span></label>
             <div class="s3-dims"><label>X <input type="number" id="s3-rx" step="5"></label><label>Y <input type="number" id="s3-ry" step="5"></label><label>Z <input type="number" id="s3-rz" step="5"></label></div></div>
           <div class="field"><label for="s3-size">Size <span class="s3-size-v"></span></label><input type="range" id="s3-size" min="0.2" max="3" step="0.01"></div>
@@ -856,7 +862,9 @@ const Scene3D = (() => {
     box.innerHTML = `<p class="hint">H3 makes the video from the picture, following this scene's rough animation (Time-to-Move, as in Animate objects):
         ${cameraMoves() ? "the camera move and the objects" : "the objects; the camera holds still"}. ${frameCount()} frames, ${dur().toFixed(2)} s.</p>
       <div class="field"><label for="s3r-what">What happens <span class="opt">optional</span></label>
-        <textarea id="s3r-what" rows="3" placeholder="${esc(moving.length ? `${moving.join(" and ")} move${moving.length > 1 ? "" : "s"} across the scene.` : "The scene comes to life.")}"></textarea></div>
+        ${tagChips()}
+        <textarea id="s3r-what" rows="3" placeholder="${esc(moving.length ? `${moving.map(n => `{${n}}`).join(" and ")} move${moving.length > 1 ? "" : "s"} across the scene.` : "The scene comes to life.")}"></textarea>
+        <p class="hint s3-said" aria-live="polite"></p></div>
       <div class="row2"><div class="field"><label for="s3r-q">Quality</label><select id="s3r-q"><option value="draft">Draft</option><option value="standard" selected>Standard</option><option value="full">Full</option></select></div>
         <div class="field"><label for="s3r-hold">Follow the plan</label><select id="s3r-hold"><option value="loose">Loosely</option><option value="normal" selected>Normally</option><option value="tight">Tightly</option></select></div></div>
       <div class="field"><label for="s3r-first">Start from</label><select id="s3r-first">
@@ -870,7 +878,8 @@ const Scene3D = (() => {
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
     foot.innerHTML = `<span class="hint s3r-st"></span><button type="button" class="btn ghost" data-a="cancel">Cancel</button><button type="button" class="btn primary" data-a="go">🎬 Render</button>`;
-    const win = WM.open({ id: "scene3d-render", title: `Render · ${s.sc.name}`, content: box, footer: foot, width: 540, height: 560, modal: true });
+    const win = WM.open({ id: "scene3d-render", title: `Render · ${s.sc.name}`, content: box, footer: foot, width: 560, height: 660, modal: true });
+    wireTags(box, box.querySelector("#s3r-what"), () => videoText(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder));
     const st = foot.querySelector(".s3r-st"), firstSel = box.querySelector("#s3r-first"), holdSel = box.querySelector("#s3r-hold");
     // From a photo, H3 is held to the plain rough animation only loosely, so the photo's look carries through.
     const syncStart = () => {
@@ -915,7 +924,7 @@ const Scene3D = (() => {
         const ref = await renderVideo("ref", [W, H], n, (f, N) => { st.textContent = `Drawing the rough animation: frame ${f + 1} of ${N}`; }, proj);
         const mask = await renderVideo("mask", [W, H], n, (f, N) => { st.textContent = `Drawing its mask: frame ${f + 1} of ${N}`; }, proj);
         st.textContent = "Sending to H3…";
-        const what = box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder;
+        const what = videoText(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder).text;
         const cam = cameraMoves() ? "The camera moves smoothly through the scene." : "The camera holds a static shot.";
         const prompt = `integrated_multimodal_description: [Shot 1] ${what.replace(/\s+/g, " ")} ${cam}\n\noverall_soundscape: Natural sound of the scene.\n\nnon_diegetic_music: N/A`;
         const toTl = box.querySelector("#s3r-tl").checked;
@@ -1231,12 +1240,13 @@ const Scene3D = (() => {
     root.addEventListener("input", e => {
       const o = s.objs[s.sel]; if (!o) return;
       if (e.target.id === "s3-color" && o.prim) { o.color = e.target.value; o.mesh.parts[0].base = [...hexRgb(o.color), 1]; s.dirty = true; return; }
+      if (e.target.id === "s3-becomes") { o.becomes = e.target.value.slice(0, 200); return; }
       const rf = { "s3-rx": "pitch", "s3-ry": "yaw", "s3-rz": "roll" }[e.target.id];
       if (rf && o.mesh && o.pos && e.target.value !== "") editPose(o, { [rf]: +e.target.value });
       if (e.target.id === "s3-size") { editPose(o, { scale: (o.auto_scale || o.scale) * +e.target.value }); root.querySelector(".s3-size-v").textContent = `${Math.round(+e.target.value * 100)}%`; }
       s.dirty = true;
     });
-    root.addEventListener("change", e => { if (["s3-rx", "s3-ry", "s3-rz", "s3-size"].includes(e.target.id)) { save(); renderSide(); } });
+    root.addEventListener("change", e => { if (["s3-rx", "s3-ry", "s3-rz", "s3-size", "s3-becomes"].includes(e.target.id)) { save(); renderSide(); } });
     // undo and redo, anywhere in the scene window but a text field
     root.addEventListener("keydown", e => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey || e.target.matches("input:not([type=range]):not([type=checkbox]):not([type=color]), textarea")) return;
@@ -1282,7 +1292,7 @@ const Scene3D = (() => {
     const root = s.root;
     const st = o => o.prim ? (o.hidden ? `<span class="hint">hidden</span>` : "") : o.state === "running" ? `<span class="hint">making… </span>` : o.state === "failed" ? `<span class="hint">failed</span>`
       : o.state === "missing" ? `<span class="hint">model deleted</span>` : !o.model ? `<button type="button" class="btn sm" data-act="make3d" data-i="${s.objs.indexOf(o)}">🧊 Make 3D</button>` : o.hidden ? `<span class="hint">hidden</span>` : "";
-    root.querySelector(".s3-objs").innerHTML = s.objs.length ? s.objs.map((o, i) => `<li data-i="${i}" class="${i === s.sel ? "sel" : ""}" tabindex="0" title="Right-click for its menu"><b>${o.prim ? `<span aria-hidden="true">${PRIMS[o.prim].icon}</span> ` : ""}${esc(o.name)}</b> ${st(o)}</li>`).join("")
+    root.querySelector(".s3-objs").innerHTML = s.objs.length ? s.objs.map((o, i) => `<li data-i="${i}" class="${i === s.sel ? "sel" : ""}" tabindex="0" title="Right-click for its menu"><b>${o.prim ? `<span aria-hidden="true">${PRIMS[o.prim].icon}</span> ` : ""}${esc(o.name)}</b>${o.becomes ? ` <span class="hint s3-becomes-l">→ ${esc(o.becomes)}</span>` : ""} ${st(o)}</li>`).join("")
       : `<li class="hint">No objects yet: add a shape from the tool bar, or a 3D model below.</li>`;
     const opts = models.filter(m => m.status === "done");
     const mine = opts.filter(m => m.source === s.sc.picture), other = opts.filter(m => m.source !== s.sc.picture);
@@ -1293,6 +1303,7 @@ const Scene3D = (() => {
     sec.hidden = !o;
     if (o) {
       root.querySelector(".s3-sel-h").textContent = o.name;
+      { const b = root.querySelector("#s3-becomes"); if (b !== document.activeElement) b.value = o.becomes || ""; }
       const P = o.pos ? poseAt(o, s.t) : { yaw: 0, scale: o.scale };
       const size = o.auto_scale && P.scale ? P.scale / o.auto_scale : 1;
       const K = o.keys || [];
@@ -1383,6 +1394,96 @@ const Scene3D = (() => {
     return j.ref;
   }
 
+  /* ---------------------------------------------------------------- objects, as the models can see them */
+  // The photo and video models see only the render: an object is "the red cube on the left", not "Cube 2". Each one is
+  // described by its colour and shape (or a 3D model's name), where it is in the frame at that moment, and what it
+  // Becomes; {Name} in a render's text is sent as that description.
+  const COLORS = [["black", [22, 22, 22]], ["dark grey", [72, 72, 72]], ["grey", [128, 128, 128]], ["light grey", [200, 200, 200]],
+    ["white", [246, 246, 246]], ["red", [205, 40, 40]], ["dark red", [120, 22, 22]], ["orange", [240, 130, 30]], ["yellow", [236, 212, 50]],
+    ["beige", [216, 196, 158]], ["brown", [122, 76, 40]], ["green", [52, 162, 62]], ["dark green", [30, 90, 42]], ["teal", [30, 150, 150]],
+    ["light blue", [130, 190, 240]], ["blue", [40, 90, 210]], ["navy", [26, 36, 92]], ["purple", [122, 62, 172]], ["pink", [240, 130, 182]]];
+  const colorName = hex => { const c = hexRgb(hex).map(v => v * 255); return COLORS.reduce((b, x) => { const d = Math.hypot(c[0] - x[1][0], c[1] - x[1][1], c[2] - x[1][2]); return d < b[1] ? [x[0], d] : b; }, ["", Infinity])[0]; };
+  const SHAPE = { cube: "cube", sphere: "sphere", cylinder: "cylinder", cone: "cone", plane: "flat panel", torus: "ring" };
+  const ORD = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth"];
+  const bare = t => String(t || "").trim().replace(/^(a|an|the|some)\s+/i, "");
+  // Where an object is in the frame of `cam` at time t: u, v (0..1 across and down), its distance, or off: out of view.
+  function seenAt(o, t, cam) {
+    const p = poseAt(o, t)?.pos; if (!p) return null;
+    const W = 1000, H = Math.round(W / (s.bg.aspect || 16 / 9)), { VP, e } = viewProj(W, H, cam), x = xf(VP, p, 1);
+    const w = VP[3] * p[0] + VP[7] * p[1] + VP[11] * p[2] + VP[15];
+    if (w <= 1e-6) return { off: true, u: 0.5, d: Infinity };
+    const u = (x[0] / w + 1) / 2, v = (1 - x[1] / w) / 2;
+    return { u, v, d: Math.hypot(p[0] - e[0], p[1] - e[1], p[2] - e[2]), off: u < -0.05 || u > 1.05 || v < -0.15 || v > 1.15 };
+  }
+  // Every shown object as the models see it at time t through cam: { o, looks, where, seen, becomes, off }.
+  function cast(t, cam) {
+    const list = s.objs.filter(o => o.mesh && o.pos && !o.hidden).map(o => ({ o, at: seenAt(o, t, cam) })).filter(x => x.at);
+    const ds = list.filter(x => !x.at.off).map(x => x.at.d).sort((a, b) => a - b), med = ds[ds.length >> 1];
+    for (const x of list) {
+      const a = x.at;
+      x.off = a.off;
+      x.looks = x.o.prim ? `${colorName(x.o.color || PRIM_COLOR)} ${SHAPE[x.o.prim]}` : bare(x.o.name).replace(/\s+\d+$/, "").toLowerCase();
+      x.where = a.off ? "out of view" : a.u < 0.36 ? "on the left" : a.u > 0.64 ? "on the right" : "in the middle";
+      if (!a.off && ds.length > 1 && a.d < med * 0.7) x.where += ", in front";
+      else if (!a.off && ds.length > 1 && a.d > med * 1.4) x.where += ", at the back";
+      x.becomes = (x.o.becomes || "").trim();
+    }
+    // Two that would read the same are told apart left to right.
+    const groups = new Map();
+    for (const x of list) { const k = `${x.looks}|${x.where}`; groups.set(k, [...(groups.get(k) || []), x]); }
+    for (const g of groups.values()) if (g.length > 1) g.sort((a, b) => a.at.u - b.at.u).forEach((x, i) => { x.looks = `${ORD[i] || `#${i + 1}`} ${x.looks} from the left`; });
+    for (const x of list) x.seen = `the ${x.looks}${x.off ? "" : ` ${x.where}`}`;
+    return list;
+  }
+  // "the wooden crate (the red cube on the left)", or just what it looks like when it Becomes nothing.
+  const refOf = x => x.becomes ? `the ${bare(x.becomes)} (${x.seen})` : x.seen;
+  // {Name} -> that object's description; unknown names lose their braces and are reported.
+  function expandTags(text, list) {
+    const unknown = [];
+    const out = String(text || "").replace(/\{([^{}]{1,120})\}/g, (m, n) => {
+      const x = list.find(q => q.o.name.trim().toLowerCase() === n.trim().toLowerCase());
+      if (!x) { unknown.push(n.trim()); return n.trim(); }
+      return refOf(x);
+    });
+    return { text: out, unknown, used: list.filter(x => new RegExp(`\\{\\s*${x.o.name.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\}`, "i").test(text)) };
+  }
+  // The photo: every object in view, and what it becomes.
+  function photoObjects(t, cam) {
+    const list = cast(t, cam).filter(x => !x.off);
+    if (!list.length) return "";
+    return ` The objects in it: ${list.map(x => x.becomes ? `${x.seen} becomes ${x.becomes}` : x.seen).join("; ")}.`;
+  }
+  // The video's text: tags expanded, and what the other objects are (as the first frame shows them).
+  function videoText(what) {
+    const list = cast(0, camForRender(0)), r = expandTags(what, list);
+    const rest = list.filter(x => x.becomes && !r.used.includes(x) && !x.off);
+    const cap = t => t[0].toUpperCase() + t.slice(1);
+    const extra = rest.map(x => `${cap(x.seen)} is ${x.becomes}.`).join(" ");
+    let text = r.text.trim();
+    if (text) text = cap(text);
+    if (text && !/[.!?]$/.test(text)) text += ".";
+    return { text: [text, extra].filter(Boolean).join(" "), unknown: r.unknown };
+  }
+  // The {Name} chips over a text box, and the preview of what the model reads under it.
+  function tagChips() {
+    const list = s.objs.filter(o => o.mesh && o.pos && !o.hidden);
+    return list.length ? `<div class="s3-tags" role="group" aria-label="Insert an object">${list.map(o => `<button type="button" class="chip-btn" data-tag="{${esc(o.name)}}" title="Insert {${esc(o.name)}}: sent as ${esc(o.becomes ? `the ${bare(o.becomes)} (what it looks like and where it is)` : "what it looks like and where it is")}">${o.prim ? `${PRIMS[o.prim].icon} ` : ""}${esc(o.name)}${o.becomes ? ` <small>→ ${esc(o.becomes)}</small>` : ""}</button>`).join("")}</div>` : "";
+  }
+  function wireTags(box, ta, said) {
+    const out = box.querySelector(".s3-said");
+    const show = () => {
+      const r = said();
+      out.innerHTML = `H3 reads: “${esc(r.text)}”${r.unknown.length ? ` <span class="warn">No object called ${r.unknown.map(n => `“${esc(n)}”`).join(", ")}.</span>` : ""}`;
+    };
+    box.querySelector(".s3-tags")?.addEventListener("mousedown", e => { if (e.target.closest("[data-tag]")) e.preventDefault(); });  // keep the caret
+    box.querySelector(".s3-tags")?.addEventListener("click", e => {
+      const b = e.target.closest("[data-tag]"); if (!b) return;
+      ta.focus(); insertAtCursor(ta, b.dataset.tag); ta.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    ta.addEventListener("input", show);
+    show();
+  }
+
   /* ---------------------------------------------------------------- 📷 Generate photo */
   const photoPrompt = look => "Turn this 3D render into a realistic photograph. Keep the composition, the camera angle, and the position, size, "
     + "shape and colour of every object exactly as they are; give the surfaces real materials, light and shadows." + (look ? ` ${look}` : "");
@@ -1391,8 +1492,7 @@ const Scene3D = (() => {
   // A photo of the scene at time t through `cam` (queued with the edit model); it's remembered on the scene.
   async function makePhoto(size, t, cam, look, model) {
     const ref = await uploadFrame(size, t, cam, "scene_view.png");
-    const names = s.objs.filter(o => o.mesh && o.pos && !o.hidden).map(o => o.name);
-    const prompt = photoPrompt(look) + (names.length ? ` The objects in it: ${names.join(", ")}.` : "");
+    const prompt = photoPrompt(expandTags(look, cast(t, cam)).text) + photoObjects(t, cam);
     const items = await submit({ kind: "image", engine: "imgedit", edit_op: "instruct", source: ref, prompt, edit_model: model,
       seed: -1, batch: 1, project: s.sc.project });
     if (!items?.length) throw new Error("The edit model didn't take it (the reason is on the Generate step)");
@@ -1411,11 +1511,12 @@ const Scene3D = (() => {
         keeping where everything is. The photo shows up in the gallery.</p>
       <div class="field"><label for="s3p-look">How it should look <span class="opt">optional</span></label>
         <textarea id="s3p-look" rows="3" placeholder="${s.bg.empty ? "On a sunny beach at golden hour, shot on 35 mm film." : "Soft daylight, shot on 35 mm film."}">${esc(keep)}</textarea></div>
-      <div class="field"><label for="s3p-model">Model</label><select id="s3p-model">${models.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></div>`;
+      <div class="field"><label for="s3p-model">Model</label><select id="s3p-model">${models.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></div>
+      <p class="hint s3-said">${s.objs.some(o => o.mesh && o.pos && !o.hidden) ? `It's told: ${esc(photoObjects(s.t, s.cam).trim()) || "nothing about the objects (none in view)"}` : ""}${s.objs.some(o => o.mesh && !o.hidden && !(o.becomes || "").trim()) ? " Give an object a <b>Becomes</b> (on its panel) to say what it should turn into." : ""}</p>`;
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
     foot.innerHTML = `<span class="hint s3p-st"></span><button type="button" class="btn ghost" data-a="cancel">Cancel</button><button type="button" class="btn primary" data-a="go">📷 Generate</button>`;
-    const win = WM.open({ id: "scene3d-photo", title: `Photo · ${s.sc.name}`, content: box, footer: foot, width: 500, height: 380, modal: true });
+    const win = WM.open({ id: "scene3d-photo", title: `Photo · ${s.sc.name}`, content: box, footer: foot, width: 520, height: 460, modal: true });
     foot.querySelector('[data-a="cancel"]').onclick = () => win.close();
     foot.querySelector('[data-a="go"]').onclick = async e => {
       e.target.disabled = true;

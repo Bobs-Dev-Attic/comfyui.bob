@@ -388,6 +388,8 @@ async def models3d_rename(model_id: str, req: Model3DPatch):
 class SceneObject(BaseModel):
     id: str = Field(..., max_length=40)
     name: str = Field("Object", max_length=120)
+    # what the photo and the video should make of it ("a wooden crate"); the render only shows its shape and colour
+    becomes: str = Field("", max_length=200)
     model: str | None = Field(None, max_length=40)  # a 3D model's id
     mask: str | None = Field(None, max_length=2000)  # where it was in the picture (white = the object)
     # placement, set by the page: position (scene units; camera at the origin looking down -Z, Y up), turn in degrees
