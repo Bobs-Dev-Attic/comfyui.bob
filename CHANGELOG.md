@@ -5,6 +5,23 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.97.2] - 2026-11-18
+
+### Fixed
+- **🎬 Render video** from a photo (a new photo of the first frame, or an earlier one) moves the real thing, not the
+  stand-in. The edit model seldom puts a person exactly where the mannequin stood, so the mannequin walked off with
+  the wrong part of the photo (H3 drew a grey mannequin) and the person in the photo stayed behind, standing on the
+  ground or left as a pale copy. Now each moving object is looked for in the photo (SAM 3, the same model as AI
+  select, near its stand-in and by what it becomes), its whole path is moved over the ground and its size changed
+  so it starts where and as big as the photo has it, and it carries only what was found there, on every side as it
+  turns. Where it stood (a little more, for its shadow) is left for H3 to fill in once it has gone. Without SAM 3,
+  or when nothing is found near the stand-in, it works as before.
+- What H3 reads for a video that starts from a photo names each object by what it becomes and where it is ("the
+  woman (on the left, walking)"), not by its stand-in ("the light grey human figure"), which had H3 add a grey
+  mannequin to the photo's scene.
+- The edit model is told not to add people or large objects the render doesn't have (one test photo came back with
+  an extra man).
+
 ## [0.97.1] - 2026-11-18
 
 ### Fixed

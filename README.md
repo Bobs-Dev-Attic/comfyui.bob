@@ -122,7 +122,9 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   turn it into a photograph that keeps the layout. Its window has a field for what each object in view becomes ("a
   large pile of trash"); an object left empty keeps its look, except a Person, which becomes a real person. 🎬 Render video can start from such a photo (a new one of the first
   frame is made first, or an earlier one): the photo is painted onto the scene from its camera (projection mapping), so
-  the rough animation H3 follows looks like the photo, and so does the video.
+  the rough animation H3 follows looks like the photo, and so does the video. Each moving object is first looked for in
+  the photo (SAM 3, near its stand-in) and its path is moved and sized to start where the photo has it, so the real
+  person walks off, not a grey mannequin, and the spot they leave is filled in, not left with a copy of them.
   **Tool bar and right-click menus**: add primitive shapes (cube, sphere, cylinder, cone, plane, ring) with a colour,
   a size in metres and a tilt, or a 3D model; choose what dragging an object does (move, raise, rotate, resize).
   Right-click an object to move, raise, rotate or resize it following the mouse, turn it 90°, size it up or down, set
