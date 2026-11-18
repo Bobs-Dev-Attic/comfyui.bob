@@ -119,7 +119,8 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   **Empty scenes** (☰ › New empty 3D scene) start from nothing: a floor with a 1 m grid, a sky colour and an optional
   backdrop picture, with the shot's shape and lens chosen in the View section; add 3D models and frame the shot.
   **📷 Generate photo…** (any scene) draws what the camera frames and has Qwen Image Edit 2511 (or MiniMax H3 Image)
-  turn it into a photograph that keeps the layout. 🎬 Render video can start from such a photo (a new one of the first
+  turn it into a photograph that keeps the layout. Its window has a field for what each object in view becomes ("a
+  large pile of trash"); an object left empty keeps its look, except a Person, which becomes a real person. 🎬 Render video can start from such a photo (a new one of the first
   frame is made first, or an earlier one): the photo is painted onto the scene from its camera (projection mapping), so
   the rough animation H3 follows looks like the photo, and so does the video.
   **Tool bar and right-click menus**: add primitive shapes (cube, sphere, cylinder, cone, plane, ring) with a colour,

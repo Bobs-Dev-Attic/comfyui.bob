@@ -5,6 +5,17 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.97.1] - 2026-11-18
+
+### Fixed
+- **📷 Generate photo** turns the scene's objects into what you say they are. Qwen keeps whatever it isn't told to
+  change, so text alone ("a woman next to a pile of trash") came back as a woman and a pile of trash *beside* the grey
+  mannequin and the grey cone. The window now has a **What each object becomes** field for each object in view (the
+  same Becomes as on its panel, saved with the scene), and each one is sent as "the light grey cone on the right
+  becomes a large pile of trash". Objects that become something are stand-ins that keep only their place, size and
+  pose. A Person with nothing filled in becomes a real person, never the mannequin. The window shows the whole text
+  the edit model gets, updated as you type.
+
 ## [0.97.0] - 2026-11-18
 
 ### Added
