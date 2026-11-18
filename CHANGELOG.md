@@ -5,6 +5,16 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.97.0] - 2026-11-18
+
+### Added
+- **📷 Generate photo › Use the depth map** (with Qwen Image Edit 2511). A depth map of the view, drawn through the same
+  camera at the same size as the render, goes along as Picture 2, and Qwen is told to keep the depth, layout and
+  proportions it shows: it holds the scene together when the look changes a lot (a whole new setting or style), where
+  the render's grey clay look could otherwise stay or the layout wander. It takes one of Qwen's two extra pictures, so
+  one object picture fits beside it; the window says which is which and what's left out. The choice is remembered.
+  Hidden for MiniMax H3 Image, which isn't made for depth maps.
+
 ## [0.96.0] - 2026-11-18
 
 ### Changed
