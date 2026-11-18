@@ -83,6 +83,8 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   it (AI select), make the empty background (Erase), drag each object at a time on the scrubber to key its path, set
   its size and flip, and Generate. Needs AI select and Erase (above), H3, and
   [ComfyUI-vlo](https://github.com/PxTicks/ComfyUI-vlo) 0.3+ for `vloTimeToMove`.
+- **📷 Generate photo** in Animate objects: the picture at the playhead with the objects where you put them, made into
+  one natural photograph by Qwen Image Edit 2511 (or MiniMax H3 Image).
 - **🎯 Track an object** (a video's menu in the results): click an object (or name it) on any frame and SAM 3.1
   follows it for up to 15 s; misdetections are dropped, gaps filled and the path smoothed into a few keys. Save the
   path, then in Animate objects any object can **Use a tracked path** to move the same way. Needs the SAM 3.1 checkpoint.

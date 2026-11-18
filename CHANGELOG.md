@@ -5,6 +5,15 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.83.0] - 2026-11-17
+
+### Added
+- **📷 Generate photo…** in Animate objects (the footer, next to 🏞 3D scene): the picture as it is at the playhead
+  (the empty background when there is one, each object where you put it, turned, flipped and recoloured), at the
+  picture's own size, made into one natural photograph by the image editor's whole-picture edit (Qwen Image Edit 2511
+  or MiniMax H3 Image), which blends the objects in (light, shadows, edges) and keeps them where they are. Without an
+  empty background it warns that a moved object still shows at its old place.
+
 ## [0.82.0] - 2026-11-17
 
 ### Added
