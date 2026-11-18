@@ -5,6 +5,16 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.75.1] - 2026-11-17
+
+### Added
+- A 3D scene's render can go on the timeline by itself: **Add it to the timeline when it's done** in the Render
+  dialog (on by default, remembered), as the Shots step does. It goes at the end of the first video track of the
+  scene's project, and survives a page reload while it waits.
+
+### Fixed
+- The scene's Render dialog said "queued" even when H3 refused the request; it now keeps the dialog open and says so.
+
 ## [0.75.0] - 2026-11-17
 
 ### Added
