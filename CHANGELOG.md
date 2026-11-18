@@ -5,6 +5,21 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.84.0] - 2026-11-18
+
+### Added
+- **3D scene tool bar**: **Add** primitive shapes (cube, sphere, cylinder, cone, plane, ring) or one of your 3D models;
+  **Drag to** picks what dragging an object does (✥ move, ↕ raise, ⟳ rotate, ⤢ resize); and buttons for the selected
+  object (turn 90° left or right, set it down on the ground, duplicate, delete). On a narrow window the buttons show
+  only their icons.
+- **Right-click menus** in 3D scenes. On an object (in the view or the Objects list): move, raise, rotate or resize it
+  following the mouse until a click (Esc or right-click cancels), turn it 90°, make it bigger or smaller, set it down on
+  the ground, size/tilt/colour, duplicate, rename, hide, delete. On the ground: add a shape (or a 3D model) right
+  there. Keys: G move, L raise, R rotate, S resize, Shift+D duplicate, Del delete.
+- A shape's **colour**, **size** (width, height, depth: metres in an empty scene) and **tilt** (upright, tipped forward,
+  on its side, upside down) are in the side panel. Shapes are saved with the scene.
+- 📷 Generate photo tells the edit model the objects' names, so a cube named "wooden crate" comes out as one.
+
 ## [0.83.0] - 2026-11-17
 
 ### Added

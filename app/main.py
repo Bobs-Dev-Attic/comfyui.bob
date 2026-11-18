@@ -397,6 +397,12 @@ class SceneObject(BaseModel):
     scale: float | None = None
     auto_scale: float | None = None  # the scale it was placed at (the size slider's 100%)
     hidden: bool = False
+    # a primitive shape made in the page instead of a 3D model: its kind, colour, size (width, height, depth before
+    # scaling; metres in an empty scene) and tilt (degrees about X, then Z)
+    prim: Literal["cube", "sphere", "cylinder", "cone", "plane", "torus"] | None = None
+    color: str | None = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
+    dims: list[float] | None = Field(None, min_length=3, max_length=3)
+    tilt: list[float] | None = Field(None, min_length=2, max_length=2)
     # its motion: [{t (seconds), pos, yaw, scale}] by time; none = it stays where it is
     keys: list[dict[str, Any]] = Field(default_factory=list, max_length=500)
 

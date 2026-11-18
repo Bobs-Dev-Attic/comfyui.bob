@@ -122,6 +122,11 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   turn it into a photograph that keeps the layout. 🎬 Render video can start from such a photo (a new one of the first
   frame is made first, or an earlier one): the photo is painted onto the scene from its camera (projection mapping), so
   the rough animation H3 follows looks like the photo, and so does the video.
+  **Tool bar and right-click menus**: add primitive shapes (cube, sphere, cylinder, cone, plane, ring) with a colour,
+  a size in metres and a tilt, or a 3D model; choose what dragging an object does (move, raise, rotate, resize).
+  Right-click an object to move, raise, rotate or resize it following the mouse, turn it 90°, size it up or down, set
+  it on the ground, duplicate, rename, hide or delete it; right-click the ground to add a shape there. Keys: G, L, R,
+  S, Shift+D, Del. Name a shape for what it should become (a wooden crate): 📷 Generate photo passes the names on.
 - **Objects in motion in a shot** (Shots › a shot's Edit window, One video per shot): give the shot a picture from the Inputs
   step and its objects' paths (the Animate objects window, in a "Use for this shot" mode). That shot then renders from the
   picture with the objects on their paths, with the shot's own text, length and settings; it can take a tracked path too.
