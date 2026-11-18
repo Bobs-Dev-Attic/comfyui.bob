@@ -230,6 +230,7 @@ const Media = (() => {
       ${pics ? `<button type="button" class="btn sm primary" data-act="use">Use</button>` : ""}
       ${n === 1 && pics === 1 ? `<button type="button" class="btn sm" data-act="edit" title="Open the picture in the image editor">✏ Edit</button>` : ""}
       ${n === 1 && pics === 1 && typeof Model3D !== "undefined" ? `<button type="button" class="btn sm" data-act="make3d" title="A textured 3D model of the main object in this picture (TRELLIS.2)">🧊 Make 3D…</button>` : ""}
+      ${n === 1 && pics === 1 && typeof Scene3D !== "undefined" ? `<button type="button" class="btn sm" data-act="scene3d" title="This picture in depth, to stand 3D models in">🏞 3D scene…</button>` : ""}
       <button type="button" class="btn sm" data-act="tags">🏷 Tags…</button>
       ${inLib < n ? `<button type="button" class="btn sm" data-act="add">＋ Library</button>` : ""}
       ${inLib ? `<button type="button" class="btn sm" data-act="remove" title="Take it out of this project's library; the file stays">Remove</button>` : ""}
@@ -559,6 +560,12 @@ const Media = (() => {
     Model3D.start({ ref: m.ref, url: m.url, name: (m.name || m.ref.split("/").pop()).replace(/\.[^.]+$/, "") });
   }
 
+  // The picture as a 3D scene (scene3d.js).
+  function scene3d(m) {
+    if (!m || m.kind !== "image") return;
+    Scene3D.create({ ref: m.ref, url: m.url, name: (m.name || m.ref.split("/").pop()).replace(/\.[^.]+$/, "") });
+  }
+
   function itemMenu(root, x, y) {
     const items = selectedItems(root);
     if (!items.length) return;
@@ -570,6 +577,7 @@ const Media = (() => {
       one && one.kind === "image" && one.exists !== false && ["✏ Edit", () => editItem(one)],
       one && one.kind === "image" && typeof Angles !== "undefined" && ["🔄 Angles… (other camera angles)", () => Angles.dialog({ ref: one.ref, url: one.url, name: one.name })],
       one && one.kind === "image" && one.exists !== false && typeof Model3D !== "undefined" && ["🧊 Make 3D… (a 3D model of the main object)", () => make3d(one)],
+      one && one.kind === "image" && one.exists !== false && typeof Scene3D !== "undefined" && ["🏞 3D scene… (the picture in depth)", () => scene3d(one)],
       pics.length && video && eng === "h3" && ["Use as first frame", () => useItems(pics, "first_frame")],
       pics.length && video && eng === "h3" && ["Use as last frame", () => useItems(pics, "last_frame")],
       pics.length && video && eng === "h3ref" && [`Add as reference${pics.length > 1 ? "s" : ""}`, () => useItems(pics, "reference")],
@@ -622,6 +630,7 @@ const Media = (() => {
         if (act === "use") return useItems(selectedItems(root));
         if (act === "edit") return editItem(selectedItems(root)[0]);
         if (act === "make3d") return make3d(selectedItems(root)[0]);
+        if (act === "scene3d") return scene3d(selectedItems(root)[0]);
         if (act === "tags") return tagsDialog(selectedItems(root));
         if (act === "add") return addToLibrary([...st.selected]);
         if (act === "remove") return removeFromLibrary([...st.selected]);

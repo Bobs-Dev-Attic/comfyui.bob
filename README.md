@@ -95,7 +95,8 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   `trellis_2_texture_vae_bf16` (vae), `dino_v3_L_naf_fp32` (clip_vision), from
   [Comfy-Org/TRELLIS.2](https://huggingface.co/Comfy-Org/TRELLIS.2) and [Comfy-Org/Pixal3D](https://huggingface.co/Comfy-Org/Pixal3D),
   plus BiRefNet (background_removal) for a whole picture. Models live in `data/models3d.json`, files in `outputs/3d/`.
-- **🏞 3D scene** (a picture's menu, or 🏞 Open as a 3D scene in Animate objects): the picture in depth with 3D models
+- **🏞 3D scene** (a picture's button in the gallery, its menu in the results, the Media page or the Inputs step, or
+  🏞 Open as a 3D scene in Animate objects): the picture in depth with 3D models
   standing in it. Depth Anything 3 (`depth_anything_3_base`, already used for camera moves) turns the background (the
   empty background from Animate objects when there is one, so objects don't show twice) into a surface, and its camera
   is estimated from the picture. Each object's 3D model (🧊 Make 3D, from the scene or Animate objects) stands where it
