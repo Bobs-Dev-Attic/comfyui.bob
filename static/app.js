@@ -390,11 +390,18 @@ async function uploadFile(role, file) {
     setFrame(role, j.ref, j.url);
   } catch (e) { $("#form-error").textContent = e.message; }
 }
+// An Inputs picture (a keyframe or a reference) as a 3D scene (scene3d.js).
+function sceneOf(ref, url) {
+  if (typeof Scene3D === "undefined") return;
+  Scene3D.create({ ref, url, name: ref.split("/").pop().replace(/\.[^.]+$/, "") });
+}
+
 function initDrops() {
   const input = $("#file-input");
   for (const drop of $$(".drop")) {
     const role = drop.dataset.role;
-    drop.addEventListener("click", e => { if (e.target.classList.contains("x")) return; state.pickRole = role; input.click(); });
+    drop.addEventListener("click", e => { if (e.target.classList.contains("x") || e.target.classList.contains("s3b")) return; state.pickRole = role; input.click(); });
+    $(".s3b", drop).addEventListener("click", e => { e.stopPropagation(); const f = state.frames[role]; if (f) sceneOf(f.ref, f.url); });
     drop.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); state.pickRole = role; input.click(); } });
     $(".x", drop).addEventListener("click", e => { e.stopPropagation(); clearFrame(role); });
     drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("over"); });
@@ -434,10 +441,12 @@ function renderRefs() {
       <img src="${esc(r.url)}" alt="Reference ${i + 1}">
       <button type="button" class="tag" data-i="${i}" title="Insert into prompt">Picture ${i + 1}</button>
       ${r.desc ? `<span class="ref-desc" title="${esc(r.desc)}">✨</span>` : ""}
+      <button type="button" class="s3b" data-i="${i}" title="Open Picture ${i + 1} as a 3D scene" aria-label="Open Picture ${i + 1} as a 3D scene">🏞</button>
       <button type="button" class="ref-more" data-i="${i}" title="Open, edit, describe or remove" aria-label="Picture ${i + 1} options" aria-haspopup="menu">⋯</button>
     </div>`).join("")
     + (state.refs.length < MAX_REFS ? `<div class="ref-add" id="ref-add" tabindex="0" role="button">+ Add<br>picture</div>` : "");
   $$(".ref .ref-more", box).forEach(b => b.onclick = () => RefTools.pictureMenu(+b.dataset.i, b));
+  $$(".ref .s3b", box).forEach(b => b.onclick = () => { const r = state.refs[+b.dataset.i]; if (r) sceneOf(r.ref, r.url); });
   $$(".ref img", box).forEach((im, i) => im.ondblclick = () => RefTools.pictureMenu(i, im.parentElement.querySelector(".ref-more")));
   Prompts.renderBar?.();
   $$(".ref .tag", box).forEach(b => b.onclick = () => insertAtCursor($("#prompt"), `<Picture ${+b.dataset.i + 1}>`));
