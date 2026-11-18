@@ -5,6 +5,22 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.81.0] - 2026-11-17
+
+### Added
+- **Empty 3D scenes** (☰ › New empty 3D scene, or ＋ New empty scene in 🏞 3D scenes): a scene with no picture, to
+  build a shot out of 3D models. A floor with a 1 m grid 1.6 m under the camera, a sky colour, and optionally a
+  picture far behind as a backdrop; its shape (16:9, 9:16, 1:1, 4:3, 21:9) and lens (18 to 135 mm) are set in the
+  View section. 3D models stand on the floor side by side at 1 m tall; move, turn, size and keyframe them as in any
+  scene. 🎬 Render video starts H3 from the scene's own first frame.
+- **📷 Generate photo…** in any 3D scene: draws what the camera frames (at the playhead) and has the image editor's
+  whole-picture edit (Qwen Image Edit 2511, or MiniMax H3 Image) turn it into a photograph that keeps where
+  everything is; an optional description sets the look. The photo shows up in the gallery.
+- A frame on the scene view shows what the camera captures (the shot's shape), with the rest shaded.
+
+### Changed
+- The scene window's "Save picture of this view" is now **💾 Save view**.
+
 ## [0.80.0] - 2026-11-17
 
 ### Added

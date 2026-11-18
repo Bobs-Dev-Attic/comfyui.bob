@@ -114,6 +114,10 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   view when the camera moves, with the holes it opens left to H3; otherwise just the objects). H3 starts from the
   picture (when the scene starts as the picture) or from the scene's first frame, and goes on the timeline when it's
   done (unless you untick that). Needs what Animate objects needs.
+  **Empty scenes** (☰ › New empty 3D scene) start from nothing: a floor with a 1 m grid, a sky colour and an optional
+  backdrop picture, with the shot's shape and lens chosen in the View section; add 3D models and frame the shot.
+  **📷 Generate photo…** (any scene) draws what the camera frames and has Qwen Image Edit 2511 (or MiniMax H3 Image)
+  turn it into a photograph that keeps the layout.
 - **Objects in motion in a shot** (Shots › a shot's Edit window, One video per shot): give the shot a picture from the Inputs
   step and its objects' paths (the Animate objects window, in a "Use for this shot" mode). That shot then renders from the
   picture with the objects on their paths, with the shot's own text, length and settings; it can take a tracked path too.

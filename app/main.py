@@ -402,7 +402,7 @@ class SceneObject(BaseModel):
 
 
 class SceneNew(BaseModel):
-    picture: str = Field(..., max_length=2000)
+    picture: str | None = Field(None, max_length=2000)  # none: an empty scene (a floor and a backdrop)
     plate: str | None = Field(None, max_length=2000)  # the picture with its objects erased (Animate objects)
     name: str = Field("3D scene", max_length=120)
     project: str | None = Field(None, max_length=200)
@@ -415,6 +415,11 @@ class ScenePatch(BaseModel):
     seconds: float | None = Field(None, ge=1, le=20)  # the scene's length
     # the camera's path: [{t, yaw, pitch, dist, target: [x, y, z]}] (an orbit about target); none = it stays put
     camera_keys: list[dict[str, Any]] | None = Field(None, max_length=500)
+    # an empty scene's framing and backdrop: aspect "16:9" | "9:16" | "1:1" | "4:3" | "21:9"; lens in mm (full frame);
+    # backdrop {sky, floor: "#rrggbb", picture: a media ref or none}
+    aspect: Literal["16:9", "9:16", "1:1", "4:3", "21:9"] | None = None
+    lens: float | None = Field(None, ge=10, le=300)
+    backdrop: dict[str, Any] | None = None
 
 
 @app.post("/api/scenes")
@@ -425,12 +430,12 @@ async def scenes_new(req: SceneNew):
     except Exception:  # noqa: BLE001
         nodes = set()
     need = {"LoadDA3Model", "DA3Inference", "DA3GeometryToMesh", "SaveGLB", "ImageScaleToMaxDimension"}
-    if nodes and need - nodes:
+    if req.picture and nodes and need - nodes:
         raise HTTPException(409, "A 3D scene needs ComfyUI's Depth Anything 3 nodes: " + ", ".join(sorted(need - nodes)))
-    for ref in [req.picture] + ([req.plate] if req.plate else []):
+    for ref in [r for r in (req.picture, req.plate) if r]:
         try:
             if media.kind_of(ref) != "image" or not media_path(ref).is_file():
-                raise HTTPException(400, "A 3D scene starts from a picture")
+                raise HTTPException(400, "A 3D scene starts from a picture (or from nothing: an empty scene)")
         except (media.MediaError, ValueError) as exc:
             raise HTTPException(400, str(exc)) from exc
     return model3d.start_scene(jobs, picture=req.picture, plate=req.plate, name=req.name, project=req.project,
@@ -453,6 +458,17 @@ async def scenes_get(scene_id: str):
 @app.patch("/api/scenes/{scene_id}")
 async def scenes_patch(scene_id: str, req: ScenePatch):
     fields = {k: v for k, v in req.model_dump(exclude_unset=True).items() if v is not None}
+    if "backdrop" in fields:  # only its known keys; a picture must be one the studio can serve
+        bd = fields["backdrop"]
+        pic = bd.get("picture") or None
+        if pic:
+            try:
+                if media.kind_of(pic) != "image" or not media_path(pic).is_file():
+                    raise HTTPException(400, "The backdrop must be a picture")
+            except (media.MediaError, ValueError) as exc:
+                raise HTTPException(400, str(exc)) from exc
+        hexok = lambda v, d: v if isinstance(v, str) and len(v) == 7 and v.startswith("#") else d  # noqa: E731
+        fields["backdrop"] = {"sky": hexok(bd.get("sky"), "#c9d3de"), "floor": hexok(bd.get("floor"), "#8b9098"), "picture": pic}
     s = model3d.update_scene(scene_id, **fields)
     if not s:
         raise HTTPException(404, "No such 3D scene")

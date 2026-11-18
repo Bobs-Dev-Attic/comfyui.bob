@@ -1318,6 +1318,7 @@ function openMainMenu() {
     ["🗂  Project settings…", () => projectSettingsDialog()],
     ["🧊  3D models…", () => Model3D.openList()],
     ["🏞  3D scenes…", () => Scene3D.openList()],
+    ["＋  New empty 3D scene…", () => Scene3D.createEmpty()],
     ...(state.project ? [
       [`✎  Rename “${state.project.name}”…`, () => renameProjectDialog()],
       [`🗑  Delete “${state.project.name}”…`, () => deleteProjectDialog()],
