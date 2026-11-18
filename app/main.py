@@ -390,6 +390,8 @@ class SceneObject(BaseModel):
     name: str = Field("Object", max_length=120)
     # what the photo and the video should make of it ("a wooden crate"); the render only shows its shape and colour
     becomes: str = Field("", max_length=200)
+    # a picture of what it should look like (a media ref), for a render on H3 Reference: <Picture N> in the prompt
+    picture: str | None = Field(None, max_length=2000)
     model: str | None = Field(None, max_length=40)  # a 3D model's id
     mask: str | None = Field(None, max_length=2000)  # where it was in the picture (white = the object)
     # placement, set by the page: position (scene units; camera at the origin looking down -Z, Y up), turn in degrees

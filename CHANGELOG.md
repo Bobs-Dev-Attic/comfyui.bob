@@ -5,6 +5,19 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.87.0] - 2026-11-18
+
+### Added
+- **A Picture for each object in a 3D scene**, for a render on H3 Reference (on the object's panel; 🖼 in the objects
+  list). ✂ From the picture cuts the object out of the picture it was made from, on white. Choose… takes a file, or
+  drop one from the gallery, the media library or your PC.
+- **🎬 Render can use those pictures**: “Use the objects' pictures (H3 Reference)”. The video then runs on H3
+  Reference's model (ref2va) with the same Time-to-Move motion. The first frame is <Picture 1> (held at 0.00 s,
+  as keyframes are), and the objects' pictures are <Picture 2> on, up to 8. {Name} is sent as, e.g., “the golden
+  retriever from <Picture 2> (the red cube on the left)”, and objects with a picture that the text doesn't mention
+  are added as “The blue sphere on the right looks like <Picture 3>.” The window says which object is which picture,
+  and the preview shows what H3 reads. It needs H3 Reference installed (see the Model step).
+
 ## [0.86.0] - 2026-11-18
 
 ### Added

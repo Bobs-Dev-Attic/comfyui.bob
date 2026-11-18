@@ -61,6 +61,7 @@ def build_motion(
     edge: int = 0,
     prefix: str = "bob/motion",
     loras: list[tuple[str, float]] | None = None,
+    references: int = 0,
 ) -> Built:
     """Motion layers (app/motion.py): H3 image-to-video from the original picture, with Time-to-Move
     (vloTimeToMove from ComfyUI-vlo) holding the moved objects to a rough cut-and-drag animation.
@@ -69,7 +70,14 @@ def build_motion(
     objects), both drawn by the caller at width x height with exactly `length` frames. The mask is eroded by
     `edge` pixels so H3 may redraw the cut edges. `hold`: how long the objects stay held to the path; TTM seeds
     everything at step 1 and frees the objects at the end step (loose = 2, normal = a third of the steps,
-    tight = half)."""
+    tight = half).
+
+    With `references` (1-8, a 3D scene's object pictures: image_inputs ref_0...), it runs on H3 Reference instead
+    (`files` are the ref2va set): MiniMaxH3ReferenceToVideo with the first frame as <Picture 1>, aligned to 0.00 s
+    as H3's keyframe wording does, and the object pictures as <Picture 2>... Time-to-Move holds the motion the same
+    way (as FaceRefine does, H3 Reference's conditioning takes a latent made elsewhere)."""
+    if not 0 <= references <= H3_MAX_REFS - 1:
+        raise ValueError(f"A scene render takes at most {H3_MAX_REFS - 1} object pictures")
     g = Graph()
     o = Graph.out
     unet = g.add("UNETLoader", unet_name=files["unet"], weight_dtype="default")
@@ -77,7 +85,9 @@ def build_motion(
     use_turbo = turbo and bool(files.get("turbo_lora"))
     if use_turbo:
         model = g.add("LoraLoaderModelOnly", model=o(unet), lora_name=files["turbo_lora"], strength_model=1.0)
-        default_steps = 4 if "4step" in files["turbo_lora"].lower() else 8
+        lora = files["turbo_lora"].lower()
+        # the ref2v turbo LoRA is 4-step unless it says 8; the fl2v one is 8-step unless it says 4 (as build_h3_ref, build_h3)
+        default_steps = (8 if "8step" in lora else 4) if references else (4 if "4step" in lora else 8)
     else:
         default_steps = 20
     n_steps = int(steps or default_steps)
@@ -89,8 +99,20 @@ def build_motion(
 
     first = g.add("LoadImage", image="")
     scaled = g.add("ImageScale", image=o(first), upscale_method="lanczos", width=width, height=height, crop="center")
-    cond = g.add("MiniMaxH3ImageToVideo", clip=o(clip), vae=o(vae), prompt=prompt, width=width, height=height,
-                 length=length, first_frame=o(scaled))
+    image_inputs: dict[str, str] = {"first_frame": first}
+    if references:
+        prompt = f"{h3_frame_alignment(True, False, length)}\n\n{prompt}"
+        cond_inputs: dict[str, Any] = dict(clip=o(clip), vae=o(vae), audio_vae=o(audio_vae), prompt=prompt, width=width,
+                                           height=height, length=length, ref_image_size="match")
+        cond_inputs["ref_images.ref_image_0"] = o(scaled)
+        for i in range(references):
+            load = g.add("LoadImage", image="")  # an object's picture, filled by the caller
+            image_inputs[f"ref_{i}"] = load
+            cond_inputs[f"ref_images.ref_image_{i + 1}"] = o(load)
+        cond = g.add("MiniMaxH3ReferenceToVideo", **cond_inputs)
+    else:
+        cond = g.add("MiniMaxH3ImageToVideo", clip=o(clip), vae=o(vae), prompt=prompt, width=width, height=height,
+                     length=length, first_frame=o(scaled))
 
     ref = g.add("LoadVideo", file="")
     ref_parts = g.add("GetVideoComponents", video=o(ref))
@@ -106,7 +128,9 @@ def build_motion(
 
     noise = g.add("RandomNoise", noise_seed=int(seed))
     sampler = g.add("KSamplerSelect", sampler_name="res_multistep")
-    sigmas = g.add("BasicScheduler", model=o(model), scheduler="simple", steps=n_steps, denoise=1.0)
+    # H3 Reference: beta for full sampling, simple with its turbo LoRA (see build_h3_ref)
+    scheduler = "beta" if references and not use_turbo else "simple"
+    sigmas = g.add("BasicScheduler", model=o(model), scheduler=scheduler, steps=n_steps, denoise=1.0)
     guider = g.add("BasicGuider", model=o(ttm), conditioning=o(cond, 0))
     latent = g.add("SamplerCustomAdvanced", noise=o(noise), guider=o(guider), sampler=o(sampler), sigmas=o(sigmas),
                    latent_image=o(cond, 1))
@@ -116,9 +140,10 @@ def build_motion(
     save = g.add("SaveVideo", video=o(video), filename_prefix=prefix, format="auto", codec="auto")
     return Built(
         graph=g.nodes, outputs=[save],
-        image_inputs={"first_frame": first, "motion_ref": ref, "motion_mask": msk},
+        image_inputs={**image_inputs, "motion_ref": ref, "motion_mask": msk},
         info={"width": width, "height": height, "frames": length, "seconds": round(length / FPS, 2), "steps": n_steps,
-              "turbo": use_turbo, "hold_steps": f"1-{end}", "edge": edge, "final_prompt": prompt},
+              "turbo": use_turbo, "hold_steps": f"1-{end}", "edge": edge, "final_prompt": prompt,
+              **({"references": references, "model": "H3 Reference", "scheduler": scheduler} if references else {})},
     )
 
 

@@ -28,7 +28,10 @@
    (Qwen Image Edit 2511 or MiniMax H3 Image) make a photograph of it, keeping the layout.
    The models only see pictures, so each object is told to them by what they can see: "the red cube on the left", with
    what it Becomes (a field per object: "a wooden crate"). In 🎬 Render's text, {Name} stands for an object and is sent
-   as that description, e.g. "the wooden crate (the red cube on the left)". */
+   as that description, e.g. "the wooden crate (the red cube on the left)". An object can also have a Picture (cut from
+   the scene's picture, a file, or dropped from the gallery): 🎬 Render can then run on H3 Reference, with the first
+   frame as <Picture 1> and the objects' pictures as <Picture 2>..., so {Dog} is sent as "the golden retriever from
+   <Picture 2> (the red cube on the left)". */
 "use strict";
 
 const Scene3D = (() => {
@@ -541,7 +544,7 @@ const Scene3D = (() => {
     if (!o?.mesh || !o.pos) return;
     const P = poseAt(o, s.t), w = (o.mesh.hi[0] - o.mesh.lo[0]) * P.scale * 1.2 || 1, y = s.cam.yaw * rad;
     const off = [Math.cos(y) * w, 0, -Math.sin(y) * w], move = p => addv(p, off);
-    const c = { id: uid(), name: `${o.name} copy`, becomes: o.becomes || "", model: o.model, mask: o.mask, prim: o.prim, color: o.color, dims: o.dims?.slice(), tilt: o.tilt?.slice(),
+    const c = { id: uid(), name: `${o.name} copy`, becomes: o.becomes || "", picture: o.picture || null, model: o.model, mask: o.mask, prim: o.prim, color: o.color, dims: o.dims?.slice(), tilt: o.tilt?.slice(),
       pos: move(o.pos), yaw: o.yaw || 0, pitch: o.pitch || 0, roll: o.roll || 0, stretch: o.stretch?.slice(), scale: o.scale, auto_scale: o.auto_scale, hidden: false,
       keys: (o.keys || []).map(k => ({ ...k, pos: move(k.pos) })), state: "ok" };
     c.mesh = o.prim ? primMesh(c) : o.mesh;
@@ -641,7 +644,7 @@ const Scene3D = (() => {
   }
 
   /* ---------------------------------------------------------------- saving */
-  const objectsOut = () => s.objs.map(o => ({ id: o.id, name: o.name, becomes: (o.becomes || "").trim(), model: o.model, mask: o.mask, pos: o.pos, yaw: o.yaw || 0, pitch: o.pitch || 0, roll: o.roll || 0,
+  const objectsOut = () => s.objs.map(o => ({ id: o.id, name: o.name, becomes: (o.becomes || "").trim(), picture: o.picture || null, model: o.model, mask: o.mask, pos: o.pos, yaw: o.yaw || 0, pitch: o.pitch || 0, roll: o.roll || 0,
     stretch: o.stretch || null, scale: o.scale, auto_scale: o.auto_scale, hidden: !!o.hidden, keys: o.keys || [],
     ...(o.prim ? { prim: o.prim, color: o.color || PRIM_COLOR, dims: o.dims || PRIMS[o.prim].dims, tilt: o.tilt || [0, 0] } : {}) }));
   function save() {
@@ -716,6 +719,12 @@ const Scene3D = (() => {
           <div class="field"><label for="s3-becomes">Becomes <span class="opt">in the photo and the video</span></label>
             <input type="text" id="s3-becomes" maxlength="200" placeholder="a wooden crate, a golden retriever…"
               title="What the photo and the video should make of it. The models only see its shape and colour; this says what it really is."></div>
+          <div class="field"><label>Picture <span class="opt">for a render on H3 Reference</span></label>
+            <div class="s3-pic"><div class="s3-pic-th" tabindex="0" title="Drop a picture here from the gallery, the media library or your files"></div>
+              <div class="s3-pic-btns"><button type="button" class="btn sm" data-act="pic-crop" title="Cut it out of the picture it was made from">✂ From the picture</button>
+                <button type="button" class="btn sm" data-act="pic-file">Choose…</button>
+                <button type="button" class="btn sm ghost" data-act="pic-clear" title="No picture">Remove</button></div></div>
+            <input type="file" class="s3-picfile" accept="image/png,image/jpeg,image/webp" hidden></div>
           <div class="field"><label>Rotation <span class="opt">degrees</span></label>
             <div class="s3-dims"><label>X <input type="number" id="s3-rx" step="5"></label><label>Y <input type="number" id="s3-ry" step="5"></label><label>Z <input type="number" id="s3-rz" step="5"></label></div></div>
           <div class="field"><label for="s3-size">Size <span class="s3-size-v"></span></label><input type="range" id="s3-size" min="0.2" max="3" step="0.01"></div>
@@ -865,6 +874,9 @@ const Scene3D = (() => {
         ${tagChips()}
         <textarea id="s3r-what" rows="3" placeholder="${esc(moving.length ? `${moving.map(n => `{${n}}`).join(" and ")} move${moving.length > 1 ? "" : "s"} across the scene.` : "The scene comes to life.")}"></textarea>
         <p class="hint s3-said" aria-live="polite"></p></div>
+      ${picObjs().length ? `<label class="check"><input type="checkbox" id="s3r-refs"${refsReady() ? " checked" : " disabled"}> Use the objects' pictures (H3 Reference)</label>
+        <p class="hint s3r-refs-h">${refsReady() ? `The first frame is &lt;Picture 1&gt;; ${picObjs().map((o, i) => `${esc(o.name)} is &lt;Picture ${i + 2}&gt;`).join(", ")}. Runs on H3 Reference's model with the same motion.`
+          : "Needs H3 Reference's model (ref2va) in ComfyUI: see the Model step."}${s.objs.filter(o => o.mesh && o.pos && !o.hidden && o.picture).length > 8 ? " Only the first 8 pictures are used." : ""}</p>` : ""}
       <div class="row2"><div class="field"><label for="s3r-q">Quality</label><select id="s3r-q"><option value="draft">Draft</option><option value="standard" selected>Standard</option><option value="full">Full</option></select></div>
         <div class="field"><label for="s3r-hold">Follow the plan</label><select id="s3r-hold"><option value="loose">Loosely</option><option value="normal" selected>Normally</option><option value="tight">Tightly</option></select></div></div>
       <div class="field"><label for="s3r-first">Start from</label><select id="s3r-first">
@@ -879,7 +891,9 @@ const Scene3D = (() => {
     foot.className = "wm-foot-row";
     foot.innerHTML = `<span class="hint s3r-st"></span><button type="button" class="btn ghost" data-a="cancel">Cancel</button><button type="button" class="btn primary" data-a="go">🎬 Render</button>`;
     const win = WM.open({ id: "scene3d-render", title: `Render · ${s.sc.name}`, content: box, footer: foot, width: 560, height: 660, modal: true });
-    wireTags(box, box.querySelector("#s3r-what"), () => videoText(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder));
+    const useRefs = () => !!box.querySelector("#s3r-refs")?.checked;
+    wireTags(box, box.querySelector("#s3r-what"), () => videoText(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder, useRefs()));
+    box.querySelector("#s3r-refs")?.addEventListener("change", () => box.querySelector("#s3r-what").dispatchEvent(new Event("input")));
     const st = foot.querySelector(".s3r-st"), firstSel = box.querySelector("#s3r-first"), holdSel = box.querySelector("#s3r-hold");
     // From a photo, H3 is held to the plain rough animation only loosely, so the photo's look carries through.
     const syncStart = () => {
@@ -924,7 +938,7 @@ const Scene3D = (() => {
         const ref = await renderVideo("ref", [W, H], n, (f, N) => { st.textContent = `Drawing the rough animation: frame ${f + 1} of ${N}`; }, proj);
         const mask = await renderVideo("mask", [W, H], n, (f, N) => { st.textContent = `Drawing its mask: frame ${f + 1} of ${N}`; }, proj);
         st.textContent = "Sending to H3…";
-        const what = videoText(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder).text;
+        const what = videoText(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder, useRefs()).text;
         const cam = cameraMoves() ? "The camera moves smoothly through the scene." : "The camera holds a static shot.";
         const prompt = `integrated_multimodal_description: [Shot 1] ${what.replace(/\s+/g, " ")} ${cam}\n\noverall_soundscape: Natural sound of the scene.\n\nnon_diegetic_music: N/A`;
         const toTl = box.querySelector("#s3r-tl").checked;
@@ -932,6 +946,7 @@ const Scene3D = (() => {
         const req = { kind: "video", engine: "motion", prompt, seconds: n / FPS, aspect: "16:9", quality: box.querySelector("#s3r-q").value,
           seed: -1, batch: 1, turbo: true, first_frame: null, motion_video: ref, motion_video_mask: mask,
           motion_hold: holdSel.value, motion_first: "picture", project: s.sc.project };
+        if (useRefs()) req.references = picObjs().map(o => o.picture);
         if (photoPath) req.first_frame = photoPath;
         else if (start === "picture") req.first_frame = s.sc.picture;
         else if (noPic) req.first_frame = await uploadFrame([W, H], 0, camForRender(0), "scene_first.png");  // as drawn
@@ -1183,6 +1198,13 @@ const Scene3D = (() => {
       if (a === "render") return renderDialog();
       if (a === "photo") return photoDialog();
       if (a === "bd-pick") return s.root.querySelector(".s3-bdfile").click();
+      if (a === "pic-file") return s.root.querySelector(".s3-picfile").click();
+      if (a === "pic-clear" && o) { o.picture = null; save(); renderSide(); return; }
+      if (a === "pic-crop" && o) {
+        b.disabled = true;
+        cropPicture(o).then(ref => { o.picture = ref; save(); renderSide(); }).catch(err => Media.toast(`Picture: ${err.message}`)).finally(() => { b.disabled = false; });
+        return;
+      }
       if (a === "bd-clear") { s.sc.backdrop = { ...s.sc.backdrop, picture: null }; s.sc.backdrop_url = null; return emptyChanged(); }
       if (a === "play") return play();
       if (a === "key-cam") {
@@ -1216,6 +1238,11 @@ const Scene3D = (() => {
         if (id === "s3-floor") s.sc.backdrop = { ...s.sc.backdrop, floor: e.target.value };
         return emptyChanged();
       }
+      if (e.target.classList.contains("s3-picfile")) {
+        const f = e.target.files[0], o = s.objs[s.sel]; e.target.value = ""; if (!f || !o) return;
+        try { o.picture = await uploadBlob(f, f.name); save(); renderSide(); } catch (err) { Media.toast(`Picture: ${err.message}`); }
+        return;
+      }
       if (e.target.classList.contains("s3-bdfile")) {
         const f = e.target.files[0]; e.target.value = ""; if (!f) return;
         try {
@@ -1247,6 +1274,26 @@ const Scene3D = (() => {
       s.dirty = true;
     });
     root.addEventListener("change", e => { if (["s3-rx", "s3-ry", "s3-rz", "s3-size", "s3-becomes"].includes(e.target.id)) { save(); renderSide(); } });
+    // An object's picture: dropped from the gallery or the media library (a media ref), or a file from the PC.
+    const th = root.querySelector(".s3-pic-th");
+    th.addEventListener("dragover", e => { e.preventDefault(); th.classList.add("over"); });
+    th.addEventListener("dragleave", () => th.classList.remove("over"));
+    th.addEventListener("drop", async e => {
+      e.preventDefault(); th.classList.remove("over");
+      const o = s.objs[s.sel]; if (!o) return;
+      const ref = e.dataTransfer.getData("text/x-bob-ref"), kind = e.dataTransfer.getData("text/x-bob-kind");
+      try {
+        if (ref) {
+          if (kind && kind !== "image" || /\.(mp4|webm|mov|mkv|mp3|wav|flac|ogg|m4a)$/i.test(ref)) throw new Error("Drop a picture");
+          o.picture = ref;
+        } else if (e.dataTransfer.files[0]) {
+          const f = e.dataTransfer.files[0];
+          if (!/^image\//.test(f.type)) throw new Error("Drop a picture");
+          o.picture = await uploadBlob(f, f.name);
+        } else return;
+        save(); renderSide();
+      } catch (err) { Media.toast(`Picture: ${err.message}`); }
+    });
     // undo and redo, anywhere in the scene window but a text field
     root.addEventListener("keydown", e => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey || e.target.matches("input:not([type=range]):not([type=checkbox]):not([type=color]), textarea")) return;
@@ -1292,7 +1339,7 @@ const Scene3D = (() => {
     const root = s.root;
     const st = o => o.prim ? (o.hidden ? `<span class="hint">hidden</span>` : "") : o.state === "running" ? `<span class="hint">making… </span>` : o.state === "failed" ? `<span class="hint">failed</span>`
       : o.state === "missing" ? `<span class="hint">model deleted</span>` : !o.model ? `<button type="button" class="btn sm" data-act="make3d" data-i="${s.objs.indexOf(o)}">🧊 Make 3D</button>` : o.hidden ? `<span class="hint">hidden</span>` : "";
-    root.querySelector(".s3-objs").innerHTML = s.objs.length ? s.objs.map((o, i) => `<li data-i="${i}" class="${i === s.sel ? "sel" : ""}" tabindex="0" title="Right-click for its menu"><b>${o.prim ? `<span aria-hidden="true">${PRIMS[o.prim].icon}</span> ` : ""}${esc(o.name)}</b>${o.becomes ? ` <span class="hint s3-becomes-l">→ ${esc(o.becomes)}</span>` : ""} ${st(o)}</li>`).join("")
+    root.querySelector(".s3-objs").innerHTML = s.objs.length ? s.objs.map((o, i) => `<li data-i="${i}" class="${i === s.sel ? "sel" : ""}" tabindex="0" title="Right-click for its menu"><b>${o.prim ? `<span aria-hidden="true">${PRIMS[o.prim].icon}</span> ` : ""}${esc(o.name)}</b>${o.becomes ? ` <span class="hint s3-becomes-l">→ ${esc(o.becomes)}</span>` : ""}${o.picture ? ` <span class="s3-hasPic" title="Has a picture for H3 Reference">🖼</span>` : ""} ${st(o)}</li>`).join("")
       : `<li class="hint">No objects yet: add a shape from the tool bar, or a 3D model below.</li>`;
     const opts = models.filter(m => m.status === "done");
     const mine = opts.filter(m => m.source === s.sc.picture), other = opts.filter(m => m.source !== s.sc.picture);
@@ -1304,6 +1351,9 @@ const Scene3D = (() => {
     if (o) {
       root.querySelector(".s3-sel-h").textContent = o.name;
       { const b = root.querySelector("#s3-becomes"); if (b !== document.activeElement) b.value = o.becomes || ""; }
+      root.querySelector(".s3-pic-th").innerHTML = o.picture ? `<img src="${esc(mediaUrl(o.picture))}" alt="">` : `<span class="hint">None: drop one here</span>`;
+      root.querySelector('[data-act="pic-crop"]').hidden = !cropSource(o);
+      root.querySelector('[data-act="pic-clear"]').hidden = !o.picture;
       const P = o.pos ? poseAt(o, s.t) : { yaw: 0, scale: o.scale };
       const size = o.auto_scale && P.scale ? P.scale / o.auto_scale : 1;
       const K = o.keys || [];
@@ -1435,15 +1485,20 @@ const Scene3D = (() => {
     for (const x of list) x.seen = `the ${x.looks}${x.off ? "" : ` ${x.where}`}`;
     return list;
   }
-  // "the wooden crate (the red cube on the left)", or just what it looks like when it Becomes nothing.
-  const refOf = x => x.becomes ? `the ${bare(x.becomes)} (${x.seen})` : x.seen;
+  // "the wooden crate (the red cube on the left)", or just what it looks like when it Becomes nothing; with its picture
+  // as <Picture k> (a render on H3 Reference), "the wooden crate from <Picture 2> (the red cube on the left)".
+  const refOf = (x, k = 0) => k ? `the ${x.becomes ? bare(x.becomes) : x.o.name.trim().toLowerCase()} from <Picture ${k}> (${x.seen})`
+    : x.becomes ? `the ${bare(x.becomes)} (${x.seen})` : x.seen;
+  // The objects whose pictures go to H3 Reference, in order (<Picture 2>...; the first frame is <Picture 1>).
+  const picObjs = () => s.objs.filter(o => o.mesh && o.pos && !o.hidden && o.picture).slice(0, 8);
+  const refsReady = () => !!state.caps?.engines?.h3ref?.ready;
   // {Name} -> that object's description; unknown names lose their braces and are reported.
-  function expandTags(text, list) {
+  function expandTags(text, list, picOf = () => 0) {
     const unknown = [];
     const out = String(text || "").replace(/\{([^{}]{1,120})\}/g, (m, n) => {
       const x = list.find(q => q.o.name.trim().toLowerCase() === n.trim().toLowerCase());
       if (!x) { unknown.push(n.trim()); return n.trim(); }
-      return refOf(x);
+      return refOf(x, picOf(x));
     });
     return { text: out, unknown, used: list.filter(x => new RegExp(`\\{\\s*${x.o.name.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\}`, "i").test(text)) };
   }
@@ -1454,11 +1509,12 @@ const Scene3D = (() => {
     return ` The objects in it: ${list.map(x => x.becomes ? `${x.seen} becomes ${x.becomes}` : x.seen).join("; ")}.`;
   }
   // The video's text: tags expanded, and what the other objects are (as the first frame shows them).
-  function videoText(what) {
-    const list = cast(0, camForRender(0)), r = expandTags(what, list);
-    const rest = list.filter(x => x.becomes && !r.used.includes(x) && !x.off);
+  function videoText(what, refs = false) {
+    const pics = refs ? picObjs() : [], picOf = x => { const i = pics.indexOf(x.o); return i < 0 ? 0 : i + 2; };
+    const list = cast(0, camForRender(0)), r = expandTags(what, list, picOf);
+    const rest = list.filter(x => !r.used.includes(x) && (picOf(x) || (x.becomes && !x.off)));
     const cap = t => t[0].toUpperCase() + t.slice(1);
-    const extra = rest.map(x => `${cap(x.seen)} is ${x.becomes}.`).join(" ");
+    const extra = rest.map(x => picOf(x) ? `${cap(x.seen)} looks like <Picture ${picOf(x)}>${x.becomes ? `: ${x.becomes}` : ""}.` : `${cap(x.seen)} is ${x.becomes}.`).join(" ");
     let text = r.text.trim();
     if (text) text = cap(text);
     if (text && !/[.!?]$/.test(text)) text += ".";
@@ -1482,6 +1538,48 @@ const Scene3D = (() => {
     });
     ta.addEventListener("input", show);
     show();
+  }
+
+  /* ---------------------------------------------------------------- an object's picture (for H3 Reference) */
+  async function uploadBlob(blob, name) {
+    const fd = new FormData(); fd.append("file", blob, name);
+    const r = await fetch("/api/upload", { method: "POST", body: fd }), j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    return j.ref;
+  }
+  // The picture and mask an object was made from: the scene's own, or its 3D model's.
+  function cropSource(o) {
+    if (o.mask && s.sc.picture) return [s.sc.picture, o.mask];
+    const md = o.model && models.find(x => x.id === o.model);
+    return md?.source && md?.mask ? [md.source, md.mask] : null;
+  }
+  // Cut the object out of that picture by its mask, on white, with a little room around it; uploaded as a PNG.
+  async function cropPicture(o) {
+    const src = cropSource(o); if (!src) throw new Error("It wasn't made from a picture");
+    const load = ref => new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error("Couldn't load the picture")); im.src = mediaUrl(ref); });
+    const [pic, msk] = await Promise.all(src.map(load));
+    const W = pic.naturalWidth, H = pic.naturalHeight, cv = document.createElement("canvas");
+    cv.width = W; cv.height = H;
+    const g = cv.getContext("2d", { willReadFrequently: true });
+    g.drawImage(msk, 0, 0, W, H);
+    const m = g.getImageData(0, 0, W, H).data;
+    let x0 = W, y0 = H, x1 = -1, y1 = -1;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (m[(y * W + x) * 4] > 127) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    if (x1 < 0) throw new Error("Its mask is empty");
+    const pad = Math.round(Math.max(x1 - x0, y1 - y0) * 0.08);
+    x0 = Math.max(0, x0 - pad); y0 = Math.max(0, y0 - pad); x1 = Math.min(W - 1, x1 + pad); y1 = Math.min(H - 1, y1 + pad);
+    const w = x1 - x0 + 1, h = y1 - y0 + 1;
+    g.drawImage(pic, 0, 0, W, H);
+    const px = g.getImageData(x0, y0, w, h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4, a = m[((y + y0) * W + x + x0) * 4] / 255;
+      for (let c = 0; c < 3; c++) px.data[i + c] = px.data[i + c] * a + 255 * (1 - a);
+      px.data[i + 3] = 255;
+    }
+    const out = document.createElement("canvas"); out.width = w; out.height = h;
+    out.getContext("2d").putImageData(px, 0, 0);
+    const blob = await new Promise(res => out.toBlob(res, "image/png"));
+    return uploadBlob(blob, `${o.name.replace(/[^\w-]+/g, "_").slice(0, 40) || "object"}.png`);
   }
 
   /* ---------------------------------------------------------------- 📷 Generate photo */
