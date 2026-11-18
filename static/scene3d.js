@@ -1862,15 +1862,49 @@ const Scene3D = (() => {
     vals.sort((a, b) => a - b);
     return [Math.max(1e-4, vals[Math.floor(vals.length * 0.005)]), vals[Math.min(vals.length - 1, Math.floor(vals.length * 0.995))]];
   }
-  function depthCanvas(z, [W, H], [near, far]) {
+  // Distances -> grey levels (one byte a pixel, top row first).
+  function depthGray(z, [near, far]) {
+    const out = new Uint8Array(z.length), a = 1 / near, b = 1 / Math.max(far, near * 1.001);
+    for (let i = 0; i < z.length; i++) out[i] = z[i] > 0 ? Math.round(255 * Math.max(0, Math.min(1, (1 / z[i] - b) / (a - b)))) : 0;
+    return out;
+  }
+  function depthCanvas(z, [W, H], range) {
     const c = document.createElement("canvas"); c.width = W; c.height = H;
-    const g = c.getContext("2d"), im = g.createImageData(W, H), a = 1 / near, b = 1 / Math.max(far, near * 1.001);
-    for (let i = 0; i < z.length; i++) {
-      const v = z[i] > 0 ? Math.round(255 * Math.max(0, Math.min(1, (1 / z[i] - b) / (a - b)))) : 0;
-      im.data[i * 4] = im.data[i * 4 + 1] = im.data[i * 4 + 2] = v; im.data[i * 4 + 3] = 255;
-    }
+    const g = c.getContext("2d"), im = g.createImageData(W, H), v = depthGray(z, range);
+    for (let i = 0; i < v.length; i++) { im.data[i * 4] = im.data[i * 4 + 1] = im.data[i * 4 + 2] = v[i]; im.data[i * 4 + 3] = 255; }
     g.putImageData(im, 0, 0);
     return c;
+  }
+  /* A plain 8-bit greyscale PNG (one channel, no alpha), which depth ControlNet tools read as is; browsers can only save
+     RGBA, so it's written here: rows with PNG's "Up" filter (good for smooth depth), compressed by the browser's own
+     zlib (CompressionStream "deflate"). Where there is no CompressionStream, an RGBA PNG from a canvas instead. */
+  async function grayPNG(gray, W, H) {
+    if (typeof CompressionStream === "undefined") {
+      const c = document.createElement("canvas"); c.width = W; c.height = H;
+      const g = c.getContext("2d"), im = g.createImageData(W, H);
+      for (let i = 0; i < gray.length; i++) { im.data[i * 4] = im.data[i * 4 + 1] = im.data[i * 4 + 2] = gray[i]; im.data[i * 4 + 3] = 255; }
+      g.putImageData(im, 0, 0);
+      return new Uint8Array(await (await new Promise(res => c.toBlob(res, "image/png"))).arrayBuffer());
+    }
+    const raw = new Uint8Array((W + 1) * H);
+    for (let y = 0; y < H; y++) {
+      const o = y * (W + 1), r = y * W;
+      raw[o] = y ? 2 : 0;  // Up (the first row has nothing above it: None)
+      for (let x = 0; x < W; x++) raw[o + 1 + x] = y ? (gray[r + x] - gray[r - W + x]) & 255 : gray[r + x];
+    }
+    const zdata = new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new CompressionStream("deflate"))).arrayBuffer());
+    const chunk = (type, data) => {
+      const td = new Uint8Array(4 + data.length); td.set(new TextEncoder().encode(type)); td.set(data, 4);
+      const out = new Uint8Array(12 + data.length), dv = new DataView(out.buffer);
+      dv.setUint32(0, data.length); out.set(td, 4); dv.setUint32(8 + data.length, crc32(td));
+      return out;
+    };
+    const ihdr = new Uint8Array(13), dv = new DataView(ihdr.buffer);
+    dv.setUint32(0, W); dv.setUint32(4, H); ihdr.set([8, 0, 0, 0, 0], 8);  // 8 bits, greyscale, deflate, no filter type, no interlace
+    const parts = [new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", ihdr), chunk("IDAT", zdata), chunk("IEND", new Uint8Array(0))];
+    const out = new Uint8Array(parts.reduce((a, p) => a + p.length, 0));
+    let off = 0; for (const p of parts) { out.set(p, off); off += p.length; }
+    return out;
   }
   // A .zip of files stored as they are (PNGs are compressed already): [{name, bytes}] -> Blob.
   const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
@@ -1908,7 +1942,8 @@ const Scene3D = (() => {
       if (!clip) {
         const cam = s.camKeys.length ? camForRender(s.t) : s.cam, z = depthDistances(size, s.t, cam), range = depthRange(z);
         if (!range) return Media.toast("Nothing in view to measure.");
-        depthCanvas(z, size, range).toBlob(bl => { const u = URL.createObjectURL(bl); save(u, `${base}_depth.png`); setTimeout(() => URL.revokeObjectURL(u), 4000); }, "image/png");
+        const u = URL.createObjectURL(new Blob([await grayPNG(depthGray(z, range), size[0], size[1])], { type: "image/png" }));
+        save(u, `${base}_depth.png`); setTimeout(() => URL.revokeObjectURL(u), 4000);
         return;
       }
       const n = frameCount(), sizeM = [Math.round(W * 0.75 / 2) * 2, Math.round(H * 0.75 / 2) * 2], sizeV = mode === "pngs" ? size : sizeM;
@@ -1924,9 +1959,8 @@ const Scene3D = (() => {
       if (mode === "pngs") {
         const files = [];
         for (let f = 0; f < n; f++) {
-          const c = depthCanvas(depthDistances(sizeV, f / FPS, camForRender(f / FPS)), sizeV, [near, far]);
-          const bl = await new Promise(res => c.toBlob(res, "image/png"));
-          files.push({ name: `${base}_depth_${String(f).padStart(5, "0")}.png`, bytes: new Uint8Array(await bl.arrayBuffer()) });
+          const gray = depthGray(depthDistances(sizeV, f / FPS, camForRender(f / FPS)), [near, far]);
+          files.push({ name: `${base}_depth_${String(f).padStart(5, "0")}.png`, bytes: await grayPNG(gray, sizeV[0], sizeV[1]) });
           if (f % 8 === 0) Media.toast(`Depth map: frame ${f + 1} of ${n}…`);
           if (!s) return;
         }
