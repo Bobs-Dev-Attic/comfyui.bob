@@ -5,6 +5,15 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.92.0] - 2026-11-18
+
+### Added
+- **Walk cycle for the Person** in 3D scenes (Walk cycle, next to Pose: Off, Walk or Run). While the person moves along
+  its path, its legs and arms swing in a walking or running gait, its steps matching how far it goes (one cycle of two
+  steps is about 0.8 of its height walking, 1.45 running), so its feet don't slide; when it stops, it eases back into its
+  keyed pose. The photo and video models are told it's walking or running. Turn it to face the way it goes: the walk
+  cycle doesn't steer it.
+
 ## [0.91.0] - 2026-11-18
 
 ### Added
