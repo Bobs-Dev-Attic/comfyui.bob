@@ -401,6 +401,7 @@ class SceneObject(BaseModel):
     scale: float | None = None
     auto_scale: float | None = None  # the scale it was placed at (the size slider's 100%)
     hidden: bool = False
+    face: bool = False  # turns (about Y) to face the way it moves; its own yaw is added on top
     # a primitive shape made in the page instead of a 3D model: its kind, colour, size (width, height, depth before
     # scaling; metres in an empty scene) and tilt (degrees about X, then Z)
     prim: Literal["cube", "sphere", "cylinder", "cone", "plane", "torus", "figure"] | None = None

@@ -5,6 +5,18 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.93.0] - 2026-11-18
+
+### Added
+- **Face where it's going** for any object in a 3D scene (on its panel, above Rotation). While it moves, it turns to
+  face the way it goes, following the curve of its path; when it stops it keeps the heading it last moved with.
+  Rotation Y is then added on top (0 faces straight ahead, 180 walks backwards) and its keys keep only that. With a
+  Person's walk cycle, it walks where it's facing.
+
+### Fixed
+- An object that stops (two keys in the same place) no longer drifts past its stop and back: paths ease into and out
+  of a hold. A walking Person now stops stepping when it stops.
+
 ## [0.92.0] - 2026-11-18
 
 ### Added
