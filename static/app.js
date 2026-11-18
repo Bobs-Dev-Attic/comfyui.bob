@@ -1117,7 +1117,7 @@ function connectEvents() {
   es.onmessage = e => {
     const ev = JSON.parse(e.data);
     Activity.onEvent(ev);
-    if (ev.type === "item") { TL.onItem?.(ev.item); Shots.onItem(ev.item); Enhance.onItem(ev.item); }
+    if (ev.type === "item") { TL.onItem?.(ev.item); Shots.onItem(ev.item); Enhance.onItem(ev.item); Scene3D.onItem?.(ev.item); }
     if (ev.type === "item") {
       const prev = state.items.get(ev.item.id);
       state.items.set(ev.item.id, ev.item);
@@ -1269,6 +1269,7 @@ function init() {
     renderGallery(); renderQueue();
     if (state.shellReady) selectInScope();  // otherwise initShell does it once the project is open
     Shots.resume();  // a chain of shots that was waiting when the page closed
+    Scene3D.resume?.();  // a 3D scene's video waiting for its photo
   });
   connectEvents();
   pollStatus();
