@@ -50,6 +50,7 @@ const Scene3D = (() => {
   /* ---------------------------------------------------------------- keys */
   const cr = (q0, q1, q2, q3, u) => 0.5 * ((2 * q1) + (-q0 + q2) * u + (2 * q0 - 5 * q1 + 4 * q2 - q3) * u * u + (-q0 + 3 * q1 - 3 * q2 + q3) * u * u * u);
   // Between keys K (sorted by t): fields in `smooth` on a Catmull-Rom curve, the rest in a straight line.
+  const same = (x, y) => Array.isArray(x) && Array.isArray(y) && x.length === y.length && x.every((v, j) => Math.abs(v - y[j]) < 1e-6);
   function interp(K, t, smooth) {
     if (K.length === 1 || t <= K[0].t) return K[0];
     if (t >= K.at(-1).t) return K.at(-1);
@@ -58,7 +59,13 @@ const Scene3D = (() => {
     for (const k of Object.keys(a)) {
       if (k === "t") continue;
       if (typeof a[k] === "string" || typeof b[k] !== typeof a[k]) { out[k] = u < 0.5 || b[k] === undefined ? a[k] : b[k]; continue; }
-      if (Array.isArray(a[k])) out[k] = a[k].map((v, j) => smooth.includes(k) ? cr(p0[k][j], v, b[k][j], p3[k][j], u) : v + (b[k][j] - v) * u);
+      if (Array.isArray(a[k]) && smooth.includes(k)) {
+        // A hold (two keys in the same place) stays put, and the path eases into and out of it: no overshoot past a
+        // stop and back (which also turned a "face where it's going" object round when it stopped).
+        if (same(a[k], b[k])) { out[k] = a[k].slice(); continue; }
+        const q0 = same(p0[k], a[k]) ? b : p0, q3 = same(p3[k], b[k]) ? a : p3;
+        out[k] = a[k].map((v, j) => cr(q0[k][j], v, b[k][j], q3[k][j], u));
+      } else if (Array.isArray(a[k])) out[k] = a[k].map((v, j) => v + (b[k][j] - v) * u);
       else out[k] = smooth.includes(k) ? cr(p0[k], a[k], b[k], p3[k], u) : a[k] + (b[k] - a[k]) * u;
     }
     return out;
@@ -67,7 +74,30 @@ const Scene3D = (() => {
     ...(o.prim === "figure" ? { pose: o.pose || "standing" } : {}) });
   const normKeys = K => (K || []).map(k => ({ pitch: 0, roll: 0, ...k }));
   // An object's pose at time t.
-  function poseAt(o, t) { return o.keys?.length ? interp(o.keys, t, ["pos"]) : baseOf(o); }
+  function poseAt(o, t) {
+    const P = o.keys?.length ? { ...interp(o.keys, t, ["pos"]) } : baseOf(o);  // a copy: before the first key interp gives the key itself
+    if (o.face) P.heading = headingAt(o, t);
+    return P;
+  }
+  /* Face where it's going: while an object moves over the ground, it turns (about Y) to face the way it goes; stopped,
+     it keeps the heading it last moved with. Its own Y rotation is added on top (0 = facing straight ahead). Shown and
+     rendered only: keys keep the object's own rotation. Yaw 0 faces +Z, so the heading of a step (dx, dz) is atan2. */
+  function headingAt(o, t) {
+    const K = o.keys; if (!K || K.length < 2) return 0;
+    const at = tt => interp(K, Math.max(K[0].t, Math.min(K.at(-1).t, tt)), ["pos"]).pos, h = 1 / 48;
+    const dirAt = tt => { const a = at(tt - h), b = at(tt + h); return [b[0] - a[0], b[2] - a[2]]; };
+    const H = o.mesh ? (o.mesh.hi[1] - o.mesh.lo[1]) * (o.stretch?.[1] || 1) * (interp(K, t, ["pos"]).scale || 1) : 1;
+    const moving = d => Math.hypot(d[0], d[1]) > 0.004 * Math.max(0.05, H);  // over about a tenth of its height a second
+    let d = dirAt(t);
+    // stopped (or before it starts): the heading it last moved with, else the one it's about to move with
+    for (let k = 1; !moving(d) && k <= 240; k++) {
+      const back = t - k / 24, fwd = t + k / 24;
+      if (back >= K[0].t) { d = dirAt(back); if (moving(d)) break; }
+      if (fwd <= K.at(-1).t) d = dirAt(fwd);
+      if (back < K[0].t && fwd > K.at(-1).t) break;
+    }
+    return moving(d) ? Math.atan2(d[0], d[1]) / rad : 0;
+  }
   // Change an object at the playhead: before it has keys, at 0 s this is its place; otherwise it's keyed there.
   function editPose(o, f) {
     if (!o.keys?.length) {
@@ -172,7 +202,7 @@ const Scene3D = (() => {
       (a11 * b07 - a10 * b09 - a12 * b06) * d, (a00 * b09 - a01 * b07 + a02 * b06) * d, (a31 * b01 - a30 * b03 - a32 * b00) * d, (a20 * b03 - a21 * b01 + a22 * b00) * d];
   }
   // An object's turn: yaw about Y, then pitch about X, then roll about Z (Blender's gimbal axes).
-  const rotOf = P => mul4(mul4(RY((P.yaw || 0) * rad), RX((P.pitch || 0) * rad)), RZ((P.roll || 0) * rad));
+  const rotOf = P => mul4(mul4(RY(((P.yaw || 0) + (P.heading || 0)) * rad), RX((P.pitch || 0) * rad)), RZ((P.roll || 0) * rad));
   // An object's model matrix: pos is the bottom middle of its box (when upright); it turns, sizes and stretches about
   // the middle of its box.
   function matOf(o, P = poseAt(o, s.t)) {
@@ -609,7 +639,7 @@ const Scene3D = (() => {
     const P = poseAt(o, s.t), M = matOf(o, P), lo = o.mesh.lo, hi = o.mesh.hi;
     const c = xf(M, [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2], 1);
     const H = s.cv.clientHeight || 1, L = Math.hypot(...sub(c, eye())) * 2 * tanY(s.cv.clientWidth, H) * 80 / H;
-    const Ry = RY((P.yaw || 0) * rad), Rx = mul4(Ry, RX((P.pitch || 0) * rad)), R = rotOf(P), hs = [];
+    const Ry = RY(((P.yaw || 0) + (P.heading || 0)) * rad), Rx = mul4(Ry, RX((P.pitch || 0) * rad)), R = rotOf(P), hs = [];
     if (mode === "move" || mode === "lift") for (const i of mode === "lift" ? [1] : [0, 1, 2]) hs.push({ kind: "move", i, axis: colOf(ALIGN[i], 1), A: ALIGN[i] });
     if (mode === "rotate") hs.push({ kind: "rot", i: 0, axis: colOf(Ry, 0), A: mul4(Ry, ALIGN[0]) }, { kind: "rot", i: 1, axis: [0, 1, 0], A: ID },
       { kind: "rot", i: 2, axis: colOf(Rx, 2), A: mul4(Rx, ALIGN[2]) });
@@ -709,7 +739,7 @@ const Scene3D = (() => {
     const P = poseAt(o, s.t), w = (o.mesh.hi[0] - o.mesh.lo[0]) * P.scale * 1.2 || 1, y = s.cam.yaw * rad;
     const off = [Math.cos(y) * w, 0, -Math.sin(y) * w], move = p => addv(p, off);
     const c = { id: uid(), name: `${o.name} copy`, becomes: o.becomes || "", picture: o.picture || null, model: o.model, mask: o.mask, prim: o.prim, ...(o.pose ? { pose: o.pose } : {}), ...(o.gait ? { gait: o.gait } : {}), color: o.color, dims: o.dims?.slice(), tilt: o.tilt?.slice(),
-      pos: move(o.pos), yaw: o.yaw || 0, pitch: o.pitch || 0, roll: o.roll || 0, stretch: o.stretch?.slice(), scale: o.scale, auto_scale: o.auto_scale, hidden: false,
+      pos: move(o.pos), yaw: o.yaw || 0, pitch: o.pitch || 0, roll: o.roll || 0, stretch: o.stretch?.slice(), scale: o.scale, auto_scale: o.auto_scale, hidden: false, face: !!o.face,
       keys: (o.keys || []).map(k => ({ ...k, pos: move(k.pos) })), state: "ok" };
     c.mesh = o.prim ? primMesh(c) : o.mesh;
     s.objs.push(c); s.sel = s.objs.length - 1; changed(c);
@@ -809,7 +839,7 @@ const Scene3D = (() => {
 
   /* ---------------------------------------------------------------- saving */
   const objectsOut = () => s.objs.map(o => ({ id: o.id, name: o.name, becomes: (o.becomes || "").trim(), picture: o.picture || null, model: o.model, mask: o.mask, pos: o.pos, yaw: o.yaw || 0, pitch: o.pitch || 0, roll: o.roll || 0,
-    stretch: o.stretch || null, scale: o.scale, auto_scale: o.auto_scale, hidden: !!o.hidden, keys: o.keys || [],
+    stretch: o.stretch || null, scale: o.scale, auto_scale: o.auto_scale, hidden: !!o.hidden, face: !!o.face, keys: o.keys || [],
     ...(o.prim ? { prim: o.prim, color: o.color || PRIM_COLOR, dims: o.dims || PRIMS[o.prim].dims, tilt: o.tilt || [0, 0] } : {}),
     ...(o.prim === "figure" ? { pose: o.pose || "standing", gait: o.gait || null } : {}) }));
   function save() {
@@ -890,12 +920,13 @@ const Scene3D = (() => {
                 <button type="button" class="btn sm" data-act="pic-file">Choose…</button>
                 <button type="button" class="btn sm ghost" data-act="pic-clear" title="No picture">Remove</button></div></div>
             <input type="file" class="s3-picfile" accept="image/png,image/jpeg,image/webp" hidden></div>
+          <label class="check" title="While it moves, it turns to face the way it goes (stopped, it keeps its last heading). Rotation Y is then added on top: 0 faces straight ahead, 180 backwards."><input type="checkbox" id="s3-face"> Face where it's going</label>
           <div class="field"><label>Rotation <span class="opt">degrees</span></label>
             <div class="s3-dims"><label>X <input type="number" id="s3-rx" step="5"></label><label>Y <input type="number" id="s3-ry" step="5"></label><label>Z <input type="number" id="s3-rz" step="5"></label></div></div>
           <div class="field"><label for="s3-size">Size <span class="s3-size-v"></span></label><input type="range" id="s3-size" min="0.2" max="3" step="0.01"></div>
           <div class="s3-prim" hidden>
             <div class="row2 s3-posef" hidden><div class="field"><label for="s3-pose">Pose</label><select id="s3-pose">${Object.entries(POSES).map(([k, p]) => `<option value="${k}">${p.label}</option>`).join("")}</select></div>
-              <div class="field"><label for="s3-gait">Walk cycle</label><select id="s3-gait" title="While it moves along its path, it walks or runs, its steps matching how far it goes; stopped, it holds its pose. Turn it to face where it goes.">
+              <div class="field"><label for="s3-gait">Walk cycle</label><select id="s3-gait" title="While it moves along its path, it walks or runs, its steps matching how far it goes; stopped, it holds its pose. Tick Face where it's going (above) to have it turn the way it walks.">
                 <option value="">Off</option>${Object.entries(GAITS).map(([k, g]) => `<option value="${k}">${g.label}</option>`).join("")}</select></div></div>
             <div class="field"><label for="s3-color">Colour</label><input type="color" id="s3-color"></div>
             <div class="field"><label>Size <span class="opt s3-unit"></span></label>
@@ -1457,7 +1488,10 @@ const Scene3D = (() => {
       if (e.target.id === "s3-size") { editPose(o, { scale: (o.auto_scale || o.scale) * +e.target.value }); root.querySelector(".s3-size-v").textContent = `${Math.round(+e.target.value * 100)}%`; }
       s.dirty = true;
     });
-    root.addEventListener("change", e => { if (["s3-rx", "s3-ry", "s3-rz", "s3-size", "s3-becomes"].includes(e.target.id)) { save(); renderSide(); } });
+    root.addEventListener("change", e => {
+      if (e.target.id === "s3-face") { const o = s.objs[s.sel]; if (o) { o.face = e.target.checked; save(); renderSide(); s.dirty = true; } return; }
+      if (["s3-rx", "s3-ry", "s3-rz", "s3-size", "s3-becomes"].includes(e.target.id)) { save(); renderSide(); }
+    });
     // An object's picture: dropped from the gallery or the media library (a media ref), or a file from the PC.
     const th = root.querySelector(".s3-pic-th");
     th.addEventListener("dragover", e => { e.preventDefault(); th.classList.add("over"); });
@@ -1535,6 +1569,7 @@ const Scene3D = (() => {
     if (o) {
       root.querySelector(".s3-sel-h").textContent = o.name;
       { const b = root.querySelector("#s3-becomes"); if (b !== document.activeElement) b.value = o.becomes || ""; }
+      root.querySelector("#s3-face").checked = !!o.face;
       root.querySelector(".s3-pic-th").innerHTML = o.picture ? `<img src="${esc(mediaUrl(o.picture))}" alt="">` : `<span class="hint">None: drop one here</span>`;
       root.querySelector('[data-act="pic-crop"]').hidden = !cropSource(o);
       root.querySelector('[data-act="pic-clear"]').hidden = !o.picture;
@@ -1939,6 +1974,6 @@ const Scene3D = (() => {
     requestAnimationFrame(step); renderTime();
   }
 
-  return { create, createEmpty, open, openList, onItem, resume, _state: () => s, _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
+  return { create, createEmpty, open, openList, onItem, resume, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
     _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
 })();
