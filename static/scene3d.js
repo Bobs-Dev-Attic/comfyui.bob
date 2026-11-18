@@ -11,7 +11,12 @@
    Keyframes (as in Animate objects: the H3 frame grid at 24 fps): moving, turning or sizing an object at the playhead
    keys it there, and its path runs through its keys (position on a smooth curve, turn and size in a straight line).
    The camera is keyed on purpose (◆ Key the camera): orbiting to look around doesn't change its path; scrubbing or
-   playing puts the view back on it. */
+   playing puts the view back on it.
+
+   An empty scene (☰ › 3D scenes › New empty scene) has no picture: a floor 1.6 units (metres) under the camera with a
+   1 m grid, a sky colour and, if chosen, a picture far behind as a backdrop; its lens and shape (aspect) are set here.
+   📷 Generate photo draws what the camera frames (the frame on the view) and has the image editor's whole-picture edit
+   (Qwen Image Edit 2511 or MiniMax H3 Image) make a photograph of it, keeping the layout. */
 "use strict";
 
 const Scene3D = (() => {
@@ -66,6 +71,12 @@ const Scene3D = (() => {
 
   /* ---------------------------------------------------------------- starting one */
   // src: { ref, url, name, plate?, objects?: [{ name, mask, model? }] }
+  async function createEmpty() {
+    try {
+      const sc = await api("/api/scenes", { method: "POST", body: JSON.stringify({ picture: null, name: "Empty scene", project: state.project?.id ?? null }) });
+      refreshList(); open(sc.id);
+    } catch (e) { Media.toast(`3D scene: ${e.message}`); }
+  }
   async function create(src) {
     const cap = state.caps?.editor || {};
     if (cap.scene3d === false) return Media.toast("3D scenes need ComfyUI's Depth Anything 3 nodes and depth_anything_3_base.");
@@ -82,7 +93,8 @@ const Scene3D = (() => {
     if (list?.win?.el?.isConnected) return refreshList();
     const box = document.createElement("div");
     box.className = "m3-list";
-    box.innerHTML = `<div class="m3-grid"></div>`;
+    box.innerHTML = `<div class="s3-listbar"><button type="button" class="btn sm primary" data-new="1" title="A floor and a sky to build a scene from 3D models, with no picture">＋ New empty scene</button></div><div class="m3-grid"></div>`;
+    box.querySelector("[data-new]").onclick = () => createEmpty();
     const win = WM.open({ id: "scenes3d", title: "🏞 3D scenes", content: box, width: 760, height: 520, minWidth: 420, minHeight: 300, onClose: () => { list = null; } });
     list = { win, grid: box.querySelector(".m3-grid"), items: [] };
     box.addEventListener("click", e => {
@@ -98,7 +110,7 @@ const Scene3D = (() => {
     try { list.items = (await api("/api/scenes")).scenes || []; } catch (e) { list.grid.innerHTML = `<p class="hint">${esc(e.message)}</p>`; return; }
     list.grid.innerHTML = list.items.length ? list.items.map((x, i) => `
       <figure class="m3-card ${x.status}" data-i="${i}" tabindex="0">
-        <div class="m3-thumb"><img src="${esc(x.plate_url || x.picture_url || "")}" alt="">${x.status === "failed" ? `<span class="m3-fail">Failed</span>` : ""}</div>
+        <div class="m3-thumb">${x.plate_url || x.picture_url ? `<img src="${esc(x.plate_url || x.picture_url)}" alt="">` : "🏞"}${x.status === "failed" ? `<span class="m3-fail">Failed</span>` : ""}</div>
         <figcaption><b>${esc(x.name)}</b><span class="hint">${x.objects?.length || 0} object${x.objects?.length === 1 ? "" : "s"}${x.status === "failed" ? ` · ${esc((x.error || "").slice(0, 60))}` : ""}</span></figcaption>
         <button type="button" class="m3-more" data-more="${i}" aria-label="More for ${esc(x.name)}">⋯</button></figure>`).join("")
       : `<p class="hint m3-empty">No 3D scenes yet. Right-click a picture and choose 🏞 3D scene, or use 🏞 Open as a 3D scene in 🎬 Animate objects.</p>`;
@@ -153,6 +165,11 @@ const Scene3D = (() => {
   }
   // The background point seen at picture point (u, v) in 0..1, searching outwards for the nearest vertex.
   function pointAt(bg, u, v) {
+    if (bg.empty) {  // the floor along the camera's ray (the camera looks straight ahead from the origin)
+      const d = [(u - 0.5) * 2 * bg.t, -(v - 0.5) * 2 * bg.tv, -1];
+      if (d[1] >= -1e-3) return [0, bg.floor, -bg.dmed];
+      return mulv(d, Math.min(bg.floor / d[1], 60));
+    }
     const gx = Math.round(Math.max(0, Math.min(1, u)) * (bg.gw - 1)), gy = Math.round(Math.max(0, Math.min(1, v)) * (bg.gh - 1));
     for (let r = 0; r < 24; r++) {
       let best = -1, bd = Infinity;
@@ -188,6 +205,11 @@ const Scene3D = (() => {
   // The pose that stands an object where its mask is (or, without one, in the middle of the view).
   async function placement(o) {
     const bg = s.bg, m = o.mesh, hgt = Math.max(1e-6, m.hi[1] - m.lo[1]), dep = (m.hi[2] - m.lo[2]);
+    if (bg.empty && !o.mask) {  // a model's longest side is 1 unit: 1 m, on the floor in front, beside the others
+      const n = s.objs.filter(x => x !== o && x.pos).length, side = n % 2 ? 1 : -1;
+      const scale = 1 / Math.max(1e-6, hgt, m.hi[0] - m.lo[0], dep);
+      return { pos: [n ? side * Math.ceil(n / 2) * 1.2 : 0, bg.floor, -3.5], yaw: 0, scale };
+    }
     let info = null;
     if (o.mask) { try { info = await maskInfo(o.mask); } catch { info = null; } }
     const footUV = info ? [info.foot[0], Math.min(1, info.foot[1] + 0.012)] : [0.5, 0.8];
@@ -240,7 +262,8 @@ const Scene3D = (() => {
     clearTimeout(s.saveT);
     const id = s.id;
     const objects = s.objs.map(o => ({ id: o.id, name: o.name, model: o.model, mask: o.mask, pos: o.pos, yaw: o.yaw || 0, scale: o.scale, auto_scale: o.auto_scale, hidden: !!o.hidden, keys: o.keys || [] }));
-    const body = JSON.stringify({ objects, seconds: +s.seconds || 5, camera_keys: s.camKeys });
+    const body = JSON.stringify({ objects, seconds: +s.seconds || 5, camera_keys: s.camKeys,
+      ...(s.sc.kind === "empty" ? { aspect: s.sc.aspect, lens: s.sc.lens, backdrop: s.sc.backdrop } : {}) });
     s.saveT = setTimeout(() => api(`/api/scenes/${id}`, { method: "PATCH", body }).catch(e => Media.toast(`Couldn't save the scene: ${e.message}`)), 500);
   }
 
@@ -253,7 +276,7 @@ const Scene3D = (() => {
     root.className = "s3";
     root.innerHTML = `
       <div class="s3-stage"><div class="s3-box"><canvas class="m3-canvas s3-canvas" tabindex="0" aria-label="The 3D scene: drag an object to move it, drag elsewhere to orbit, wheel to zoom"></canvas>
-        <div class="m3-hud hint s3-hud">Making the background…</div></div>
+        <div class="m3-hud hint s3-hud">Making the background…</div><div class="s3-frame" aria-hidden="true"></div></div>
         <div class="mo-transport">
           <button type="button" class="btn sm" data-act="play" title="Play (Space)">▶</button>
           <input type="range" class="mo-scrub s3-scrub" min="0" step="${1 / FPS}" value="0" aria-label="Time">
@@ -261,8 +284,19 @@ const Scene3D = (() => {
           <label class="s3-len">Length <input type="number" class="s3-sec" min="1" max="10" step="0.5" aria-label="Length in seconds"> s</label></div></div>
       <aside class="mo-side s3-side">
         <section><h3>View</h3>
-          <div class="mo-row"><button type="button" class="btn sm" data-act="shot" title="Look through the picture's own camera">🎥 Picture's camera</button></div>
-          <label class="check"><input type="checkbox" data-opt="showBg" checked> Background</label>
+          <div class="mo-row"><button type="button" class="btn sm s3-shotbtn" data-act="shot" title="Look through the picture's own camera">🎥 Picture's camera</button></div>
+          <div class="s3-empty" hidden>
+            <div class="row2"><div class="field"><label for="s3-aspect">Shape</label><select id="s3-aspect">
+              <option value="16:9">16:9 wide</option><option value="9:16">9:16 tall</option><option value="1:1">1:1 square</option><option value="4:3">4:3</option><option value="21:9">21:9 cinema</option></select></div>
+              <div class="field"><label for="s3-lens">Lens</label><select id="s3-lens">
+              <option value="18">18 mm (very wide)</option><option value="24">24 mm (wide)</option><option value="35">35 mm</option><option value="50">50 mm (natural)</option><option value="85">85 mm (portrait)</option><option value="135">135 mm (tele)</option></select></div></div>
+            <div class="row2"><div class="field"><label for="s3-sky">Sky</label><input type="color" id="s3-sky"></div>
+              <div class="field"><label for="s3-floor">Floor</label><input type="color" id="s3-floor"></div></div>
+            <div class="field"><label>Backdrop picture <span class="opt">far behind</span></label>
+              <div class="mo-row"><button type="button" class="btn sm" data-act="bd-pick">Choose…</button><button type="button" class="btn sm ghost" data-act="bd-clear" hidden>Remove</button><span class="hint s3-bdname"></span></div>
+              <input type="file" class="s3-bdfile" accept="image/png,image/jpeg,image/webp" hidden></div>
+          </div>
+          <label class="check"><input type="checkbox" data-opt="showBg" checked> <span class="s3-bglabel">Background</span></label>
           <label class="check"><input type="checkbox" data-opt="clay"> Clay (models without colour)</label>
           <p class="hint s3-bgnote"></p></section>
         <section><h3>Camera</h3>
@@ -282,7 +316,8 @@ const Scene3D = (() => {
       </aside>`;
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
-    foot.innerHTML = `<span class="hint s3-foot">Drag: orbit · Right-drag: pan · Wheel: zoom</span><button type="button" class="btn ghost" data-act="pic">📷 Save picture of this view</button>
+    foot.innerHTML = `<span class="hint s3-foot">Drag: orbit · Right-drag: pan · Wheel: zoom</span><button type="button" class="btn ghost" data-act="pic" title="Save the view as it is drawn here">💾 Save view</button>
+      <button type="button" class="btn" data-act="photo" title="A photograph of what the camera frames, made by the image editor's edit model">📷 Generate photo…</button>
       <button type="button" class="btn primary" data-act="render" title="Make the video with H3, following this scene">🎬 Render video…</button>`;
     const win = WM.open({ id: "scene3d", title: `🏞 ${sc.name}`, content: root, footer: foot, width: 1100, height: 720, minWidth: 720, minHeight: 480,
       onClose: () => { if (s) { cancelAnimationFrame(s.raf); clearTimeout(s.poll); clearTimeout(s.saveT); s.ro?.disconnect(); s.closed = true; } s = null; meshCache.clear(); } });
@@ -303,6 +338,19 @@ const Scene3D = (() => {
     }
     if (sc.status !== "done") { hud.textContent = `The background couldn't be made: ${sc.error || "unknown error"}`; return; }
     s.sc = sc;
+    if (sc.kind === "empty") {
+      await buildEmpty();
+      if (!s) return;
+      toShot(); setTime(0);
+      root.querySelector(".s3-empty").hidden = false;
+      root.querySelector(".s3-shotbtn").textContent = "🎥 Start view";
+      root.querySelector(".s3-shotbtn").title = "Back to the view the scene starts with";
+      root.querySelector(".s3-bglabel").textContent = "Floor and backdrop";
+      root.querySelector(".s3-bgnote").textContent = "Add 3D models below; each stands on the floor at 1 m tall. Frame the shot by orbiting (drag), panning (right-drag) and zooming (wheel), then 📷 Generate photo.";
+      renderEmpty();
+      loop(); loadObjects();
+      return;
+    }
     try {
       const prims = await G().parseGLB(await (await fetch(sc.bg_url)).arrayBuffer());
       const p = prims[0], img = p.tex;
@@ -321,7 +369,9 @@ const Scene3D = (() => {
   }
 
   /* ---------------------------------------------------------------- rendering to video (H3 with Time-to-Move) */
-  const shotCam = () => ({ yaw: 0, pitch: 0, dist: s.bg.dmed, target: [0, 0, -s.bg.dmed] });
+  const shotCam = () => s.bg.empty ? emptyStart() : ({ yaw: 0, pitch: 0, dist: s.bg.dmed, target: [0, 0, -s.bg.dmed] });
+  // An empty scene starts at eye height (the origin) looking a little down at the floor 3.5 m ahead.
+  function emptyStart() { const ty = s.bg.floor + 0.6, z = 3.5; return { yaw: 0, pitch: Math.atan2(-ty, z) / rad, dist: Math.hypot(z, ty), target: [0, ty, -z] }; }
   // The camera of the render at time t: its path, or (without keys) the picture's own camera.
   const camForRender = t => s.camKeys.length ? camAt(t) : shotCam();
   const camDiff = (a, b) => Math.abs(a.yaw - b.yaw) + Math.abs(a.pitch - b.pitch) + Math.abs(a.dist - b.dist) / s.bg.dmed
@@ -380,7 +430,7 @@ const Scene3D = (() => {
     if (!s.objs.some(o => o.mesh && !o.hidden) && !cameraMoves()) return Media.toast("Nothing moves yet: key an object or the camera first.");
     if (!state.caps?.editor?.motion && state.caps?.editor) return Media.toast("Rendering a scene needs H3 and ComfyUI-vlo (vloTimeToMove), as Animate objects does.");
     const moving = s.objs.filter(o => o.mesh && !o.hidden && o.keys?.length > 1).map(o => o.name);
-    const pic = startsAsPicture();
+    const noPic = !s.sc.picture, pic = !noPic && startsAsPicture();
     const box = document.createElement("div");
     box.className = "m3-make";
     box.innerHTML = `<p class="hint">H3 makes the video from the picture, following this scene's rough animation (Time-to-Move, as in Animate objects):
@@ -389,7 +439,7 @@ const Scene3D = (() => {
         <textarea id="s3r-what" rows="3" placeholder="${esc(moving.length ? `${moving.join(" and ")} move${moving.length > 1 ? "" : "s"} across the scene.` : "The scene comes to life.")}"></textarea></div>
       <div class="row2"><div class="field"><label for="s3r-q">Quality</label><select id="s3r-q"><option value="draft">Draft</option><option value="standard" selected>Standard</option><option value="full">Full</option></select></div>
         <div class="field"><label for="s3r-hold">Follow the plan</label><select id="s3r-hold"><option value="loose">Loosely</option><option value="normal" selected>Normally</option><option value="tight">Tightly</option></select></div></div>
-      <div class="field"><label for="s3r-first">Start from</label><select id="s3r-first">
+      <div class="field"${noPic ? " hidden" : ""}><label for="s3r-first">Start from</label><select id="s3r-first">
         <option value="picture"${pic ? " selected" : ""}>The picture (the scene starts as the picture)</option>
         <option value="composite"${pic ? "" : " selected"}>The scene's first frame${pic ? "" : " (the camera starts elsewhere)"}</option></select></div>
       <label class="check"><input type="checkbox" id="s3r-tl"${autoTl() ? " checked" : ""}> Add it to the timeline when it's done</label>`;
@@ -414,9 +464,11 @@ const Scene3D = (() => {
         const prompt = `integrated_multimodal_description: [Shot 1] ${what.replace(/\s+/g, " ")} ${cam}\n\noverall_soundscape: Natural sound of the scene.\n\nnon_diegetic_music: N/A`;
         const toTl = box.querySelector("#s3r-tl").checked;
         try { localStorage.setItem("bob.sceneAutoTl", toTl ? "1" : "0"); } catch { /* not kept */ }
+        // an empty scene has no picture: H3 starts from the scene's own first frame
+        const first = noPic ? await uploadFrame([W, H], 0, camForRender(0), "scene_first.png") : s.sc.picture;
         const items = await submit({ kind: "video", engine: "motion", prompt, seconds: n / FPS, aspect: "16:9", quality: box.querySelector("#s3r-q").value,
-          seed: -1, batch: 1, turbo: true, first_frame: s.sc.picture, motion_video: ref, motion_video_mask: mask,
-          motion_hold: box.querySelector("#s3r-hold").value, motion_first: box.querySelector("#s3r-first").value, project: s.sc.project });
+          seed: -1, batch: 1, turbo: true, first_frame: first, motion_video: ref, motion_video_mask: mask,
+          motion_hold: box.querySelector("#s3r-hold").value, motion_first: noPic ? "picture" : box.querySelector("#s3r-first").value, project: s.sc.project });
         if (!items?.length) throw new Error("H3 didn't take it (the reason is on the Generate step)");
         if (toTl) Shots.placeWhenDone(items, s.sc.project);
         win.close();
@@ -426,7 +478,7 @@ const Scene3D = (() => {
     };
   }
 
-  function toShot() { const d = s.bg.dmed; s.cam = { yaw: 0, pitch: 0, dist: d, target: [0, 0, -d] }; s.dirty = true; }
+  function toShot() { s.cam = shotCam(); s.dirty = true; }
   function eye() { const c = s.cam, y = c.yaw * rad, p = c.pitch * rad; return [c.target[0] + c.dist * Math.cos(p) * Math.sin(y), c.target[1] + c.dist * Math.sin(p), c.target[2] + c.dist * Math.cos(p) * Math.cos(y)]; }
   function frameSize() { const dpr = Math.min(2, window.devicePixelRatio || 1); return [Math.max(1, Math.round(s.cv.clientWidth * dpr)), Math.max(1, Math.round(s.cv.clientHeight * dpr))]; }
   // vertical half-angle: the picture's, widened so its whole width fits a narrower window
@@ -442,7 +494,11 @@ const Scene3D = (() => {
     if (s.cv.width !== W || s.cv.height !== H) { s.cv.width = W; s.cv.height = H; }
     const t = r ? r.t : s.t, cam = r?.cam || s.cam;
     const { e, VP } = viewProj(W, H, cam), y = (cam.yaw - 40) * rad, key = [Math.sin(y) * 0.6, 0.85, Math.cos(y) * 0.6 + 0.3];
-    s.gpu.begin(W, H, r ? [0, 0, 0] : G().themeBg(s.cv), r && !r.mask ? 0 : 1);  // a frame: holes stay see-through, to fill
+    const sky = s.bg.empty ? hexRgb(s.sc.backdrop?.sky || "#c9d3de") : null;
+    if (sky && r?.mask) s.gpu.begin(W, H, [0, 0, 0], 1);  // the open sky is H3's to make
+    else if (sky) s.gpu.begin(W, H, sky, 1);
+    else s.gpu.begin(W, H, r ? [0, 0, 0] : G().themeBg(s.cv), r && !r.mask ? 0 : 1);  // a frame: holes stay see-through, to fill
+    if (!r) frameOverlay();
     const white = [1, 1, 1], black = [0, 0, 0];
     if (r?.mask) s.gpu.draw(s.bgMesh, { VP, M: ID, eye: e, key, solid: r.mask === "all" ? white : black });
     else if (s.showBg || r) s.gpu.draw(s.bgMesh, { VP, M: ID, eye: e, key, unlit: true });
@@ -564,6 +620,9 @@ const Scene3D = (() => {
       if (a === "pic") { draw(); s.cv.toBlob(bl => { const x = document.createElement("a"); x.href = URL.createObjectURL(bl); x.download = `${s.sc.name}_view.png`; x.click(); setTimeout(() => URL.revokeObjectURL(x.href), 4000); }); return; }
       if (a === "add") return addModel();
       if (a === "render") return renderDialog();
+      if (a === "photo") return photoDialog();
+      if (a === "bd-pick") return s.root.querySelector(".s3-bdfile").click();
+      if (a === "bd-clear") { s.sc.backdrop = { ...s.sc.backdrop, picture: null }; s.sc.backdrop_url = null; return emptyChanged(); }
       if (a === "play") return play();
       if (a === "key-cam") {
         if (!s.bg) return;
@@ -587,7 +646,26 @@ const Scene3D = (() => {
       if (a === "remove") return removeSel();
       if (b.dataset.i != null && !a) { s.sel = +b.dataset.i; renderSide(); s.dirty = true; }
     }));
-    root.addEventListener("change", e => {
+    root.addEventListener("change", async e => {
+      const id = e.target.id;
+      if (s.sc.kind === "empty" && ["s3-aspect", "s3-lens", "s3-sky", "s3-floor"].includes(id)) {
+        if (id === "s3-aspect") s.sc.aspect = e.target.value;
+        if (id === "s3-lens") s.sc.lens = +e.target.value;
+        if (id === "s3-sky") s.sc.backdrop = { ...s.sc.backdrop, sky: e.target.value };
+        if (id === "s3-floor") s.sc.backdrop = { ...s.sc.backdrop, floor: e.target.value };
+        return emptyChanged();
+      }
+      if (e.target.classList.contains("s3-bdfile")) {
+        const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+        try {
+          const fd = new FormData(); fd.append("file", f);
+          const r = await fetch("/api/upload", { method: "POST", body: fd }), j = await r.json();
+          if (!r.ok) throw new Error(j.detail || r.statusText);
+          s.sc.backdrop = { ...s.sc.backdrop, picture: j.ref }; s.sc.backdrop_url = `/api/media/file?path=${encodeURIComponent(j.ref)}`;
+          emptyChanged();
+        } catch (err) { Media.toast(`Backdrop: ${err.message}`); }
+        return;
+      }
       const k = e.target.dataset.opt; if (!k) return;
       s[k] = e.target.checked; s.dirty = true;
     });
@@ -657,6 +735,115 @@ const Scene3D = (() => {
     }
   }
 
+  /* ---------------------------------------------------------------- empty scenes */
+  const hexRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255);
+  const ASPECTS = { "16:9": 16 / 9, "9:16": 9 / 16, "1:1": 1, "4:3": 4 / 3, "21:9": 21 / 9 };
+  // An empty scene's camera and background: the lens on the frame's long side (a 36 mm wide sensor), a floor with a
+  // 1 m grid 1.6 m under the camera, and the backdrop picture (if any) far behind, filling the view.
+  async function buildEmpty() {
+    const sc = s.sc, A = ASPECTS[sc.aspect] || 16 / 9, tl = 18 / (+sc.lens || 35);
+    const t = A >= 1 ? tl : tl * A, tv = t / A, floor = -1.6;
+    s.bg = { empty: true, t, tv, aspect: A, dmed: 4, floor };
+    const prims = [];
+    // the floor: 80 x 80 m, its texture a grid of 1 m squares
+    const N = 80, cz = -N / 2 + 6, c = document.createElement("canvas");
+    c.width = c.height = 2048;
+    const g = c.getContext("2d"), fl = sc.backdrop?.floor || "#8b9098", [fr, fg, fb] = hexRgb(fl);
+    g.fillStyle = fl; g.fillRect(0, 0, 2048, 2048);
+    const lum = 0.3 * fr + 0.59 * fg + 0.11 * fb;
+    g.strokeStyle = lum > 0.5 ? "rgba(0,0,0,.22)" : "rgba(255,255,255,.18)"; g.lineWidth = 2;
+    for (let i = 0; i <= N; i++) { const p = i / N * 2048; g.beginPath(); g.moveTo(p, 0); g.lineTo(p, 2048); g.moveTo(0, p); g.lineTo(2048, p); g.stroke(); }
+    prims.push({ pos: new Float32Array([-N / 2, floor, cz - N / 2, N / 2, floor, cz - N / 2, N / 2, floor, cz + N / 2, -N / 2, floor, cz + N / 2]),
+      nrm: new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0]), uv: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]), col: null,
+      idx: new Uint32Array([0, 2, 1, 0, 3, 2]), base: [1, 1, 1, 1], tex: c, ao: null });
+    // the backdrop: a card 50 m away, covering the view with room to look around
+    const url = sc.backdrop?.picture ? (sc.backdrop_url || `/api/media/file?path=${encodeURIComponent(sc.backdrop.picture)}`) : null;
+    if (url) {
+      try {
+        const img = await createImageBitmap(await (await fetch(url)).blob());
+        const D = 50, h = 2 * tv * D * 1.6, w = Math.max(h * img.width / img.height, 2 * t * D * 1.6);
+        const hh = w * img.height / img.width, y0 = floor - 1, z = -D;
+        prims.push({ pos: new Float32Array([-w / 2, y0, z, w / 2, y0, z, w / 2, y0 + hh, z, -w / 2, y0 + hh, z]), nrm: null,
+          uv: new Float32Array([0, 1, 1, 1, 1, 0, 0, 0]), col: null, idx: new Uint32Array([0, 1, 2, 0, 2, 3]), base: [1, 1, 1, 1], tex: img, ao: null });
+      } catch { Media.toast("Couldn't load the backdrop picture."); }
+    }
+    s.bgMesh = s.gpu.upload(prims);
+    s.dirty = true;
+  }
+  function renderEmpty() {
+    const sc = s.sc, R = s.root;
+    R.querySelector("#s3-aspect").value = sc.aspect || "16:9";
+    R.querySelector("#s3-lens").value = String(Math.round(+sc.lens || 35));
+    R.querySelector("#s3-sky").value = sc.backdrop?.sky || "#c9d3de";
+    R.querySelector("#s3-floor").value = sc.backdrop?.floor || "#8b9098";
+    const pic = sc.backdrop?.picture;
+    R.querySelector(".s3-bdname").textContent = pic ? pic.split("/").pop() : "none";
+    R.querySelector('[data-act="bd-clear"]').hidden = !pic;
+    s.hud.textContent = `${sc.aspect || "16:9"} · ${Math.round(+sc.lens || 35)} mm · ${Math.round(2 * Math.atan(s.bg.t) / rad)}° wide`;
+  }
+  async function emptyChanged() {
+    await buildEmpty();
+    renderEmpty(); save(); s.dirty = true;
+  }
+  // What the camera frames: the rest of the view is shaded (the window and the frame rarely have the same shape).
+  function frameOverlay() {
+    const el = s.root.querySelector(".s3-frame"); if (!el || !s.bg) return;
+    const W = s.cv.clientWidth, H = s.cv.clientHeight, A = s.bg.aspect;
+    const fw = W / H > A ? H * A : W, fh = W / H > A ? H : W / A;
+    Object.assign(el.style, { left: `${(W - fw) / 2}px`, top: `${(H - fh) / 2}px`, width: `${fw}px`, height: `${fh}px` });
+  }
+
+  // One frame of the scene as a picture in data/uploads: [W, H], at time t, through `cam` (holes filled).
+  async function uploadFrame(size, t, cam, name) {
+    draw({ size, t, cam });
+    const c = fillHoles(s.cv, size[0], size[1]);
+    const blob = await new Promise(res => c.toBlob(res, "image/png"));
+    const fd = new FormData(); fd.append("file", blob, name);
+    const r = await fetch("/api/upload", { method: "POST", body: fd }), j = await r.json();
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    return j.ref;
+  }
+
+  /* ---------------------------------------------------------------- 📷 Generate photo */
+  function photoDialog() {
+    if (!s?.bg) return;
+    const ed = state.caps?.editor || {}, models = [ed.qwen !== false && ["qwen", "Qwen Image Edit 2511"], ed.h3image && ["h3image", "MiniMax H3 Image"]].filter(Boolean);
+    if (!models.length) return Media.toast("Generate photo needs an edit model: Qwen Image Edit 2511 or MiniMax H3 Image.");
+    let keep = "";
+    try { keep = localStorage.getItem("bob.scenePhotoLook") || ""; } catch { /* none */ }
+    const box = document.createElement("div");
+    box.className = "m3-make";
+    box.innerHTML = `<p class="hint">Draws what the camera frames${s.camKeys.length ? ` (at ${s.t.toFixed(2)} s)` : ""} and has the edit model turn it into a photograph,
+        keeping where everything is. The photo shows up in the gallery.</p>
+      <div class="field"><label for="s3p-look">How it should look <span class="opt">optional</span></label>
+        <textarea id="s3p-look" rows="3" placeholder="${s.bg.empty ? "On a sunny beach at golden hour, shot on 35 mm film." : "Soft daylight, shot on 35 mm film."}">${esc(keep)}</textarea></div>
+      <div class="field"><label for="s3p-model">Model</label><select id="s3p-model">${models.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></div>`;
+    const foot = document.createElement("div");
+    foot.className = "wm-foot-row";
+    foot.innerHTML = `<span class="hint s3p-st"></span><button type="button" class="btn ghost" data-a="cancel">Cancel</button><button type="button" class="btn primary" data-a="go">📷 Generate</button>`;
+    const win = WM.open({ id: "scene3d-photo", title: `Photo · ${s.sc.name}`, content: box, footer: foot, width: 500, height: 380, modal: true });
+    foot.querySelector('[data-a="cancel"]').onclick = () => win.close();
+    foot.querySelector('[data-a="go"]').onclick = async e => {
+      e.target.disabled = true;
+      const st = foot.querySelector(".s3p-st"), look = box.querySelector("#s3p-look").value.trim();
+      try { localStorage.setItem("bob.scenePhotoLook", look); } catch { /* not kept */ }
+      const A = s.bg.aspect, W = Math.round((A >= 1 ? 1280 : 1280 * A) / 8) * 8, H = Math.round(W / A / 8) * 8, size0 = [s.cv.width, s.cv.height];
+      try {
+        st.textContent = "Drawing the view…";
+        const ref = await uploadFrame([W, H], s.t, s.cam, "scene_view.png");
+        const prompt = "Turn this 3D render into a realistic photograph. Keep the composition, the camera angle, and the position, size, "
+          + "shape and colour of every object exactly as they are; give the surfaces real materials, light and shadows." + (look ? ` ${look}` : "");
+        st.textContent = "Sending to the edit model…";
+        const items = await submit({ kind: "image", engine: "imgedit", edit_op: "instruct", source: ref, prompt, edit_model: box.querySelector("#s3p-model").value,
+          seed: -1, batch: 1, project: s.sc.project });
+        if (!items?.length) throw new Error("The edit model didn't take it (the reason is on the Generate step)");
+        win.close();
+        Media.toast("3D scene: the photo is being made. It shows up in the gallery.");
+      } catch (err) { st.textContent = ""; e.target.disabled = false; Media.toast(`Photo: ${err.message}`); }
+      finally { if (s) { s.cv.width = size0[0]; s.cv.height = size0[1]; s.dirty = true; } }
+    };
+  }
+
   /* ---------------------------------------------------------------- time */
   function renderTime() {
     if (!s) return;
@@ -688,6 +875,6 @@ const Scene3D = (() => {
     requestAnimationFrame(step); renderTime();
   }
 
-  return { create, open, openList, _state: () => s, _draw: (r = null) => s && s.bg && draw(r),
+  return { create, createEmpty, open, openList, _state: () => s, _draw: (r = null) => s && s.bg && draw(r),
     _render: (kind, size, n) => renderVideo(kind, size, n, () => {}), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
 })();

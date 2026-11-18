@@ -206,7 +206,9 @@ def _write_scenes(items: list[dict[str, Any]]) -> None:
 
 def _scene_public(s: dict[str, Any]) -> dict[str, Any]:
     q = lambda ref: f"/api/media/file?path={urllib.parse.quote(ref)}" if ref else None  # noqa: E731
-    return {**s, "bg_url": _url(s.get("bg")), "picture_url": q(s.get("picture")), "plate_url": q(s.get("plate"))}
+    bd = s.get("backdrop") or {}
+    return {**s, "bg_url": _url(s.get("bg")), "picture_url": q(s.get("picture")), "plate_url": q(s.get("plate")),
+            "backdrop_url": q(bd.get("picture"))}
 
 
 def list_scenes() -> list[dict[str, Any]]:
@@ -239,18 +241,24 @@ def delete_scene(scene_id: str) -> bool:
     return True
 
 
-def start_scene(jobs: Any, *, picture: str, plate: str | None, name: str, project: str | None,
+def start_scene(jobs: Any, *, picture: str | None, plate: str | None, name: str, project: str | None,
                 objects: list[dict[str, Any]]) -> dict[str, Any]:
-    """Make a scene's background (a few seconds); returns the entry at once (status "running")."""
+    """Make a scene's background (a few seconds); returns the entry at once (status "running"). Without a picture
+    it's an empty scene (a floor and a backdrop, drawn in the page), ready at once."""
     scene_id = uuid.uuid4().hex[:12]
     now = time.time()
     entry = {"id": scene_id, "name": name.strip()[:120] or "3D scene", "project": project, "picture": picture,
-             "plate": plate, "status": "running", "error": None, "bg": None, "objects": objects, "seconds": 5.0, "camera_keys": [],
-             "created": now, "updated": now}
+             "plate": plate, "status": "running" if picture else "done", "error": None, "bg": None, "objects": objects,
+             "seconds": 5.0, "camera_keys": [], "created": now, "updated": now}
+    if not picture:  # an empty scene: its framing and backdrop
+        entry.update(kind="empty", aspect="16:9", lens=35.0,
+                     backdrop={"sky": "#c9d3de", "floor": "#8b9098", "picture": None})
     with _lock:
         items = _read_scenes()
         items.append(entry)
         _write_scenes(items)
+    if not picture:
+        return _scene_public(entry)
     built = workflows.build_scene_background(prefix=f"bob/scene/{scene_id}")
     _tasks[f"scene_{scene_id}"] = asyncio.get_running_loop().create_task(_run_scene(jobs, scene_id, built, plate or picture))
     return _scene_public(entry)
