@@ -374,6 +374,7 @@ const Scene3D = (() => {
     return (await r.json()).ref;
   }
 
+  const autoTl = () => { try { return localStorage.getItem("bob.sceneAutoTl") !== "0"; } catch { return true; } };
   function renderDialog() {
     if (!s?.bg) return;
     if (!s.objs.some(o => o.mesh && !o.hidden) && !cameraMoves()) return Media.toast("Nothing moves yet: key an object or the camera first.");
@@ -390,7 +391,8 @@ const Scene3D = (() => {
         <div class="field"><label for="s3r-hold">Follow the plan</label><select id="s3r-hold"><option value="loose">Loosely</option><option value="normal" selected>Normally</option><option value="tight">Tightly</option></select></div></div>
       <div class="field"><label for="s3r-first">Start from</label><select id="s3r-first">
         <option value="picture"${pic ? " selected" : ""}>The picture (the scene starts as the picture)</option>
-        <option value="composite"${pic ? "" : " selected"}>The scene's first frame${pic ? "" : " (the camera starts elsewhere)"}</option></select></div>`;
+        <option value="composite"${pic ? "" : " selected"}>The scene's first frame${pic ? "" : " (the camera starts elsewhere)"}</option></select></div>
+      <label class="check"><input type="checkbox" id="s3r-tl"${autoTl() ? " checked" : ""}> Add it to the timeline when it's done</label>`;
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
     foot.innerHTML = `<span class="hint s3r-st"></span><button type="button" class="btn ghost" data-a="cancel">Cancel</button><button type="button" class="btn primary" data-a="go">🎬 Render</button>`;
@@ -410,11 +412,15 @@ const Scene3D = (() => {
         const what = box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder;
         const cam = cameraMoves() ? "The camera moves smoothly through the scene." : "The camera holds a static shot.";
         const prompt = `integrated_multimodal_description: [Shot 1] ${what.replace(/\s+/g, " ")} ${cam}\n\noverall_soundscape: Natural sound of the scene.\n\nnon_diegetic_music: N/A`;
-        await submit({ kind: "video", engine: "motion", prompt, seconds: n / FPS, aspect: "16:9", quality: box.querySelector("#s3r-q").value,
+        const toTl = box.querySelector("#s3r-tl").checked;
+        try { localStorage.setItem("bob.sceneAutoTl", toTl ? "1" : "0"); } catch { /* not kept */ }
+        const items = await submit({ kind: "video", engine: "motion", prompt, seconds: n / FPS, aspect: "16:9", quality: box.querySelector("#s3r-q").value,
           seed: -1, batch: 1, turbo: true, first_frame: s.sc.picture, motion_video: ref, motion_video_mask: mask,
           motion_hold: box.querySelector("#s3r-hold").value, motion_first: box.querySelector("#s3r-first").value, project: s.sc.project });
+        if (!items?.length) throw new Error("H3 didn't take it (the reason is on the Generate step)");
+        if (toTl) Shots.placeWhenDone(items, s.sc.project);
         win.close();
-        Media.toast("3D scene: queued. The video shows up in the gallery when it's done.");
+        Media.toast(`3D scene: queued. ${toTl ? "It goes on the timeline when it's done." : "The video shows up in the gallery when it's done."}`);
       } catch (err) { st.textContent = ""; e.target.disabled = false; Media.toast(`Render: ${err.message}`); }
       finally { if (s) { s.cv.width = keep[0]; s.cv.height = keep[1]; s.dirty = true; } }
     };

@@ -1167,6 +1167,13 @@ const Shots = (() => {
       return;
     }
   }
+  // Another window's video (a 3D scene's render): onto the end of the timeline's first video track when it's done, like
+  // a shot with "Add to timeline when done" (the first good take; kept across a reload).
+  function placeWhenDone(items, project) {
+    if (!items?.length) return;
+    pending.set(items[0].id, { ids: items.map(x => x.id), project: project ?? "experiment", one: true });
+    savePending();
+  }
   // For the Generate step's summary.
   // Exactly what Generate sends: the multi-shot prompt, or each shot's own prompt.
   function previewText() {
@@ -1191,5 +1198,5 @@ const Shots = (() => {
     return only ? 0 : sh.list.length - 1;
   }
 
-  return { init, render, renderBanner, prompt, previewText, on, ready, generate, onItem, resume, ensure, describe, openModal, reuse, describeMissing };
+  return { init, render, renderBanner, prompt, previewText, on, ready, generate, onItem, resume, ensure, describe, openModal, reuse, describeMissing, placeWhenDone };
 })();
