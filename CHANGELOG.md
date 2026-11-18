@@ -5,6 +5,15 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.94.0] - 2026-11-18
+
+### Added
+- **🌫 Save depth map…** in a 3D scene (next to Save view): this frame as a PNG (1280 px on its long side), or the
+  whole clip as a video, through the render's camera. It's the kind depth ControlNets (MiDaS, Depth Anything) expect:
+  near is white, far is black, scaled as inverse depth between the nearest and farthest things in view, and the open
+  sky is black. Exact, from the scene itself rather than estimated; a clip uses one range for all its frames, so it
+  doesn't flicker. Persons appear in their poses and walk cycles.
+
 ## [0.93.0] - 2026-11-18
 
 ### Added

@@ -939,6 +939,7 @@ const Scene3D = (() => {
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
     foot.innerHTML = `<span class="hint s3-foot">Drag: orbit · Right-drag: pan · Wheel: zoom · Right-click: menu</span><button type="button" class="btn ghost" data-act="pic" title="Save the view as it is drawn here">💾 Save view</button>
+      <button type="button" class="btn ghost" data-act="depth" title="A depth map of what the camera frames (near is white, far is black), for a depth ControlNet">🌫 Save depth map…</button>
       <button type="button" class="btn" data-act="photo" title="A photograph of what the camera frames, made by the image editor's edit model">📷 Generate photo…</button>
       <button type="button" class="btn primary" data-act="render" title="Make the video with H3, following this scene">🎬 Render video…</button>`;
     const win = WM.open({ id: "scene3d", title: `🏞 ${sc.name}`, content: root, footer: foot, width: 1100, height: 720, minWidth: 720, minHeight: 480,
@@ -1396,6 +1397,13 @@ const Scene3D = (() => {
       if (a === "floor") return dropDown(o);
       if (a === "dup") return duplicate(o);
       if (a === "render") return renderDialog();
+      if (a === "depth") {
+        const r = b.getBoundingClientRect();
+        return Media.menu(r.left, r.top - 8, [
+          [`This frame${s.camKeys.length ? ` (${s.t.toFixed(2)} s)` : ""}: PNG`, () => saveDepth(false)],
+          [`The whole clip (${frameCount()} frames): video`, () => saveDepth(true)],
+        ]);
+      }
       if (a === "photo") return photoDialog();
       if (a === "bd-pick") return s.root.querySelector(".s3-bdfile").click();
       if (a === "pic-file") return s.root.querySelector(".s3-picfile").click();
@@ -1825,6 +1833,82 @@ const Scene3D = (() => {
     out.getContext("2d").putImageData(px, 0, 0);
     const blob = await new Promise(res => out.toBlob(res, "image/png"));
     return uploadBlob(blob, `${o.name.replace(/[^\w-]+/g, "_").slice(0, 40) || "object"}.png`);
+  }
+
+  /* ---------------------------------------------------------------- 🌫 Save depth map */
+  // What the camera frames as depth, the way depth ControlNets (MiDaS, Depth Anything) want it: near is white, far is
+  // black, scaled as inverse depth between the nearest and farthest things in view; the open sky is black. It's drawn
+  // offscreen with each pixel's distance along the camera's forward axis encoded in 24 bits, then read back here.
+  // A clip uses one range for all its frames (measured first), so its brightness doesn't flicker.
+  function depthDistances([W, H], t, cam) {
+    for (const o of s.objs) figureMesh(o, t);
+    const { e, VP } = viewProj(W, H, cam), fwd = norm(sub(cam.target, e)), zmax = (s.bg.dmed || 4) * 60;
+    const px = s.gpu.capture(W, H, d => {
+      const o = { VP, M: ID, eye: e, key: [0, 1, 0], depthOut: [...fwd, zmax] };
+      if (s.bgMesh) d(s.bgMesh, o);
+      for (const x of s.objs) if (x.mesh && x.pos && !x.hidden) d(x.mesh, { ...o, M: matOf(x, poseAt(x, t)) });
+    });
+    const z = new Float32Array(W * H);  // top row first; 0 = nothing (sky)
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = ((H - 1 - y) * W + x) * 4, v = px[i] * 65536 + px[i + 1] * 256 + px[i + 2];
+      z[y * W + x] = v ? (v - 1) / 16777214 * zmax : 0;
+    }
+    return z;
+  }
+  function depthRange(z) {
+    const vals = []; for (let i = 0; i < z.length; i += 7) if (z[i] > 0) vals.push(z[i]);
+    if (!vals.length) return null;
+    vals.sort((a, b) => a - b);
+    return [Math.max(1e-4, vals[Math.floor(vals.length * 0.005)]), vals[Math.min(vals.length - 1, Math.floor(vals.length * 0.995))]];
+  }
+  function depthCanvas(z, [W, H], [near, far]) {
+    const c = document.createElement("canvas"); c.width = W; c.height = H;
+    const g = c.getContext("2d"), im = g.createImageData(W, H), a = 1 / near, b = 1 / Math.max(far, near * 1.001);
+    for (let i = 0; i < z.length; i++) {
+      const v = z[i] > 0 ? Math.round(255 * Math.max(0, Math.min(1, (1 / z[i] - b) / (a - b)))) : 0;
+      im.data[i * 4] = im.data[i * 4 + 1] = im.data[i * 4 + 2] = v; im.data[i * 4 + 3] = 255;
+    }
+    g.putImageData(im, 0, 0);
+    return c;
+  }
+  async function saveDepth(clip) {
+    if (!s?.bg) return;
+    const A = s.bg.aspect, W = Math.round((A >= 1 ? 1280 : 1280 * A) / 8) * 8, H = Math.round(W / A / 8) * 8, size = [W, H];
+    const base = (s.sc.name || "scene").replace(/[^\w-]+/g, "_").slice(0, 40) || "scene";
+    const save = (href, name) => { const x = document.createElement("a"); x.href = href; x.download = name; x.click(); };
+    try {
+      if (!clip) {
+        const cam = s.camKeys.length ? camForRender(s.t) : s.cam, z = depthDistances(size, s.t, cam), range = depthRange(z);
+        if (!range) return Media.toast("Nothing in view to measure.");
+        depthCanvas(z, size, range).toBlob(bl => { const u = URL.createObjectURL(bl); save(u, `${base}_depth.png`); setTimeout(() => URL.revokeObjectURL(u), 4000); }, "image/png");
+        return;
+      }
+      const n = frameCount(), sizeV = [Math.round(W * 0.75 / 2) * 2, Math.round(H * 0.75 / 2) * 2];
+      Media.toast(`Depth map: measuring ${n} frames…`);
+      let near = Infinity, far = 0;
+      for (let f = 0; f < n; f++) {
+        const r = depthRange(depthDistances(sizeV, f / FPS, camForRender(f / FPS)));
+        if (r) { near = Math.min(near, r[0]); far = Math.max(far, r[1]); }
+        if (f % 8 === 0) await new Promise(res => setTimeout(res));
+        if (!s) return;
+      }
+      if (!isFinite(near)) return Media.toast("Nothing in view to measure.");
+      const fd = new FormData();
+      for (let f = 0; f < n; f++) {
+        const c = depthCanvas(depthDistances(sizeV, f / FPS, camForRender(f / FPS)), sizeV, [near, far]);
+        const url = c.toDataURL("image/png"), bin = atob(url.slice(url.indexOf(",") + 1)), bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        fd.append("frame", new Blob([bytes], { type: "image/png" }), `${String(f).padStart(5, "0")}.png`);
+        if (f % 8 === 0) { Media.toast(`Depth map: frame ${f + 1} of ${n}…`); await new Promise(res => setTimeout(res)); }
+        if (!s) return;
+      }
+      fd.append("fps", String(FPS));
+      const r = await fetch("/api/frames/video", { method: "POST", body: fd }), j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detail || r.statusText);
+      save(mediaUrl(j.ref), `${base}_depth.mp4`);
+      Media.toast(`Depth map saved: ${n} frames.`);
+    } catch (err) { Media.toast(`Depth map: ${err.message}`); }
+    finally { if (s) s.dirty = true; }
   }
 
   /* ---------------------------------------------------------------- 📷 Generate photo */

@@ -413,8 +413,16 @@ const Model3D = (() => {
     // projection mapping: the photo seen from its camera (uVP0, the point's pose then uM0); uDepth0 is what that camera
     // saw first (its depth), so surfaces it couldn't see get nothing (holes: see-through, or black in a mask)
     uniform int uProj; uniform int uProjMask; uniform sampler2D uPhoto; uniform sampler2D uDepth0; uniform vec2 uNF;
+    // depth out (a 3D scene's Save depth map): the distance along the camera's forward axis (xyz) over w, as a 24-bit
+    // number in RGB; 0 is left for "nothing here" (the sky)
+    uniform vec4 uDepthOut;
     float lin(float d) { float z = d * 2.0 - 1.0; return 2.0 * uNF.x * uNF.y / (uNF.y + uNF.x - z * (uNF.y - uNF.x)); }
     void main() {
+      if (uDepthOut.w > 0.0) {
+        float v = floor(clamp(dot(vPos - uEye, uDepthOut.xyz) / uDepthOut.w, 0.0, 1.0) * 16777214.0) + 1.0;
+        o = vec4(floor(v / 65536.0), mod(floor(v / 256.0), 256.0), mod(v, 256.0), 255.0) / 255.0;
+        return;
+      }
       if (uProj == 1) {
         vec4 hole = uProjMask == 1 ? vec4(0.0, 0.0, 0.0, 1.0) : vec4(0.0);
         if (vP0.w <= 0.0) { o = hole; return; }
@@ -488,6 +496,7 @@ const Model3D = (() => {
       gl.uniform3fv(U("uEye"), o.eye); gl.uniform3fv(U("uKey"), o.key); gl.uniform1i(U("uMode"), o.look || 0);
       gl.uniform1i(U("uUnlit"), o.unlit ? 1 : 0); gl.uniform3fv(U("uTint"), o.tint || [0, 0, 0]);
       gl.uniform4fv(U("uSolid"), o.solid ? [...o.solid, 1] : [0, 0, 0, 0]);
+      gl.uniform4fv(U("uDepthOut"), o.depthOut || [0, 0, 0, 0]);
       const P = o.proj;
       gl.uniform1i(U("uProj"), P ? 1 : 0); gl.uniform1i(U("uProjMask"), P?.mask ? 1 : 0);
       gl.uniformMatrix4fv(U("uVP0"), false, P ? P.VP0 : o.VP); gl.uniformMatrix4fv(U("uM0"), false, P ? (o.M0 || o.M) : o.M);
@@ -528,6 +537,23 @@ const Model3D = (() => {
     }
     const texture = img => tex(img);
     const free = t => t && gl.deleteTexture(t);
+    // Draw fn(draw) into an offscreen W x H picture (no antialiasing, so encoded values stay exact) and read it back:
+    // RGBA bytes, bottom row first.
+    function capture(W, H, fn) {
+      const fb = gl.createFramebuffer(), tx = gl.createTexture(), rb = gl.createRenderbuffer();
+      gl.bindTexture(gl.TEXTURE_2D, tx); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.bindRenderbuffer(gl.RENDERBUFFER, rb); gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, W, H);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tx, 0);
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, rb);
+      gl.viewport(0, 0, W, H); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); gl.enable(gl.DEPTH_TEST);
+      fn(draw);
+      const px = new Uint8Array(W * H * 4);
+      gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.deleteFramebuffer(fb); gl.deleteTexture(tx); gl.deleteRenderbuffer(rb);
+      return px;
+    }
     // Let go of a mesh made by upload() (its buffers, and textures of its own), e.g. a Person's pose that's no longer shown.
     function drop(mesh) {
       for (const p of mesh?.parts || []) {
@@ -536,7 +562,7 @@ const Model3D = (() => {
       }
       if (mesh) mesh.parts = [];
     }
-    return { upload, begin, draw, lines, depthPass, texture, free, drop };
+    return { upload, begin, draw, lines, depthPass, texture, free, drop, capture };
   }
 
   return { start, openList, view, download, _parseGLB: parseGLB,
