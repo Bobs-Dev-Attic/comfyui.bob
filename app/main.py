@@ -404,6 +404,7 @@ class SceneObject(BaseModel):
     # a primitive shape made in the page instead of a 3D model: its kind, colour, size (width, height, depth before
     # scaling; metres in an empty scene) and tilt (degrees about X, then Z)
     prim: Literal["cube", "sphere", "cylinder", "cone", "plane", "torus", "figure"] | None = None
+    pose: str | None = Field(None, max_length=20)  # a Person's preset pose (scene3d.js POSES)
     color: str | None = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
     dims: list[float] | None = Field(None, min_length=3, max_length=3)
     tilt: list[float] | None = Field(None, min_length=2, max_length=2)
