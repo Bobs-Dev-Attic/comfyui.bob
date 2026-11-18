@@ -1024,6 +1024,7 @@ function renderViewer() {
       ${it.status === "done" && f && it.kind === "image" ? `<button class="btn" data-a="edit" title="Crop, resize, colors, and AI: select, erase, replace, change with a prompt, remove the background">✏ Edit</button>` : ""}
       ${it.status === "done" && f && it.kind === "image" ? `<button class="btn" data-a="angles" title="Re-shoot this picture from other camera angles (Qwen Image Edit)">🔄 Angles…</button>` : ""}
       ${it.status === "done" && f && it.kind === "image" ? `<button class="btn" data-a="make3d" title="A textured 3D model of the main object in this picture (TRELLIS.2), for the 3D viewer, 3D scenes and Blender">🧊 Make 3D…</button>` : ""}
+      ${it.status === "done" && f && it.kind === "image" ? `<button class="btn" data-a="scene3d" title="This picture in depth, to stand 3D models in, keyframe and render with H3">🏞 3D scene…</button>` : ""}
       ${canFrame ? `<button class="btn" data-a="first">→ First frame</button><button class="btn" data-a="last">→ Last frame</button><button class="btn" data-a="ref">→ Reference</button>` : ""}
       ${f ? `<a class="btn" href="${esc(f.url)}" download="${esc(f.name)}">Download</a>` : ""}
       ${it.engine !== "timeline" && it.status !== "submitting" ? `<button class="btn" data-a="workflow" title="The exact ComfyUI workflow this was made with: compare it with yours, or load it in ComfyUI">{ } Workflow</button>` : ""}
@@ -1069,6 +1070,7 @@ async function action(a, it) {
   if (a === "workflow") return workflowDialog(it);
   if (a === "angles") { const f = it.files[0]; return Angles.dialog({ ref: f.path, url: f.url, name: f.name }); }
   if (a === "make3d") { const f = it.files[0]; return Model3D.start({ ref: f.path, url: f.url, name: (promptLabel(it.params?.prompt) || f.name).slice(0, 60) }); }
+  if (a === "scene3d") { const f = it.files[0]; return Scene3D.create({ ref: f.path, url: f.url, name: (promptLabel(it.params?.prompt) || f.name).slice(0, 60) }); }
   if (a === "ref") {
     const prev = state.engine[state.kind];
     state.kind = "video"; state.engine.video = "h3ref";
