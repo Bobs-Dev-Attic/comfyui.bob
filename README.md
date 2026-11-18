@@ -127,6 +127,9 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   Right-click an object to move, raise, rotate or resize it following the mouse, turn it 90°, size it up or down, set
   it on the ground, duplicate, rename, hide or delete it; right-click the ground to add a shape there. Keys: G, L, R,
   S, Shift+D, Del. Name a shape for what it should become (a wooden crate): 📷 Generate photo passes the names on.
+  The selected object has a **gizmo**, as in Blender. Arrows move it along X, Y or Z. Rings turn it about each axis,
+  using gimbal axes. Handles stretch it along its own axes, and the middle ball sizes all of it. Ctrl snaps. After G,
+  R or S, press X, Y or Z to work along one axis. **Undo and redo**: ↶ and ↷ on the tool bar, Ctrl+Z and Ctrl+Y.
 - **Objects in motion in a shot** (Shots › a shot's Edit window, One video per shot): give the shot a picture from the Inputs
   step and its objects' paths (the Animate objects window, in a "Use for this shot" mode). That shot then renders from the
   picture with the objects on their paths, with the shot's own text, length and settings; it can take a tracked path too.

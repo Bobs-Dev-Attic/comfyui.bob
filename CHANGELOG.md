@@ -5,6 +5,24 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.85.0] - 2026-11-18
+
+### Added
+- **Undo and redo** in 3D scenes: ↶ Undo and ↷ Redo on the tool bar, Ctrl+Z and Ctrl+Y (or Ctrl+Shift+Z). Every
+  change to the scene is a step: objects, shapes, camera keys, length, and an empty scene's shape, lens and backdrop.
+- **Gizmo on the selected object**, as in Blender, for the tool picked under Drag to. ✥ Move shows red, green and blue
+  arrows that move the object along the scene's X, Y and Z axes. ⟳ Rotate shows rings that turn it about each axis.
+  The rings use gimbal axes: Y stays upright, X turns with Y, and Z turns with both. ⤢ Resize shows handles that
+  stretch the object along its own axes, and a middle ball that sizes the whole object. Hold Ctrl while dragging to
+  snap (0.1 m, 15°, 10%). With G, R or S, press X, Y or Z to work along one axis only.
+- Objects turn about X and Z as well as Y, and these turns are keyed too. Rotation X, Y and Z replace the Turn slider
+  in the side panel. Objects turn about the middle of their box. ⬇ Set it down rests the lowest corner of a turned
+  object on the ground.
+
+### Changed
+- Stretching a shape changes its width, height or depth. A 3D model keeps its stretch with the scene instead. The
+  shape's "Stands" choice is gone: use the rotate rings or the Rotation fields.
+
 ## [0.84.0] - 2026-11-18
 
 ### Added
