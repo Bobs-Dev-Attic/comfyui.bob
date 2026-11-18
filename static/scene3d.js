@@ -354,8 +354,9 @@ const Scene3D = (() => {
     const p = POSES[name] || POSES.standing, st = POSES.standing, a = p.arms || st.arms, l = p.legs || st.legs;
     return { arms: { R: a.R, L: a.L }, legs: { R: l.R, L: l.L } };
   }
-  function blendPose(na, nb, u) {
-    const A = fullPose(na), B = fullPose(nb), out = { arms: {}, legs: {} };
+  function blendPose(na, nb, u) { return mixPose(fullPose(na), fullPose(nb), u); }
+  function mixPose(A, B, u) {
+    const out = { arms: {}, legs: {} };
     for (const g of ["arms", "legs"]) for (const side of ["R", "L"]) {
       const x = A[g][side], y = B[g][side];
       out[g][side] = [0, 1].map(i => { const p = norm(x[i]), q = norm(y[i]); return norm([0, 1, 2].map(c => p[c] + (q[c] - p[c]) * u)); });
@@ -376,16 +377,56 @@ const Scene3D = (() => {
     return { a: a.pose, b: b.pose, u: u * u * (3 - 2 * u) };
   }
   const postureName = ps => ps.name || (ps.u < 0.5 ? ps.a : ps.b);
+  /* Walk cycle: while a Person moves along its path, its legs and arms swing in a gait whose phase follows the distance
+     it has covered (one cycle, two steps, is about 0.8 of its height walking, 1.45 running), so its feet keep pace;
+     when it stops it eases back into its keyed pose. In each side's bones the angle is forward from straight down. */
+  const GAITS = {
+    walk: { label: "Walk", says: "walking", stride: 0.8, hip: 24, knee: [6, 38], arm: 0.75, elbow: 18 },
+    run: { label: "Run", says: "running", stride: 1.45, hip: 40, knee: [18, 85], arm: 1.1, elbow: 80 },
+  };
+  const fwd = (deg, out = 0.03) => { const r = deg * rad; return [out, -Math.cos(r), Math.sin(r)]; };
+  function gaitPose(kind, phase) {
+    const g = GAITS[kind], side = ph => {
+      const a = 2 * Math.PI * ph, hip = g.hip * Math.sin(a);
+      // the knee bends most as the leg swings forward, and a little as the foot takes the weight
+      const knee = g.knee[0] + (g.knee[1] - g.knee[0]) * Math.max(0, Math.sin(a + 1.1)) ** 1.5;
+      const arm = -hip * g.arm;  // the arm swings against its own side's leg
+      return { leg: [fwd(hip), fwd(hip - knee, 0)], arm: [fwd(arm, 0.1), fwd(arm + g.elbow, 0.06)] };
+    };
+    const R = side(phase), L = side(phase + 0.5);
+    return { arms: { R: R.arm, L: L.arm }, legs: { R: R.leg, L: L.leg } };
+  }
+  // How far an object has moved along its path by time t (scene units), sampled at 48 steps a second.
+  function travelled(o, t) {
+    const K = o.keys || []; if (K.length < 2 || t <= K[0].t) return 0;
+    let d = 0, prev = poseAt(o, K[0].t).pos;
+    const end = Math.min(t, K.at(-1).t), n = Math.max(1, Math.ceil((end - K[0].t) * 48));
+    for (let i = 1; i <= n; i++) { const p = poseAt(o, K[0].t + (end - K[0].t) * i / n).pos; d += Math.hypot(p[0] - prev[0], p[1] - prev[1], p[2] - prev[2]); prev = p; }
+    return d;
+  }
+  // The person's height in the scene (its stretch and size included), for the stride and for what counts as moving.
+  const figHeight = (o, P = poseAt(o, s.t)) => (o.dims?.[1] || 1.74) * (o.stretch?.[1] || 1) * (P.scale || 1);
+  // The gait at time t: { pose, w } with w = how much of it shows (0 standing still, 1 moving at a walk), or null.
+  function gaitAt(o, t) {
+    const g = GAITS[o.gait]; if (!g || !(o.keys?.length > 1)) return null;
+    const H = figHeight(o, poseAt(o, t)), h = 1 / 48, d = travelled(o, t);
+    const speed = (travelled(o, t + h) - travelled(o, Math.max(0, t - h))) / (t - Math.max(0, t - h) + h);
+    const w = Math.max(0, Math.min(1, speed / (0.25 * H)));
+    if (w < 0.02) return null;
+    return { phase: (d / (g.stride * H)) % 1, w };
+  }
   // The mesh a Person shows at time t (swapped in before drawing); others keep theirs.
   function figureMesh(o, t) {
-    if (o.prim !== "figure" || !(o.keys || []).some(k => k.pose)) return;
-    const ps = postureAt(o, t), q = ps.name ? null : Math.round(ps.u * 48) / 48;
-    const id = `${o.pose}|${o.dims}|${o.tilt}|${ps.name || `${ps.a}>${ps.b}@${q}`}`;
+    if (o.prim !== "figure" || !((o.keys || []).some(k => k.pose) || (o.gait && o.keys?.length > 1))) return;
+    const ps = postureAt(o, t), q = ps.name ? null : Math.round(ps.u * 48) / 48, ga = gaitAt(o, t);
+    const gq = ga ? [Math.round(ga.phase * 40) / 40, Math.round(ga.w * 10) / 10] : null;
+    const id = `${o.pose}|${o.dims}|${o.tilt}|${ps.name || `${ps.a}>${ps.b}@${q}`}${gq ? `|${o.gait}@${gq}` : ""}`;
     if (o._pmKey === id && o.mesh) return;
     o._pm ||= new Map();
     let m = o._pm.get(id);
     if (!m) {
-      m = primMesh(o, ps.name || blendPose(ps.a, ps.b, q));
+      const base = ps.name ? fullPose(ps.name) : blendPose(ps.a, ps.b, q);
+      m = primMesh(o, gq ? mixPose(base, gaitPose(o.gait, gq[0]), gq[1]) : base);
       o._pm.set(id, m);
       for (const [k, old] of o._pm) { if (o._pm.size <= 64) break; if (old !== o.mesh) s.gpu.drop?.(old); o._pm.delete(k); }
     }
@@ -667,7 +708,7 @@ const Scene3D = (() => {
     if (!o?.mesh || !o.pos) return;
     const P = poseAt(o, s.t), w = (o.mesh.hi[0] - o.mesh.lo[0]) * P.scale * 1.2 || 1, y = s.cam.yaw * rad;
     const off = [Math.cos(y) * w, 0, -Math.sin(y) * w], move = p => addv(p, off);
-    const c = { id: uid(), name: `${o.name} copy`, becomes: o.becomes || "", picture: o.picture || null, model: o.model, mask: o.mask, prim: o.prim, ...(o.pose ? { pose: o.pose } : {}), color: o.color, dims: o.dims?.slice(), tilt: o.tilt?.slice(),
+    const c = { id: uid(), name: `${o.name} copy`, becomes: o.becomes || "", picture: o.picture || null, model: o.model, mask: o.mask, prim: o.prim, ...(o.pose ? { pose: o.pose } : {}), ...(o.gait ? { gait: o.gait } : {}), color: o.color, dims: o.dims?.slice(), tilt: o.tilt?.slice(),
       pos: move(o.pos), yaw: o.yaw || 0, pitch: o.pitch || 0, roll: o.roll || 0, stretch: o.stretch?.slice(), scale: o.scale, auto_scale: o.auto_scale, hidden: false,
       keys: (o.keys || []).map(k => ({ ...k, pos: move(k.pos) })), state: "ok" };
     c.mesh = o.prim ? primMesh(c) : o.mesh;
@@ -770,7 +811,7 @@ const Scene3D = (() => {
   const objectsOut = () => s.objs.map(o => ({ id: o.id, name: o.name, becomes: (o.becomes || "").trim(), picture: o.picture || null, model: o.model, mask: o.mask, pos: o.pos, yaw: o.yaw || 0, pitch: o.pitch || 0, roll: o.roll || 0,
     stretch: o.stretch || null, scale: o.scale, auto_scale: o.auto_scale, hidden: !!o.hidden, keys: o.keys || [],
     ...(o.prim ? { prim: o.prim, color: o.color || PRIM_COLOR, dims: o.dims || PRIMS[o.prim].dims, tilt: o.tilt || [0, 0] } : {}),
-    ...(o.prim === "figure" ? { pose: o.pose || "standing" } : {}) }));
+    ...(o.prim === "figure" ? { pose: o.pose || "standing", gait: o.gait || null } : {}) }));
   function save() {
     clearTimeout(s.saveT);
     record();
@@ -853,7 +894,9 @@ const Scene3D = (() => {
             <div class="s3-dims"><label>X <input type="number" id="s3-rx" step="5"></label><label>Y <input type="number" id="s3-ry" step="5"></label><label>Z <input type="number" id="s3-rz" step="5"></label></div></div>
           <div class="field"><label for="s3-size">Size <span class="s3-size-v"></span></label><input type="range" id="s3-size" min="0.2" max="3" step="0.01"></div>
           <div class="s3-prim" hidden>
-            <div class="field s3-posef" hidden><label for="s3-pose">Pose</label><select id="s3-pose">${Object.entries(POSES).map(([k, p]) => `<option value="${k}">${p.label}</option>`).join("")}</select></div>
+            <div class="row2 s3-posef" hidden><div class="field"><label for="s3-pose">Pose</label><select id="s3-pose">${Object.entries(POSES).map(([k, p]) => `<option value="${k}">${p.label}</option>`).join("")}</select></div>
+              <div class="field"><label for="s3-gait">Walk cycle</label><select id="s3-gait" title="While it moves along its path, it walks or runs, its steps matching how far it goes; stopped, it holds its pose. Turn it to face where it goes.">
+                <option value="">Off</option>${Object.entries(GAITS).map(([k, g]) => `<option value="${k}">${g.label}</option>`).join("")}</select></div></div>
             <div class="field"><label for="s3-color">Colour</label><input type="color" id="s3-color"></div>
             <div class="field"><label>Size <span class="opt s3-unit"></span></label>
               <div class="s3-dims"><label>W <input type="number" id="s3-dw" min="0.01" max="500" step="0.1"></label><label>H <input type="number" id="s3-dh" min="0.01" max="500" step="0.1"></label><label>D <input type="number" id="s3-dd" min="0.01" max="500" step="0.1"></label></div></div></div>
@@ -1381,6 +1424,9 @@ const Scene3D = (() => {
         return;
       }
       const po = s.objs[s.sel];
+      if (po?.prim === "figure" && id === "s3-gait") {
+        po.gait = e.target.value || null; po._pmKey = null; po.mesh = primMesh(po); figureMesh(po, s.t); return changed(po);
+      }
       if (po?.prim === "figure" && id === "s3-pose") {
         // At the playhead, like moving it: a key there once it has keys (or the playhead isn't at the start).
         const before = po.pose || "standing";
@@ -1504,7 +1550,7 @@ const Scene3D = (() => {
       root.querySelector('[data-act="replace"]').hidden = !!o.prim;
       const pf = root.querySelector(".s3-prim"); pf.hidden = !o.prim;
       root.querySelector(".s3-posef").hidden = o.prim !== "figure";
-      if (o.prim === "figure") root.querySelector("#s3-pose").value = postureName(postureAt(o, s.t));
+      if (o.prim === "figure") { root.querySelector("#s3-pose").value = postureName(postureAt(o, s.t)); root.querySelector("#s3-gait").value = o.gait || ""; }
       if (o.prim) {
         const d = o.dims || PRIMS[o.prim].dims, act = document.activeElement;
         if (act !== root.querySelector("#s3-color")) root.querySelector("#s3-color").value = o.color || PRIM_COLOR;
@@ -1627,6 +1673,9 @@ const Scene3D = (() => {
       if (x.o.prim === "figure") {
         const seq = video ? (x.o.keys || []).filter(k => k.pose).map(k => k.pose).filter((p, i, a) => i === 0 || p !== a[i - 1]) : [];
         pose = seq.length > 1 ? seq.map(p => POSES[p]?.says || "standing").join(", then ") : POSES[seq[0] || postureName(postureAt(x.o, t))]?.says || "";
+        // walking or running along its path (the video: if it moves at all; a photo: if it's moving then)
+        const g = GAITS[x.o.gait], moving = g && (video ? travelled(x.o, x.o.keys?.at(-1)?.t ?? 0) > 0.05 * figHeight(x.o) : !!gaitAt(x.o, t));
+        if (moving) pose = [g.says, ...(seq.length > 1 ? seq.filter(p => p !== "standing").map(p => POSES[p]?.says).filter(Boolean) : pose ? [pose] : [])].join(", then ");
       }
       x.pose = pose;
       x.seen = `the ${x.looks}${x.off ? "" : ` ${x.where}`}${pose ? `, ${pose},` : ""}`;
