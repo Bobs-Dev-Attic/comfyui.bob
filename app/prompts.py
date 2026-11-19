@@ -41,7 +41,7 @@ _lock = threading.Lock()
 
 # The Prompt Explorer node's model names, as Bob engine keys (import only).
 NODE_MODELS = {"flux2": "image:klein", "flux": "image:klein", "krea2": "image:krea2", "krea": "image:krea2",
-               "minimax h3": "video:h3", "h3": "video:h3", "music 3": "audio:music3", "moss": "image:moss"}
+               "minimax h3": "video:h3", "h3": "video:h3", "music 3": "audio:music3", "moss": "image:moss", "moss edit": "image:mossedit"}
 
 
 # --------------------------------------------------------------------------- catalog
@@ -210,6 +210,11 @@ PROFILES: dict[str, tuple[str, str]] = {
              "(e.g. \"Studio photograph of …\", \"Anime-style illustration of …\"), then the subject's details, pose, the space "
              "from foreground to background, framing and camera, light, palette and texture. Any text to show goes in double "
              "quotes, word for word, with where it sits, its typeface and color. No tag lists and no weights such as (word:1.2). " + NO_NEG),
+    "mossedit": ("MOSS-Image Edit, which changes a photo by a short instruction and keeps everything else",
+                 "Write one or two sentences, as the edit model was trained: \"Change only the <thing> to <new thing>. Keep the "
+                 "<people, faces, hair, poses, background and composition> unchanged.\" Name exactly what changes and what stays; "
+                 "with several pictures, say what each one is for (e.g. the coat from the second picture). No scene description "
+                 "beyond the change. " + NO_NEG),
     "h3still": ("MiniMax H3 rendering one still frame",
                 "Line 1: the style (medium, look, palette, lens, mood) in one line.\nThen a blank line.\nThen one paragraph: the framing, "
                 "the setting and its light, then the subject and pose. " + NO_NEG),

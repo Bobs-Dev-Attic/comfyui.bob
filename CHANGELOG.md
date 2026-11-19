@@ -5,6 +5,21 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.102.0] - 2026-11-19
+
+### Added
+- **MOSS Edit** as an image model: ComfyUI's “MOSS-Image: Image Edit” template. It changes a photo by a short
+  instruction and keeps the rest.
+  - Add the photo to edit in the Inputs step (Picture 1); the result keeps its shape. Draft, Standard and High are
+    0.5, 1 and 1.5 MP (the template uses 1 MP; much smaller makes the model re-frame the subject).
+  - Up to 3 more pictures (a garment, a face, a prop) as references; say in the prompt what each is for.
+  - Write only the change, as the edit LoRA was trained: “Change only the jacket to a black wool coat. Keep the face,
+    pose and background unchanged.” The Prompt tab's live rewrite has a MOSS Edit style that writes it that way.
+  - Runs what the LoRA's author ships: the Moss-Image-Edit LoRA on the MOSS checkpoint, skip-layer guidance on layer
+    22, 30 steps, CFG 4, euler/normal, both prompts seeing the pictures.
+  - Needs ComfyUI 0.43 or later and `moss_image_edit_lora_rank_64_bf16` (297 MB, from
+    [Comfy-Org/MOSS-Image](https://huggingface.co/Comfy-Org/MOSS-Image)) in a loras folder, besides MOSS Image's files.
+
 ## [0.101.0] - 2026-11-19
 
 ### Added

@@ -31,7 +31,7 @@ const Prompts = (() => {
   /* ------------------------------------------------------------ the model being written for */
   const PROFILE = {
     "video:h3": "h3video", "video:h3ref": "h3ref", "image:h3": "h3still", "image:klein": "flux",
-    "image:krea2": "krea", "image:h3image": "h3image", "image:moss": "moss", "audio:h3": "h3sound", "audio:music3": "music",
+    "image:krea2": "krea", "image:h3image": "h3image", "image:moss": "moss", "image:mossedit": "mossedit", "audio:h3": "h3sound", "audio:music3": "music",
   };
   const modelKey = () => `${state.kind}:${state.engine[state.kind]}`;
   const profile = () => PROFILE[modelKey()] || null;
