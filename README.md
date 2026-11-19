@@ -119,6 +119,10 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   done (unless you untick that). Needs what Animate objects needs. **Goes to** a shot instead (on the Shots step, a
   shot of the list or a new one): the shot keeps the drawn rough animation, its mask and the first picture, with the
   scene's text and length, and Generate on the Shots step makes it in order with the other shots (one video per shot).
+  **Shots map to scenes**: a shot's Edit window (or 🎞 For a shot… on the panel) makes a scene from the shot's inputs
+  (its keyframe or a reference picture its text names, or none; its length; the project's shape), or maps an existing
+  one. That scene's Render then goes to its shot with the shot's What happens, `<Picture N>` becoming the object with
+  that picture (📥 Inputs… on an object's Picture picks one from the Inputs step).
   **Empty scenes** (☰ › New empty 3D scene) start from nothing: a floor with a 1 m grid, a sky colour and an optional
   backdrop picture, with the shot's shape and lens chosen in the View section; add 3D models and frame the shot.
   **📷 Generate photo…** (any scene) draws what the camera frames and has Qwen Image Edit 2511 (or MiniMax H3 Image)

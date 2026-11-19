@@ -242,16 +242,16 @@ def delete_scene(scene_id: str) -> bool:
 
 
 def start_scene(jobs: Any, *, picture: str | None, plate: str | None, name: str, project: str | None,
-                objects: list[dict[str, Any]]) -> dict[str, Any]:
+                objects: list[dict[str, Any]], seconds: float | None = None, aspect: str | None = None) -> dict[str, Any]:
     """Make a scene's background (a few seconds); returns the entry at once (status "running"). Without a picture
     it's an empty scene (a floor and a backdrop, drawn in the page), ready at once."""
     scene_id = uuid.uuid4().hex[:12]
     now = time.time()
     entry = {"id": scene_id, "name": name.strip()[:120] or "3D scene", "project": project, "picture": picture,
              "plate": plate, "status": "running" if picture else "done", "error": None, "bg": None, "objects": objects,
-             "seconds": 5.0, "camera_keys": [], "created": now, "updated": now}
+             "seconds": float(seconds or 5.0), "camera_keys": [], "created": now, "updated": now}
     if not picture:  # an empty scene: its framing and backdrop
-        entry.update(kind="empty", aspect="16:9", lens=35.0,
+        entry.update(kind="empty", aspect=aspect or "16:9", lens=35.0,
                      backdrop={"sky": "#c9d3de", "floor": "#8b9098", "picture": None})
     with _lock:
         items = _read_scenes()
