@@ -20,6 +20,7 @@ const MODEL_CARDS = [
   { kind: "image", engine: "klein", name: "FLUX 3 Klein", opts: ["Up to 2 MP", "Prompt upsampler", "Fast"] },
   { kind: "image", engine: "krea2", name: "Krea 2", opts: ["Up to 2 MP", "Photoreal", "Turbo 8 steps", "Prompt expander"] },
   { kind: "image", engine: "h3image", name: "MiniMax H3 Image", opts: ["Up to 16 MP", "6 steps", "Reference pictures", "<Picture N> tags", "Clean texture"] },
+  { kind: "image", engine: "mossedit", name: "MOSS Edit", opts: ["Edit a photo by instruction", "Keeps the rest", "Up to 4 pictures", "1 MP"] },
   { kind: "image", engine: "moss", name: "MOSS Image", opts: ["Up to 2 MP", "Text in pictures", "Long prompts", "Prompt enhancer"] },
   { kind: "audio", engine: "h3", name: "H3 sound", opts: ["Ambience and effects", "2–15 s", "MP3"] },
   { kind: "audio", engine: "music3", name: "Music 3", opts: ["Songs with vocals", "Tagged lyrics", "10–300 s", "MP3"] },
@@ -90,6 +91,7 @@ function renderUnet() {
    is what its ComfyUI template uses; the lists are ComfyUI's own (KSampler). */
 const SAMPLING_NOTES = {
   h3image: "H3 Image is distilled for 6 steps on its own sigma grid: keep the simple scheduler and 6 steps, or the picture may come out noisy.",
+  mossedit: "MOSS Edit runs what its edit LoRA's author ships: euler, normal, CFG 4, 30 steps.",
   moss: "MOSS uses ComfyUI's faster template settings (er_sde, simple, CFG 2.5, 25 steps). OpenMOSS's own: euler, 50 steps, CFG 3.",
   h3ref: "By default H3 Reference uses simple with the turbo LoRA and beta without it.",
   h3: "With the turbo LoRA, H3 is distilled for res_multistep and simple.",

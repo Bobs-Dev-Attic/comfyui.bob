@@ -34,6 +34,8 @@ REQUIRED_NODES = {
     "krea2": {"ConditioningZeroOut", "TextGenerate"},
     "h3image": {"MiniMaxH3ImageConditioning", "ConditioningZeroOut"},
     "moss": {"EmptyFlux2LatentImage", "SkipLayerGuidanceDiTSimple", "TextGenerate"},
+    "mossedit": {"TextEncodeMOSSImageEdit", "LoraLoaderModelOnly", "SkipLayerGuidanceDiTSimple", "EmptyFlux2LatentImage",
+                 "ImageScaleToTotalPixels", "GetImageSize"},
     "music3": {"MiniMaxMusic3TextEncode", "EmptyMiniMaxMusic3LatentAudio", "SaveAudioMP3"},
     "angles": {"TextEncodeQwenImageEditPlus", "FluxKontextMultiReferenceLatentMethod", "CFGNorm", "ModelSamplingAuraFlow"},
 }
@@ -690,6 +692,7 @@ async def capabilities(refresh: bool = False):
         "krea2_quality": workflows.KREA2_QUALITY,
         "h3image_quality": workflows.H3_IMAGE_QUALITY,
         "moss_quality": workflows.MOSS_QUALITY,
+        "mossedit_quality": workflows.MOSS_EDIT_QUALITY,
         "h3image_easyfix": workflows.EASYFIX_NODES <= nodes,
         "samplers": comfy.samplers, "schedulers": comfy.schedulers,
         "sampling_defaults": {k: {"sampler": a, "scheduler": b, "cfg": workflows.CFG_DEFAULTS.get(k)}

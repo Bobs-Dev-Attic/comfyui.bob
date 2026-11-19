@@ -23,7 +23,7 @@ from .comfy import ComfyService
 log = logging.getLogger("bob.jobs")
 
 Kind = Literal["video", "image", "audio"]
-Engine = Literal["h3", "h3ref", "klein", "krea2", "h3image", "moss", "music3", "reshoot", "enhance", "angles", "imgedit", "motion"]
+Engine = Literal["h3", "h3ref", "klein", "krea2", "h3image", "moss", "mossedit", "music3", "reshoot", "enhance", "angles", "imgedit", "motion"]
 EditOp = Literal["erase", "replace", "prompt", "instruct", "remove_bg", "adjust"]
 
 
@@ -564,6 +564,18 @@ class JobManager:
             raise ValueError("MiniMax H3 Image only makes images")
         if req.engine == "moss" and req.kind != "image":
             raise ValueError("MOSS-Image only makes images")
+        if req.engine == "mossedit":
+            if req.kind != "image":
+                raise ValueError("MOSS Edit makes pictures")
+            if not req.references:
+                raise ValueError("MOSS Edit needs the picture to edit: add it in the Inputs step")
+            if len(req.references) > workflows.MOSS_EDIT_MAX_PICTURES:
+                raise ValueError(f"MOSS Edit takes at most {workflows.MOSS_EDIT_MAX_PICTURES} pictures")
+            for ref in req.references:
+                if media.kind_of(media_path(ref).name) != "image":
+                    raise ValueError("MOSS Edit works on pictures")
+            if not req.prompt.strip():
+                raise ValueError("Say what to change, e.g. “Change only the jacket to a black wool coat.”")
         if req.engine == "music3" and req.kind != "audio":
             raise ValueError("Music 3 only makes audio")
         if req.engine == "reshoot":
@@ -725,6 +737,11 @@ class JobManager:
             clean = req.clean_texture and not req.scheduler  # checked against ComfyUI's nodes in submit
             return workflows.build_h3_image(files, prompt=req.prompt, width=w, height=h, seed=seed, references=len(req.references), steps=req.steps,
                                             prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras], clean=clean)
+        if req.engine == "mossedit":
+            return workflows.build_moss_edit(
+                files, prompt=req.prompt, pictures=len(req.references), megapixels=workflows.MOSS_EDIT_QUALITY.get(req.quality, 1.0),
+                seed=seed, steps=req.steps or 30, prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras],
+            )
         if req.engine == "moss":
             mp = workflows.MOSS_QUALITY.get(req.quality, 1.0)
             w, h = workflows.dims_for(aspect, mp, multiple=16)

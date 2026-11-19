@@ -6,7 +6,7 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 
 const ENGINES = {
   video: [{ key: "h3", label: "MiniMax H3" }, { key: "h3ref", label: "H3 Reference" }],
-  image: [{ key: "h3", label: "H3 still" }, { key: "klein", label: "FLUX 3 Klein" }, { key: "krea2", label: "Krea 2" }, { key: "h3image", label: "H3 Image" }, { key: "moss", label: "MOSS Image" }],
+  image: [{ key: "h3", label: "H3 still" }, { key: "klein", label: "FLUX 3 Klein" }, { key: "krea2", label: "Krea 2" }, { key: "h3image", label: "H3 Image" }, { key: "moss", label: "MOSS Image" }, { key: "mossedit", label: "MOSS Edit" }],
   audio: [{ key: "h3", label: "H3 sound" }, { key: "music3", label: "Music 3" }],
 };
 
@@ -17,6 +17,7 @@ const ENGINE_NOTES = {
   "image:klein": "Dedicated image model: fast and sharp, up to 2 MP.",
   "image:krea2": "Krea 2 Turbo: photoreal pictures in 8 steps, up to 2 MP.",
   "image:h3image": "MiniMax H3 Image: MiniMax's image model, 6 steps, up to 16 MP. Optional reference pictures; Clean texture with EasyFix.",
+  "image:mossedit": "MOSS Edit: change a photo by instruction (“Change only the jacket to…”); keeps the rest. Up to 4 pictures.",
   "image:moss": "MOSS-Image: an open 5B model that's good at text inside the picture and long prompts, 1–2 MP.",
   "audio:h3": "H3 generates audio jointly with a tiny video, then keeps only the soundtrack (MP3).",
   "audio:music3": "Full songs with vocals from a style caption and tagged lyrics.",
@@ -47,6 +48,8 @@ non_diegetic_music: <score style, or N/A>`,
 `<medium: e.g. Candid photograph / Oil painting>, <subject and action>, <setting>, <lighting and camera>, <colors and materials>.`,
   "image:h3image":
 `<medium and style>, <subject with concrete colors and materials>, <setting>, <lighting and camera>.`,
+  "image:mossedit":
+`Change only the <thing> to <new thing>. Keep the <faces, hair, poses, background and composition> unchanged.`,
   "image:moss":
 `<medium> of <subject>, <details and pose>, <setting from front to back>, <framing and light>. A sign reads "<exact text>".`,
   "audio:h3":
@@ -90,6 +93,12 @@ const TIPS = {
     <li>Put any text to render in double quotes.</li>
     <li>It always runs 6 steps (distilled). It's trained for 4 to 20 MP: High is 4 MP, XL 8 MP, Max 16 MP.</li>
     <li><b>Clean texture</b> (with the ComfyUI-H3-Image-EasyFix node pack) removes the grainy, speckled look on skin, fur and stone. It runs on 6 steps with the default scheduler.</li></ul>`,
+  mossedit: `<ul>
+    <li>Add the photo to edit in the Inputs step (Picture 1). The result keeps its shape; Standard is 1 MP.</li>
+    <li>Describe only the change, the way the edit LoRA was trained: “Change only the pink blazer to a plain black wool coat. Keep both women, their faces, poses and the background unchanged.”</li>
+    <li>Words that must stay or appear go in double quotes, e.g. Keep the text “BOB STUDIO” unchanged.</li>
+    <li>Up to 3 more pictures (a garment, a face, a prop): say what each is for, e.g. “the coat from the second picture”.</li>
+    <li>30 steps at CFG 4 (what the LoRA's author ships); lower CFG can add things you didn't ask for.</li></ul>`,
   moss: `<ul>
     <li>Describe the finished picture in full sentences, starting with the medium and subject (“Studio photograph of…”).</li>
     <li>Long prompts are fine (up to about 4,000 tokens): more visible detail gives better pictures.</li>
@@ -166,17 +175,23 @@ function renderForm() {
   renderModels();  // the Model step (shell.js)
   MossLayout.render();
 
-  const isRef = eng === "h3ref", isH3Img = eng === "h3image";
+  const isRef = eng === "h3ref", isH3Img = eng === "h3image", isMossEdit = eng === "mossedit";
   const isH3 = eng === "h3" || isRef, isKlein = eng === "klein" || eng === "krea2" || eng === "moss", isMusic = eng === "music3";
   $("#f-frames").hidden = !(kind === "video") || isRef;
-  $("#f-refs").hidden = !(isRef || isH3Img);
+  $("#f-refs").hidden = !(isRef || isH3Img || isMossEdit);
+  // MOSS Edit: Picture 1 is the photo to edit, the others are references; no <Picture N> tags.
+  $("#f-refs > label").innerHTML = isMossEdit ? `Pictures <span class="opt">1–4 · the first is the photo to edit</span>`
+    : `Reference pictures <span class="opt">1–9 · people, objects, places, style</span>`;
+  $("#f-refs > .hint").innerHTML = isMossEdit
+    ? "Picture 1 is edited and sets the size and shape. More pictures (a garment, a face, a prop) are references: say what each is for, e.g. “the coat from the second picture”."
+    : "In the prompt, call them <code>&lt;Picture 1&gt;</code>, <code>&lt;Picture 2&gt;</code>… in this order. Click a tag on a picture to insert it.";
   $("#f-arefs").hidden = !(kind === "video" && isH3);
   $("#f-arefs").classList.toggle("needs-ref", !isRef);
   $("#f-fidelity").hidden = !isRef;
   $("#f-enhance-after").hidden = kind === "audio";
   if (typeof Enhance !== "undefined") Enhance.renderSettings();  // FaceRefine fits H3 video only
   $("#f-lyrics").hidden = !isMusic;
-  $("#f-aspect").hidden = kind === "audio";
+  $("#f-aspect").hidden = kind === "audio" || isMossEdit;  // MOSS Edit keeps the picture's shape
   $("#f-quality").hidden = kind === "audio";
   $("#f-seconds").hidden = kind !== "audio";  // video: each shot has its own length (Shots step)
   $("#f-turbo").hidden = !isH3;
@@ -198,13 +213,15 @@ function renderForm() {
 
   // quality options
   const q = $("#quality"), prevQ = q.value;
-  const opts = isH3Img
+  const opts = isMossEdit
+    ? [["draft", "Draft · 0.5 MP"], ["standard", "Standard · 1 MP"], ["high", "High · 1.5 MP"]]
+    : isH3Img
     ? [["draft", "Draft · 1 MP"], ["standard", "Standard · 2 MP"], ["high", "High · 4 MP"], ["xl", "XL · 8 MP"], ["max", "Max · 16 MP"]]
     : isKlein
     ? [["draft", "Draft · 0.5 MP"], ["standard", "Standard · 1 MP"], ["high", "High · 2 MP"]]
     : [["draft", "Draft · 480p"], ["standard", "Standard · 576p"], ["full", "Full · 768p"]];
   q.innerHTML = opts.map(([v, l]) => `<option value="${v}">${l}</option>`).join("");
-  q.value = opts.some(o => o[0] === prevQ) ? prevQ : (kind === "image" && isH3 ? "full" : opts[0][0]);
+  q.value = opts.some(o => o[0] === prevQ) ? prevQ : (kind === "image" && isH3 ? "full" : isMossEdit ? "standard" : opts[0][0]);
 
   // duration range
   const s = $("#seconds");
@@ -237,7 +254,9 @@ function updateDerived() {
     const mpTable = eng === "h3image" ? { draft: 1, standard: 2, high: 4, xl: 8, max: 16 } : eng === "klein" || eng === "krea2" || eng === "moss" ? { draft: 0.5, standard: 1, high: 2 } : { draft: 0.4, standard: 0.6, full: 0.98 };
     const mp = mpTable[$("#quality").value] ?? 0.4;
     const kf = state.frames.first_frame || state.frames.last_frame;
-    if (kind === "video" && eng === "h3" && kf?.w) {
+    if (eng === "mossedit") {
+      dims = `${({ draft: 0.5, standard: 1, high: 1.5 })[$("#quality").value] ?? 1} MP, the shape of Picture 1`;
+    } else if (kind === "video" && eng === "h3" && kf?.w) {
       const [w, h] = dimsFor([kf.w, kf.h], mp);
       dims = `${w} × ${h} (from keyframe)`;
     } else {
@@ -251,7 +270,7 @@ function updateDerived() {
   const turbo = $("#turbo").checked;
   const refLora = state.caps?.engines?.h3ref?.files?.turbo_lora || "";
   const refTurboSteps = /8step/i.test(refLora) ? 8 : 4;
-  const autoSteps = eng === "h3" ? (turbo ? 8 : 20) : eng === "h3ref" ? (turbo && refLora ? refTurboSteps : 20) : eng === "klein" ? 16 : eng === "krea2" ? 8 : eng === "h3image" ? 6 : eng === "moss" ? 25 : 30;
+  const autoSteps = eng === "h3" ? (turbo ? 8 : 20) : eng === "h3ref" ? (turbo && refLora ? refTurboSteps : 20) : eng === "klein" ? 16 : eng === "krea2" ? 8 : eng === "h3image" ? 6 : eng === "moss" ? 25 : 30;  // MOSS Edit and Music 3: 30
   $("#steps-hint").textContent = `auto = ${autoSteps}`;
   MossLayout.render();
   postContext();
@@ -318,7 +337,7 @@ function collectRequest() {
     batch: state.batch,
     first_frame: kind === "video" && eng === "h3" ? state.frames.first_frame?.ref ?? null : null,
     last_frame: kind === "video" && eng === "h3" ? state.frames.last_frame?.ref ?? null : null,
-    references: eng === "h3ref" || eng === "h3image" ? state.refs.map(r => r.ref) : [],
+    references: eng === "h3ref" || eng === "h3image" || eng === "mossedit" ? state.refs.map(r => r.ref) : [],
     ref_audios: eng === "h3ref" && kind === "video" ? state.arefs.map(a => a.ref) : [],
     clean_audio: $("#clean-audio").checked,
     preview: $("#live-preview")?.value || "off",
@@ -802,7 +821,7 @@ async function writePrompt() {
     dialogue: $("#llm-dialogue").checked,
     first_frame: kind === "video" && eng === "h3" ? state.frames.first_frame?.ref ?? null : null,
     last_frame: kind === "video" && eng === "h3" ? state.frames.last_frame?.ref ?? null : null,
-    references: eng === "h3ref" || eng === "h3image" ? state.refs.map(r => r.ref) : [],
+    references: eng === "h3ref" || eng === "h3image" || eng === "mossedit" ? state.refs.map(r => r.ref) : [],
     backend: $("#llm-backend").value, url: $("#llm-url").value.trim(), model: $("#llm-model").value,
     creativity: Prompts.creativity(),
   };

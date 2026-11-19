@@ -181,7 +181,19 @@ MOSS = ModelSet(
     ),
 )
 
-ALL_SETS = {s.key: s for s in (H3, H3REF, KLEIN, KREA2, H3_IMAGE, MOSS, MUSIC3, ANGLES)}
+# MOSS Edit: ComfyUI's "MOSS-Image: Image Edit" template. The Moss-Image-Edit LoRA (chinoll) on a MOSS
+# checkpoint (SFT first), the same text encoder and VAE; the pictures go into TextEncodeMOSSImageEdit.
+MOSS_EDIT = ModelSet(
+    key="mossedit",
+    title="MOSS-Image Edit",
+    source=HF_MOSS,
+    unet_hints=("moss",),
+    slots=MOSS.slots + (
+        Slot("edit_lora", "loras", ("moss_image_edit_lora*", "moss-image-edit*", "moss_image_edit*"), label="MOSS-Image Edit LoRA"),
+    ),
+)
+
+ALL_SETS = {s.key: s for s in (H3, H3REF, KLEIN, KREA2, H3_IMAGE, MOSS, MOSS_EDIT, MUSIC3, ANGLES)}
 
 
 def _match(pattern: str, filename: str) -> bool:

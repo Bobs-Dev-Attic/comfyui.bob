@@ -46,6 +46,10 @@ EASYFIX = {"strength": 0.7, "steer_steps": "0", "plan": "RNmid", "s_noise": 0.95
 
 # MOSS-Image: 1 to 2 MP recommended (0.25 to 4 MP work), sides in multiples of 16.
 MOSS_QUALITY = {"draft": 0.5, "standard": 1.0, "high": 2.0}
+# MOSS Edit: the result takes the first picture's shape at this size (the template uses 1 MP; much lower
+# makes the model re-frame the subject instead of editing the picture it was given).
+MOSS_EDIT_QUALITY = {"draft": 0.5, "standard": 1.0, "high": 1.5}
+MOSS_EDIT_MAX_PICTURES = 4
 
 
 def dims_for(aspect: tuple[float, float], megapixels: float, multiple: int = 32) -> tuple[int, int]:
@@ -228,10 +232,10 @@ def h3_frame_alignment(first: bool, last: bool, frames: int) -> str:
 SAMPLING_DEFAULTS = {
     "h3": ("res_multistep", "simple"), "h3ref": ("res_multistep", "simple"), "klein": ("euler", "simple"),
     "krea2": ("euler", "simple"), "h3image": ("euler", "simple"), "music3": ("euler", "simple"),
-    "moss": ("er_sde", "simple"),
+    "moss": ("er_sde", "simple"), "mossedit": ("euler", "normal"),
 }
 # CFG each engine runs at (H3 and H3 Reference use a BasicGuider: no negative, which is CFG 1).
-CFG_DEFAULTS = {"h3": 1.0, "h3ref": 1.0, "klein": 1.0, "krea2": 1.0, "h3image": 1.0, "music3": 1.7, "moss": 2.5}
+CFG_DEFAULTS = {"h3": 1.0, "h3ref": 1.0, "klein": 1.0, "krea2": 1.0, "h3image": 1.0, "music3": 1.7, "moss": 2.5, "mossedit": 4.0}
 
 
 def apply_sampling(graph: dict[str, dict], sampler: str | None, scheduler: str | None,
@@ -742,6 +746,60 @@ def build_moss(
                  info={"width": width, "height": height, "steps": int(steps or 25), "enhanced": enhance,
                        "checkpoint": "Base" if base else "SFT", **({"slg": "layer 22"} if base else {}),
                        **({"layout": f"{len(layout)} box{'es' if len(layout) != 1 else ''}"} if layout else {})})
+
+
+def build_moss_edit(
+    files: dict[str, str | None],
+    *,
+    prompt: str,
+    pictures: int,
+    megapixels: float,
+    seed: int,
+    steps: int | None = None,
+    prefix: str = "bob/mossedit",
+    loras: list[tuple[str, float]] | None = None,
+) -> Built:
+    """MOSS-Image Edit, as ComfyUI's "MOSS-Image: Image Edit" template runs it: the Moss-Image-Edit LoRA on the
+    MOSS checkpoint, skip-layer guidance on layer 22 for the whole schedule, 30 steps, CFG 4, euler/normal. The
+    first picture (ref_0) is the one to edit: scaled to the quality's size on a 16 px grid, it sets the output's
+    size and shape. More pictures (a garment, a face, a prop) are scaled the same way and go to the encoder too;
+    the prompt says what each is for. Both prompts see the pictures (TextEncodeMOSSImageEdit, edit_format
+    "Moss-Image-Edit", which is what the LoRA was trained with)."""
+    g = Graph()
+    o = Graph.out
+    unet = g.add("UNETLoader", unet_name=files["unet"], weight_dtype="default")
+    clip = g.add("CLIPLoader", clip_name=files["clip"], type="moss_image", device="default")
+    vae = g.add("VAELoader", vae_name=files["vae"])
+    model: Any = g.add("LoraLoaderModelOnly", model=o(unet), lora_name=files["edit_lora"], strength_model=1.0)
+    model = chain_loras(g, model, loras)
+    model = g.add("SkipLayerGuidanceDiTSimple", model=o(model), double_layers="", single_layers="22",
+                  start_percent=0.0, end_percent=1.0)
+
+    inputs: dict[str, str] = {}
+    images: dict[str, Any] = {}
+    first: str | None = None
+    for i in range(pictures):
+        load = g.add("LoadImage", image="")
+        inputs[f"ref_{i}"] = load
+        scaled = g.add("ImageScaleToTotalPixels", image=o(load), upscale_method="lanczos", megapixels=float(megapixels),
+                       resolution_steps=16)
+        images[f"images.image_{i}"] = o(scaled)
+        first = first or scaled
+    size = g.add("GetImageSize", image=o(first))
+    empty = g.add("EmptyFlux2LatentImage", width=o(size, 0), height=o(size, 1), batch_size=1)
+    pos = g.add("TextEncodeMOSSImageEdit", clip=o(clip), prompt=prompt, edit_format="Moss-Image-Edit", vae=o(vae),
+                image_strength=1.0, **images)
+    neg = g.add("TextEncodeMOSSImageEdit", clip=o(clip), prompt=MOSS_NEGATIVE, edit_format="Moss-Image-Edit", vae=o(vae),
+                image_strength=1.0, **images)
+    sampled = g.add(
+        "KSampler",
+        model=o(model), seed=int(seed), steps=int(steps or 30), cfg=4.0, sampler_name="euler", scheduler="normal",
+        positive=o(pos), negative=o(neg), latent_image=o(empty), denoise=1.0,
+    )
+    decoded = g.add("VAEDecode", samples=o(sampled), vae=o(vae))
+    save = g.add("SaveImage", images=o(decoded), filename_prefix=prefix)
+    return Built(graph=g.nodes, outputs=[save], image_inputs=inputs,
+                 info={"megapixels": megapixels, "steps": int(steps or 30), "pictures": pictures})
 
 
 def build_h3_image(
