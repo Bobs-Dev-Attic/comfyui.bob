@@ -690,6 +690,7 @@ async def capabilities(refresh: bool = False):
         "krea2_quality": workflows.KREA2_QUALITY,
         "h3image_quality": workflows.H3_IMAGE_QUALITY,
         "moss_quality": workflows.MOSS_QUALITY,
+        "h3image_easyfix": workflows.EASYFIX_NODES <= nodes,
         "samplers": comfy.samplers, "schedulers": comfy.schedulers,
         "sampling_defaults": {k: {"sampler": a, "scheduler": b, "cfg": workflows.CFG_DEFAULTS.get(k)}
                               for k, (a, b) in workflows.SAMPLING_DEFAULTS.items()},

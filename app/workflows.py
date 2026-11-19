@@ -34,7 +34,15 @@ H3_AUDIO_ONLY_MP = 0.2  # sound-only runs don't need pixels; keep the latent sma
 KLEIN_QUALITY = {"draft": 0.5, "standard": 1.0, "high": 2.0}
 KREA2_QUALITY = {"draft": 0.5, "standard": 1.0, "high": 2.0}
 # MiniMax H3 Image is tuned for about 4 MP (2048 x 2048 of area).
-H3_IMAGE_QUALITY = {"draft": 1.0, "standard": 2.0, "high": 4.0}
+H3_IMAGE_QUALITY = {"draft": 1.0, "standard": 2.0, "high": 4.0, "xl": 8.0, "max": 16.0}  # it's trained for 4 to 20 MP
+
+# ComfyUI-H3-Image-EasyFix (PedroMarinhoDev, Apache-2.0): against H3 Image's grainy, speckled fine texture.
+# Steering nudges step 0 toward the cleaner texture H3 Image draws with an empty picture in the prompt; the
+# Re-Noise Sampler redraws the fine texture on steps 3 to 5. Settings are the pack's own example workflow's.
+EASYFIX_NODES = {"H3ImageSteering", "H3ImageSampler", "ManualSigmas", "SamplerCustomAdvanced", "BasicGuider", "RandomNoise", "KSamplerSelect"}
+H3_IMAGE_SIGMAS = "1.0, 0.9675236940383911, 0.8875485062599182, 0.75, 0.5327739119529724, 0.23200887441635132, 0.0"
+EASYFIX = {"strength": 0.7, "steer_steps": "0", "plan": "RNmid", "s_noise": 0.95, "sampler": "euler_ancestral"}
+
 # MOSS-Image: 1 to 2 MP recommended (0.25 to 4 MP work), sides in multiples of 16.
 MOSS_QUALITY = {"draft": 0.5, "standard": 1.0, "high": 2.0}
 
@@ -716,6 +724,7 @@ def build_h3_image(
     steps: int | None = None,
     prefix: str = "bob/h3image",
     loras: list[tuple[str, float]] | None = None,
+    clean: bool = False,
 ) -> Built:
     """MiniMax H3 Image text-to-image, as ComfyUI's "MiniMax-H3-Image: Text to Image" template runs it:
     MiniMaxH3ImageConditioning, 6 distilled steps (the checkpoint's PDD grid), cfg 1, euler/simple.
@@ -733,14 +742,29 @@ def build_h3_image(
         inputs[f"ref_{i}"] = load
         images[f"images.image_{i + 1}"] = o(load)
     cond = g.add("MiniMaxH3ImageConditioning", clip=o(clip), vae=o(vae), prompt=prompt, width=int(width), height=int(height), **images)
-    neg = g.add("ConditioningZeroOut", conditioning=o(cond, 0))
     steps = int(steps or 6)  # its distilled grid has 6 steps; other counts interpolate it
-    sampled = g.add("KSampler", model=o(chain_loras(g, unet, loras)), seed=int(seed), steps=steps, cfg=1.0, sampler_name="euler",
-                    scheduler="simple", positive=o(cond, 0), negative=o(neg), latent_image=o(cond, 1), denoise=1.0)
+    model = chain_loras(g, unet, loras)
+    # Clean texture (EasyFix) follows the official 6-step grid, so it runs only on 6 steps.
+    clean = clean and steps == 6
+    if clean:
+        e = EASYFIX
+        steered = g.add("H3ImageSteering", model=o(model), strength=e["strength"], steps=e["steer_steps"])
+        guider = g.add("BasicGuider", model=o(steered), conditioning=o(cond, 0))
+        inner = g.add("KSamplerSelect", sampler_name=e["sampler"])
+        renoise = g.add("H3ImageSampler", plan=e["plan"], custom_plan="SSRRRS", s_noise=e["s_noise"], sampler=o(inner))
+        sigmas = g.add("ManualSigmas", sigmas=H3_IMAGE_SIGMAS)
+        noise = g.add("RandomNoise", noise_seed=int(seed))
+        sampled = g.add("SamplerCustomAdvanced", noise=o(noise), guider=o(guider), sampler=o(renoise), sigmas=o(sigmas),
+                        latent_image=o(cond, 1))
+    else:
+        neg = g.add("ConditioningZeroOut", conditioning=o(cond, 0))
+        sampled = g.add("KSampler", model=o(model), seed=int(seed), steps=steps, cfg=1.0, sampler_name="euler",
+                        scheduler="simple", positive=o(cond, 0), negative=o(neg), latent_image=o(cond, 1), denoise=1.0)
     decoded = g.add("VAEDecode", samples=o(sampled), vae=o(vae))
     save = g.add("SaveImage", images=o(decoded), filename_prefix=prefix)
     return Built(graph=g.nodes, outputs=[save], image_inputs=inputs,
-                 info={"width": width, "height": height, "steps": steps, "references": references})
+                 info={"width": width, "height": height, "steps": steps, "references": references,
+                       **({"clean_texture": True} if clean else {})})
 
 
 # ------------------------------------------------------------------- Angles (Qwen Image Edit 2511)
