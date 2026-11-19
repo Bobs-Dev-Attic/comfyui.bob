@@ -53,6 +53,10 @@ const Shots = (() => {
     // A 3D scene's render (static/scene3d.js, 🎬 Render › Goes to a shot): {id, name, thumb, seconds, what, cam,
     // req: {motion_video, motion_video_mask, first_frame, motion_first, motion_hold, quality, references}}
     s.scene = s.scene && typeof s.scene === "object" && s.scene.req?.motion_video && s.scene.req.first_frame ? s.scene : null;
+    // The 3D scene this shot is mapped to (made from it, or picked for it), rendered into it yet or not: {id, name,
+    // thumb}. The scene's 🎬 Render goes to this shot, with this shot's text, unless told otherwise.
+    s.sceneLink = s.sceneLink && typeof s.sceneLink === "object" && typeof s.sceneLink.id === "string" && s.sceneLink.id ? s.sceneLink
+      : s.scene?.id ? { id: s.scene.id, name: s.scene.name || "3D scene", thumb: s.scene.thumb || "" } : null;
     // Shots no longer carry their own frames, picture choice or settings (the Inputs and Settings steps hold them).
     for (const k of ["first_frame", "last_frame", "refs", "over"]) delete s[k];
     return s;
@@ -391,8 +395,8 @@ const Shots = (() => {
   /* ---------------------------------------------------------------- the step */
   const thumbOf = (s, i) => {
     if (s.scene?.thumb) return s.scene.thumb;
-    if (isRef()) { const k = picsIn(s.rawOn ? s.raw : s.action)[0] ?? 0; return state.refs[k]?.url || ""; }
-    const f = framesOf(i); return (f.first_frame || f.last_frame)?.url || "";
+    if (isRef()) { const k = picsIn(s.rawOn ? s.raw : s.action)[0] ?? 0; return state.refs[k]?.url || s.sceneLink?.thumb || ""; }
+    const f = framesOf(i); return (f.first_frame || f.last_frame)?.url || s.sceneLink?.thumb || "";
   };
   function summary(s) {
     if (s.scene) return `🏞 ${s.scene.name}: ${oneLine(s.scene.what)}`;
@@ -423,7 +427,8 @@ const Shots = (() => {
       const t0 = t; t += +s.seconds || 0;
       const thumb = thumbOf(s, i), text = summary(s);
       const meta = s.scene ? ["3D scene", s.scene.cam?.includes("moves") ? "camera moves" : "static camera"] : s.rawOn && s.raw.trim() ? ["own prompt"] : [s.framing, s.angle, s.camera].filter(Boolean);
-      const badges = [s.scene ? `<span class="sb-badge" title="Renders the 3D scene ${esc(s.scene.name)}">🏞</span>` : "", motionOn(i) ? `<span class="sb-badge" title="Objects in motion: ${esc(s.motion.layers.map(l => l.name).join(", "))}, from ${esc(s.motion.picture.name || "a picture")}">🎬</span>` : "",
+      const badges = [s.scene ? `<span class="sb-badge" title="Renders the 3D scene ${esc(s.scene.name)}">🏞</span>`
+        : s.sceneLink && sceneFits() ? `<span class="sb-badge sb-dim" title="Mapped to the 3D scene ${esc(s.sceneLink.name)}: not rendered into this shot yet (open the scene, then 🎬 Render)">🏞</span>` : "", motionOn(i) ? `<span class="sb-badge" title="Objects in motion: ${esc(s.motion.layers.map(l => l.name).join(", "))}, from ${esc(s.motion.picture.name || "a picture")}">🎬</span>` : "",
         joins(i) ? `<span class="sb-badge" title="Continues shot ${i} without a cut">↪</span>` : "", s.dialogue.trim() && !s.rawOn ? `<span class="sb-badge" title="${esc(speakerOf(s) ? `${s.speaker} says` : "Spoken line")}: ${esc(s.dialogue)}">🗣</span>` : "",
         s.notes.trim() ? `<span class="sb-badge" title="${esc(s.notes)}">📝</span>` : ""].join("");
       return `<div class="shot-block${hasContent(s) ? "" : " sb-blank"}" data-i="${i}" ${n > 1 ? 'draggable="true"' : ""} role="listitem" aria-label="Shot ${i + 1}${s.title ? `: ${esc(s.title)}` : ""}">
@@ -442,6 +447,8 @@ const Shots = (() => {
     if (sh.mode === "multi" && T > 15) warn.push(`H3 makes up to about 15 s in one video; this is ${T.toFixed(1)} s. Use “One video per shot”, or shorten.`);
     if (sh.mode === "multi" && n > 6) warn.push("More than 6 shots in one video crowds it; H3 does best with 1–5.");
     if (sh.mode === "multi" && sh.list.some(s => s.scene)) warn.push("A 3D scene renders only in “One video per shot”: in one multi-shot video its shot has no text.");
+    const unrendered = sceneFits() && sh.mode === "each" ? sh.list.map((s, i) => s.sceneLink && !s.scene ? i + 1 : 0).filter(Boolean) : [];
+    if (unrendered.length) warn.push(`Shot${unrendered.length > 1 ? "s" : ""} ${unrendered.join(", ")} ${unrendered.length > 1 ? "have 3D scenes" : "has a 3D scene"} not rendered in yet, so ${unrendered.length > 1 ? "they render" : "it renders"} from text (open the scene and 🎬 Render it into the shot).`);
     const empty = sh.list.map((s, i) => hasContent(s) ? 0 : i + 1).filter(Boolean);
     if (empty.length) warn.push(`Shot${empty.length > 1 ? "s" : ""} ${empty.join(", ")} ${empty.length > 1 ? "are" : "is"} empty.`);
     document.getElementById("shots-hint").innerHTML = `${sh.mode === "multi"
@@ -477,6 +484,7 @@ const Shots = (() => {
   function duplicate(i) {
     const L = state.shots.list, c = { ...structuredClone(L[i]), id: uid() };
     if (c.title) c.title += " (copy)";
+    if (!c.scene) c.sceneLink = null;  // a scene renders into one shot
     L.splice(i + 1, 0, c); changed();
     return i + 1;
   }
@@ -498,7 +506,10 @@ const Shots = (() => {
   function menu(i, anchor) {
     document.querySelector(".ex-menu")?.remove();
     const n = state.shots.list.length;
-    const items = [["✎  Edit…", () => openModal(i)], null,
+    const s = state.shots.list[i];
+    const items = [["✎  Edit…", () => openModal(i)],
+      ...(sceneFits() && state.shots.mode === "each" ? s.sceneLink ? [["🏞  Open its 3D scene", () => Scene3D.open(s.sceneLink.id)]]
+        : [["🏞  New 3D scene from this shot", () => newScene(i, shotPictures(i)[0]?.ref || null)]] : []), null,
       ["↑  Move up", () => move(i, i - 1), i === 0], ["↓  Move down", () => move(i, i + 1), i === n - 1], null,
       ["⧉  Duplicate", () => duplicate(i)], ["🗑  Delete", () => remove(i), n <= 1]];
     const m = document.createElement("div");
@@ -744,6 +755,17 @@ const Shots = (() => {
             </div>
           </section>
 
+          ${!multi && !s.scene && sceneFits() ? `<section class="sm-scene"><h3>🏞 3D scene <span class="opt">optional</span></h3>
+            ${s.sceneLink ? `<div class="sm-mo">${s.sceneLink.thumb ? `<img src="${esc(s.sceneLink.thumb)}" alt="">` : `<span class="sm-mo-ph" aria-hidden="true">🏞</span>`}
+                <div><b>${esc(s.sceneLink.name)}</b> · not rendered in yet
+                  <div class="sm-mo-acts"><button type="button" class="btn sm" data-sm="link-open" title="Build the shot in 3D, then 🎬 Render: it goes to this shot">🏞 Open the scene</button>
+                  <button type="button" class="btn sm ghost" data-sm="link-off" title="This shot no longer uses the scene (the scene stays)">Unlink</button></div></div></div>
+              <p class="hint">The scene's 🎬 Render goes to this shot, with this shot's What happens (its &lt;Picture N&gt; tags become the objects that have those pictures). Until it's rendered in, this shot renders from the fields below.</p>`
+            : `<div class="sm-mo-acts"><button type="button" class="btn sm" data-sm="link-new" title="A 3D scene made from this shot's inputs: its picture, length and text">＋ New scene from this shot…</button>
+                <button type="button" class="btn sm ghost" data-sm="link-pick" title="One of this project's 3D scenes">Use a scene…</button></div>
+              <p class="hint">Stage this shot in 3D. The scene starts from ${shotPictures(i).length ? `this shot's ${esc(shotPictures(i).map(p => p.label.toLowerCase()).join(", "))} (or another Inputs picture, or none)` : "an Inputs picture, or none"}, with this shot's length; its 🎬 Render then goes to this shot.</p>`}
+          </section>` : ""}
+
           ${s.scene ? `<section class="sm-scene"><h3>🏞 3D scene</h3>
             <div class="sm-mo"><img src="${esc(s.scene.thumb || "")}" alt="">
               <div><b>${esc(s.scene.name)}</b> · ${(+s.scene.seconds).toFixed(2)} s · ${esc(s.scene.cam || "")}
@@ -905,6 +927,22 @@ const Shots = (() => {
     if (a === "motion-off") { s.motion = null; changed(); return renderModal(); }
     if (a === "scene-off") { s.scene = null; changed(); return renderModal(); }
     if (a === "scene-open") { syncFromForm(); closeModal(); return Scene3D.open(s.scene.id); }
+    if (a === "link-open") { syncFromForm(); closeModal(); return Scene3D.open(s.sceneLink.id); }
+    if (a === "link-off") { s.sceneLink = null; changed(); return renderModal(); }
+    if (a === "link-new" || a === "link-pick") {
+      const r = e.target.closest("[data-sm]").getBoundingClientRect();
+      let items;
+      if (a === "link-new") {
+        const own = shotPictures(i), rest = Scene3D.inputPictures().filter(p => !own.some(o => o.ref === p.ref));
+        items = [...own.map(p => [`🖼 This shot's ${p.label.toLowerCase()}: ${p.name}`, p.ref]), ...rest.map(p => [`🖼 ${p.label}: ${p.name}`, p.ref]),
+          ["▢ An empty scene (a floor and a sky)", null]].map(([l, ref]) => [l, () => { syncFromForm(); closeModal(); newScene(i, ref); }]);
+      } else {
+        const list = await Scene3D.projectScenes();
+        if (!list.length) return Media.toast("This project has no 3D scenes yet: make one with ＋ New scene from this shot.");
+        items = list.map(x => [`🏞 ${x.name}${(state.shots.list.find(y => y.sceneLink?.id === x.id && y !== s) ? " (another shot's)" : "")}`, () => linkScene(i, x)]);
+      }
+      return Media.menu(r.left, r.bottom + 4, items);
+    }
     if (a === "rebuild") {
       const diff = syncFromForm();
       const pre = modal.root.querySelector(".sm-prompt"); if (pre) pre.textContent = "";  // force the rebuild and its flash
@@ -1236,10 +1274,54 @@ const Shots = (() => {
     }
     const s = sh.list[k];
     s.scene = scene; s.seconds = clampSec(scene.seconds);
+    s.sceneLink = { id: scene.id, name: scene.name, thumb: scene.thumb || s.sceneLink?.thumb || "" };
+    for (const x of sh.list) if (x !== s && !x.scene && x.sceneLink?.id === scene.id) x.sceneLink = null;  // one shot per scene
     if (!s.title) s.title = scene.name;
     if (sh.mode === "multi") sh.mode = "each";  // a scene renders only as its own video
     changed();
     return k;
+  }
+  /* Shots mapped to 3D scenes (H3, H3 Reference, one video per shot). A shot's own inputs are the keyframe it starts
+     or ends on and the reference pictures its text names; a scene made from it starts from one of those (in depth) or
+     from nothing, takes its length (and, empty, the project's picture shape), and is linked to it, so the scene's
+     🎬 Render goes to this shot with its text. */
+  const sceneFits = () => isVideo() && ["h3", "h3ref"].includes(state.engine.video);
+  function shotPictures(i) {
+    const s = state.shots.list[i], f = framesOf(i), out = [];
+    const add = (r, label) => { if (r?.ref && r.url && !out.some(p => p.ref === r.ref)) out.push({ ref: r.ref, url: r.url, label, name: r.ref.split("/").pop().replace(/\.[^.]+$/, "") }); };
+    add(f.first_frame, "First frame"); add(f.last_frame, "Last frame");
+    for (const k of picsIn(s.rawOn ? s.raw : s.action)) add(state.refs[k], `Picture ${k + 1}`);
+    return out;
+  }
+  async function newScene(i, picture) {
+    const s = state.shots.list[i], id = s.id;
+    const sc = await Scene3D.createFor({ picture, name: `Shot ${i + 1}${s.title ? `: ${s.title}` : ""}`, seconds: s.seconds });
+    const k = state.shots.list.findIndex(x => x.id === id);
+    if (sc && k >= 0) linkScene(k, sc);
+  }
+  function linkScene(i, sc) {
+    const sh = ensure(), s = sh.list[i];
+    if (!s || !sc) return;
+    for (const x of sh.list) if (x !== s && !x.scene && x.sceneLink?.id === sc.id) x.sceneLink = null;  // one shot per scene
+    s.sceneLink = { id: sc.id, name: sc.name, thumb: sc.plate_url || sc.picture_url || sc.backdrop_url || "" };
+    if (!s.title) s.title = sc.name.replace(/^Shot \d+:\s*/, "");
+    if (sh.mode === "multi") sh.mode = "each";  // a scene renders only as its own video
+    changed();
+    Scene3D.refreshPanel();  // its "→ Shot N"
+  }
+  function unlinkScene(id) {
+    if (!upgraded()) return;
+    let hit = false;
+    for (const x of state.shots.list) if (x.sceneLink?.id === id && !x.scene) { x.sceneLink = null; hit = true; }
+    if (hit) { changed(); Scene3D.refreshPanel(); }
+  }
+  // The shot a scene is mapped to, for its Render window and the scenes panel: {i, label, action}.
+  function shotOfScene(id) {
+    if (!on()) return null;
+    const i = state.shots.list.findIndex(s => s.sceneLink?.id === id);
+    if (i < 0) return null;
+    const s = state.shots.list[i];
+    return { i, label: `Shot ${i + 1}${s.title ? `: ${s.title}` : ""}`, action: s.rawOn ? "" : s.action || "" };
   }
   // The shots a scene's render can go to (for its Render window).
   const targets = () => on() ? state.shots.list.map((s, i) => ({ i, label: `Shot ${i + 1}${s.title ? `: ${s.title}` : ""}${s.scene ? " (its 3D scene)" : hasContent(s) ? "" : " (empty)"}` })) : [];
@@ -1251,5 +1333,5 @@ const Shots = (() => {
     return only ? 0 : sh.list.length - 1;
   }
 
-  return { init, render, renderBanner, prompt, previewText, on, ready, generate, onItem, resume, ensure, describe, openModal, reuse, describeMissing, placeWhenDone, useScene, targets };
+  return { init, render, renderBanner, prompt, previewText, on, ready, generate, onItem, resume, ensure, describe, openModal, reuse, describeMissing, placeWhenDone, useScene, targets, shotOfScene, linkScene, unlinkScene, sceneFits };
 })();

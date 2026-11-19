@@ -139,6 +139,24 @@ const Scene3D = (() => {
     } catch (e) { Media.toast(`3D scene: ${e.message}`); }
   }
 
+  // A scene for a shot on the Shots step (shots.js): a picture in depth or none, the shot's length and, empty, the
+  // project's picture shape. Opens it; returns the new scene (or null).
+  async function createFor({ picture = null, name = "3D scene", seconds = 5 }) {
+    if (picture && state.caps?.editor?.scene3d === false) { Media.toast("3D scenes need ComfyUI's Depth Anything 3 nodes and depth_anything_3_base."); return null; }
+    const asp = document.getElementById("aspect")?.value;
+    try {
+      const sc = await api("/api/scenes", { method: "POST", body: JSON.stringify({ picture, name, project: state.project?.id ?? null,
+        seconds: Math.max(1, Math.min(10, +seconds || 5)), aspect: ["16:9", "9:16", "1:1", "4:3", "21:9"].includes(asp) ? asp : null }) });
+      refreshPanel(); open(sc.id);
+      return sc;
+    } catch (e) { Media.toast(`3D scene: ${e.message}`); return null; }
+  }
+  // This project's finished scenes.
+  async function projectScenes() {
+    const proj = state.project?.id ?? null;
+    try { return ((await api("/api/scenes")).scenes || []).filter(x => (x.project ?? null) === proj && x.status === "done"); } catch { return []; }
+  }
+
   /* ---------------------------------------------------------------- the list */
   async function openList() {
     if (list?.win?.el?.isConnected) return refreshList();
@@ -167,12 +185,18 @@ const Scene3D = (() => {
         <button type="button" class="m3-more" data-more="${i}" aria-label="More for ${esc(x.name)}">⋯</button></figure>`).join("")
       : `<p class="hint m3-empty">No 3D scenes yet. Right-click a picture and choose 🏞 3D scene, or use 🏞 Open as a 3D scene in 🎬 Animate objects.</p>`;
   }
-  function itemMenu(x, px, py) {
+  function itemMenu(x, px, py, shots = false) {
     if (!x) return;
+    // on the Shots step: which shot it's for
+    const sh = shots && typeof Shots !== "undefined" && Shots.on() && state.shots.mode === "each" ? Shots.shotOfScene(x.id) : null;
+    const shotItems = shots && sh === null && typeof Shots !== "undefined" && Shots.on() && state.shots.mode === "each" && x.status === "done"
+      ? state.shots.list.map((y, i) => [`🎞 For shot ${i + 1}${y.title ? `: ${y.title}` : ""}`, () => Shots.linkScene(i, x)]) : [];
     Media.menu(px, py, [
       x.status === "done" && ["🏞 Open", () => open(x.id)],
+      ...shotItems,
+      sh && [`✕ Not for shot ${sh.i + 1} any more`, () => Shots.unlinkScene(x.id)],
       ["✎ Rename…", async () => { const n = prompt("Name", x.name); if (!n?.trim()) return; try { await api(`/api/scenes/${x.id}`, { method: "PATCH", body: JSON.stringify({ name: n.trim() }) }); refreshList(); } catch (e) { Media.toast(e.message); } }],
-      ["🗑 Delete…", async () => { if (!confirm(`Delete the scene “${x.name}”? Its 3D models stay in 🧊 3D models.`)) return; try { await api(`/api/scenes/${x.id}`, { method: "DELETE" }); refreshList(); } catch (e) { Media.toast(e.message); } }],
+      ["🗑 Delete…", async () => { if (!confirm(`Delete the scene “${x.name}”? Its 3D models stay in 🧊 3D models.`)) return; try { await api(`/api/scenes/${x.id}`, { method: "DELETE" }); if (typeof Shots !== "undefined") Shots.unlinkScene(x.id); refreshList(); } catch (e) { Media.toast(e.message); } }],
     ].filter(Boolean));
   }
 
@@ -192,6 +216,9 @@ const Scene3D = (() => {
     pb.disabled = cap.scene3d === false || !pics.length;
     pb.title = cap.scene3d === false ? "Needs ComfyUI's Depth Anything 3 nodes and depth_anything_3_base"
       : pics.length ? "One of the Inputs step's pictures (a keyframe or a reference) in depth, to stand 3D models in" : "Add a keyframe or reference picture in the Inputs step first";
+    const sb = box.querySelector('[data-s3p="shot"]');
+    if (sb) sb.disabled = !(typeof Shots !== "undefined" && Shots.on() && state.shots.mode === "each");
+    if (sb) sb.title = sb.disabled ? "In “One video per shot”: a scene for one of the shots" : "A scene for one of the shots, from its inputs (its picture, length and text); its 🎬 Render goes to that shot";
     if (!force && Date.now() - panelFetched < 5000) return;  // Shots.render runs on every edit
     panelFetched = Date.now();
     let all;
@@ -203,7 +230,7 @@ const Scene3D = (() => {
     grid.innerHTML = mine.length ? mine.map((x, i) => `
       <figure class="m3-card ${x.status}" data-i="${i}" tabindex="0" title="${x.status === "done" ? "Open this scene" : x.status === "failed" ? esc(x.error || "Failed") : "Being made…"}">
         <div class="m3-thumb">${x.plate_url || x.picture_url || x.backdrop_url ? `<img src="${esc(x.plate_url || x.picture_url || x.backdrop_url)}" alt="">` : "🏞"}${x.status === "failed" ? `<span class="m3-fail">Failed</span>` : ""}</div>
-        <figcaption><b>${esc(x.name)}</b><span class="hint">${x.status === "done" ? `${x.objects?.length || 0} object${x.objects?.length === 1 ? "" : "s"}` : x.status === "failed" ? "failed" : "making the depth…"}</span></figcaption>
+        <figcaption><b>${esc(x.name)}</b><span class="hint">${(() => { const sh = typeof Shots !== "undefined" && Shots.shotOfScene(x.id); return sh ? `<span class="s3p-shot" title="${esc(sh.label)}: its 🎬 Render goes there">→ Shot ${sh.i + 1}</span> · ` : ""; })()}${x.status === "done" ? `${x.objects?.length || 0} object${x.objects?.length === 1 ? "" : "s"}` : x.status === "failed" ? "failed" : "making the depth…"}</span></figcaption>
         <button type="button" class="m3-more" data-more="${i}" aria-label="More for ${esc(x.name)}">⋯</button></figure>`).join("")
       : `<p class="hint m3-empty">No 3D scenes in this project yet${others ? ` (${others} in other projects: All scenes…)` : ""}.</p>`;
     clearTimeout(panelTimer);
@@ -226,8 +253,12 @@ const Scene3D = (() => {
         const r = e.target.closest("[data-s3p]").getBoundingClientRect();
         return Media.menu(r.left, r.bottom + 4, inputPictures().map(p => [`🖼 ${p.label}: ${p.name}`, () => create(p)]));
       }
+      if (act === "shot") {  // pick the shot; its Edit window has the choice of picture
+        const r = e.target.closest("[data-s3p]").getBoundingClientRect();
+        return Media.menu(r.left, r.bottom + 4, state.shots.list.map((x, i) => [`🎞 Shot ${i + 1}${x.title ? `: ${x.title}` : ""}${x.sceneLink ? " (has a scene)" : ""}`, () => Shots.openModal(i)]));
+      }
       const more = e.target.closest("[data-more]");
-      if (more) { const r = more.getBoundingClientRect(); return itemMenu(box._items?.[+more.dataset.more], r.left, r.bottom + 4); }
+      if (more) { const r = more.getBoundingClientRect(); return itemMenu(box._items?.[+more.dataset.more], r.left, r.bottom + 4, true); }
       const c = e.target.closest(".m3-card"), x = c && box._items?.[+c.dataset.i];
       if (x?.status === "done") open(x.id);
     });
@@ -235,7 +266,7 @@ const Scene3D = (() => {
       const c = e.target.closest?.(".m3-card"), x = c && box._items?.[+c.dataset.i];
       if (x?.status === "done" && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); open(x.id); }
     });
-    box.addEventListener("contextmenu", e => { const c = e.target.closest(".m3-card"); if (!c) return; e.preventDefault(); itemMenu(box._items?.[+c.dataset.i], e.clientX, e.clientY); });
+    box.addEventListener("contextmenu", e => { const c = e.target.closest(".m3-card"); if (!c) return; e.preventDefault(); itemMenu(box._items?.[+c.dataset.i], e.clientX, e.clientY, true); });
   }
 
   /* ---------------------------------------------------------------- maths */
@@ -981,6 +1012,7 @@ const Scene3D = (() => {
           <div class="field"><label>Picture <span class="opt">for a render on H3 Reference</span></label>
             <div class="s3-pic"><div class="s3-pic-th" tabindex="0" title="Drop a picture here from the gallery, the media library or your files"></div>
               <div class="s3-pic-btns"><button type="button" class="btn sm" data-act="pic-crop" title="Cut it out of the picture it was made from">✂ From the picture</button>
+                <button type="button" class="btn sm" data-act="pic-inputs" title="A keyframe or reference picture from the Inputs step (so a shot's <Picture N> becomes this object)">📥 Inputs…</button>
                 <button type="button" class="btn sm" data-act="pic-file">Choose…</button>
                 <button type="button" class="btn sm ghost" data-act="pic-clear" title="No picture">Remove</button></div></div>
             <input type="file" class="s3-picfile" accept="image/png,image/jpeg,image/webp" hidden></div>
@@ -1118,6 +1150,17 @@ const Scene3D = (() => {
 
   // The shots the render can go to: this scene's project's shot list, while it's the one open.
   const toShots = () => typeof Shots !== "undefined" && (state.project?.id ?? null) === (s.sc.project ?? null) ? Shots.targets() : [];
+  // The shot this scene is for (made from it or picked for it on the Shots step), while its project is open.
+  const forShot = () => toShots().length && state.shots.mode === "each" ? Shots.shotOfScene(s.sc.id) : null;
+  // A shot's text in the scene's words: <Picture N> (the Inputs step's reference N) becomes {the object} that has
+  // that picture, or "the subject".
+  function fromShot(text) {
+    const objs = s.objs.filter(o => o.mesh && o.pos && !o.hidden);
+    return String(text || "").replace(/<Picture (\d+)>/g, (_, n) => {
+      const ref = state.refs?.[+n - 1]?.ref, o = ref && objs.find(x => x.picture === ref);
+      return o ? `{${o.name}}` : "the subject";
+    }).trim();
+  }
   const autoTl = () => { try { return localStorage.getItem("bob.sceneAutoTl") !== "0"; } catch { return true; } };
   function renderDialog() {
     if (!s?.bg) return;
@@ -1138,7 +1181,7 @@ const Scene3D = (() => {
         ${cameraMoves() ? "the camera move and the objects" : "the objects; the camera holds still"}. ${frameCount()} frames, ${dur().toFixed(2)} s.</p>
       <div class="field"><label for="s3r-what">What happens <span class="opt">optional</span></label>
         ${tagChips()}
-        <textarea id="s3r-what" rows="3" placeholder="${esc(moving.length ? `${moving.map(n => `{${n}}`).join(" and ")} move${moving.length > 1 ? "" : "s"} across the scene.` : "The scene comes to life.")}"></textarea>
+        <textarea id="s3r-what" rows="3" placeholder="${esc(moving.length ? `${moving.map(n => `{${n}}`).join(" and ")} move${moving.length > 1 ? "" : "s"} across the scene.` : "The scene comes to life.")}">${esc(fromShot(forShot()?.action))}</textarea>
         <p class="hint s3-said" aria-live="polite"></p></div>
       ${picObjs().length ? `<label class="check"><input type="checkbox" id="s3r-refs"${refsReady() ? " checked" : " disabled"}> Use the objects' pictures (H3 Reference)</label>
         <p class="hint s3r-refs-h">${refsReady() ? `The first frame is &lt;Picture 1&gt;; ${picObjs().map((o, i) => `${esc(o.name)} is &lt;Picture ${i + 2}&gt;`).join(", ")}. Runs on H3 Reference's model with the same motion.`
@@ -1156,7 +1199,7 @@ const Scene3D = (() => {
         <option value="now">Render it now (the gallery)</option>
         <optgroup label="A shot on the Shots step">${toShots().map(t => `<option value="${t.i}">${esc(t.label)}</option>`).join("")}
         <option value="new">A new shot</option></optgroup></select>
-        <p class="hint s3r-to-h" hidden>The shot keeps this render's rough animation, mask and first picture; Generate on the Shots step makes it, in order with the other shots.</p></div>` : ""}
+        <p class="hint s3r-to-h" hidden>The shot keeps this render's rough animation, mask and first picture; Generate on the Shots step makes it, in order with the other shots.${forShot() ? ` This scene is for shot ${forShot().i + 1}: What happens is that shot's.` : ""}</p></div>` : ""}
       <label class="check s3r-tlf"><input type="checkbox" id="s3r-tl"${autoTl() ? " checked" : ""}> Add it to the timeline when it's done</label>`;
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
@@ -1184,7 +1227,7 @@ const Scene3D = (() => {
       if (toSel) box.querySelector(".s3r-to-h").hidden = !shot;
       goBtn.textContent = shot ? "🏞 Put in the shot" : "🎬 Render";
     };
-    if (toSel) toSel.onchange = syncTo;
+    if (toSel) { toSel.onchange = syncTo; const fs = forShot(); if (fs) toSel.value = String(fs.i); }
     syncTo();
     foot.querySelector('[data-a="cancel"]').onclick = () => win.close();
     foot.querySelector('[data-a="go"]').onclick = async e => {
@@ -1501,6 +1544,11 @@ const Scene3D = (() => {
       if (a === "photo") return photoDialog();
       if (a === "bd-pick") return s.root.querySelector(".s3-bdfile").click();
       if (a === "pic-file") return s.root.querySelector(".s3-picfile").click();
+      if (a === "pic-inputs" && o) {
+        const pics = inputPictures(), r = b.getBoundingClientRect();
+        if (!pics.length) return Media.toast("The Inputs step has no keyframes or reference pictures.");
+        return Media.menu(r.left, r.bottom + 4, pics.map(p => [`🖼 ${p.label}: ${p.name}`, () => { o.picture = p.ref; save(); renderSide(); }]));
+      }
       if (a === "pic-clear" && o) { o.picture = null; save(); renderSide(); return; }
       if (a === "pic-crop" && o) {
         b.disabled = true;
@@ -2516,6 +2564,6 @@ const Scene3D = (() => {
     requestAnimationFrame(step); renderTime();
   }
 
-  return { create, createEmpty, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
+  return { create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
     _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
 })();

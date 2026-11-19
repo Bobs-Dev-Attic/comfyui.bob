@@ -5,6 +5,24 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.106.0] - 2026-11-19
+
+### Added
+- **Shots are mapped to 3D scenes, with their inputs.** On the Shots step (H3, H3 Reference, one video per shot), a
+  shot can have its own 3D scene:
+  - **＋ New scene from this shot…** in the shot's Edit window (or 🏞 New 3D scene from this shot in its ⋯ menu, or
+    🎞 For a shot… on the 3D scenes panel). The scene starts from the shot's own picture (the keyframe it starts or
+    ends on, or a reference picture its text names), another Inputs picture, or none. It takes the shot's length,
+    and an empty scene takes the project's picture shape. It's named after the shot and opens at once.
+  - **Use a scene…** maps one of the project's scenes to the shot; the panel's ⋯ menu also has For shot N and Not for
+    shot N any more. A scene belongs to one shot.
+  - The scene's **🎬 Render** then goes to its shot by default, with the shot's What happens filled in. The shot's
+    `<Picture N>` tags become the objects that have those pictures, so each reference picture maps to an object.
+  - An object's Picture has **📥 Inputs…**, which picks a keyframe or reference picture from the Inputs step.
+  - The shot list shows a dim 🏞 on a shot whose scene isn't rendered in yet, and warns that it renders from text
+    until it is. The panel shows **→ Shot N** on each mapped scene. Unlink in the Edit window leaves the scene;
+    deleting a scene unlinks it.
+
 ## [0.105.0] - 2026-11-19
 
 ### Added

@@ -794,7 +794,10 @@ details.post-proc > .hint { margin: 0 0 10px; }
 /* a shot's objects in motion (Shots › Edit) */
 .sm-mo { display: flex; gap: 10px; align-items: flex-start; }
 .sm-mo img { width: 96px; height: 64px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); flex: none; }
-.sm-mo-acts { display: flex; gap: 6px; margin-top: 6px; }
+.sm-mo-acts { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.sm-mo-ph { width: 96px; height: 64px; border-radius: 6px; border: 1px dashed var(--line); flex: none; display: grid; place-items: center; font-size: 24px; }
+.sb-badge.sb-dim { opacity: .5; }
+.s3p-shot { color: var(--accent); font-weight: 600; }
 .sm-motion .mo-find select { flex: 1; min-width: 0; }
 
 /* Animate objects: the object menu and the erase bar */

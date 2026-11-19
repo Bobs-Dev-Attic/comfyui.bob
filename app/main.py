@@ -429,6 +429,9 @@ class SceneNew(BaseModel):
     name: str = Field("3D scene", max_length=120)
     project: str | None = Field(None, max_length=200)
     objects: list[SceneObject] = Field(default_factory=list, max_length=64)
+    # made for a shot on the Shots step: its length, and (an empty scene) the project's picture shape
+    seconds: float | None = Field(None, ge=1, le=20)
+    aspect: Literal["16:9", "9:16", "1:1", "4:3", "21:9"] | None = None
 
 
 class ScenePatch(BaseModel):
@@ -463,7 +466,7 @@ async def scenes_new(req: SceneNew):
         except (media.MediaError, ValueError) as exc:
             raise HTTPException(400, str(exc)) from exc
     return model3d.start_scene(jobs, picture=req.picture, plate=req.plate, name=req.name, project=req.project,
-                               objects=[o.model_dump() for o in req.objects])
+                               objects=[o.model_dump() for o in req.objects], seconds=req.seconds, aspect=req.aspect)
 
 
 @app.get("/api/scenes")
