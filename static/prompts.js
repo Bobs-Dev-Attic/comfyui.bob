@@ -31,7 +31,7 @@ const Prompts = (() => {
   /* ------------------------------------------------------------ the model being written for */
   const PROFILE = {
     "video:h3": "h3video", "video:h3ref": "h3ref", "image:h3": "h3still", "image:klein": "flux",
-    "image:krea2": "krea", "image:h3image": "h3image", "audio:h3": "h3sound", "audio:music3": "music",
+    "image:krea2": "krea", "image:h3image": "h3image", "image:moss": "moss", "audio:h3": "h3sound", "audio:music3": "music",
   };
   const modelKey = () => `${state.kind}:${state.engine[state.kind]}`;
   const profile = () => PROFILE[modelKey()] || null;
@@ -143,14 +143,15 @@ const Prompts = (() => {
     if (!prof) return { text: s, notes };
     const H3 = prof.startsWith("h3");
     const has = re => { re.lastIndex = 0; const hit = re.test(s); re.lastIndex = 0; return hit; };
-    if (prof === "flux" || prof === "krea") {
+    if (prof === "flux" || prof === "krea" || prof === "moss") {
       const w = /\(\s*([^():]+?)\s*:\s*[\d.]+\s*\)|\(\(+\s*([^()]+?)\s*\)+\)|\[\s*([^\][]+?)\s*\]/g;
       if (w.test(s)) { s = s.replace(w, (m, a, b, c) => a || b || c); notes.push(["Weights like (word:1.2) do nothing here: taken out", "fix"]); }
       if (has(FILLER)) { s = dropFiller(s); notes.push(["Filler such as “masterpiece, 8k” taken out", "fix"]); }
       const commas = (s.match(/,/g) || []).length, sentences = (s.match(/[.!?](\s|$)/g) || []).length;
-      if (commas >= 6 && sentences <= 1 && words(s) / (commas + 1) < 3.5) notes.push([`${prof === "flux" ? "FLUX" : "Krea 2"} reads sentences: a tag list works better rewritten`, "tip"]);
+      if (commas >= 6 && sentences <= 1 && words(s) / (commas + 1) < 3.5) notes.push([`${prof === "flux" ? "FLUX" : prof === "moss" ? "MOSS" : "Krea 2"} reads sentences: a tag list works better rewritten`, "tip"]);
       const n = words(s);
-      if (n && n < 8) notes.push(["Short prompt: add the setting, light or style", "tip"]);
+      if (prof === "moss") { if (n && n < 40) notes.push(["MOSS likes long captions (150+ words): describe more, or turn on Enhance prompt", "tip"]); }
+      else if (n && n < 8) notes.push(["Short prompt: add the setting, light or style", "tip"]);
       else if (n > 160) notes.push([`${n} words: long prompts dilute; aim for 40–90`, "tip"]);
     }
     if (H3) {

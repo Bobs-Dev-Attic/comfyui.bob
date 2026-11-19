@@ -15,6 +15,7 @@ HF_KREA2 = "https://huggingface.co/Comfy-Org/Krea-2"
 HF_MUSIC3 = "https://huggingface.co/Comfy-Org/MiniMax-Music-3"
 HF_QWEN_EDIT = "https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI"
 HF_H3_IMAGE = "https://huggingface.co/Comfy-Org/MiniMax-H3-Image"
+HF_MOSS = "https://huggingface.co/Comfy-Org/MOSS-Image"
 
 
 @dataclass(frozen=True)
@@ -162,7 +163,25 @@ H3_IMAGE = ModelSet(
     ),
 )
 
-ALL_SETS = {s.key: s for s in (H3, H3REF, KLEIN, KREA2, H3_IMAGE, MUSIC3, ANGLES)}
+# MOSS-Image (OpenMOSS, Apache-2.0): a 5B image model with strong in-picture text, as ComfyUI's
+# "MOSS-Image: Text to Image" template runs it. The SFT checkpoint first, then Base (int8 before bf16).
+# Its text encoder is the plain Qwen3.5 9B w4a8 file (not Klein's flux3 upsampler), and its VAE the
+# small FLUX.2 VAE (not flux2-vae itself).
+MOSS = ModelSet(
+    key="moss",
+    title="MOSS-Image",
+    source=HF_MOSS,
+    unet_hints=("moss",),
+    slots=(
+        Slot("unet", "diffusion_models", ("moss_image_sft_int8*", "moss_image_sft*", "moss-image-sft*",
+                                          "moss_image_base_int8*", "moss_image_base*", "moss-image-base*", "moss_image*", "moss-image*"),
+             label="MOSS-Image diffusion model (SFT or Base)"),
+        Slot("clip", "text_encoders", ("qwen3.5_9b_w4a8_gptq*",), label="Qwen3.5 9B text encoder (w4a8)"),
+        Slot("vae", "vae", ("flux2-vae_small*", "flux2_vae_small*"), label="FLUX.2 small VAE"),
+    ),
+)
+
+ALL_SETS = {s.key: s for s in (H3, H3REF, KLEIN, KREA2, H3_IMAGE, MOSS, MUSIC3, ANGLES)}
 
 
 def _match(pattern: str, filename: str) -> bool:

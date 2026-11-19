@@ -41,7 +41,7 @@ _lock = threading.Lock()
 
 # The Prompt Explorer node's model names, as Bob engine keys (import only).
 NODE_MODELS = {"flux2": "image:klein", "flux": "image:klein", "krea2": "image:krea2", "krea": "image:krea2",
-               "minimax h3": "video:h3", "h3": "video:h3", "music 3": "audio:music3"}
+               "minimax h3": "video:h3", "h3": "video:h3", "music 3": "audio:music3", "moss": "image:moss"}
 
 
 # --------------------------------------------------------------------------- catalog
@@ -205,6 +205,11 @@ PROFILES: dict[str, tuple[str, str]] = {
     "krea": ("Krea 2, a photoreal image model that reads natural language",
              "Write one paragraph of 30 to 80 words in plain, concrete photographic language: subject and action, wardrobe and materials, "
              "place, light and time of day, camera and lens. No tag lists and no weights such as (word:1.2). " + NO_NEG),
+    "moss": ("MOSS-Image, an image model trained on long, detailed English captions and good at rendering text",
+             "Write two or three paragraphs of 120 to 250 words in plain natural language. Start with the medium and the subject "
+             "(e.g. \"Studio photograph of …\", \"Anime-style illustration of …\"), then the subject's details, pose, the space "
+             "from foreground to background, framing and camera, light, palette and texture. Any text to show goes in double "
+             "quotes, word for word, with where it sits, its typeface and color. No tag lists and no weights such as (word:1.2). " + NO_NEG),
     "h3still": ("MiniMax H3 rendering one still frame",
                 "Line 1: the style (medium, look, palette, lens, mood) in one line.\nThen a blank line.\nThen one paragraph: the framing, "
                 "the setting and its light, then the subject and pose. " + NO_NEG),

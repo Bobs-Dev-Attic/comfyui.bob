@@ -35,6 +35,8 @@ KLEIN_QUALITY = {"draft": 0.5, "standard": 1.0, "high": 2.0}
 KREA2_QUALITY = {"draft": 0.5, "standard": 1.0, "high": 2.0}
 # MiniMax H3 Image is tuned for about 4 MP (2048 x 2048 of area).
 H3_IMAGE_QUALITY = {"draft": 1.0, "standard": 2.0, "high": 4.0}
+# MOSS-Image: 1 to 2 MP recommended (0.25 to 4 MP work), sides in multiples of 16.
+MOSS_QUALITY = {"draft": 0.5, "standard": 1.0, "high": 2.0}
 
 
 def dims_for(aspect: tuple[float, float], megapixels: float, multiple: int = 32) -> tuple[int, int]:
@@ -217,9 +219,10 @@ def h3_frame_alignment(first: bool, last: bool, frames: int) -> str:
 SAMPLING_DEFAULTS = {
     "h3": ("res_multistep", "simple"), "h3ref": ("res_multistep", "simple"), "klein": ("euler", "simple"),
     "krea2": ("euler", "simple"), "h3image": ("euler", "simple"), "music3": ("euler", "simple"),
+    "moss": ("er_sde", "simple"),
 }
 # CFG each engine runs at (H3 and H3 Reference use a BasicGuider: no negative, which is CFG 1).
-CFG_DEFAULTS = {"h3": 1.0, "h3ref": 1.0, "klein": 1.0, "krea2": 1.0, "h3image": 1.0, "music3": 1.7}
+CFG_DEFAULTS = {"h3": 1.0, "h3ref": 1.0, "klein": 1.0, "krea2": 1.0, "h3image": 1.0, "music3": 1.7, "moss": 2.5}
 
 
 def apply_sampling(graph: dict[str, dict], sampler: str | None, scheduler: str | None,
@@ -610,6 +613,96 @@ def build_krea2(
     save = g.add("SaveImage", images=o(decoded), filename_prefix=prefix)
     return Built(graph=g.nodes, outputs=[save],
                  info={"width": width, "height": height, "steps": steps, "enhanced": enhance})
+
+
+# MOSS-Image's prompt enhancer, adapted from ComfyUI's MOSS-Image template (which follows OpenMOSS's
+# "MOSS-Image Prompt Enhancer" skill): it turns a short idea into the long English caption the model was
+# trained on, keeping any quoted text verbatim.
+MOSS_ENHANCE_SYSTEM = (
+    "You are a prompt engineer for an image generation model. The user sends a short, rough request, sometimes with "
+    "exact copy to render. Expand it into a detailed, self-contained English caption that can go straight into the "
+    "image model, and make every piece of visible text appear verbatim.\n\n"
+    "Output only the caption. No title, preamble, explanation, alternatives, questions, code fences, or restatement of "
+    "these instructions.\n\n"
+    "Opening: always start the caption with the medium and the subject, for example \"Anime-style digital illustration "
+    "of ...\", \"Studio photograph of ...\", \"Mixed-media poster of ...\". Never start with a verb.\n\n"
+    "Preserve everything the user specifies: number of subjects, identity, action, clothing, style, era, composition, "
+    "palette, exclusions, and any copy they quote. Add only plausible visual detail the user left open. Never add new "
+    "people, plot, or dialogue, and never invent real product specifications, prices, or real people's names.\n\n"
+    "Cover these facets when the scene has content for them, without padding: 1. Subject: appearance, build, hair, each "
+    "garment and its material, accessories, texture. 2. Action: pose, hands, gaze, expression, in a single frame. "
+    "3. Space: foreground, midground and background, relative positions, frame edges. 4. Setting: architecture, props, "
+    "signs of time and place. 5. Framing: shot size, camera height and angle, perspective, placement in the frame. "
+    "6. Light: key light direction and hardness, color temperature, practical sources, how light falls on materials. "
+    "7. Tone: palette, contrast, grain, medium, atmosphere. 8. Text.\n\n"
+    "Text rules: keep the user's wording verbatim in its original language inside double quotes; never rewrite, "
+    "translate, shorten or repeat it. For each text block state the exact content, its carrier (sign, poster, label, "
+    "screen), position and relative size, typeface style and color, and legibility. When the scene clearly needs text "
+    "but none is given, write short, specific, scene-appropriate wording; never placeholders.\n\n"
+    "Writing: flowing natural language in two to four paragraphs, ordered by space or by the viewer's eye. No tag soup "
+    "and no empty quality words such as masterpiece or 8k. Every sentence adds new visible information. Aim for 220 to "
+    "320 words for a single subject and 320 to 500 for posters, multi-subject or text-heavy scenes, never fewer than "
+    "200 words. Describe only what is visible: no generation parameters, sizes or aspect ratios."
+)
+MOSS_NEGATIVE = "nsfw, worst quality, bad anatomy, watermark, jpeg artifact"
+
+
+def build_moss(
+    files: dict[str, str | None],
+    *,
+    prompt: str,
+    width: int,
+    height: int,
+    seed: int,
+    steps: int | None = None,
+    enhance: bool = False,
+    prefix: str = "bob/moss",
+    loras: list[tuple[str, float]] | None = None,
+) -> Built:
+    """MOSS-Image text-to-image, as ComfyUI's "MOSS-Image: Text to Image" template runs it: 25 steps, CFG 2.5,
+    er_sde/simple, its standard negative, an EmptyFlux2LatentImage canvas. The Base checkpoint gets skip-layer
+    guidance on layer 22 (the template's Base setting; the SFT template runs without it). Enhance rewrites the
+    prompt with the same Qwen3.5 text encoder (TextGenerate) into a full caption first."""
+    g = Graph()
+    o = Graph.out
+    unet_name = files["unet"] or ""
+    unet = g.add("UNETLoader", unet_name=unet_name, weight_dtype="default")
+    clip = g.add("CLIPLoader", clip_name=files["clip"], type="moss_image", device="default")
+    vae = g.add("VAELoader", vae_name=files["vae"])
+
+    model: Any = chain_loras(g, unet, loras)
+    base = "base" in unet_name.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if base:
+        model = g.add("SkipLayerGuidanceDiTSimple", model=o(model), double_layers="", single_layers="22",
+                      start_percent=0.0, end_percent=0.5)
+
+    text: Any = prompt
+    if enhance:
+        text = o(g.add(
+            "TextGenerate",
+            clip=o(clip),
+            system_prompt=MOSS_ENHANCE_SYSTEM,
+            prompt=prompt,
+            max_length=4096,
+            sampling_mode="on",  # a dynamic combo: its sub-inputs go in flat as "sampling_mode.<name>"
+            **{f"sampling_mode.{k}": v for k, v in (("temperature", 0.7), ("top_k", 64), ("top_p", 0.95), ("min_p", 0.05),
+                                                    ("repetition_penalty", 1.0), ("seed", int(seed) % (2**63)))},
+            thinking=False,
+            use_default_template=True,
+        ))
+    pos = g.add("CLIPTextEncode", clip=o(clip), text=text)
+    neg = g.add("CLIPTextEncode", clip=o(clip), text=MOSS_NEGATIVE)
+    empty = g.add("EmptyFlux2LatentImage", width=width, height=height, batch_size=1)
+    sampled = g.add(
+        "KSampler",
+        model=o(model), seed=int(seed), steps=int(steps or 25), cfg=2.5, sampler_name="er_sde", scheduler="simple",
+        positive=o(pos), negative=o(neg), latent_image=o(empty), denoise=1.0,
+    )
+    decoded = g.add("VAEDecode", samples=o(sampled), vae=o(vae))
+    save = g.add("SaveImage", images=o(decoded), filename_prefix=prefix)
+    return Built(graph=g.nodes, outputs=[save],
+                 info={"width": width, "height": height, "steps": int(steps or 25), "enhanced": enhance,
+                       "checkpoint": "Base" if base else "SFT", **({"slg": "layer 22"} if base else {})})
 
 
 def build_h3_image(
