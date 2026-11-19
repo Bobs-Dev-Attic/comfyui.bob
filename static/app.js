@@ -6,7 +6,7 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 
 const ENGINES = {
   video: [{ key: "h3", label: "MiniMax H3" }, { key: "h3ref", label: "H3 Reference" }],
-  image: [{ key: "h3", label: "H3 still" }, { key: "klein", label: "FLUX 3 Klein" }, { key: "krea2", label: "Krea 2" }, { key: "h3image", label: "H3 Image" }],
+  image: [{ key: "h3", label: "H3 still" }, { key: "klein", label: "FLUX 3 Klein" }, { key: "krea2", label: "Krea 2" }, { key: "h3image", label: "H3 Image" }, { key: "moss", label: "MOSS Image" }],
   audio: [{ key: "h3", label: "H3 sound" }, { key: "music3", label: "Music 3" }],
 };
 
@@ -17,6 +17,7 @@ const ENGINE_NOTES = {
   "image:klein": "Dedicated image model: fast and sharp, up to 2 MP.",
   "image:krea2": "Krea 2 Turbo: photoreal pictures in 8 steps, up to 2 MP.",
   "image:h3image": "MiniMax H3 Image: MiniMax's image model, 6 steps, up to 16 MP. Optional reference pictures; Clean texture with EasyFix.",
+  "image:moss": "MOSS-Image: an open 5B model that's good at text inside the picture and long prompts, 1–2 MP.",
   "audio:h3": "H3 generates audio jointly with a tiny video, then keeps only the soundtrack (MP3).",
   "audio:music3": "Full songs with vocals from a style caption and tagged lyrics.",
 };
@@ -46,6 +47,8 @@ non_diegetic_music: <score style, or N/A>`,
 `<medium: e.g. Candid photograph / Oil painting>, <subject and action>, <setting>, <lighting and camera>, <colors and materials>.`,
   "image:h3image":
 `<medium and style>, <subject with concrete colors and materials>, <setting>, <lighting and camera>.`,
+  "image:moss":
+`<medium> of <subject>, <details and pose>, <setting from front to back>, <framing and light>. A sign reads "<exact text>".`,
   "audio:h3":
 `overall_soundscape: <describe the sounds, their order and timing — e.g. rain on a tin roof, thunder building to a close crack at 3 seconds>
 non_diegetic_music: <music style, or N/A>`,
@@ -87,6 +90,12 @@ const TIPS = {
     <li>Put any text to render in double quotes.</li>
     <li>It always runs 6 steps (distilled). It's trained for 4 to 20 MP: High is 4 MP, XL 8 MP, Max 16 MP.</li>
     <li><b>Clean texture</b> (with the ComfyUI-H3-Image-EasyFix node pack) removes the grainy, speckled look on skin, fur and stone. It runs on 6 steps with the default scheduler.</li></ul>`,
+  moss: `<ul>
+    <li>Describe the finished picture in full sentences, starting with the medium and subject (“Studio photograph of…”).</li>
+    <li>Long prompts are fine (up to about 4,000 tokens): more visible detail gives better pictures.</li>
+    <li>Text to render goes in double quotes, word for word; English and Chinese both work. Use new lines for line breaks.</li>
+    <li>Short prompt? Turn on <b>Enhance prompt</b>: MOSS's own text encoder writes a full caption from it.</li>
+    <li>25 steps at CFG 2.5 (ComfyUI's template); for the official look try 50 steps, CFG 3 and euler in Settings › Advanced.</li></ul>`,
   music3: `<ul>
     <li>Caption in three parts: Global Metadata → Vocal Details → Arrangement.</li>
     <li>Lyrics tags (<code>[Intro] [Verse] [Chorus] [Bridge] [Outro] [Instrumental]</code>) control structure.</li></ul>`,
@@ -157,7 +166,7 @@ function renderForm() {
   renderModels();  // the Model step (shell.js)
 
   const isRef = eng === "h3ref", isH3Img = eng === "h3image";
-  const isH3 = eng === "h3" || isRef, isKlein = eng === "klein" || eng === "krea2", isMusic = eng === "music3";
+  const isH3 = eng === "h3" || isRef, isKlein = eng === "klein" || eng === "krea2" || eng === "moss", isMusic = eng === "music3";
   $("#f-frames").hidden = !(kind === "video") || isRef;
   $("#f-refs").hidden = !(isRef || isH3Img);
   $("#f-arefs").hidden = !(kind === "video" && isH3);
@@ -177,7 +186,8 @@ function renderForm() {
   $("#clean").disabled = !easyfix;
   $("#clean-hint").textContent = easyfix ? "EasyFix: less grain and speckle on skin, fur and stone (6 steps)"
     : "Needs the ComfyUI-H3-Image-EasyFix node pack in ComfyUI";
-  $("#enhance-hint").textContent = eng === "krea2" ? "Krea 2's text encoder expands short prompts" : "Qwen3.5 upsampler expands short prompts";
+  $("#enhance-hint").textContent = eng === "krea2" ? "Krea 2's text encoder expands short prompts"
+    : eng === "moss" ? "MOSS's Qwen3.5 text encoder writes a full caption from a short prompt" : "Qwen3.5 upsampler expands short prompts";
   $("#prompt-label").textContent = isMusic ? "Style caption" : kind === "audio" ? "Sound description" : "Prompt";
   $("#prompt").placeholder = {
     video: "Describe the shots, camera moves, and the sound…",
@@ -223,14 +233,14 @@ function updateDerived() {
   }
   let dims = "";
   if (kind !== "audio") {
-    const mpTable = eng === "h3image" ? { draft: 1, standard: 2, high: 4, xl: 8, max: 16 } : eng === "klein" || eng === "krea2" ? { draft: 0.5, standard: 1, high: 2 } : { draft: 0.4, standard: 0.6, full: 0.98 };
+    const mpTable = eng === "h3image" ? { draft: 1, standard: 2, high: 4, xl: 8, max: 16 } : eng === "klein" || eng === "krea2" || eng === "moss" ? { draft: 0.5, standard: 1, high: 2 } : { draft: 0.4, standard: 0.6, full: 0.98 };
     const mp = mpTable[$("#quality").value] ?? 0.4;
     const kf = state.frames.first_frame || state.frames.last_frame;
     if (kind === "video" && eng === "h3" && kf?.w) {
       const [w, h] = dimsFor([kf.w, kf.h], mp);
       dims = `${w} × ${h} (from keyframe)`;
     } else {
-      const [w, h] = dimsFor(ASPECT[$("#aspect").value] || [16, 9], mp, eng === "klein" || eng === "krea2" ? 16 : 32);
+      const [w, h] = dimsFor(ASPECT[$("#aspect").value] || [16, 9], mp, eng === "klein" || eng === "krea2" || eng === "moss" ? 16 : 32);
       dims = `${w} × ${h}`;
     }
   }
@@ -240,7 +250,7 @@ function updateDerived() {
   const turbo = $("#turbo").checked;
   const refLora = state.caps?.engines?.h3ref?.files?.turbo_lora || "";
   const refTurboSteps = /8step/i.test(refLora) ? 8 : 4;
-  const autoSteps = eng === "h3" ? (turbo ? 8 : 20) : eng === "h3ref" ? (turbo && refLora ? refTurboSteps : 20) : eng === "klein" ? 16 : eng === "krea2" ? 8 : eng === "h3image" ? 6 : 30;
+  const autoSteps = eng === "h3" ? (turbo ? 8 : 20) : eng === "h3ref" ? (turbo && refLora ? refTurboSteps : 20) : eng === "klein" ? 16 : eng === "krea2" ? 8 : eng === "h3image" ? 6 : eng === "moss" ? 25 : 30;
   $("#steps-hint").textContent = `auto = ${autoSteps}`;
   postContext();
   scheduleSave();

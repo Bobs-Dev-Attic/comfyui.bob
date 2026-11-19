@@ -33,6 +33,7 @@ REQUIRED_NODES = {
     "klein": {"EmptyFlux2LatentImage", "TextGenerate"},
     "krea2": {"ConditioningZeroOut", "TextGenerate"},
     "h3image": {"MiniMaxH3ImageConditioning", "ConditioningZeroOut"},
+    "moss": {"EmptyFlux2LatentImage", "SkipLayerGuidanceDiTSimple", "TextGenerate"},
     "music3": {"MiniMaxMusic3TextEncode", "EmptyMiniMaxMusic3LatentAudio", "SaveAudioMP3"},
     "angles": {"TextEncodeQwenImageEditPlus", "FluxKontextMultiReferenceLatentMethod", "CFGNorm", "ModelSamplingAuraFlow"},
 }
@@ -688,6 +689,7 @@ async def capabilities(refresh: bool = False):
         "klein_quality": workflows.KLEIN_QUALITY,
         "krea2_quality": workflows.KREA2_QUALITY,
         "h3image_quality": workflows.H3_IMAGE_QUALITY,
+        "moss_quality": workflows.MOSS_QUALITY,
         "h3image_easyfix": workflows.EASYFIX_NODES <= nodes,
         "samplers": comfy.samplers, "schedulers": comfy.schedulers,
         "sampling_defaults": {k: {"sampler": a, "scheduler": b, "cfg": workflows.CFG_DEFAULTS.get(k)}

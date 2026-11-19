@@ -30,10 +30,10 @@ CACHE_FILE = config.DATA_DIR / "lora_cache.json"
 PREVIEW_EXTS = (".preview.png", ".preview.jpg", ".preview.jpeg", ".preview.webp", ".png", ".jpg", ".jpeg", ".webp")
 FAMILIES = {
     "h3": "MiniMax H3", "flux2": "FLUX 2 / Klein", "krea2": "Krea 2", "wan": "Wan 2.x", "qwen-image": "Qwen Image",
-    "ltx": "LTX", "flux1": "FLUX 1", "sdxl": "SDXL", "sd15": "SD 1.5", "hunyuan": "Hunyuan", "music3": "Music 3", "unknown": "Unknown",
+    "ltx": "LTX", "flux1": "FLUX 1", "sdxl": "SDXL", "sd15": "SD 1.5", "hunyuan": "Hunyuan", "music3": "Music 3", "moss": "MOSS-Image", "unknown": "Unknown",
 }
 # The engines of this studio and the LoRA families that fit them.
-ENGINE_FAMILIES = {"h3": {"h3"}, "h3ref": {"h3"}, "klein": {"flux2"}, "krea2": {"krea2"}, "h3image": {"h3"}, "music3": {"music3"}}
+ENGINE_FAMILIES = {"h3": {"h3"}, "h3ref": {"h3"}, "klein": {"flux2"}, "krea2": {"krea2"}, "h3image": {"h3"}, "moss": {"moss"}, "music3": {"music3"}}
 _lock = threading.Lock()
 _mem: dict[str, Any] | None = None
 

@@ -5,6 +5,23 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.100.0] - 2026-11-19
+
+### Added
+- **MOSS Image** as an image model ([OpenMOSS MOSS-Image](https://github.com/OpenMOSS/MOSS-Image), Apache-2.0): an
+  open 5B model that draws text inside the picture well (put it in double quotes) and reads long, detailed prompts.
+  - Runs as ComfyUI's own “MOSS-Image: Text to Image” template does: 25 steps, CFG 2.5, er_sde, its standard negative
+    prompt; Draft, Standard and High are 0.5, 1 and 2 MP. OpenMOSS's slower official settings (50 steps, CFG 3,
+    euler) can be picked in Settings › Advanced.
+  - Uses the SFT checkpoint when installed, else Base; the Base checkpoint gets the template's skip-layer guidance
+    (layer 22). Either can be picked in the Model step's diffusion model list.
+  - **Enhance prompt** has MOSS's own Qwen3.5 text encoder turn a short idea into the long caption it was trained
+    on, keeping quoted text word for word.
+  - The Prompt tab's live rewrite has a MOSS style, and the live view suggests a longer caption when a prompt is
+    short.
+  - Needs ComfyUI 0.42 or later and three files from [Comfy-Org/MOSS-Image](https://huggingface.co/Comfy-Org/MOSS-Image):
+    `moss_image_sft_int8_convrot` (or a Base checkpoint), `qwen3.5_9b_w4a8_gptq` and `flux2-vae_small`.
+
 ## [0.99.0] - 2026-11-19
 
 ### Added
