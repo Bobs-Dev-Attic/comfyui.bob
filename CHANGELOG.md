@@ -5,6 +5,19 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.105.0] - 2026-11-19
+
+### Added
+- **A 3D scene's render can go into a shot.** The scene's 🎬 Render window has a **Goes to** list: render it now (the
+  gallery, as before), one of the Shots step's shots, or a new shot. The shot keeps what the render drew (the rough
+  animation, its mask and the first picture: the scene's picture, a photo, or its first frame as drawn), and Generate
+  on the Shots step sends it in order with the other shots, onto the timeline.
+  - In the shot list it shows 🏞 with the scene's first picture. Its Edit window has a 🏞 3D scene section: the text H3
+    reads (editable), 🏞 Open the scene, and Remove. Its length is the scene's; the other fields aren't used. The shot
+    list's sound and music, and the Settings step, still apply.
+  - It renders only in "One video per shot" (putting a scene in a shot switches the list to it), starts with a cut,
+    and doesn't take the last frame of the shot before.
+
 ## [0.104.0] - 2026-11-19
 
 ### Added

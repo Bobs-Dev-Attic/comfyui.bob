@@ -1116,6 +1116,8 @@ const Scene3D = (() => {
     return (await r.json()).ref;
   }
 
+  // The shots the render can go to: this scene's project's shot list, while it's the one open.
+  const toShots = () => typeof Shots !== "undefined" && (state.project?.id ?? null) === (s.sc.project ?? null) ? Shots.targets() : [];
   const autoTl = () => { try { return localStorage.getItem("bob.sceneAutoTl") !== "0"; } catch { return true; } };
   function renderDialog() {
     if (!s?.bg) return;
@@ -1150,7 +1152,12 @@ const Scene3D = (() => {
         <option value="composite">The scene's first frame as drawn (plain)</option></select></div>
       <div class="field s3r-lookf"><label for="s3r-look">How the photo should look <span class="opt">optional</span></label>
         <textarea id="s3r-look" rows="2" placeholder="Soft daylight, shot on 35 mm film.">${esc(lastLook())}</textarea></div>
-      <label class="check"><input type="checkbox" id="s3r-tl"${autoTl() ? " checked" : ""}> Add it to the timeline when it's done</label>`;
+      ${toShots().length ? `<div class="field"><label for="s3r-to">Goes to</label><select id="s3r-to">
+        <option value="now">Render it now (the gallery)</option>
+        <optgroup label="A shot on the Shots step">${toShots().map(t => `<option value="${t.i}">${esc(t.label)}</option>`).join("")}
+        <option value="new">A new shot</option></optgroup></select>
+        <p class="hint s3r-to-h" hidden>The shot keeps this render's rough animation, mask and first picture; Generate on the Shots step makes it, in order with the other shots.</p></div>` : ""}
+      <label class="check s3r-tlf"><input type="checkbox" id="s3r-tl"${autoTl() ? " checked" : ""}> Add it to the timeline when it's done</label>`;
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
     foot.innerHTML = `<span class="hint s3r-st"></span><button type="button" class="btn ghost" data-a="cancel">Cancel</button><button type="button" class="btn primary" data-a="go">🎬 Render</button>`;
@@ -1170,6 +1177,15 @@ const Scene3D = (() => {
     };
     firstSel.value = startDefault; syncStart();
     firstSel.onchange = syncStart; holdSel.onchange = () => { holdSel.dataset.touched = "1"; };
+    const toSel = box.querySelector("#s3r-to"), goBtn = foot.querySelector('[data-a="go"]');
+    const syncTo = () => {
+      const shot = !!toSel && toSel.value !== "now";
+      box.querySelector(".s3r-tlf").hidden = shot;
+      if (toSel) box.querySelector(".s3r-to-h").hidden = !shot;
+      goBtn.textContent = shot ? "🏞 Put in the shot" : "🎬 Render";
+    };
+    if (toSel) toSel.onchange = syncTo;
+    syncTo();
     foot.querySelector('[data-a="cancel"]').onclick = () => win.close();
     foot.querySelector('[data-a="go"]').onclick = async e => {
       e.target.disabled = true;
@@ -1207,8 +1223,9 @@ const Scene3D = (() => {
         const what = videoText(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder, useRefs(), fromPhoto()).text;
         const cam = cameraMoves() ? "The camera moves smoothly through the scene." : "The camera holds a static shot.";
         const prompt = `integrated_multimodal_description: [Shot 1] ${what.replace(/\s+/g, " ")} ${cam}\n\noverall_soundscape: Natural sound of the scene.\n\nnon_diegetic_music: N/A`;
-        const toTl = box.querySelector("#s3r-tl").checked;
-        try { localStorage.setItem("bob.sceneAutoTl", toTl ? "1" : "0"); } catch { /* not kept */ }
+        const to = toSel?.value ?? "now";
+        const toTl = to === "now" && box.querySelector("#s3r-tl").checked;
+        if (to === "now") try { localStorage.setItem("bob.sceneAutoTl", toTl ? "1" : "0"); } catch { /* not kept */ }
         const req = { kind: "video", engine: "motion", prompt, seconds: n / FPS, aspect: "16:9", quality: box.querySelector("#s3r-q").value,
           seed: -1, batch: 1, turbo: true, first_frame: null, motion_video: ref, motion_video_mask: mask,
           motion_hold: holdSel.value, motion_first: "picture", project: s.sc.project };
@@ -1218,6 +1235,16 @@ const Scene3D = (() => {
         else if (noPic) req.first_frame = await uploadFrame([W, H], 0, camForRender(0), "scene_first.png");  // as drawn
         else { req.first_frame = s.sc.picture; req.motion_first = "composite"; }
         if (!req.first_frame) throw new Error("That photo isn't there anymore");
+        if (to !== "now") {  // into a shot: Generate on the Shots step sends it
+          const pic = s.photos.find(p => state.items.get(p.id)?.files?.[0]?.path === req.first_frame);
+          const thumb = (pic && state.items.get(pic.id)?.files?.[0]?.url) || `/${req.first_frame.replace(/^\/+/, "")}`;  // its first picture
+          const k = Shots.useScene(to === "new" ? -1 : +to, { id: s.sc.id, name: s.sc.name, thumb, seconds: n / FPS, what, cam,
+            req: { motion_video: ref, motion_video_mask: mask, first_frame: req.first_frame, motion_first: req.motion_first,
+              motion_hold: req.motion_hold, quality: req.quality, references: req.references || [] } });
+          win.close();
+          Media.toast(`3D scene: it's shot ${k + 1} now. Generate on the Shots step makes it.`);
+          return;
+        }
         const items = await submit(req);
         if (!items?.length) throw new Error("H3 didn't take it (the reason is on the Generate step)");
         if (toTl) Shots.placeWhenDone(items, s.sc.project);
