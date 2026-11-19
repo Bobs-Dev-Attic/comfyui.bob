@@ -219,6 +219,24 @@
               <div class="prompt-bar" id="prompt-bar" role="toolbar" aria-label="Insert into the prompt"></div>
               <textarea id="prompt" rows="9" placeholder="Describe the shots, camera moves, and the sound…"></textarea>
               <div class="prompt-live" id="prompt-live" hidden></div>
+              <details class="moss-layout" id="f-layout" hidden>
+                <summary>▣ Layout <span class="opt">boxes for text, objects and characters</span> <span class="opt" id="layout-count"></span></summary>
+                <div class="ml-head">
+                  <label class="switch"><input type="checkbox" id="layout-on"><span></span></label>
+                  <span><strong>Use the layout</strong> <span class="hint inline">the prompt above becomes the whole scene's caption</span></span>
+                  <span class="grow"></span>
+                  <span class="hint inline" id="layout-dims"></span>
+                  <button type="button" class="link" id="layout-clear">Clear</button>
+                </div>
+                <div class="ml-body" id="layout-body">
+                  <div class="ml-canvas" id="layout-canvas" tabindex="0" aria-label="Layout canvas: drag to draw a box"></div>
+                  <p class="hint">Drag on the canvas to draw a box; drag a box to move it, its corner to resize; Delete removes the selected one.
+                    Boxes are drawn in order: background first. <b>Text</b> boxes render their words exactly (one line per line);
+                    <b>Character</b> marks a person or creature.</p>
+                  <p class="hint warn" id="layout-enhance" hidden>Enhance prompt is skipped while the layout is on: it would rewrite the boxes.</p>
+                  <div class="ml-list" id="layout-list"></div>
+                </div>
+              </details>
               <div class="tips" id="tips" hidden></div>
               <div class="writer-status" id="writer-status" hidden></div>
               <details class="writer" id="f-writer">
@@ -469,6 +487,7 @@
   <script src="/static/editor.js"></script>
   <script src="/static/settings.js"></script>
   <script src="/static/prompts.js"></script>
+  <script src="/static/layout.js"></script>
   <script src="/static/app.js"></script>
   <script src="/static/shell.js"></script>
 </body>

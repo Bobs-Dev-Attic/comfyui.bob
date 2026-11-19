@@ -87,6 +87,17 @@ class MotionLayer(BaseModel):
     adjust: dict[str, float] | None = None  # the object's colour: hue (degrees), sat and bri (factors)
 
 
+class LayoutBox(BaseModel):
+    """A MOSS-Image layout box, as fractions of the canvas; drawn background first."""
+    x: float = Field(..., ge=0, le=1)
+    y: float = Field(..., ge=0, le=1)
+    w: float = Field(..., gt=0, le=1)
+    h: float = Field(..., gt=0, le=1)
+    type: Literal["text", "object", "character"] = "object"
+    text: str = Field("", max_length=1000)  # text boxes: the exact words to draw
+    desc: str = Field("", max_length=4000)
+
+
 class GenerateRequest(BaseModel):
     kind: Kind
     engine: Engine = "h3"
@@ -142,6 +153,7 @@ class GenerateRequest(BaseModel):
     motion_video: str | None = Field(None, max_length=2000)
     motion_video_mask: str | None = Field(None, max_length=2000)
     enhance: bool = False  # Klein prompt upsampler / Krea 2 prompt expander
+    layout: list[LayoutBox] | None = Field(None, max_length=60)  # MOSS-Image layout control
     clean_texture: bool = True  # H3 Image: EasyFix steering + re-noise, when ComfyUI-H3-Image-EasyFix is installed
     lyrics: str = Field("", max_length=20000)  # Music 3
     batch: int = Field(1, ge=1, le=4)  # number of takes (seeds seed, seed+1, ...)
@@ -719,6 +731,7 @@ class JobManager:
             return workflows.build_moss(
                 files, prompt=req.prompt, width=w, height=h, seed=seed, steps=req.steps or 25,
                 enhance=req.enhance, prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras],
+                layout=[b.model_dump() for b in req.layout] if req.layout else None,
             )
         if req.engine == "krea2":
             mp = workflows.KREA2_QUALITY.get(req.quality, 1.0)

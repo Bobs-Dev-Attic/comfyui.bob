@@ -164,6 +164,7 @@ function curKey() { return `${state.kind}:${state.engine[state.kind]}`; }
 function renderForm() {
   const kind = state.kind, eng = state.engine[kind];
   renderModels();  // the Model step (shell.js)
+  MossLayout.render();
 
   const isRef = eng === "h3ref", isH3Img = eng === "h3image";
   const isH3 = eng === "h3" || isRef, isKlein = eng === "klein" || eng === "krea2" || eng === "moss", isMusic = eng === "music3";
@@ -252,6 +253,7 @@ function updateDerived() {
   const refTurboSteps = /8step/i.test(refLora) ? 8 : 4;
   const autoSteps = eng === "h3" ? (turbo ? 8 : 20) : eng === "h3ref" ? (turbo && refLora ? refTurboSteps : 20) : eng === "klein" ? 16 : eng === "krea2" ? 8 : eng === "h3image" ? 6 : eng === "moss" ? 25 : 30;
   $("#steps-hint").textContent = `auto = ${autoSteps}`;
+  MossLayout.render();
   postContext();
   scheduleSave();
   $("#turbo-note").textContent = eng === "h3ref"
@@ -311,6 +313,7 @@ function collectRequest() {
     turbo: $("#turbo").checked,
     enhance: $("#enhance").checked,
     clean_texture: $("#clean").checked,
+    layout: MossLayout.request(),  // MOSS-Image: boxes for text, objects and characters
     steps,
     batch: state.batch,
     first_frame: kind === "video" && eng === "h3" ? state.frames.first_frame?.ref ?? null : null,
@@ -339,6 +342,7 @@ function applyParams(p) {
   $("#prompt").value = p.prompt || "";
   $("#lyrics").value = p.lyrics || "";
   if (p.aspect) $("#aspect").value = p.aspect;
+  if (p.layout) MossLayout.set({ on: true, boxes: p.layout });
   if (p.quality) $("#quality").value = p.quality;
   if (p.seconds) $("#seconds").value = p.seconds;
   $("#turbo").checked = p.turbo !== false;
@@ -1261,6 +1265,8 @@ function init() {
   initArefs();
   initWriter();
   Prompts.init();
+  MossLayout.init();
+  $("#enhance").addEventListener("change", () => MossLayout.render());
   initSysCheck();
   TL.mount($("#timeline"));
   Bin.init();
