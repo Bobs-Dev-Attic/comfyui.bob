@@ -1201,7 +1201,7 @@ const Scene3D = (() => {
     if (r?.mask) s.gpu.draw(s.bgMesh, { VP, M: ID, eye: e, key, solid: r.mask === "all" ? white : black });
     else if (s.showBg || r) s.gpu.draw(s.bgMesh, { VP, M: ID, eye: e, key, unlit: true });
     s.objs.forEach((o, i) => {
-      if (!o.mesh || !o.pos || o.hidden) return;
+      if (!o.mesh || !o.pos || o.hidden || r?.skip?.includes(o)) return;
       s.gpu.draw(o.mesh, { VP, M: matOf(o, poseAt(o, t)), eye: e, key, look: !r && s.clay ? 1 : 0,
         tint: !r && i === s.sel ? [0.06, 0.04, 0.0] : null, solid: r?.mask ? white : null });
     });
@@ -1666,9 +1666,11 @@ const Scene3D = (() => {
   }
 
   // One frame of the scene as a picture in data/uploads: [W, H], at time t, through `cam` (holes filled).
-  async function uploadFrame(size, t, cam, name) {
-    draw({ size, t, cam });
+  // `paste`: people pasted over their mannequins (pastePeople), which are then left out of the drawing.
+  async function uploadFrame(size, t, cam, name, paste = []) {
+    draw({ size, t, cam, skip: paste.map(p => p.o) });
     const c = fillHoles(s.cv, size[0], size[1]);
+    if (paste.length) { const g = c.getContext("2d"); for (const p of paste) g.drawImage(p.layer, 0, 0); }
     const blob = await new Promise(res => c.toBlob(res, "image/png"));
     const fd = new FormData(); fd.append("file", blob, name);
     const r = await fetch("/api/upload", { method: "POST", body: fd }), j = await r.json();
@@ -1752,13 +1754,19 @@ const Scene3D = (() => {
   }
   // The photo: every object in view, and what it becomes.
   // With pictures (`pics`, from photoPics), an object with one "becomes the golden retriever from Picture 2".
-  function photoObjects(t, cam, pics = [], model = "qwen", first = 2, free = false) {
+  // `pasted`: people already pasted into the render from their pictures, in their mannequins' place (pastePeople).
+  function photoObjects(t, cam, pics = [], model = "qwen", first = 2, free = false, pasted = []) {
     const list = cast(t, cam).filter(x => !x.off);
     if (!list.length) return "";
     const tag = PIC_TAG[model] || PIC_TAG.qwen;
     const one = x => {
       const k = pics.indexOf(x.o);
-      if (k >= 0) return `${x.seen} becomes ${x.becomes ? `the ${bare(x.becomes)} from ${tag(k + first)}` : `what is in ${tag(k + first)}`}`;
+      // pasted in from its picture: there's no mannequin in the render any more, only that person, roughly cut out
+      if (k >= 0 && pasted.includes(x.o)) return `the person ${x.where} is the one from ${tag(k + first)}, pasted in roughly: keep them exactly there, at that size, `
+        + `${x.pose ? `pose them ${x.pose}` : "keep their pose"}, and blend them into the photo with matching light, colour and shadows`;
+      // with a picture, Qwen tends to add what's in it beside the stand-in and keep the stand-in: say it takes its place
+      if (k >= 0) return `${x.seen} becomes ${x.becomes ? `the ${bare(x.becomes)} from ${tag(k + first)}` : x.o.prim === "figure" ? `the person in ${tag(k + first)}` : `what is in ${tag(k + first)}`}`
+        + `, exactly where it stands and at its size; the ${x.o.prim ? SHAPE[x.o.prim] : "stand-in"} itself is gone`;
       // a Person with nothing said is still a real person: Qwen keeps what it isn't told to change, the mannequin included
       return x.becomes ? `${x.seen} becomes ${x.becomes}` : x.o.prim === "figure" ? `${x.seen} becomes a real person` : x.seen;
     };
@@ -2012,19 +2020,101 @@ const Scene3D = (() => {
     + (person ? `${free ? "; each" : ", except that each"} human figure is a real person, not a mannequin` : "")
     + ". Add no people or large objects that the render doesn't have. Give the surfaces real materials, light and shadows." + (look ? ` ${look[0].toUpperCase()}${look.slice(1)}${/[.!?]$/.test(look) ? "" : "."}` : "");
   // The whole text for a photo at t through cam: `pics` are the objects' pictures, `d` 1 when the depth map goes along.
-  function photoText(t, cam, look, model, pics = [], d = 0) {
+  // `pasted`: the people pasted into the render (pastePeople); by default every Person with a picture among `pics`.
+  function photoText(t, cam, look, model, pics = [], d = 0, pasted = null) {
     const tag = PIC_TAG[model] || PIC_TAG.qwen, seen = cast(t, cam).filter(x => !x.off);
     const said = expandTags(look, cast(t, cam)).text.trim();
     const free = !!said || pics.length > 0 || seen.some(x => x.becomes);
     const person = seen.some(x => x.o.prim === "figure" && !x.becomes && !pics.includes(x.o));
-    return photoPrompt(said, pics.length || d ? tag(1) : "", free, person) + (d ? depthLine(tag, model) : "") + photoObjects(t, cam, pics, model, 2 + d, free);
+    pasted ??= pics.filter(o => o.prim === "figure");
+    return photoPrompt(said, pics.length || d ? tag(1) : "", free, person) + (d ? depthLine(tag, model) : "") + photoObjects(t, cam, pics, model, 2 + d, free, pasted);
   }
   const lastLook = () => { try { return localStorage.getItem("bob.scenePhotoLook") || ""; } catch { return ""; } };
   const EDIT_NAMES = { qwen: "Qwen Image Edit 2511", h3image: "MiniMax H3 Image" };
   const editModels = () => { const ed = state.caps?.editor || {}; return [ed.qwen !== false && ["qwen", "Qwen Image Edit 2511"], ed.h3image && ["h3image", "MiniMax H3 Image"]].filter(Boolean); };
+  // A Person with a picture goes into the render in its mannequin's place before the edit model sees it: only told to
+  // put the person from the picture where the mannequin is, the edit model mostly keeps the mannequin as well (beside
+  // them, or wearing their clothes). So the person is cut out of the picture (SAM 3), stood on the mannequin's feet as
+  // tall as it is standing, and left out wherever something in front of the mannequin covers it; the mannequin isn't
+  // drawn. The edit model then poses them as the mannequin was and blends them in.
+  const cutouts = new Map();  // picture ref -> the person in it, cropped, on a see-through canvas (null: none found)
+  async function cutoutOf(ref) {
+    if (cutouts.has(ref)) return cutouts.get(ref);
+    const load = async url => createImageBitmap(await (await fetch(url)).blob());
+    let out = null;
+    try {
+      const r = await api("/api/edit/select", { method: "POST", body: JSON.stringify({ source: ref, text: "person", threshold: 0.4 }) });
+      const [pic, m] = await Promise.all([load(mediaUrl(ref)), load(r.url)]);
+      const W = pic.width, H = pic.height, N = W * H;
+      const cv = Object.assign(document.createElement("canvas"), { width: W, height: H }), g = cv.getContext("2d", { willReadFrequently: true });
+      g.drawImage(m, 0, 0, W, H);
+      const md = g.getImageData(0, 0, W, H).data, a = new Uint8Array(N);
+      for (let c = 0; c < N; c++) a[c] = md[c * 4] > 127 ? 1 : 0;
+      // the biggest piece, and the smaller ones within its box (a hand apart from the arm), not someone else
+      const parts = components(a, W, H).sort((p, q) => q.cells.length - p.cells.length), big = parts[0];
+      if (big && big.cells.length > N * 0.01) {
+        const one = new Uint8Array(N); for (const c of big.cells) one[c] = 1;
+        const bb = boxOf(one, W, H, v => v === 1);
+        for (const p of parts.slice(1)) if (p.cells.length > big.cells.length * 0.01) { const x = p.cells[0] % W, y = (p.cells[0] / W) | 0; if (x >= bb.x0 && x < bb.x1 && y >= bb.y0 && y < bb.y1) for (const c of p.cells) one[c] = 1; }
+        const b = boxOf(one, W, H, v => v === 1);
+        g.clearRect(0, 0, W, H); g.drawImage(pic, 0, 0);
+        const px = g.getImageData(0, 0, W, H);
+        for (let c = 0; c < N; c++) if (!one[c]) px.data[c * 4 + 3] = 0;
+        g.putImageData(px, 0, 0);
+        out = Object.assign(document.createElement("canvas"), { width: b.x1 - b.x0, height: b.y1 - b.y0 });
+        out.getContext("2d").drawImage(cv, b.x0, b.y0, out.width, out.height, 0, 0, out.width, out.height);
+        out.noFeet = b.y1 >= H - 2;  // cut off by the picture's bottom edge (a portrait): there are no feet to stand on
+      }
+    } catch (err) { if (/SAM 3/.test(err.message)) throw err; console.warn("Cutting out the person:", err); }
+    cutouts.set(ref, out);
+    return out;
+  }
+  // The people pasted over their mannequins in a frame of `size` at t through cam: [{ o, layer }] (layer: the frame,
+  // see-through but for the person). Without SAM 3, or a picture with no whole person in it: not pasted.
+  async function pastePeople(size, t, cam, objs) {
+    const [W, H] = size, N = W * H, { e, VP } = viewProj(W, H, cam), out = [];
+    const fwd = norm(cam.target.map((v, j) => v - e[j]));
+    for (const x of s.objs) figureMesh(x, t);  // a Person in its pose at t
+    const toPx = p => { const x = xf(VP, p, 1), w = VP[3] * p[0] + VP[7] * p[1] + VP[11] * p[2] + VP[15]; return w > 1e-6 ? [(x[0] / w + 1) / 2 * W, (1 - x[1] / w) / 2 * H] : null; };
+    const depthOf = x => { const p = poseAt(x, t).pos; return (p[0] - e[0]) * fwd[0] + (p[1] - e[1]) * fwd[1] + (p[2] - e[2]) * fwd[2]; };
+    const shown = s.objs.filter(x => x.mesh && x.pos && !x.hidden);
+    for (const o of objs) {
+      let cut;
+      try { cut = await cutoutOf(o.picture); } catch { return out; }  // no SAM 3
+      if (!cut || cut.noFeet) continue;
+      // its feet on the ground and its head as high as it stands (a Person's position is at its feet)
+      const P = poseAt(o, t), pose = o.pose || "standing";
+      const tall = (o.dims?.[1] || 1.74) * natDims("figure", "standing")[1] / natDims("figure", pose)[1] * (o.stretch?.[1] || 1) * (P.scale || 1);
+      const feet = toPx(P.pos), head = toPx([P.pos[0], P.pos[1] + tall, P.pos[2]]);
+      if (!feet || !head || feet[1] - head[1] < 8) continue;
+      const h = feet[1] - head[1], w = cut.width * h / cut.height;
+      // what covers each pixel (bottom row first): R this mannequin, G another object (1 + its index), B the background;
+      // and where this mannequin is when nothing is in front of it
+      const all = s.gpu.capture(W, H, d => {
+        const o0 = { VP, eye: e, key: [0, 1, 0] };
+        if (s.bgMesh) d(s.bgMesh, { ...o0, M: ID, solid: [0, 0, 1] });
+        shown.forEach((x, i) => d(x.mesh, { ...o0, M: matOf(x, poseAt(x, t)), solid: x === o ? [1, 0, 0] : [0, (i + 1) / 255, 0] }));
+      });
+      const alone = s.gpu.capture(W, H, d => d(o.mesh, { VP, eye: e, key: [0, 1, 0], M: matOf(o, P), solid: [1, 0, 0] }));
+      const near = depthOf(o), front = shown.map(x => x !== o && depthOf(x) < near);
+      const layer = Object.assign(document.createElement("canvas"), { width: W, height: H }), g = layer.getContext("2d", { willReadFrequently: true });
+      g.imageSmoothingQuality = "high";
+      g.drawImage(cut, feet[0] - w / 2, head[1], w, h);
+      const px = g.getImageData(0, 0, W, H), d = px.data;
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        const c = y * W + x; if (!d[c * 4 + 3]) continue;
+        const q = ((H - 1 - y) * W + x) * 4, mine = alone[q] > 127;
+        // in front of the mannequin where it is (the depth test said so), or nearer than it beside it
+        const other = all[q + 1] ? (mine || front[all[q + 1] - 1]) : all[q + 2] > 127 && mine;
+        if (other) d[c * 4 + 3] = 0;
+      }
+      g.putImageData(px, 0, 0);
+      out.push({ o, layer });
+    }
+    return out;
+  }
   // A photo of the scene at time t through `cam` (queued with the edit model); it's remembered on the scene.
   async function makePhoto(size, t, cam, look, model, usePics = false, useDepth = false) {
-    const ref = await uploadFrame(size, t, cam, "scene_view.png");
     // the depth map, drawn through the same camera at the same size, so it lines up with the render
     let depthRef = null;
     if (useDepth && depthOk(model)) {
@@ -2033,7 +2123,9 @@ const Scene3D = (() => {
     }
     const off = depthRef ? 1 : 0;
     const pics = usePics ? photoPics(t, cam, model, off) : [];
-    const prompt = photoText(t, cam, look, model, pics, off);
+    const paste = await pastePeople(size, t, cam, pics.filter(o => o.prim === "figure"));
+    const ref = await uploadFrame(size, t, cam, "scene_view.png", paste);
+    const prompt = photoText(t, cam, look, model, pics, off, paste.map(p => p.o));
     const refs = [depthRef, ...pics.map(o => o.picture)].filter(Boolean);
     const items = await submit({ kind: "image", engine: "imgedit", edit_op: "instruct", source: ref, prompt, edit_model: model,
       ...(refs.length ? { references: refs } : {}),

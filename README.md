@@ -120,7 +120,7 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   backdrop picture, with the shot's shape and lens chosen in the View section; add 3D models and frame the shot.
   **📷 Generate photo…** (any scene) draws what the camera frames and has Qwen Image Edit 2511 (or MiniMax H3 Image)
   turn it into a photograph that keeps the layout. Its window has a field for what each object in view becomes ("a
-  large pile of trash"); an object left empty keeps its look, except a Person, which becomes a real person. 🎬 Render video can start from such a photo (a new one of the first
+  large pile of trash"); an object left empty keeps its look, except a Person, which becomes a real person. A Person with a picture is cut out of it (SAM 3) and pasted into the render in the mannequin's place before the edit model sees it, which then poses and blends them in, so no mannequin is left beside them. 🎬 Render video can start from such a photo (a new one of the first
   frame is made first, or an earlier one): the photo is painted onto the scene from its camera (projection mapping), so
   the rough animation H3 follows looks like the photo, and so does the video. Each moving object is first looked for in
   the photo (SAM 3, near its stand-in) and its path is moved and sized to start where the photo has it, so the real
