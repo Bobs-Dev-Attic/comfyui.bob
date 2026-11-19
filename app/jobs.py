@@ -142,6 +142,7 @@ class GenerateRequest(BaseModel):
     motion_video: str | None = Field(None, max_length=2000)
     motion_video_mask: str | None = Field(None, max_length=2000)
     enhance: bool = False  # Klein prompt upsampler / Krea 2 prompt expander
+    clean_texture: bool = True  # H3 Image: EasyFix steering + re-noise, when ComfyUI-H3-Image-EasyFix is installed
     lyrics: str = Field("", max_length=20000)  # Music 3
     batch: int = Field(1, ge=1, le=4)  # number of takes (seeds seed, seed+1, ...)
     project: str | None = Field(None, max_length=64)  # project id; None = Experiment
@@ -444,6 +445,11 @@ class JobManager:
                 resolved = {"files": {**resolved["files"], "unet": pick}}
                 req.unet = pick
         self._validate(req)
+        if req.engine == "h3image" and req.clean_texture:  # only with ComfyUI-H3-Image-EasyFix installed
+            try:
+                req.clean_texture = workflows.EASYFIX_NODES <= await self.comfy.node_types()
+            except Exception:  # noqa: BLE001
+                req.clean_texture = False
         if req.engine not in workflows.SAMPLING_DEFAULTS:
             req.cfg = None
         if req.sampler or req.scheduler:
@@ -701,8 +707,10 @@ class JobManager:
         if req.engine == "h3image":
             mp = workflows.H3_IMAGE_QUALITY.get(req.quality, 2.0)
             w, h = workflows.dims_for(aspect, mp, multiple=32)
+            # Clean texture needs the EasyFix nodes and the official sigmas (no scheduler of the user's own).
+            clean = req.clean_texture and not req.scheduler  # checked against ComfyUI's nodes in submit
             return workflows.build_h3_image(files, prompt=req.prompt, width=w, height=h, seed=seed, references=len(req.references), steps=req.steps,
-                                            prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras])
+                                            prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras], clean=clean)
         if req.engine == "krea2":
             mp = workflows.KREA2_QUALITY.get(req.quality, 1.0)
             w, h = workflows.dims_for(aspect, mp, multiple=16)

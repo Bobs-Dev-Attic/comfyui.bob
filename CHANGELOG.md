@@ -5,6 +5,18 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.99.0] - 2026-11-19
+
+### Added
+- **H3 Image: Clean texture** (on by default), from [ComfyUI-H3-Image-EasyFix](https://github.com/PedroMarinhoDev/ComfyUI-H3-Image-EasyFix)
+  (Apache-2.0). Plain H3 Image text-to-image often gives skin, fur and stone a grainy, speckled texture; this nudges
+  the first step toward cleaner texture (Steering, strength 0.7) and redraws the fine texture on steps 3 to 5
+  (Re-Noise Sampler, RNmid, noise 0.95, euler_ancestral), on H3 Image's official 6-step sigmas. It needs the node
+  pack in ComfyUI (the switch says so when it's missing) and runs on 6 steps with the default scheduler; a step count
+  or scheduler of your own uses the plain sampler.
+- **H3 Image: XL · 8 MP and Max · 16 MP** sizes (it's trained for 4 to 20 MP; High was the largest, 4 MP). A 16 MP
+  picture takes about 40 s on a 32 GB card.
+
 ## [0.98.0] - 2026-11-19
 
 ### Added
