@@ -403,6 +403,7 @@ const Shots = (() => {
     const ideaS = document.getElementById("shots-idea-s"); if (ideaS && document.activeElement !== ideaS) ideaS.value = sh.ideaSeconds || 10;
     renderCreat();
     renderSubjects();
+    if (typeof Scene3D !== "undefined") Scene3D.refreshPanel(false);  // the 3D scenes panel (H3, H3 Reference)
     const T = total(), n = sh.list.length;
     document.getElementById("shots-total").textContent = `${n} shot${n === 1 ? "" : "s"} · ${T.toFixed(1)} s`;
     let t = 0;
