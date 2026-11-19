@@ -36,7 +36,7 @@ const Shots = (() => {
   const fmtT = t => P()?.fmtTime(t) || t.toFixed(2);
   const clampSec = v => Math.max(1, Math.min(15, Math.round((+v || 1) * 2) / 2));
   const str = v => typeof v === "string" ? v.trim() : "";
-  const hasContent = s => !!((s.rawOn && str(s.raw)) || str(s.setting) || str(s.action) || str(s.dialogue));
+  const hasContent = s => !!(s.scene || (s.rawOn && str(s.raw)) || str(s.setting) || str(s.action) || str(s.dialogue));
   const settingsSeconds = () => { const v = +document.getElementById("seconds")?.value; return v >= 1 && v <= 15 ? v : 5; };
 
   /* ---------------------------------------------------------------- state */
@@ -50,6 +50,9 @@ const Shots = (() => {
     s.join = s.join === "continue" ? "continue" : "cut";  // from the shot before: a cut, or the same shot carrying on
     // Objects in motion (static/motion.js): {picture: {ref, url, name}, plate, hold, layers: [{name, mask, keys}]}
     s.motion = s.motion && typeof s.motion === "object" && s.motion.picture?.ref && Array.isArray(s.motion.layers) ? s.motion : null;
+    // A 3D scene's render (static/scene3d.js, 🎬 Render › Goes to a shot): {id, name, thumb, seconds, what, cam,
+    // req: {motion_video, motion_video_mask, first_frame, motion_first, motion_hold, quality, references}}
+    s.scene = s.scene && typeof s.scene === "object" && s.scene.req?.motion_video && s.scene.req.first_frame ? s.scene : null;
     // Shots no longer carry their own frames, picture choice or settings (the Inputs and Settings steps hold them).
     for (const k of ["first_frame", "last_frame", "refs", "over"]) delete s[k];
     return s;
@@ -296,6 +299,7 @@ const Shots = (() => {
     const style = H.sentence(sh.style || "") || "Cinematic live-action, natural light.";
     if (only != null) {
       const s = sh.list[only];
+      if (sceneOn(only)) return scenePrompt(s);
       if (s.rawOn && s.raw.trim()) return Prompts.final(s.raw);  // its own prompt: tags and {a|b} resolved, tidied
     }
     const all = resolveShots(sh.list), list = only != null ? [all[only]] : all;
@@ -311,7 +315,13 @@ const Shots = (() => {
      moving along their paths (engine "motion": H3 image-to-video with Time-to-Move, app/motion.py). Its own text,
      length and settings still make the video; it doesn't take reference pictures, voices or the last frame of the shot
      before (it starts from its own picture, so it comes after a cut). */
-  const motionOn = i => state.shots?.mode === "each" && !!state.shots.list[i]?.motion && !(state.shots.list[i].rawOn && state.shots.list[i].raw.trim());
+  const motionOn = i => state.shots?.mode === "each" && !!state.shots.list[i]?.motion && !(state.shots.list[i].rawOn && state.shots.list[i].raw.trim()) && !sceneOn(i);
+  /* A 3D scene's render (one video per shot): the rough animation and its mask were drawn when it was put in the shot,
+     so the shot sends them as they are (engine "motion", as the scene's own 🎬 Render does), with the scene's text and
+     length; the shot list's sound and music, and the Settings step, still apply. It starts with a cut. */
+  const sceneOn = i => state.shots?.mode === "each" && !!state.shots.list[i]?.scene;
+  const scenePrompt = s => `integrated_multimodal_description: [Shot 1] ${oneLine(s.scene.what) || "The scene comes to life"}. ${s.scene.cam || ""}`.replace(/\.\. /g, ". ").trim()
+    + `\n\n${audioFields()}`;
   function motionPictures() {
     const out = state.refs.map((r, k) => ({ ref: r.ref, url: r.url, name: `Picture ${k + 1}` }));
     const f = state.frames?.first_frame;
@@ -330,11 +340,11 @@ const Shots = (() => {
     .replace(/<(?:Picture|Subject) (\d+)>/g, (_, n) => subjectWords(+n - 1))
     .replace(/(\. |\] )([a-z])/g, (_, a, c) => a + c.toUpperCase());  // "… light. a red cube" -> "… light. A red cube"
   // A shot set to "Continue without a cut" (from the shot before) always waits for that shot and carries it on.
-  const joins = i => isRef() && state.shots?.mode === "each" && i > 0 && state.shots.list[i]?.join === "continue" && !motionOn(i);
+  const joins = i => isRef() && state.shots?.mode === "each" && i > 0 && state.shots.list[i]?.join === "continue" && !motionOn(i) && !sceneOn(i);
   const chainOn = () => isRef() && state.shots?.mode === "each" && state.shots.list.length > 1
     && (state.shots.continuity !== false || state.shots.list.some((_, i) => joins(i)));
   const contPic = () => state.refs.length + 1;
-  const carries = i => chainOn() && i > 0 && state.refs.length < 9 && !(state.shots.list[i].rawOn && state.shots.list[i].raw.trim()) && !motionOn(i)
+  const carries = i => chainOn() && i > 0 && state.refs.length < 9 && !(state.shots.list[i].rawOn && state.shots.list[i].raw.trim()) && !motionOn(i) && !sceneOn(i)
     && (state.shots.continuity !== false || joins(i));
   // A shot with no Where of its own keeps the last place written before it: the place in words is what H3 follows most.
   function carriedSetting(all, i) {
@@ -380,10 +390,12 @@ const Shots = (() => {
 
   /* ---------------------------------------------------------------- the step */
   const thumbOf = (s, i) => {
+    if (s.scene?.thumb) return s.scene.thumb;
     if (isRef()) { const k = picsIn(s.rawOn ? s.raw : s.action)[0] ?? 0; return state.refs[k]?.url || ""; }
     const f = framesOf(i); return (f.first_frame || f.last_frame)?.url || "";
   };
   function summary(s) {
+    if (s.scene) return `🏞 ${s.scene.name}: ${oneLine(s.scene.what)}`;
     if (s.rawOn && s.raw.trim()) return s.raw.trim();
     return [s.action, s.setting].map(x => x.trim()).filter(Boolean).join(" · ");
   }
@@ -410,8 +422,8 @@ const Shots = (() => {
     box.innerHTML = sh.list.map((s, i) => {
       const t0 = t; t += +s.seconds || 0;
       const thumb = thumbOf(s, i), text = summary(s);
-      const meta = s.rawOn && s.raw.trim() ? ["own prompt"] : [s.framing, s.angle, s.camera].filter(Boolean);
-      const badges = [motionOn(i) ? `<span class="sb-badge" title="Objects in motion: ${esc(s.motion.layers.map(l => l.name).join(", "))}, from ${esc(s.motion.picture.name || "a picture")}">🎬</span>` : "",
+      const meta = s.scene ? ["3D scene", s.scene.cam?.includes("moves") ? "camera moves" : "static camera"] : s.rawOn && s.raw.trim() ? ["own prompt"] : [s.framing, s.angle, s.camera].filter(Boolean);
+      const badges = [s.scene ? `<span class="sb-badge" title="Renders the 3D scene ${esc(s.scene.name)}">🏞</span>` : "", motionOn(i) ? `<span class="sb-badge" title="Objects in motion: ${esc(s.motion.layers.map(l => l.name).join(", "))}, from ${esc(s.motion.picture.name || "a picture")}">🎬</span>` : "",
         joins(i) ? `<span class="sb-badge" title="Continues shot ${i} without a cut">↪</span>` : "", s.dialogue.trim() && !s.rawOn ? `<span class="sb-badge" title="${esc(speakerOf(s) ? `${s.speaker} says` : "Spoken line")}: ${esc(s.dialogue)}">🗣</span>` : "",
         s.notes.trim() ? `<span class="sb-badge" title="${esc(s.notes)}">📝</span>` : ""].join("");
       return `<div class="shot-block${hasContent(s) ? "" : " sb-blank"}" data-i="${i}" ${n > 1 ? 'draggable="true"' : ""} role="listitem" aria-label="Shot ${i + 1}${s.title ? `: ${esc(s.title)}` : ""}">
@@ -429,6 +441,7 @@ const Shots = (() => {
     const warn = [];
     if (sh.mode === "multi" && T > 15) warn.push(`H3 makes up to about 15 s in one video; this is ${T.toFixed(1)} s. Use “One video per shot”, or shorten.`);
     if (sh.mode === "multi" && n > 6) warn.push("More than 6 shots in one video crowds it; H3 does best with 1–5.");
+    if (sh.mode === "multi" && sh.list.some(s => s.scene)) warn.push("A 3D scene renders only in “One video per shot”: in one multi-shot video its shot has no text.");
     const empty = sh.list.map((s, i) => hasContent(s) ? 0 : i + 1).filter(Boolean);
     if (empty.length) warn.push(`Shot${empty.length > 1 ? "s" : ""} ${empty.join(", ")} ${empty.length > 1 ? "are" : "is"} empty.`);
     document.getElementById("shots-hint").innerHTML = `${sh.mode === "multi"
@@ -731,13 +744,23 @@ const Shots = (() => {
             </div>
           </section>
 
-          <section>
+          ${s.scene ? `<section class="sm-scene"><h3>🏞 3D scene</h3>
+            <div class="sm-mo"><img src="${esc(s.scene.thumb || "")}" alt="">
+              <div><b>${esc(s.scene.name)}</b> · ${(+s.scene.seconds).toFixed(2)} s · ${esc(s.scene.cam || "")}
+                <div class="sm-mo-acts"><button type="button" class="btn sm" data-sm="scene-open" title="Open the scene; 🎬 Render › Goes to this shot again replaces this render">🏞 Open the scene</button>
+                <button type="button" class="btn sm ghost" data-sm="scene-off">Remove</button></div></div></div>
+            <div class="field"><label for="sm-scene-what">What happens <span class="opt">what H3 reads</span></label>
+              <textarea id="sm-scene-what" rows="3">${esc(s.scene.what || "")}</textarea></div>
+            <p class="hint">${multi ? `<span class="warn">⚠ A 3D scene renders only in “One video per shot”.</span>` : "This shot is the scene's render: its rough animation, mask and first picture as they were when it was put here. The fields below aren't used; its length is the scene's. The shot list's sound, music and the Settings step still apply."}</p>
+          </section>` : ""}
+
+          <section${s.scene && !multi ? ' class="sm-dim"' : ""}>
             <h3>Shot</h3>
             ${i > 0 && !multi && isRef() ? `<div class="field sm-join"><label for="sm-join">From shot ${i}</label>
               <select id="sm-join" data-sf="join" title="Continue without a cut: H3 carries on from the last moments of shot ${i} (its picture, motion and sound), so the two play as one shot">
                 ${opt("cut", "Cut to a new shot", s.join)}${opt("continue", "Continue without a cut", s.join)}</select></div>` : ""}
             <div class="sm-grid">
-              <div class="field"><label for="sm-sec">Length</label><div class="sm-sec"><input type="number" id="sm-sec" data-sf="seconds" min="1" max="15" step="0.5" value="${s.seconds}"> s</div></div>
+              <div class="field"><label for="sm-sec">Length</label><div class="sm-sec"><input type="number" id="sm-sec" data-sf="seconds" min="1" max="15" step="0.5" value="${s.seconds}"${s.scene ? " disabled title=\"The 3D scene's length\"" : ""}> s</div></div>
               <div class="field"><label>Framing</label><select data-sf="framing">${framings.map(f => opt(f, f, s.framing)).join("")}</select></div>
               <div class="field"><label>Angle</label><select data-sf="angle" title="The camera's height and angle">${opt("", "Any", s.angle)}${angles.map(a => opt(a, a, s.angle)).join("")}</select></div>
             </div>
@@ -761,7 +784,7 @@ const Shots = (() => {
               <p class="hint">${multi ? `In one multi-shot video this text becomes Shot ${i + 1}'s description.` : "Tags like <Picture 1> and {a|b} choices work as on the Prompt step."}</p></div>` : ""}
           </section>
 
-          ${!multi ? (() => {
+          ${!multi && !s.scene ? (() => {
             const mo = s.motion, pics = motionPictures(), holdName = { loose: "loosely", normal: "normally", tight: "tightly" };
             return `<section class="sm-motion"><h3>Objects in motion <span class="opt">optional</span></h3>
             ${mo ? `<div class="sm-mo"><img src="${esc(mo.picture.url)}" alt="">
@@ -836,6 +859,7 @@ const Shots = (() => {
   function onModalInput(e) {
     const s = state.shots.list[modal.i], f = e.target.dataset.sf;
     if (e.target.id === "sm-creat") { state.shots.creativity = +e.target.value; renderCreat(); scheduleSave(); return; }
+    if (e.target.id === "sm-scene-what" && s.scene) { s.scene.what = e.target.value; scheduleSave(); refreshPreview(); return; }
     if (f && f !== "rawOn" && e.target.tagName !== "SELECT") {
       if (f === "seconds") { s.seconds = clampSec(e.target.value); const tm = modal.root.querySelector(".sm-time"); if (tm) { let t0 = 0; for (let k = 0; k < modal.i; k++) t0 += +state.shots.list[k].seconds || 0; tm.textContent = `${fmtT(t0)} – ${fmtT(t0 + s.seconds)}`; } }
       else s[f] = e.target.value;
@@ -879,6 +903,8 @@ const Shots = (() => {
         onUse: plan => { const x = state.shots.list.find(y => y.id === id); if (x) { x.motion = plan; changed(); } } });
     }
     if (a === "motion-off") { s.motion = null; changed(); return renderModal(); }
+    if (a === "scene-off") { s.scene = null; changed(); return renderModal(); }
+    if (a === "scene-open") { syncFromForm(); closeModal(); return Scene3D.open(s.scene.id); }
     if (a === "rebuild") {
       const diff = syncFromForm();
       const pre = modal.root.querySelector(".sm-prompt"); if (pre) pre.textContent = "";  // force the rebuild and its flash
@@ -1039,6 +1065,13 @@ const Shots = (() => {
     }
     const reqFor = i => {
       const s = sh.list[i], f = framesOf(i);
+      if (sceneOn(i)) {  // a 3D scene's render: its prepared rough animation, mask and first picture
+        const r = s.scene.req;
+        return { ...base, engine: "motion", prompt: prompt(i), seconds: +s.scene.seconds || +s.seconds || 3, first_frame: r.first_frame, last_frame: null,
+          references: r.references || [], ref_audios: [], motion_video: r.motion_video, motion_video_mask: r.motion_video_mask,
+          motion_hold: r.motion_hold || "normal", motion_first: r.motion_first || "picture", quality: r.quality || base.quality,
+          motion_plate: null, motion_layers: [], loras: [], unet: null, sampler: null, scheduler: null, cfg: null };
+      }
       if (motionOn(i)) {  // objects in motion: the motion engine, from the plan's picture
         const p = s.motion, secs = +s.seconds || 3;
         return { ...base, engine: "motion", prompt: prompt(i), seconds: secs, first_frame: p.picture.ref, last_frame: null, references: [],
@@ -1179,8 +1212,9 @@ const Shots = (() => {
   // Exactly what Generate sends: the multi-shot prompt, or each shot's own prompt.
   function previewText() {
     const sh = state.shots;
+    if (sh.mode !== "multi" && sh.list.length === 1 && (sceneOn(0) || motionOn(0))) return prompt(0);  // as Generate sends it
     return sh.mode === "multi" || sh.list.length === 1 ? prompt() : sh.list.map((_, i) =>
-      `── Shot ${i + 1}${motionOn(i) ? ` · 🎬 objects in motion, from ${state.shots.list[i].motion.picture.name || "a picture"}` : ""}${joins(i) ? ` · continues shot ${i} without a cut` : ""}${carries(i) ? ` · ${joins(i) ? "its" : `carries on from shot ${i}'s`} last frame is sent as <Picture ${contPic()}>` : ""} ──\n${prompt(i)}`).join("\n\n");
+      `── Shot ${i + 1}${sceneOn(i) ? ` · 🏞 the 3D scene ${state.shots.list[i].scene.name}` : ""}${motionOn(i) ? ` · 🎬 objects in motion, from ${state.shots.list[i].motion.picture.name || "a picture"}` : ""}${joins(i) ? ` · continues shot ${i} without a cut` : ""}${carries(i) ? ` · ${joins(i) ? "its" : `carries on from shot ${i}'s`} last frame is sent as <Picture ${contPic()}>` : ""} ──\n${prompt(i)}`).join("\n\n");
   }
   function describe() {
     if (!upgraded()) return { text: "", first: "", empty: 0, prompt: "", missing: 0 };
@@ -1191,6 +1225,24 @@ const Shots = (() => {
   }
   const ready = () => on() && state.shots.list.some(hasContent);
   // Reuse on a video result: its prompt as a shot with its own prompt (fills an empty single shot, else is added).
+  /* A 3D scene's render, put in a shot (scene3d.js): `at` is a shot index, or -1 for a new shot (it fills an empty
+     single shot). Returns the shot's index. */
+  function useScene(at, scene) {
+    const sh = ensure(), only = sh.list.length === 1 && !hasContent(sh.list[0]);
+    let k = at;
+    if (at < 0 || at >= sh.list.length) {
+      if (only) k = 0;
+      else { sh.list.push({ ...blank(), title: scene.name }); k = sh.list.length - 1; }
+    }
+    const s = sh.list[k];
+    s.scene = scene; s.seconds = clampSec(scene.seconds);
+    if (!s.title) s.title = scene.name;
+    if (sh.mode === "multi") sh.mode = "each";  // a scene renders only as its own video
+    changed();
+    return k;
+  }
+  // The shots a scene's render can go to (for its Render window).
+  const targets = () => on() ? state.shots.list.map((s, i) => ({ i, label: `Shot ${i + 1}${s.title ? `: ${s.title}` : ""}${s.scene ? " (its 3D scene)" : hasContent(s) ? "" : " (empty)"}` })) : [];
   function reuse(text, seconds) {
     const sh = ensure(), only = sh.list.length === 1 && !hasContent(sh.list[0]);
     const s = { ...blank(clampSec(seconds || settingsSeconds())), raw: text, rawOn: true, title: "Reused from a result" };
@@ -1199,5 +1251,5 @@ const Shots = (() => {
     return only ? 0 : sh.list.length - 1;
   }
 
-  return { init, render, renderBanner, prompt, previewText, on, ready, generate, onItem, resume, ensure, describe, openModal, reuse, describeMissing, placeWhenDone };
+  return { init, render, renderBanner, prompt, previewText, on, ready, generate, onItem, resume, ensure, describe, openModal, reuse, describeMissing, placeWhenDone, useScene, targets };
 })();
