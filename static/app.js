@@ -16,7 +16,7 @@ const ENGINE_NOTES = {
   "image:h3": "One frame rendered by the H3 video model at its native 768p canvas.",
   "image:klein": "Dedicated image model: fast and sharp, up to 2 MP.",
   "image:krea2": "Krea 2 Turbo: photoreal pictures in 8 steps, up to 2 MP.",
-  "image:h3image": "MiniMax H3 Image: MiniMax's image model, 6 steps, up to 4 MP. Optional reference pictures.",
+  "image:h3image": "MiniMax H3 Image: MiniMax's image model, 6 steps, up to 16 MP. Optional reference pictures; Clean texture with EasyFix.",
   "audio:h3": "H3 generates audio jointly with a tiny video, then keeps only the soundtrack (MP3).",
   "audio:music3": "Full songs with vocals from a style caption and tagged lyrics.",
 };
@@ -85,7 +85,8 @@ const TIPS = {
     <li>Describe the picture in full sentences: medium and style, subject, setting, lighting and camera.</li>
     <li>Optional reference pictures: name them <code>&lt;Picture 1&gt;</code>, <code>&lt;Picture 2&gt;</code>… e.g. “the woman from <code>&lt;Picture 1&gt;</code> in a café”.</li>
     <li>Put any text to render in double quotes.</li>
-    <li>It always runs 6 steps (distilled). High is about 4 MP, the size it's tuned for.</li></ul>`,
+    <li>It always runs 6 steps (distilled). It's trained for 4 to 20 MP: High is 4 MP, XL 8 MP, Max 16 MP.</li>
+    <li><b>Clean texture</b> (with the ComfyUI-H3-Image-EasyFix node pack) removes the grainy, speckled look on skin, fur and stone. It runs on 6 steps with the default scheduler.</li></ul>`,
   music3: `<ul>
     <li>Caption in three parts: Global Metadata → Vocal Details → Arrangement.</li>
     <li>Lyrics tags (<code>[Intro] [Verse] [Chorus] [Bridge] [Outro] [Instrumental]</code>) control structure.</li></ul>`,
@@ -170,6 +171,12 @@ function renderForm() {
   $("#f-seconds").hidden = kind !== "audio";  // video: each shot has its own length (Shots step)
   $("#f-turbo").hidden = !isH3;
   $("#f-enhance").hidden = !isKlein;
+  // H3 Image: ComfyUI-H3-Image-EasyFix's steering + re-noise sampler against grainy fine texture.
+  const easyfix = !!state.caps?.h3image_easyfix;
+  $("#f-clean").hidden = !isH3Img;
+  $("#clean").disabled = !easyfix;
+  $("#clean-hint").textContent = easyfix ? "EasyFix: less grain and speckle on skin, fur and stone (6 steps)"
+    : "Needs the ComfyUI-H3-Image-EasyFix node pack in ComfyUI";
   $("#enhance-hint").textContent = eng === "krea2" ? "Krea 2's text encoder expands short prompts" : "Qwen3.5 upsampler expands short prompts";
   $("#prompt-label").textContent = isMusic ? "Style caption" : kind === "audio" ? "Sound description" : "Prompt";
   $("#prompt").placeholder = {
@@ -181,7 +188,7 @@ function renderForm() {
   // quality options
   const q = $("#quality"), prevQ = q.value;
   const opts = isH3Img
-    ? [["draft", "Draft · 1 MP"], ["standard", "Standard · 2 MP"], ["high", "High · 4 MP"]]
+    ? [["draft", "Draft · 1 MP"], ["standard", "Standard · 2 MP"], ["high", "High · 4 MP"], ["xl", "XL · 8 MP"], ["max", "Max · 16 MP"]]
     : isKlein
     ? [["draft", "Draft · 0.5 MP"], ["standard", "Standard · 1 MP"], ["high", "High · 2 MP"]]
     : [["draft", "Draft · 480p"], ["standard", "Standard · 576p"], ["full", "Full · 768p"]];
@@ -216,7 +223,7 @@ function updateDerived() {
   }
   let dims = "";
   if (kind !== "audio") {
-    const mpTable = eng === "h3image" ? { draft: 1, standard: 2, high: 4 } : eng === "klein" || eng === "krea2" ? { draft: 0.5, standard: 1, high: 2 } : { draft: 0.4, standard: 0.6, full: 0.98 };
+    const mpTable = eng === "h3image" ? { draft: 1, standard: 2, high: 4, xl: 8, max: 16 } : eng === "klein" || eng === "krea2" ? { draft: 0.5, standard: 1, high: 2 } : { draft: 0.4, standard: 0.6, full: 0.98 };
     const mp = mpTable[$("#quality").value] ?? 0.4;
     const kf = state.frames.first_frame || state.frames.last_frame;
     if (kind === "video" && eng === "h3" && kf?.w) {
@@ -293,6 +300,7 @@ function collectRequest() {
     seed: $("#seed").value === "" ? -1 : +$("#seed").value,
     turbo: $("#turbo").checked,
     enhance: $("#enhance").checked,
+    clean_texture: $("#clean").checked,
     steps,
     batch: state.batch,
     first_frame: kind === "video" && eng === "h3" ? state.frames.first_frame?.ref ?? null : null,
@@ -325,6 +333,7 @@ function applyParams(p) {
   if (p.seconds) $("#seconds").value = p.seconds;
   $("#turbo").checked = p.turbo !== false;
   $("#enhance").checked = !!p.enhance;
+  $("#clean").checked = p.clean_texture !== false;
   $("#fidelity").checked = !!p.max_fidelity;
   if (p.engine === "h3ref") {
     state.refs = (p.references || []).map(r => ({ ref: r, url: mediaUrl(r) })); renderRefs();
