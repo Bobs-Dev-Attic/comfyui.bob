@@ -264,6 +264,7 @@ function collectSettings() {
     v: 1, kind: state.kind, engine: { ...state.engine },
     prompt: $("#prompt").value, lyrics: $("#lyrics").value,
     promptTags: structuredClone(state.promptTags || {}),
+    layout: MossLayout.get(),
     aspect: $("#aspect").value, quality: $("#quality").value, seconds: +$("#seconds").value,
     seed: $("#seed").value, steps: $("#steps").value, cfg: $("#cfg").value, batch: state.batch,
     turbo: $("#turbo").checked, enhance: $("#enhance").checked, fidelity: $("#fidelity").checked,
@@ -295,6 +296,7 @@ function applySettings(s) {
     // Shots.ensure() (below, once the prompt and length are in) fills missing fields and upgrades older lists.
     state.shots = s.shots && Array.isArray(s.shots.list) ? structuredClone(s.shots) : null;
     state.promptTags = s.promptTags && typeof s.promptTags === "object" && !Array.isArray(s.promptTags) ? structuredClone(s.promptTags) : {};
+    MossLayout.set(s.layout);
     renderForm();
     $("#prompt").value = s.prompt || "";
     Prompts.refresh();

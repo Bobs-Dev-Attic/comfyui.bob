@@ -5,6 +5,21 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.101.0] - 2026-11-19
+
+### Added
+- **MOSS Image layout control with bounding boxes.** With MOSS Image picked, the Prompt step has a **▣ Layout** panel
+  under the prompt: a canvas the shape of the picture where you drag to draw boxes, drag a box to move it and its
+  corner to resize it.
+  - Each box is **Text** (the exact words to draw, one line per line), **Object** or **Character** (a person or
+    creature), with a short description such as the typeface and color, or what the thing looks like.
+  - Boxes are drawn in order, background first; ↑ and ↓ change the order. The prompt becomes the whole scene's caption.
+  - Bob sends MOSS the same JSON layout prompt ComfyUI's “MOSS-Image Layout Prompt” node builds (each box in pixels
+    from the canvas centre), so no extra nodes are needed.
+  - Enhance prompt is skipped while the layout is on, because it would rewrite the boxes (ComfyUI's layout templates
+    leave it off too).
+  - The layout is saved with the project and restored by Reuse settings.
+
 ## [0.100.0] - 2026-11-19
 
 ### Added

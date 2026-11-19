@@ -11,6 +11,7 @@ SDK asset handles by the caller).
 """
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass, field
 from typing import Any
@@ -655,6 +656,29 @@ MOSS_ENHANCE_SYSTEM = (
 MOSS_NEGATIVE = "nsfw, worst quality, bad anatomy, watermark, jpeg artifact"
 
 
+def moss_layout_prompt(caption: str, boxes: list[dict[str, Any]], width: int, height: int) -> str:
+    """MOSS-Image's layout prompt, as ComfyUI's "MOSS-Image Layout Prompt" node builds it from Create Bounding
+    Boxes: a JSON caption with the whole scene's caption and one item per box (in drawing order: background
+    first), each box as pixel edges [y0, x0, y1, x1] measured from the canvas centre. Boxes come in as
+    fractions of the canvas (x, y, w, h in 0..1) and go through the node's 0-1000 grid, so the numbers match."""
+    items = []
+    for b in boxes:
+        x0, y0 = min(max(float(b["x"]), 0.0), 1.0), min(max(float(b["y"]), 0.0), 1.0)
+        x1, y1 = min(x0 + max(float(b["w"]), 0.0), 1.0), min(y0 + max(float(b["h"]), 0.0), 1.0)
+        g = [round(v * 1000) for v in (y0, x0, y1, x1)]  # Create Bounding Boxes' 0-1000 [ymin, xmin, ymax, xmax]
+        label = b.get("type") if b.get("type") in ("text", "character") else "object"
+        item: dict[str, Any] = {"label": label, "caption": str(b.get("desc") or "").strip()}
+        if label == "text":
+            item["text"] = str(b.get("text") or "")
+        item["bbox"] = [math.floor(round(g[0] * height / 1000, 9)) - height // 2, math.floor(round(g[1] * width / 1000, 9)) - width // 2,
+                        math.ceil(round(g[2] * height / 1000, 9)) - height // 2, math.ceil(round(g[3] * width / 1000, 9)) - width // 2]
+        items.append(item)
+    if not items:
+        return caption
+    layout = {"summary": {"caption": caption.strip()}, "items": items, "bbox_coord_space": "abs_centralized", "bbox_format": "yxyx"}
+    return json.dumps(layout, ensure_ascii=False, separators=(",", ":"))
+
+
 def build_moss(
     files: dict[str, str | None],
     *,
@@ -666,6 +690,7 @@ def build_moss(
     enhance: bool = False,
     prefix: str = "bob/moss",
     loras: list[tuple[str, float]] | None = None,
+    layout: list[dict[str, Any]] | None = None,
 ) -> Built:
     """MOSS-Image text-to-image, as ComfyUI's "MOSS-Image: Text to Image" template runs it: 25 steps, CFG 2.5,
     er_sde/simple, its standard negative, an EmptyFlux2LatentImage canvas. The Base checkpoint gets skip-layer
@@ -685,6 +710,11 @@ def build_moss(
                       start_percent=0.0, end_percent=0.5)
 
     text: Any = prompt
+    if layout:
+        # Layout control: boxes for text, objects and characters. The prompt enhancer would rewrite the JSON and drop
+        # boxes (ComfyUI's layout templates leave it off too), so it's skipped.
+        text = moss_layout_prompt(prompt, layout, width, height)
+        enhance = False
     if enhance:
         text = o(g.add(
             "TextGenerate",
@@ -710,7 +740,8 @@ def build_moss(
     save = g.add("SaveImage", images=o(decoded), filename_prefix=prefix)
     return Built(graph=g.nodes, outputs=[save],
                  info={"width": width, "height": height, "steps": int(steps or 25), "enhanced": enhance,
-                       "checkpoint": "Base" if base else "SFT", **({"slg": "layer 22"} if base else {})})
+                       "checkpoint": "Base" if base else "SFT", **({"slg": "layer 22"} if base else {}),
+                       **({"layout": f"{len(layout)} box{'es' if len(layout) != 1 else ''}"} if layout else {})})
 
 
 def build_h3_image(
