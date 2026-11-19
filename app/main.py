@@ -132,6 +132,7 @@ async def enhance_caps():
     dits = [m for m in await asyncio.to_thread(options, "SeedVR2LoadDiTModel", "model") if m in await jobs.seedvr2_files()]
     return {
         "facerefine": has("H3FaceTrackCrop", "H3FaceStitch", "H3PerFrameDenoise", "H3InjectVideoLatent", "MiniMaxH3NativeAudioLock"),
+        "facerefine_plus": has(*workflows.FACEREFINE_PLUS_NODES),
         "dlss": has("DLSS5EnhanceImages", "DLSS5Settings"),
         "seedvr2": has("SeedVR2VideoUpscaler", "SeedVR2LoadDiTModel", "SeedVR2LoadVAEModel") and bool(dits),
         "seedvr2_models": dits,

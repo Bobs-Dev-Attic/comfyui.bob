@@ -5,6 +5,17 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.98.0] - 2026-11-19
+
+### Added
+- **✨ Enhance › FaceRefine** has a **Finish** choice: **Plus** or **Stock**. Plus uses
+  [ComfyUI-H3-FaceRefine-Plus](https://github.com/AnniCodex/ComfyUI-H3-FaceRefine-Plus) when it's installed: Stitch
+  Plus pastes only the refined face's detail over the shot's own light and colour (antialiased, so it doesn't
+  shimmer), Flow Lock pins the new eyes, brows and mouth onto the head so the face stops wobbling, and Tone Match
+  brings the colours, lips included, back to the source. A **Lip colour fix** checkbox turns off Tone Match's lip pass.
+  Plus is the default; without the pack the option is greyed out and FaceRefine works exactly as before (the stock
+  H3 Face Stitch). The same choice is in Settings › Post-Processing, and the time estimate counts the extra passes.
+
 ## [0.97.3] - 2026-11-18
 
 ### Fixed

@@ -37,6 +37,10 @@ class EnhanceOpts(BaseModel):
     facerefine: bool = False
     face_strength: float = Field(0.4, ge=0.05, le=1.0)
     face_steps: int = Field(20, ge=4, le=50)
+    # How the refined faces go back into the frame. "plus" = ComfyUI-H3-FaceRefine-Plus (Stitch Plus freq_sep,
+    # Flow Lock, Tone Match) when that pack is installed, else the stock H3 Face Stitch; "stock" = always the stock one.
+    face_finish: Literal["plus", "stock"] = "plus"
+    face_lipfix: bool = True  # Tone Match's lip pass (Plus finish only)
     dlss: bool = False
     dlss_mode: Literal["1x", "1.5x", "1.724x", "2x", "3x"] = "1x"
     dlss_style: Literal["Default", "Natural", "Cinematic"] = "Default"
@@ -636,6 +640,7 @@ class JobManager:
                 pass
             built = workflows.build_enhance(
                 video=kind == "video", has_audio=has_audio, opts=req.enhance_opts.model_dump(), seed=seed, prompt=req.prompt,
+                plus=all(self.has_node(n) for n in workflows.FACEREFINE_PLUS_NODES),
                 h3=files.get("h3ref"), references=len(req.references), audios=len(req.ref_audios),
                 clean_audio=req.clean_audio and self.has_node("H3RefAudioPrep"), relay=files.get("relay"),
                 loras=[(lu.name, lu.strength) for lu in req.loras], prefix=prefix,

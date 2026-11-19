@@ -822,6 +822,10 @@ DLSS_MODES = {"1x": "1x (DLAA / native)", "1.5x": "1.5x (Quality)", "1.724x": "1
               "3x": "3x (Ultra Performance)"}
 
 
+# ComfyUI-H3-FaceRefine-Plus (AnniCodex): the finish build_enhance uses after the H3 face re-render when it's installed.
+FACEREFINE_PLUS_NODES = ("H3FaceStitchPlus", "H3FaceFlowLock", "H3FaceToneMatch")
+
+
 def build_enhance(
     *,
     video: bool,
@@ -836,6 +840,7 @@ def build_enhance(
     relay: dict[str, str] | None = None,
     loras: list[tuple[str, float]] | None = None,
     prefix: str = "bob/enhance",
+    plus: bool = False,
 ) -> Built:
     """Improve a finished picture or video, in this order (each step optional):
 
@@ -843,7 +848,10 @@ def build_enhance(
        768 px canvas, the crops are encoded into an H3 audio+video latent next to the original
        sound (audio lock), and H3 Reference re-samples them at a low denoise with the source's
        own prompt, reference pictures/sounds and LoRAs, more where faces are small; the refined
-       faces are stitched back.
+       faces are stitched back. With ComfyUI-H3-FaceRefine-Plus installed (plus=True) and
+       opts face_finish "plus", the finish is that pack's: Stitch Plus (antialiased paste, light and
+       colour from the original frame, detail from the refined face), Flow Lock (pins the new features
+       on the head, so the face doesn't wobble) and Tone Match (colour back to the source, lips too).
     2. DLSS 5 (ComfyUI-DLSS5-Enhancer): NVIDIA neural rendering per frame, in playback order,
        at 1x (look only) or upscaling 1.5-3x.
     3. An upscaler: SeedVR2 (diffusion restoration to a target short side, 3B or 7B) or RelayVSR
@@ -907,9 +915,22 @@ def build_enhance(
         sampled = g.add("SamplerCustomAdvanced", noise=o(g.add("RandomNoise", noise_seed=int(seed))), guider=o(guider),
                         sampler=o(g.add("KSamplerSelect", sampler_name="res_multistep")), sigmas=o(sigmas), latent_image=o(pfd, 0))
         faces = g.add("VAEDecode", samples=o(sampled), vae=o(vae))
-        images = o(g.add("H3FaceStitch", base_images=images, refined_crops=o(faces), transform=o(track, 1), paste_region="face_only",
-                         mask_dilation=24, feather=24, colour_match=1.0, blend=1.0, undetected_frames="fade_out", feather_scales_with_crop=False))
-        steps_done.append("facerefine")
+        if plus and opts.get("face_finish", "plus") == "plus":
+            base = images
+            stitched = g.add("H3FaceStitchPlus", base_images=base, refined_crops=o(faces), transform=o(track, 1), paste_region="face_only",
+                             mask_dilation=24, feather=24, tone_mode="freq_sep", lowpass_face_frac=0.15, detail_gain=1.0, blend=1.0,
+                             undetected_frames="fade_out")
+            locked = g.add("H3FaceFlowLock", base_images=base, refined_images=o(stitched), sigma_frac=1.0 / 150.0, threshold=4.0,
+                           base_offset=0)
+            images = o(g.add("H3FaceToneMatch", source_images=base, processed_images=o(locked), sigma_luma_frac=0.01,
+                             sigma_chroma_frac=1.0 / 300.0, source_offset=0, lip_fix=bool(opts.get("face_lipfix", True)),
+                             face_detector="face_yolov8m.pt"))
+            steps_done.append("facerefine_plus")
+        else:
+            images = o(g.add("H3FaceStitch", base_images=images, refined_crops=o(faces), transform=o(track, 1), paste_region="face_only",
+                             mask_dilation=24, feather=24, colour_match=1.0, blend=1.0, undetected_frames="fade_out",
+                             feather_scales_with_crop=False))
+            steps_done.append("facerefine")
 
     if opts.get("dlss"):
         settings = g.add("DLSS5Settings", upscaling_mode=DLSS_MODES.get(opts.get("dlss_mode") or "1x", DLSS_MODES["1x"]), nr_preset="Default",
@@ -953,7 +974,7 @@ def build_enhance(
     else:
         save = g.add("SaveImage", images=images, filename_prefix=prefix)
     return Built(graph=g.nodes, outputs=[save], image_inputs=image_inputs,
-                 info={"steps": " → ".join({"facerefine": "FaceRefine", "dlss": "DLSS 5", "seedvr2": "SeedVR2", "relayvsr": "RelayVSR x2"}[s]
+                 info={"steps": " → ".join({"facerefine": "FaceRefine", "facerefine_plus": "FaceRefine Plus", "dlss": "DLSS 5", "seedvr2": "SeedVR2", "relayvsr": "RelayVSR x2"}[s]
                                           for s in steps_done), "video": video})
 
 

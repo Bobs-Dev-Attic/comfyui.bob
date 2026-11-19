@@ -6,7 +6,7 @@
 
 const Enhance = (() => {
   const KEY = "bob.enhance";
-  const DEF = { facerefine: false, face_strength: 0.4, face_steps: 20, dlss: true, dlss_mode: "1x", dlss_style: "Default", dlss_intensity: 1,
+  const DEF = { facerefine: false, face_strength: 0.4, face_steps: 20, face_finish: "plus", face_lipfix: true, dlss: true, dlss_mode: "1x", dlss_style: "Default", dlss_intensity: 1,
     upscaler: "seedvr2", seedvr2_model: "", seedvr2_res: 1080, relay_detail: 0.45 };
   let caps = null;
   const load = () => { try { return { ...DEF, ...(JSON.parse(localStorage.getItem(KEY) || "{}") || {}) }; } catch { return { ...DEF }; } };
@@ -16,9 +16,12 @@ const Enhance = (() => {
     return caps;
   }
   const label = { facerefine: "FaceRefine", dlss: "DLSS 5", seedvr2: "SeedVR2", relayvsr: "RelayVSR ×2" };
+  // The Plus finish (Stitch Plus, Flow Lock, Tone Match) runs when it's chosen and ComfyUI-H3-FaceRefine-Plus is installed;
+  // otherwise the server uses the stock H3 Face Stitch.
+  const plusOn = o => (o.face_finish || "plus") === "plus" && !!caps?.facerefine_plus;
   function summary(o, kind) {
     const s = [];
-    if (o.facerefine && kind === "video") s.push("FaceRefine");
+    if (o.facerefine && kind === "video") s.push(plusOn(o) ? "FaceRefine Plus" : "FaceRefine");
     if (o.dlss) s.push(`DLSS 5 ${o.dlss_mode}`);
     if (o.upscaler === "seedvr2") s.push(`SeedVR2 → ${o.seedvr2_res}p`);
     if (o.upscaler === "relayvsr" && kind === "video") s.push("RelayVSR ×2");
@@ -37,7 +40,7 @@ const Enhance = (() => {
     if (!o || !src?.width || !src?.height) return null;
     const video = src.kind === "video", n = video ? Math.max(1, src.frames || 121) : 1;
     let t = 4, W = src.width, H = src.height;
-    if (o.facerefine && video) t += 20 + n * (0.33 + 0.02 * (o.face_steps || 20));
+    if (o.facerefine && video) t += 20 + n * (0.33 + 0.02 * (o.face_steps || 20)) + (plusOn(o) ? 3 + 0.17 * MPX(W, H) * n : 0);
     if (o.dlss) { const k = DLSS_K[o.dlss_mode] || 1; W *= k; H *= k; t += 3 + 0.2 * MPX(W, H) * n; }
     if (o.upscaler === "seedvr2") {
       const s = (o.seedvr2_res || 1080) / Math.min(W, H), big = /7b/i.test(o.seedvr2_model || "");
@@ -47,7 +50,7 @@ const Enhance = (() => {
     if (o.upscaler === "relayvsr" && video) { W *= 2; H *= 2; t += 5 + 0.24 * MPX(W, H) * n; }
     return t;
   }
-  const chainOf = (o, kind) => [kind, o.facerefine && kind === "video" && "face", o.dlss && "dlss", o.upscaler !== "none" && o.upscaler].filter(Boolean).join("+");
+  const chainOf = (o, kind) => [kind, o.facerefine && kind === "video" && (plusOn(o) ? "face+" : "face"), o.dlss && "dlss", o.upscaler !== "none" && o.upscaler].filter(Boolean).join("+");
   // What an enhance result was made from (its info carries the source size since 0.20).
   const sourceOf = x => ({ kind: x.kind, width: x.info?.src_width, height: x.info?.src_height, frames: x.info?.frames });
   function factor(o, kind) {
@@ -95,6 +98,17 @@ const Enhance = (() => {
     return `${w}×${h} → ${Math.round(W / 2) * 2}×${Math.round(H / 2) * 2}`;
   }
 
+  /* FaceRefine's finish: how the refined faces go back into the frame. */
+  const PLUS_WHY = "ComfyUI-H3-FaceRefine-Plus isn't installed";
+  const finishOpts = (c, v) => {
+    const cur = c.facerefine_plus && (v || "plus") === "plus" ? "plus" : "stock";
+    return `<option value="plus"${cur === "plus" ? " selected" : ""}${c.facerefine_plus ? "" : ` disabled title="${esc(PLUS_WHY)}"`}>Plus</option>`
+      + `<option value="stock"${cur === "stock" ? " selected" : ""}>Stock</option>`;
+  };
+  const finishHint = c => c.facerefine_plus
+    ? "Plus (ComfyUI-H3-FaceRefine-Plus): pastes only the new detail over the shot's own light and colour, pins the face so it doesn't wobble on the head, and matches the colours (lips too) back to the source. Plus' authors refine at 0.30; 0.15 keeps more of the face H3 drew."
+    : "Stock stitch. Install ComfyUI-H3-FaceRefine-Plus for a steadier face that keeps the shot's colours.";
+
   /* The window. it = a studio result, or null for the Settings › After generating choices. */
   async function dialog(it = null) {
     const c = await getCaps();
@@ -116,7 +130,10 @@ const Enhance = (() => {
         <div class="enh-opts">
           <div class="field"><label>Strength <span data-out="face_strength"></span></label><input type="range" min="0.1" max="0.8" step="0.05" data-k="face_strength" value="${o.face_strength}"></div>
           <div class="field"><label>Steps</label><input type="number" min="4" max="50" data-k="face_steps" value="${o.face_steps}"></div>
+          <div class="field"><label>Finish</label><select data-k="face_finish">${finishOpts(c, o.face_finish)}</select></div>
+          <label class="check" title="Tone Match's lip pass: brings each face's lips back to the source's tone (Plus finish)"><input type="checkbox" data-k="face_lipfix"${o.face_lipfix !== false ? " checked" : ""}${dis(c.facerefine_plus, PLUS_WHY)}> Lip colour fix</label>
         </div>
+        <p class="hint">${esc(finishHint(c))}</p>
       </div>
       <div class="enh-step${c.dlss ? "" : " off"}">
         <label class="check"><input type="checkbox" data-k="dlss"${o.dlss ? " checked" : ""}${dis(c.dlss, "ComfyUI-DLSS5-Enhancer isn't installed")}> 2 · DLSS 5</label>
@@ -149,6 +166,7 @@ const Enhance = (() => {
       const v = { ...o };
       form.querySelectorAll("[data-k]").forEach(el => { v[el.dataset.k] = el.type === "checkbox" ? el.checked : el.type === "range" || el.type === "number" ? +el.value : el.value; });
       v.seedvr2_res = +v.seedvr2_res;
+      if (!c.facerefine_plus) v.face_finish = o.face_finish;  // shown as Stock only because Plus is missing: keep the choice
       v.upscaler = form.querySelector('input[name="enh-up"]:checked')?.value || "none";
       if (!isVideo) { v.facerefine = false; if (v.upscaler === "relayvsr") v.upscaler = "none"; }
       return v;
@@ -235,7 +253,9 @@ const Enhance = (() => {
         <p class="hint">${faceWhy ? esc(faceWhy) + "." : "Re-renders the main face with H3 Reference at a low denoise and stitches it back."}</p>
         ${o.facerefine && !faceWhy ? `<div class="enh-opts">
           <div class="field"><label>Strength <span>${(+o.face_strength).toFixed(2)}</span></label><input type="range" min="0.1" max="0.8" step="0.05" data-pp="face_strength" value="${o.face_strength}"></div>
-          <div class="field"><label>Steps</label><input type="number" min="4" max="50" data-pp="face_steps" value="${o.face_steps}"></div></div>` : ""}
+          <div class="field"><label>Steps</label><input type="number" min="4" max="50" data-pp="face_steps" value="${o.face_steps}"></div>
+          <div class="field"><label>Finish</label><select data-pp="face_finish">${finishOpts(c, o.face_finish)}</select></div></div>
+          <p class="hint">${esc(finishHint(c))}</p>` : ""}
       </div>
       <div class="pp-step${dlssWhy ? " na" : ""}">
         <div class="pp-head"><label for="pp-dlss">2 · DLSS 5</label>
