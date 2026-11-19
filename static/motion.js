@@ -461,8 +461,8 @@ const Motion = (() => {
   }
   function photoDialog() {
     if (!m.layers.length) return Media.toast("Add an object and move it first: the photo is the picture with your objects where you put them.");
-    const ed = state.caps?.editor || {}, models = [ed.qwen !== false && ["qwen", "Qwen Image Edit 2511"], ed.h3image && ["h3image", "MiniMax H3 Image"]].filter(Boolean);
-    if (!models.length) return Media.toast("Generate photo needs an edit model: Qwen Image Edit 2511 or MiniMax H3 Image.");
+    const ed = state.caps?.editor || {}, models = [ed.qwen !== false && ["qwen", "Qwen Image Edit 2511"], ed.h3image && ["h3image", "MiniMax H3 Image"], ed.mossedit && ["mossedit", "MOSS-Image Edit"]].filter(Boolean);
+    if (!models.length) return Media.toast("Generate photo needs an edit model: Qwen Image Edit 2511, MiniMax H3 Image or MOSS-Image Edit.");
     let keep = "";
     try { keep = localStorage.getItem("bob.motionPhotoLook") || ""; } catch { /* none */ }
     const plate = m.plateImg && !m.plateStale;

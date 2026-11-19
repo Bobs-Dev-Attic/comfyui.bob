@@ -1298,12 +1298,14 @@ def build_track(sam_ckpt: str, *, first: int, count: int, width: int, height: in
     return Built(graph=g.nodes, outputs=[save], image_inputs={"video": load})
 
 
-EDIT_MODELS = {"qwen": "Qwen Image Edit 2511", "h3image": "MiniMax H3 Image"}
+EDIT_MODELS = {"qwen": "Qwen Image Edit 2511", "h3image": "MiniMax H3 Image", "mossedit": "MOSS-Image Edit"}
 
 
 # Pictures an instruction edit can take besides the one it edits: Qwen Image Edit 2511 has three image inputs,
 # MiniMax H3 Image nine. The edited picture is Picture 1 and these are Picture 2... (in H3's prompts <Picture 2>).
-EDIT_EXTRA_REFS = {"qwen": 2, "h3image": 8}
+EDIT_EXTRA_REFS = {"qwen": 2, "h3image": 8, "mossedit": MOSS_EDIT_MAX_PICTURES - 1}
+# The size each model edits at (instruct: the whole picture; it's scaled back afterwards).
+EDIT_MEGAPIXELS = {"qwen": 1.0, "h3image": 4.0, "mossedit": 1.0}
 
 
 def _edit_model(g: Graph, which: str, files: dict, ref: Any, text: Any, *, seed: int, steps: int | None,
@@ -1315,6 +1317,26 @@ def _edit_model(g: Graph, which: str, files: dict, ref: Any, text: Any, *, seed:
     extra = list(extra or [])
     if len(extra) > EDIT_EXTRA_REFS[which]:
         raise ValueError(f"{EDIT_MODELS[which]} takes at most {EDIT_EXTRA_REFS[which]} more pictures")
+    if which == "mossedit":
+        # MOSS-Image Edit as ComfyUI's "MOSS-Image: Image Edit" template runs it (see build_moss_edit): the edit LoRA,
+        # skip-layer guidance on layer 22, 30 steps at CFG 4; the picture is image_0 and sets the size.
+        unet = g.add("UNETLoader", unet_name=files["unet"], weight_dtype="default")
+        clip = g.add("CLIPLoader", clip_name=files["clip"], type="moss_image", device="default")
+        vae = g.add("VAELoader", vae_name=files["vae"])
+        model = g.add("LoraLoaderModelOnly", model=o(unet), lora_name=files["edit_lora"], strength_model=1.0)
+        model = g.add("SkipLayerGuidanceDiTSimple", model=o(model), double_layers="", single_layers="22",
+                      start_percent=0.0, end_percent=1.0)
+        pics = {"images.image_0": o(ref), **{f"images.image_{i + 1}": o(x) for i, x in enumerate(extra)}}
+        pos = g.add("TextEncodeMOSSImageEdit", clip=o(clip), prompt=text, edit_format="Moss-Image-Edit", vae=o(vae),
+                    image_strength=1.0, **pics)
+        neg = g.add("TextEncodeMOSSImageEdit", clip=o(clip), prompt=MOSS_NEGATIVE, edit_format="Moss-Image-Edit", vae=o(vae),
+                    image_strength=1.0, **pics)
+        size = g.add("GetImageSize", image=o(ref))
+        empty = g.add("EmptyFlux2LatentImage", width=o(size, 0), height=o(size, 1), batch_size=1)
+        n_steps = int(steps or 30)
+        sampled = g.add("KSampler", model=o(model), positive=o(pos), negative=o(neg), latent_image=o(empty),
+                        seed=int(seed), steps=n_steps, cfg=4.0, sampler_name="euler", scheduler="normal", denoise=1.0)
+        return o(g.add("VAEDecode", samples=o(sampled), vae=o(vae))), {"model": EDIT_MODELS["mossedit"], "steps": n_steps}
     if which == "h3image":
         # MiniMax H3 Image as ComfyUI's "Image Edit" template runs it: 6 distilled steps at cfg 1;
         # the picture conditions the text encoder and is anchored as a reference latent.
@@ -1377,8 +1399,8 @@ def build_imgedit(
       instruct The whole picture edited by an instruction ("make it night"), no selection; the
                result is scaled back to the picture's size. With `references` (image_inputs ref_0...),
                more pictures the instruction names as Picture 2... (a 3D scene's object pictures).
-    edit_model picks the model for erase, replace and instruct: "qwen" (Qwen Image Edit 2511) or
-    "h3image" (MiniMax H3 Image, 6 steps).
+    edit_model picks the model for erase, replace and instruct: "qwen" (Qwen Image Edit 2511),
+    "h3image" (MiniMax H3 Image, 6 steps) or "mossedit" (MOSS-Image Edit, 30 steps).
     """
     g = Graph()
     o = Graph.out
@@ -1408,7 +1430,7 @@ def build_imgedit(
     if op == "instruct":
         size = g.add("GetImageSize", image=o(src))
         ref = g.add("ImageScaleToTotalPixels", image=o(src), upscale_method="lanczos",
-                    megapixels=1.0 if edit_model == "qwen" else 4.0, resolution_steps=32)
+                    megapixels=EDIT_MEGAPIXELS.get(edit_model, 1.0), resolution_steps=32)
         extra = []
         for i in range(references):
             load = g.add("LoadImage", image="")

@@ -125,7 +125,7 @@ class GenerateRequest(BaseModel):
     edit_strength: float = Field(0.75, ge=0.05, le=1.0)
     edit_bg: Literal["transparent", "white", "black"] = "transparent"
     # Model for erase, replace and instruct: Qwen Image Edit 2511 or MiniMax H3 Image.
-    edit_model: Literal["qwen", "h3image"] = "qwen"
+    edit_model: Literal["qwen", "h3image", "mossedit"] = "qwen"
     source: str | None = Field(None, max_length=2000)  # enhance: the picture or video to improve (a media ref)
     enhance_opts: EnhanceOpts | None = None  # engine "enhance": the chain
     enhance_of: str | None = Field(None, max_length=64)  # enhance: the studio item it came from
@@ -421,7 +421,7 @@ class JobManager:
         if req.engine == "enhance":
             sets = [models.ALL_SETS["h3ref"]] if req.enhance_opts and req.enhance_opts.facerefine else []
         elif req.engine == "imgedit":
-            edit_set = models.H3_IMAGE if req.edit_model == "h3image" else models.QWEN_EDIT
+            edit_set = {"h3image": models.H3_IMAGE, "mossedit": models.MOSS_EDIT_EDITOR}.get(req.edit_model, models.QWEN_EDIT)
             sets = ([] if req.edit_op == "remove_bg" else [edit_set] if req.edit_op in ("erase", "replace", "instruct")
                     else [models.ALL_SETS["krea2"]])
         else:
@@ -598,6 +598,8 @@ class JobManager:
                 if not req.edit_mask:
                     raise ValueError("Select an area first (paint over it with the brush)")
                 media_path(req.edit_mask)
+            if req.edit_model == "mossedit" and req.edit_op in ("erase", "replace"):
+                raise ValueError("MOSS-Image Edit only edits the whole picture: pick Qwen Image Edit or H3 Image for Erase and Replace")
             if req.edit_op in ("replace", "prompt", "instruct") and not req.prompt.strip():
                 raise ValueError("Say what should be there")
             if req.references:

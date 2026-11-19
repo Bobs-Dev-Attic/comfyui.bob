@@ -374,7 +374,9 @@ const Editor = (() => {
     } else if (t === "select") {
       const m = ed.mode, on = ed.maskOn, busy = !!ed.busy;
       const model = editModel(caps), modelName = EDIT_MODELS.find(x => x[0] === model)[2];
-      const whole = !!caps[model], sel = whole && caps.crop;
+      // MOSS Edit only edits whole pictures: it doesn't read the magenta mark Erase and Replace use (it leaves it in).
+      const wholeOnly = model === "mossedit", whole = !!caps[model], sel = whole && caps.crop && !wholeOnly;
+      const selWhy = wholeOnly ? "MOSS Edit only edits the whole picture: pick Qwen Image Edit or H3 Image for Erase and Replace" : `Needs ${modelName}`;
       const dis = (ok, why) => ok ? "" : ` disabled title="${why}"`;
       side.innerHTML = `<h4>Select</h4>
         <div class="ed-selmodes" role="group" aria-label="Selection tool">${SEL_MODES.map(([k, ico, l, tip]) => {
@@ -398,9 +400,9 @@ const Editor = (() => {
         <label class="ed-l">Edit model<select data-k="edit-model" aria-label="Model for Erase, Replace and whole-picture edits">${EDIT_MODELS.map(([v, l]) =>
           `<option value="${v}"${model === v ? " selected" : ""}${caps[v] ? "" : " disabled"}>${l}${caps[v] ? "" : " (not installed)"}</option>`).join("")}</select></label>
         <div class="ed-ai">
-          <button type="button" class="btn sm" data-ai="erase"${dis(on && sel && !busy, on ? `Needs ${modelName}` : "Select an area first")} title="Remove the selection and fill it with the background">🧽 Erase</button>
+          <button type="button" class="btn sm" data-ai="erase"${dis(on && sel && !busy, on || wholeOnly ? selWhy : "Select an area first")} title="Remove the selection and fill it with the background">🧽 Erase</button>
           <input type="text" data-k="erase-hint" value="${fv("erase-hint")}" placeholder="What is it? e.g. the blue cup (optional)" aria-label="What the selection is">
-          <button type="button" class="btn sm" data-ai="replace"${dis(on && sel && !busy, on ? `Needs ${modelName}` : "Select an area first")}>🔁 Replace with…</button>
+          <button type="button" class="btn sm" data-ai="replace"${dis(on && sel && !busy, on || wholeOnly ? selWhy : "Select an area first")}>🔁 Replace with…</button>
           <input type="text" data-k="replace" value="${fv("replace")}" placeholder="e.g. a vase of tulips" aria-label="Replace with">
           <button type="button" class="btn sm" data-ai="prompt"${dis(on && caps.inpaint && !busy, on ? "Needs Krea 2" : "Select an area first")}>💬 Change with a prompt</button>
           <textarea data-k="prompt" rows="2" placeholder="Describe how the selected area should look" aria-label="Prompt for the selection">${fv("prompt")}</textarea>
@@ -420,7 +422,8 @@ const Editor = (() => {
 
   // [key, label in the picker, short name]
   const EDIT_MODELS = [["qwen", "Qwen Image Edit 2511 · fast", "Qwen Image Edit"],
-                       ["h3image", "MiniMax H3 Image", "H3 Image"]];
+                       ["h3image", "MiniMax H3 Image", "H3 Image"],
+                       ["mossedit", "MOSS-Image Edit", "MOSS Edit"]];
   // The picked edit model, else the remembered one, else the first installed.
   function editModel(caps) {
     let v = ed.fields["edit-model"] || Settings.get("editor.edit_model");

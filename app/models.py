@@ -193,6 +193,15 @@ MOSS_EDIT = ModelSet(
     ),
 )
 
+# The image editor's MOSS Edit (Erase, Replace, whole-picture edits): MOSS Edit's files, and Krea 2's Qwen3-VL 4B
+# when installed, to name what Erase removes.
+MOSS_EDIT_EDITOR = ModelSet(
+    key="mossedit_editor",
+    title="MOSS-Image Edit",
+    source=HF_MOSS,
+    slots=MOSS_EDIT.slots + (Slot("describer", "text_encoders", ("qwen3vl_4b*",), optional=True, label="Qwen3-VL 4B (names what to erase)"),),
+)
+
 ALL_SETS = {s.key: s for s in (H3, H3REF, KLEIN, KREA2, H3_IMAGE, MOSS, MOSS_EDIT, MUSIC3, ANGLES)}
 
 
