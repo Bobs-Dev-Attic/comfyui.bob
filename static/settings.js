@@ -166,8 +166,8 @@ const Settings = (() => {
     } else if (sec === "editor") {
       const caps = state?.caps?.editor || {};
       pane.innerHTML = `<h3>AI edits</h3>
-        ${row("Edit model", "For Erase, Replace with… and Edit the whole picture. The editor's own picker changes this too.",
-          `<select data-k="editor.edit_model">${[["qwen", "Qwen Image Edit 2511 · fast"], ["h3image", "MiniMax H3 Image"]].map(([v, l]) =>
+        ${row("Edit model", "For Erase, Replace with… and Edit the whole picture (MOSS-Image Edit: whole picture only). The editor's own picker changes this too.",
+          `<select data-k="editor.edit_model">${[["qwen", "Qwen Image Edit 2511 · fast"], ["h3image", "MiniMax H3 Image"], ["mossedit", "MOSS-Image Edit"]].map(([v, l]) =>
             `<option value="${v}"${s.editor.edit_model === v ? " selected" : ""}${state?.caps && !caps[v] ? " disabled" : ""}>${l}${state?.caps && !caps[v] ? " (not installed)" : ""}</option>`).join("")}</select>`)}`;
     } else if (sec === "updates") {
       const u = s.updates || { mode: "auto", check_minutes: 5 }, st = modal.update;

@@ -72,7 +72,7 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   night time") with no selection. Erase, Replace and whole-picture edits use the **Edit model** you pick: Qwen Image
   Edit 2511 (4 steps, fast) or MiniMax H3 Image (6 steps; needs its diffusion model and VAE from
   [Comfy-Org/MiniMax-H3-Image](https://huggingface.co/Comfy-Org/MiniMax-H3-Image) plus H3's Qwen3-VL 32B text
-  encoder). **Remove background** works
+  encoder); **Edit the whole picture** can also use MOSS-Image Edit (with the MOSS Edit model's files). **Remove background** works
   on the whole picture, to transparent, white or black (BiRefNet when one is in `models/background_removal`, else
   u2net). Every AI edit is also a result in the gallery; Undo/Redo step through them. **Save as new result** keeps the
   crop, size and color changes. Needs `sam3.1_multiplex_fp16` in `models/checkpoints` for AI select, and the NKD

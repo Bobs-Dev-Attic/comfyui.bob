@@ -5,6 +5,17 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.103.0] - 2026-11-19
+
+### Added
+- **MOSS-Image Edit as an edit model in the image editor**, beside Qwen Image Edit 2511 and MiniMax H3 Image: for
+  **Edit the whole picture**, and for **Generate photo** in Animate objects and the 3D scene (up to 3 object
+  pictures). It runs like the MOSS Edit model: the edit LoRA, skip-layer guidance, 30 steps at CFG 4, at 1 MP, then
+  scaled back to the picture's size. Pick it in the editor's Edit model list or in Settings › AI edits.
+  - Not for Erase and Replace with…: those mark the selection with a magenta patch, which MOSS Edit doesn't read
+    (in tests it left the ivy it should have erased, and left the patch in a replace). With MOSS picked, those two
+    buttons say to pick Qwen Image Edit or H3 Image.
+
 ## [0.102.0] - 2026-11-19
 
 ### Added

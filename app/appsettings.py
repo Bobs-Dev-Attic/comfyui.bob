@@ -45,7 +45,7 @@ class Generation(_Section):
 
 
 class Editor(_Section):
-    edit_model: Literal["qwen", "h3image"] = "qwen"  # Erase, Replace and whole-picture edits
+    edit_model: Literal["qwen", "h3image", "mossedit"] = "qwen"  # Erase, Replace and whole-picture edits
 
 
 class Updates(_Section):

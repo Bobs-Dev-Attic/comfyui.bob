@@ -1773,8 +1773,8 @@ const Scene3D = (() => {
     return tidy(` ${free ? "The stand-ins to replace" : "The objects in it"}: ${list.map(one).join("; ")}.`);
   }
   // Generate photo's pictures: the objects in view that have one, as many as the edit model takes besides the render.
-  const PHOTO_PICS = { qwen: 2, h3image: 8 };  // workflows.EDIT_EXTRA_REFS
-  const PIC_TAG = { qwen: k => `Picture ${k}`, h3image: k => `<Picture ${k}>` };  // how each model names its pictures
+  const PHOTO_PICS = { qwen: 2, h3image: 8, mossedit: 3 };  // workflows.EDIT_EXTRA_REFS
+  const PIC_TAG = { qwen: k => `Picture ${k}`, h3image: k => `<Picture ${k}>`, mossedit: k => `picture ${k}` };  // how each model names its pictures
   // `taken`: pictures already used besides the render (the depth map)
   const photoPics = (t, cam, model, taken = 0) => cast(t, cam).filter(x => !x.off && x.o.picture).map(x => x.o).slice(0, Math.max(0, (PHOTO_PICS[model] ?? 2) - taken));
   // With Qwen, the depth map can go along (Picture 2): it holds the layout in a big restyle, where the render's grey
@@ -2030,8 +2030,8 @@ const Scene3D = (() => {
     return photoPrompt(said, pics.length || d ? tag(1) : "", free, person) + (d ? depthLine(tag, model) : "") + photoObjects(t, cam, pics, model, 2 + d, free, pasted);
   }
   const lastLook = () => { try { return localStorage.getItem("bob.scenePhotoLook") || ""; } catch { return ""; } };
-  const EDIT_NAMES = { qwen: "Qwen Image Edit 2511", h3image: "MiniMax H3 Image" };
-  const editModels = () => { const ed = state.caps?.editor || {}; return [ed.qwen !== false && ["qwen", "Qwen Image Edit 2511"], ed.h3image && ["h3image", "MiniMax H3 Image"]].filter(Boolean); };
+  const EDIT_NAMES = { qwen: "Qwen Image Edit 2511", h3image: "MiniMax H3 Image", mossedit: "MOSS-Image Edit" };
+  const editModels = () => { const ed = state.caps?.editor || {}; return [ed.qwen !== false && ["qwen", "Qwen Image Edit 2511"], ed.h3image && ["h3image", "MiniMax H3 Image"], ed.mossedit && ["mossedit", "MOSS-Image Edit"]].filter(Boolean); };
   // A Person with a picture goes into the render in its mannequin's place before the edit model sees it: only told to
   // put the person from the picture where the mannequin is, the edit model mostly keeps the mannequin as well (beside
   // them, or wearing their clothes). So the person is cut out of the picture (SAM 3), stood on the mannequin's feet as

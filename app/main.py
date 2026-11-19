@@ -670,13 +670,14 @@ async def capabilities(refresh: bool = False):
         # The models for erase, replace and whole-picture edits; erase and replace also need the NKD crop nodes.
         "qwen": models.resolve(models.QWEN_EDIT, installed)["ready"] and "TextEncodeQwenImageEditPlus" in nodes,
         "h3image": models.resolve(models.H3_IMAGE, installed)["ready"] and "MiniMaxH3ImageConditioning" in nodes,
+        "mossedit": models.resolve(models.MOSS_EDIT, installed)["ready"] and REQUIRED_NODES["mossedit"] <= nodes,
         "crop": {"NKDInpaintCrop", "NKDInpaintStitch"} <= nodes,
         "inpaint": engines["krea2"]["ready"] and {"NKDInpaintCrop", "NKDInpaintStitch"} <= nodes,
         "remove_bg": ("RemoveBackground" in nodes and bool(installed.get("background_removal")))
                      or "Image Rembg (Remove Background)" in nodes,
         "remover": "BiRefNet" if installed.get("background_removal") else "u2net",
     }
-    editor["erase"] = editor["crop"] and (editor["qwen"] or editor["h3image"])
+    editor["erase"] = editor["crop"] and (editor["qwen"] or editor["h3image"] or editor["mossedit"])
     # Animate objects (motion layers): AI select, Erase, H3 and ComfyUI-vlo's Time-to-Move.
     editor["motion"] = editor["select"] and editor["erase"] and engines["h3"]["ready"] and "vloTimeToMove" in nodes
     # Make 3D: TRELLIS.2 and ComfyUI's mesh nodes (and background removal for a whole picture).
