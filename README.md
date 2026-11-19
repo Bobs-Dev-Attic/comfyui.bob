@@ -106,7 +106,8 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   was: on the ground under its foot, sized by its height in the picture. 🎥 looks through the picture's own camera
   (which shows the picture); drag to orbit, right-drag to pan, wheel to zoom; drag an object over the ground,
   Shift+drag to raise it, and turn or size it in the side panel. Scenes live in `data/scenes3d.json`; ☰ › **3D scenes**
-  lists them. The camera and depth are estimates: sizes and distances are usually within about 10%.
+  lists them, and the **Shots** step (MiniMax H3, H3 Reference) has a **🏞 3D scenes** panel with this project's scenes,
+  ＋ New empty scene and From an Inputs picture. The camera and depth are estimates: sizes and distances are usually within about 10%.
   **Keyframes**: a timeline under the view (play, scrub, length up to 10 s on the H3 frame grid). Moving, turning or
   sizing an object at the playhead keys it there, so it moves along a smooth path through its keys (shown in yellow).
   The camera is keyed on purpose with **◆ Key the camera**: look around, key the view, move the playhead, key another;

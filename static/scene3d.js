@@ -134,6 +134,7 @@ const Scene3D = (() => {
       const sc = await api("/api/scenes", { method: "POST", body: JSON.stringify({
         picture: src.ref, plate: src.plate || null, name: src.name || "3D scene", project: state.project?.id ?? null,
         objects: (src.objects || []).map(o => ({ id: uid(), name: o.name || "Object", mask: o.mask || null, model: o.model || null })) }) });
+      refreshPanel();
       open(sc.id);
     } catch (e) { Media.toast(`3D scene: ${e.message}`); }
   }
@@ -156,6 +157,7 @@ const Scene3D = (() => {
     refreshList();
   }
   async function refreshList() {
+    refreshPanel();
     if (!list) return;
     try { list.items = (await api("/api/scenes")).scenes || []; } catch (e) { list.grid.innerHTML = `<p class="hint">${esc(e.message)}</p>`; return; }
     list.grid.innerHTML = list.items.length ? list.items.map((x, i) => `
@@ -172,6 +174,68 @@ const Scene3D = (() => {
       ["✎ Rename…", async () => { const n = prompt("Name", x.name); if (!n?.trim()) return; try { await api(`/api/scenes/${x.id}`, { method: "PATCH", body: JSON.stringify({ name: n.trim() }) }); refreshList(); } catch (e) { Media.toast(e.message); } }],
       ["🗑 Delete…", async () => { if (!confirm(`Delete the scene “${x.name}”? Its 3D models stay in 🧊 3D models.`)) return; try { await api(`/api/scenes/${x.id}`, { method: "DELETE" }); refreshList(); } catch (e) { Media.toast(e.message); } }],
     ].filter(Boolean));
+  }
+
+  /* ---------------------------------------------------------------- the Shots step's panel
+     For the models a scene renders with (H3, H3 Reference): this project's scenes, a new empty one, or one from an
+     Inputs picture. Opening one shows the builder in its own window, as from the ☰ menu. */
+  let panelTimer = 0, panelWired = false, panelFetched = 0;
+  const panelFits = () => state.kind === "video" && ["h3", "h3ref"].includes(state.engine.video);
+  async function refreshPanel(force = true) {
+    const box = document.getElementById("shots-scenes");
+    if (!box) return;
+    box.hidden = !panelFits();
+    if (box.hidden) return;
+    if (!panelWired) wirePanel(box);
+    const cap = state.caps?.editor || {}, pics = inputPictures();
+    const pb = box.querySelector('[data-s3p="picture"]');
+    pb.disabled = cap.scene3d === false || !pics.length;
+    pb.title = cap.scene3d === false ? "Needs ComfyUI's Depth Anything 3 nodes and depth_anything_3_base"
+      : pics.length ? "One of the Inputs step's pictures (a keyframe or a reference) in depth, to stand 3D models in" : "Add a keyframe or reference picture in the Inputs step first";
+    if (!force && Date.now() - panelFetched < 5000) return;  // Shots.render runs on every edit
+    panelFetched = Date.now();
+    let all;
+    try { all = (await api("/api/scenes")).scenes || []; } catch { return; }
+    const proj = state.project?.id ?? null, mine = all.filter(x => (x.project ?? null) === proj);
+    box._items = mine;
+    const grid = box.querySelector(".s3p-grid"), others = all.length - mine.length;
+    box.querySelector(".s3p-sum").textContent = mine.length ? ` · ${mine.length}` : "";
+    grid.innerHTML = mine.length ? mine.map((x, i) => `
+      <figure class="m3-card ${x.status}" data-i="${i}" tabindex="0" title="${x.status === "done" ? "Open this scene" : x.status === "failed" ? esc(x.error || "Failed") : "Being made…"}">
+        <div class="m3-thumb">${x.plate_url || x.picture_url || x.backdrop_url ? `<img src="${esc(x.plate_url || x.picture_url || x.backdrop_url)}" alt="">` : "🏞"}${x.status === "failed" ? `<span class="m3-fail">Failed</span>` : ""}</div>
+        <figcaption><b>${esc(x.name)}</b><span class="hint">${x.status === "done" ? `${x.objects?.length || 0} object${x.objects?.length === 1 ? "" : "s"}` : x.status === "failed" ? "failed" : "making the depth…"}</span></figcaption>
+        <button type="button" class="m3-more" data-more="${i}" aria-label="More for ${esc(x.name)}">⋯</button></figure>`).join("")
+      : `<p class="hint m3-empty">No 3D scenes in this project yet${others ? ` (${others} in other projects: All scenes…)` : ""}.</p>`;
+    clearTimeout(panelTimer);
+    if (mine.some(x => !["done", "failed"].includes(x.status))) panelTimer = setTimeout(() => { if (!box.hidden && box.open) refreshPanel(); }, 4000);
+  }
+  // The Inputs step's pictures: the keyframes and the reference pictures.
+  function inputPictures() {
+    const f = state.frames || {};
+    return [[f.first_frame, "First frame"], [f.last_frame, "Last frame"], ...(state.refs || []).map((r, i) => [r, `Picture ${i + 1}`])]
+      .filter(([r]) => r?.ref && r.url).map(([r, label]) => ({ ref: r.ref, url: r.url, label, name: r.ref.split("/").pop().replace(/\.[^.]+$/, "") }));
+  }
+  function wirePanel(box) {
+    panelWired = true;
+    box.addEventListener("toggle", () => { if (box.open) refreshPanel(); });
+    box.addEventListener("click", e => {
+      const act = e.target.closest("[data-s3p]")?.dataset.s3p;
+      if (act === "new") return createEmpty();
+      if (act === "all") return openList();
+      if (act === "picture") {
+        const r = e.target.closest("[data-s3p]").getBoundingClientRect();
+        return Media.menu(r.left, r.bottom + 4, inputPictures().map(p => [`🖼 ${p.label}: ${p.name}`, () => create(p)]));
+      }
+      const more = e.target.closest("[data-more]");
+      if (more) { const r = more.getBoundingClientRect(); return itemMenu(box._items?.[+more.dataset.more], r.left, r.bottom + 4); }
+      const c = e.target.closest(".m3-card"), x = c && box._items?.[+c.dataset.i];
+      if (x?.status === "done") open(x.id);
+    });
+    box.addEventListener("keydown", e => {
+      const c = e.target.closest?.(".m3-card"), x = c && box._items?.[+c.dataset.i];
+      if (x?.status === "done" && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); open(x.id); }
+    });
+    box.addEventListener("contextmenu", e => { const c = e.target.closest(".m3-card"); if (!c) return; e.preventDefault(); itemMenu(box._items?.[+c.dataset.i], e.clientX, e.clientY); });
   }
 
   /* ---------------------------------------------------------------- maths */
@@ -2425,6 +2489,6 @@ const Scene3D = (() => {
     requestAnimationFrame(step); renderTime();
   }
 
-  return { create, createEmpty, open, openList, onItem, resume, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
+  return { create, createEmpty, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
     _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
 })();

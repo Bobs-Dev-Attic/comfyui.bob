@@ -5,6 +5,14 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.104.0] - 2026-11-19
+
+### Added
+- **The Shots step has a 🏞 3D scenes panel** for the models a 3D scene renders with (MiniMax H3 and H3 Reference):
+  this project's scenes as thumbnails (click one to open the scene builder, ⋯ or right-click to rename or delete),
+  **＋ New empty scene**, **From an Inputs picture…** (a keyframe or reference picture in depth) and **All scenes…**.
+  Scenes still being made show as such and the panel updates when they're ready.
+
 ## [0.103.0] - 2026-11-19
 
 ### Added
