@@ -5,6 +5,17 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.97.3] - 2026-11-18
+
+### Fixed
+- **📷 Generate photo** with a Person that has a picture puts that person in the mannequin's place instead of next
+  to it. Told to swap them, Qwen mostly kept the mannequin too (beside the person, or wearing their clothes). Now the
+  person is cut out of their picture (SAM 3), stood on the mannequin's feet as tall as it is standing, and pasted into
+  the render where the mannequin was, hidden behind anything in front of it; the mannequin isn't drawn. The edit
+  model is told to keep them there, pose them as the mannequin was (sitting, walking…) and blend them in. A video
+  that starts from a new photo gets the same. Without SAM 3, or a picture with no whole person in it (cut off at the
+  feet), it works as before.
+
 ## [0.97.2] - 2026-11-18
 
 ### Fixed
