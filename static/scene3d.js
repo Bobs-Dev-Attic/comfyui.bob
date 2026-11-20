@@ -1103,12 +1103,8 @@ const Scene3D = (() => {
     if (!s?.bg) return;
     const size0 = [s.cv.width, s.cv.height];
     try {
-      if (kind === "photo") {
-        const m = editModels(), model = (m.find(x => x[0] === "qwen") || m[0])?.[0]; if (!model) return;
-        const A = s.bg.aspect, W = Math.round((A >= 1 ? 768 : 768 * A) / 8) * 8, H = Math.round(W / A / 8) * 8;
-        Media.toast("Quick photo: a rough, small one on its way.");
-        await makePhoto([W, H], s.t, shotView(), lastLook(), model, true, false, true, 0.4);
-      } else {
+      if (kind === "photo") return photoDialog({ quick: true });
+      else {
         // from the scene's picture, or (the camera holding still) a photo of its first frame that matches: a quick photo
         // at 0 s will do. A moving camera without the gap fill turns a photo into flat sky and floor within a second, so
         // then it's the scene as drawn: a rough test of the motion.
@@ -1285,7 +1281,8 @@ const Scene3D = (() => {
             <button type="button" class="btn sm" data-act="t-prev" title="Back one frame (,)" aria-label="Back one frame">⏴</button>
             <button type="button" class="btn sm" data-act="play" title="Play (Space)">▶</button>
             <button type="button" class="btn sm" data-act="t-next" title="Forward one frame (.)" aria-label="Forward one frame">⏵</button>
-            <button type="button" class="btn sm" data-act="t-end" title="To the end (End)" aria-label="To the end">⏭</button></span>
+            <button type="button" class="btn sm" data-act="t-end" title="To the end (End)" aria-label="To the end">⏭</button>
+            <button type="button" class="btn sm s3-loop" data-act="t-loop" aria-pressed="false" title="Loop: play it round again from the start">🔁</button></span>
           <input type="range" class="mo-scrub s3-scrub" min="0" step="${1 / FPS}" value="0" aria-label="Time">
           <span class="mo-time s3-time"></span>
           <label class="s3-frame-in" title="The frame at the playhead (${FPS} a second): type one to go there">Frame <input type="number" class="s3-fr" min="0" step="1" aria-label="Frame"> <span class="s3-frn"></span></label>
@@ -2182,6 +2179,7 @@ const Scene3D = (() => {
       const b = e.target.closest("[data-act],[data-tool],[data-menu],[data-i]"); if (!b || !s) return;
       const a = b.dataset.act, o = s.objs[s.sel];
       if (b.dataset.menu) return openMenu(b.dataset.menu, b);
+      if (a === "t-loop") { try { localStorage.setItem("bob.s3loop", loopOn() ? "0" : "1"); } catch { /* not kept */ } return renderTime(); }
       if (a === "t-start") return toFrame(0);
       if (a === "t-end") return toFrame(frameCount() - 1);
       if (a === "t-prev" || a === "t-next") return toFrame(Math.round(s.t * FPS) + (a === "t-next" ? 1 : -1));
@@ -3206,7 +3204,8 @@ const Scene3D = (() => {
   }
   // A photo of the scene at time t through `cam` (queued with the edit model); it's remembered on the scene.
   // `megapixels`: the size the edit model makes it at (the render's shape); else its own, at the render's size.
-  async function makePhoto(size, t, cam, look, model, usePics = false, useDepth = false, dof = false, megapixels = null) {
+  // `prompt0`: the prompt as reviewed (and maybe edited) in the photo window, used as it is.
+  async function makePhoto(size, t, cam, look, model, usePics = false, useDepth = false, dof = false, megapixels = null, prompt0 = null) {
     if (dof && fstop()) look = [look, dofLine(false, t)].filter(Boolean).join(" ");
     // the depth map, drawn through the same camera at the same size, so it lines up with the render
     let depthRef = null;
@@ -3219,7 +3218,7 @@ const Scene3D = (() => {
     const paste = await pastePeople(size, t, cam, plan.paste);
     const pics = usePics ? photoPlan(t, cam, model, off, paste.map(p => p.o)).sent : [];
     const ref = await uploadFrame(size, t, cam, "scene_view.png", paste);
-    const prompt = photoText(t, cam, look, model, pics, off, paste.map(p => p.o));
+    const prompt = String(prompt0 || "").trim() || photoText(t, cam, look, model, pics, off, paste.map(p => p.o));
     const refs = [depthRef, ...pics.map(o => o.picture)].filter(Boolean);
     const items = await submit({ kind: "image", engine: "imgedit", edit_op: "instruct", source: ref, prompt, edit_model: model,
       ...(refs.length ? { references: refs } : {}), ...(megapixels ? { edit_megapixels: megapixels } : {}),
@@ -3232,8 +3231,14 @@ const Scene3D = (() => {
   // The camera a photo or depth map is taken through: the shot camera when it's an object in the scene (even while you
   // look at it from outside), else the view as you see it.
   const shotView = () => s.camObj ? camForRender(s.t) : s.cam;
-  function photoDialog() {
+  // What each edit model does (app/workflows.py _edit_model, EDIT_MEGAPIXELS), for the photo window's summary.
+  const EDIT_RUN = { qwen: { steps: "4 steps with its Lightning LoRA (20 without)", cfg: "CFG 1 (4 without the LoRA)", mp: 1 },
+    h3image: { steps: "6 steps", cfg: "CFG 1", mp: 4 }, mossedit: { steps: "30 steps", cfg: "CFG 4", mp: 1 } };
+  /* The photo window. o.quick: the quick photo (0.4 MP, Qwen by default). It shows the settings the edit model will
+     run with, the pictures it gets, and the whole prompt (editable: Generate sends it as it is; ↻ builds it again). */
+  function photoDialog(o = {}) {
     if (!s?.bg) return;
+    const quick = !!o.quick;
     const models = editModels();
     if (!models.length) return Media.toast("Generate photo needs an edit model: Qwen Image Edit 2511 or MiniMax H3 Image.");
     const pc = shotView(), keep = lastLook(), inView = cast(s.t, pc).filter(x => !x.off);
@@ -3249,24 +3254,50 @@ const Scene3D = (() => {
       <div class="field"><label for="s3p-model">Model</label><select id="s3p-model">${models.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></div>
       <label class="check s3p-depthf" title="Sends a depth map of the view along (Qwen only): it holds the layout and shapes when the look changes a lot, e.g. a whole new setting or style"><input type="checkbox" id="s3p-depth"${lastDepth() ? " checked" : ""}> Use the depth map <span class="opt">keeps the layout in a big restyle</span></label>
       ${cast(s.t, pc).some(x => !x.off && x.o.picture) ? `<label class="check"><input type="checkbox" id="s3p-pics" checked> Use the objects' pictures</label>` : ""}
-      <p class="hint s3-said"></p>`;
+      <section class="s3p-set" aria-label="Model settings"><h4>Model settings</h4><dl class="s3p-dl"></dl><div class="s3p-pics"></div></section>
+      <div class="field"><div class="s3p-ph"><label for="s3p-prompt">The prompt <span class="opt">the whole of it, as the model gets it; edit it if you like</span></label>
+        <button type="button" class="link" data-a="rebuild" title="Build the prompt again from the settings above">↻ Rebuild</button></div>
+        <textarea id="s3p-prompt" rows="9" spellcheck="false"></textarea>
+        <p class="hint s3-said"></p></div>`;
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
-    foot.innerHTML = `<span class="hint s3p-st"></span><button type="button" class="btn ghost" data-a="cancel">Cancel</button><button type="button" class="btn primary" data-a="go">📷 Generate</button>`;
-    const win = WM.open({ id: "scene3d-photo", title: `Photo · ${s.sc.name}`, content: box, footer: foot, width: 540, height: 600, modal: true });
+    foot.innerHTML = `<span class="hint s3p-st"></span><button type="button" class="btn ghost" data-a="cancel">Cancel</button><button type="button" class="btn primary" data-a="go">${quick ? "⚡ Generate the quick photo" : "📷 Generate"}</button>`;
+    const win = WM.open({ id: "scene3d-photo", title: `${quick ? "Quick photo" : "Photo"} · ${s.sc.name}`, content: box, footer: foot, width: 600, height: 720, modal: true });
+    if (quick) { const q = models.find(x => x[0] === "qwen"); if (q) box.querySelector("#s3p-model").value = "qwen"; }
+    // the size it's drawn at (the scene's shape), and what the model works at and returns
+    const A = s.bg.aspect, L = quick ? 768 : 1280, W = Math.round((A >= 1 ? L : L * A) / 8) * 8, H = Math.round(W / A / 8) * 8;
+    const dof = s.camObj || !s.camFree;
+    let edited = false;
     const usePics = () => !!box.querySelector("#s3p-pics")?.checked, model = () => box.querySelector("#s3p-model").value;
     const useDepth = () => depthOk(model()) && !!box.querySelector("#s3p-depth")?.checked;
     // What the edit model is told, and which picture is which (it follows the model: Qwen takes 2 more pictures, H3 Image 8).
+    const promptNow = () => {
+      const m = model(), d = useDepth() ? 1 : 0, plan = usePics() ? photoPlan(s.t, pc, m, d) : { paste: [], sent: [], all: 0 };
+      let look = box.querySelector("#s3p-look").value;
+      if (dof && fstop()) look = [look, dofLine(false, s.t)].filter(Boolean).join(" ");
+      return photoText(s.t, pc, look, m, plan.sent, d, plan.paste);
+    };
     const told = () => {
       const m = model(), d = useDepth() ? 1 : 0, plan = usePics() ? photoPlan(s.t, pc, m, d) : { paste: [], sent: [], all: 0 }, pics = plan.sent, tag = PIC_TAG[m];
       box.querySelector(".s3p-depthf").hidden = !depthOk(m);
-      const all = plan.all - plan.paste.length;
-      box.querySelector(".s3-said").innerHTML = `It's told: “${esc(photoText(s.t, pc, box.querySelector("#s3p-look").value, m, pics, d, plan.paste))}”`
-        + (plan.paste.length ? ` ${esc(plan.paste.map(o => o.name).join(" and "))} ${plan.paste.length === 1 ? "is" : "are"} pasted in from ${plan.paste.length === 1 ? "a picture" : "their pictures"}, so no picture of them is sent as well.` : "")
-        + (pics.length ? ` ${pics.map((o, i) => `${esc(o.name)} is ${esc(tag(i + 2 + d))}`).join(", ")}.` : "")
-        + (usePics() && all > pics.length ? ` <span class="warn">${EDIT_NAMES[m]} takes ${PHOTO_PICS[m]} picture${PHOTO_PICS[m] === 1 ? "" : "s"} besides the render${d ? ", one of them the depth map" : ""}: ${all - pics.length} object picture${all - pics.length === 1 ? "" : "s"} left out.</span>` : "")
-;
+      const all = plan.all - plan.paste.length, R = EDIT_RUN[m] || {}, mp = quick ? 0.4 : null;
+      // the settings
+      const outMP = mp || null, out = outMP ? (() => { const k = Math.sqrt(outMP * 1048576 / (W * H)); return `${Math.round(W * k / 32) * 32}×${Math.round(H * k / 32) * 32}`; })() : `${W}×${H}`;
+      box.querySelector(".s3p-dl").innerHTML = [
+        ["Model", EDIT_NAMES[m] || m], ["Sampling", `${R.steps || "its own"} · ${R.cfg || ""}`],
+        ["Works at", `${mp || R.mp || 1} MP${quick ? " (quick)" : ""}`], ["Picture", `${out} px, the scene's shape`],
+        ["Seed", "a new one each time"], ["Camera", `${s.camObj ? "the shot camera" : "the view"} at ${s.t.toFixed(2)} s${dof && fstop() ? `, f/${fstop()}` : ""}`],
+      ].map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
+      box.querySelector(".s3p-pics").innerHTML = `<span class="s3p-pic"><span class="s3p-pic0">🖼</span><b>${esc(tag(1))}</b> the render${plan.paste.length ? `, with ${esc(plan.paste.map(o => o.name).join(" and "))} pasted in` : ""}</span>`
+        + (d ? `<span class="s3p-pic"><span class="s3p-pic0">🌫</span><b>${esc(tag(2))}</b> its depth map</span>` : "")
+        + pics.map((o, i) => `<span class="s3p-pic"><img src="${esc(mediaUrl(o.picture))}" alt=""><b>${esc(tag(i + 2 + d))}</b> ${esc(o.name)}</span>`).join("");
+      if (!edited) box.querySelector("#s3p-prompt").value = promptNow();
+      box.querySelector(".s3-said").innerHTML = (edited ? `<span class="warn">Edited: Generate sends it as it is. ↻ Rebuild puts the built one back.</span> ` : "")
+        + (plan.paste.length ? `${esc(plan.paste.map(o => o.name).join(" and "))} ${plan.paste.length === 1 ? "is" : "are"} pasted in from ${plan.paste.length === 1 ? "a picture" : "their pictures"}, so no picture of them is sent as well (if a picture has no whole person to cut out, it's sent instead and named in the prompt).` : "")
+        + (usePics() && all > pics.length ? ` <span class="warn">${EDIT_NAMES[m]} takes ${PHOTO_PICS[m]} picture${PHOTO_PICS[m] === 1 ? "" : "s"} besides the render${d ? ", one of them the depth map" : ""}: ${all - pics.length} object picture${all - pics.length === 1 ? "" : "s"} left out.</span>` : "");
     };
+    box.querySelector("#s3p-prompt").addEventListener("input", () => { if (!edited) { edited = true; told(); } });
+    box.querySelector('[data-a="rebuild"]').onclick = () => { edited = false; told(); };
     // An object's Becomes, typed here: the same field as on its panel, saved with the scene.
     box.querySelector(".s3p-bec")?.addEventListener("input", e => {
       const o = e.target.dataset.oid && s.objs.find(q => q.id === e.target.dataset.oid); if (!o) return;
@@ -3281,11 +3312,11 @@ const Scene3D = (() => {
       e.target.disabled = true;
       const st = foot.querySelector(".s3p-st"), look = box.querySelector("#s3p-look").value.trim();
       try { localStorage.setItem("bob.scenePhotoLook", look); } catch { /* not kept */ }
-      const A = s.bg.aspect, W = Math.round((A >= 1 ? 1280 : 1280 * A) / 8) * 8, H = Math.round(W / A / 8) * 8, size0 = [s.cv.width, s.cv.height];
+      const size0 = [s.cv.width, s.cv.height];
       try {
         st.textContent = "Drawing the view and sending it to the edit model…";
         try { localStorage.setItem("bob.scenePhotoDepth", box.querySelector("#s3p-depth")?.checked ? "1" : "0"); } catch { /* not kept */ }
-        await makePhoto([W, H], s.t, pc, look, model(), usePics(), useDepth(), s.camObj || !s.camFree);
+        await makePhoto([W, H], s.t, pc, look, model(), usePics(), useDepth(), dof, quick ? 0.4 : null, edited ? box.querySelector("#s3p-prompt").value : null);
         win.close();
         Media.toast("3D scene: the photo is being made. It shows up in the gallery.");
       } catch (err) { st.textContent = ""; e.target.disabled = false; Media.toast(`Photo: ${err.message}`); }
@@ -3597,10 +3628,12 @@ const Scene3D = (() => {
     s.root.querySelector(".s3-time").textContent = `${s.t.toFixed(2)} / ${D.toFixed(2)} s`;
     const sec = s.root.querySelector(".s3-sec"); if (document.activeElement !== sec) sec.value = String(s.seconds);
     s.root.querySelector('[data-act="play"]').textContent = s.playing ? "⏸" : "▶";
+    const lp = s.root.querySelector(".s3-loop"); if (lp) { lp.classList.toggle("on", loopOn()); lp.setAttribute("aria-pressed", String(loopOn())); }
     const fr = s.root.querySelector(".s3-fr"), last = frameCount() - 1;
     if (fr && document.activeElement !== fr) { fr.max = String(last); fr.value = String(Math.round(s.t * FPS)); }
     const fn = s.root.querySelector(".s3-frn"); if (fn) fn.textContent = `/ ${last}`;
   }
+  const loopOn = () => { try { return localStorage.getItem("bob.s3loop") === "1"; } catch { return false; } };
   // Go to a frame (clamped), stopping playback.
   function toFrame(f) { if (s.playing) stop(); setTime(Math.max(0, Math.min(frameCount() - 1, Math.round(f))) / FPS); renderSide(); s.dirty = true; }
   // The camera's keys as chips (time, lens, easing), and the easing of the move from the key at the playhead.
@@ -3639,11 +3672,11 @@ const Scene3D = (() => {
     if (!s?.bg) return;
     if (s.playing) return stop();
     if (s.t >= dur() - 1e-3) s.t = 0;
-    s.playing = true; const t0 = performance.now() - s.t * 1000;
+    s.playing = true; let t0 = performance.now() - s.t * 1000;
     const step = now => {
       if (!s?.playing) return;
       setTime(Math.min(dur(), (now - t0) / 1000));
-      if (s.t >= dur()) stop(); else requestAnimationFrame(step);
+      if (s.t >= dur()) { if (loopOn()) { t0 = now; setTime(0); requestAnimationFrame(step); } else stop(); } else requestAnimationFrame(step);
     };
     requestAnimationFrame(step); renderTime();
   }

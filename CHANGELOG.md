@@ -5,6 +5,21 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.132.0] - 2026-11-20
+
+### Added
+- **🔁 Loop** in the scene's play controls: playing goes round again from the start instead of stopping. Remembered
+  in this browser.
+- **The photo window shows what will be sent, before it's sent** (📷 Generate photo, and ⚡ Quick photo, which now
+  opens the same window instead of starting at once):
+  - **Model settings:** the model, its steps and CFG, the size it works at (0.4 MP for the quick one), the picture's
+    size, the seed, and the camera and time it's taken from (with the aperture when there's one).
+  - **The pictures it gets,** in order: the render (and who's pasted into it), the depth map, and each object's
+    picture, as the prompt names them.
+  - **The whole prompt,** exactly as the model gets it, look and depth-of-field line included. It can be edited:
+    Generate then sends it as it is, and ↻ Rebuild puts the built one back.
+  - Then 📷 Generate (or ⚡ Generate the quick photo).
+
 ## [0.131.0] - 2026-11-20
 
 ### Added
