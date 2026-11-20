@@ -118,6 +118,13 @@ body.v2 { height: 100vh; overflow: hidden; display: grid; grid-template-rows: au
 .v2-camline { position: absolute; top: 50%; height: 2px; background: #4f8cff; transform: translateY(-50%); }
 .v2-key { position: absolute; top: 50%; transform: translate(-50%, -50%); font-size: 11px; color: #8fb6ff; line-height: 1; }
 .v2-key.ease { color: #c4b0ff; }
+.v2-key.edit { cursor: ew-resize; font-size: 13px; padding: 2px; z-index: 2; }
+.v2-key.edit:hover, .v2-key.drag { color: #fff; text-shadow: 0 0 4px #4f8cff; }
+.v2-key.drag { cursor: grabbing; }
+.v2-ruler .v2-lane { cursor: pointer; }
+.v2-tracks { position: relative; }
+.v2-playhead { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #f85149; pointer-events: none; z-index: 3; }
+.v2-playhead::before { content: ""; position: absolute; top: 0; left: -4px; border: 5px solid transparent; border-top-color: #f85149; }
 .v2-camtxt { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); font-size: 10.5px; color: var(--muted); pointer-events: none; }
 .v2-clip { min-width: 0; padding: 4px 6px; display: flex; flex-direction: column; justify-content: space-between; font-size: 12px; cursor: pointer;
   background: color-mix(in srgb, var(--accent) 16%, var(--panel-2)); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }

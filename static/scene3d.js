@@ -3648,7 +3648,30 @@ const Scene3D = (() => {
     requestAnimationFrame(step); renderTime();
   }
 
-  return { mount, autoRender, current, addFromLibrary, select: i => s?.bg && select(i), selectCam: () => s?.bg && selectCam(),
+  /* The camera's keys, edited from V2's timeline: each edit is saved and is one ↶ Undo step. Times are the scene's
+     seconds, snapped to its frames. */
+  const camEdit = {
+    seek: t => { if (s?.bg) toFrame(t * FPS); },
+    add(t) {  // a key where the camera is at t (its path doesn't change; the key is there to change)
+      if (!s?.bg) return false;
+      toFrame(t * FPS); editCam(camBase(s.t)); save(); renderSide(); s.dirty = true; return true;
+    },
+    move(i, t) {
+      const k = s?.bg && s.camKeys[i]; if (!k) return false;
+      t = Math.max(0, Math.min(dur(), Math.round(t * FPS) / FPS));
+      if (s.camKeys.some((q, j) => j !== i && near(q.t, t))) { Media.toast("There's a camera key at that frame already."); return false; }
+      k.t = t; s.camKeys.sort((a, b) => a.t - b.t);
+      save(); setTime(s.t); renderSide(); s.dirty = true; return true;
+    },
+    remove(i) { if (!s?.bg || !s.camKeys[i]) return false; s.camKeys.splice(i, 1); save(); setTime(s.t); renderSide(); s.dirty = true; return true; },
+    ease(i, e) {
+      const k = s?.bg && s.camKeys[i]; if (!k) return false;
+      if (EASES[e]) k.ease = e; else delete k.ease;
+      save(); setTime(s.t); renderSide(); s.dirty = true; return true;
+    },
+    EASES: Object.fromEntries(Object.entries(EASES).map(([k, v]) => [k, v.label])),
+  };
+  return { mount, autoRender, current, addFromLibrary, camEdit, select: i => s?.bg && select(i), selectCam: () => s?.bg && selectCam(),
     rename: (i, name) => { const o = s?.objs[i]; if (!o || !String(name || "").trim()) return; o.name = String(name).trim().slice(0, 120); save(); renderSide(); }, CAM_MOVES, applyCameraMove, cameraOut, applySavedCamera, renderForShot, photoForShot, fromTemplate, setTemplate, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
     _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _fill: (P, look, say) => fillGaps(P, look, say), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
 })();
