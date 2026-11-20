@@ -614,6 +614,21 @@ const V2 = (() => {
   /* ---- wiring */
   function wire() {
     $("v2-new").onclick = newMenu;
+    // narrow windows (v2.css): the library tabs open a drawer, 📝 Shot opens the shot panel as a drawer
+    const main = document.querySelector(".v2-main"), narrow = () => matchMedia("(max-width: 1180px)").matches;
+    const setRight = on => { main.classList.toggle("right-open", on); $("v2-paneltoggle").setAttribute("aria-expanded", String(on)); if (on) main.classList.remove("left-open"); };
+    $("v2-paneltoggle").onclick = () => setRight(!main.classList.contains("right-open"));
+    document.querySelectorAll(".v2-tabs [data-tab]").forEach(b => b.addEventListener("click", () => {
+      if (!narrow()) return;
+      const again = b.classList.contains("on") && main.classList.contains("left-open");
+      main.classList.toggle("left-open", !again);
+      if (!again) setRight(false);
+    }));
+    // a click in the viewport or timeline closes a drawer; so do Esc and picking a shot
+    document.querySelector(".v2-view").addEventListener("pointerdown", () => { if (narrow()) { main.classList.remove("left-open"); setRight(false); } });
+    document.querySelector(".v2-tl").addEventListener("pointerdown", () => { if (narrow()) main.classList.remove("left-open"); });
+    document.addEventListener("keydown", e => { if (e.key === "Escape" && narrow() && !document.querySelector(".wm-win")) { main.classList.remove("left-open"); setRight(false); } });
+    $("v2-shotlist").addEventListener("click", e => { if (narrow() && e.target.closest(".v2-shot") && !e.target.closest("[data-x]")) main.classList.remove("left-open"); });
     // the library tabs
     document.querySelectorAll(".v2-tabs [data-tab]").forEach(b => b.onclick = () => {
       document.querySelectorAll(".v2-tabs [data-tab]").forEach(x => { const on = x === b; x.classList.toggle("on", on); x.setAttribute("aria-selected", String(on)); });

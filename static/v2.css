@@ -142,4 +142,43 @@ body.v2 { height: 100vh; overflow: hidden; display: grid; grid-template-rows: au
 .v2-clip.sel { outline: 2px solid var(--accent); }
 .v2-clip.done { background: color-mix(in srgb, var(--ok, #3fb950) 16%, var(--panel-2)); }
 
-@media (max-width: 1100px) { .v2-main { grid-template-columns: 190px minmax(0, 1fr) 290px; } }
+/* ---- narrower windows. Below 1400 px: slimmer columns, and the scene builder's own side panel narrower. Below
+   1180 px: the library is a rail of icons whose tabs open as a drawer over the viewport, and the shot panel is a
+   drawer opened from 📝 Shot in the top bar, so the 3D viewport keeps the width. */
+.v2-main { position: relative; }
+#v2-paneltoggle { display: none; }
+.v2-tabs .v2-ti { margin-right: 4px; }
+.v2-tabs button { white-space: nowrap; }
+@media (max-width: 1400px) {
+  .v2-main { grid-template-columns: 200px minmax(0, 1fr) 290px; }
+  .v2-viewhost > .s3 { grid-template-columns: minmax(0, 1fr) 210px; gap: 8px; }
+  .v2-top { gap: 8px; }
+  .v2-proj select { max-width: 160px; }
+}
+@media (max-width: 1180px) {
+  .v2-main { grid-template-columns: 46px minmax(0, 1fr); grid-template-areas: "shots view" "tl tl"; overflow: clip; }
+  .v2-shots { overflow: visible; z-index: 30; }
+  .v2-tabs { flex-direction: column; border-bottom: 0; padding: 6px 4px; gap: 4px; }
+  .v2-tabs button { padding: 8px 0; border-radius: 8px; font-size: 18px; }
+  .v2-tabs button.on { box-shadow: none; background: none; }
+  .v2-main.left-open .v2-tabs button.on { background: var(--panel-2); box-shadow: inset 3px 0 0 var(--accent); }
+  .v2-tabs .v2-tt { display: none; }
+  .v2-tabs .v2-ti { margin: 0; }
+  .v2-pane, .v2-pane:not([hidden]) { display: none; }
+  .v2-main.left-open .v2-pane:not([hidden]) { display: flex; position: absolute; left: 46px; top: 0; bottom: 0; width: min(290px, calc(100vw - 60px));
+    background: var(--panel); border-right: 1px solid var(--line); box-shadow: var(--shadow, 0 10px 30px rgba(0, 0, 0, .4)); }
+  .v2-panel { grid-area: auto; position: absolute; right: 0; top: 0; bottom: 0; width: min(340px, calc(100vw - 60px)); z-index: 30;
+    transform: translateX(100%); visibility: hidden; transition: transform .18s ease, visibility 0s .18s; box-shadow: var(--shadow, 0 10px 30px rgba(0, 0, 0, .4)); }
+  .v2-main.right-open .v2-panel { transform: none; visibility: visible; transition: transform .18s ease; }
+  #v2-paneltoggle { display: inline-flex; }
+  #v2-paneltoggle[aria-expanded="true"] { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+  .v2-status { display: none; }
+  .v2-brand small { display: none; }
+}
+@media (max-width: 720px) {
+  .v2-proj { font-size: 0; }
+  .v2-proj select { font-size: 13px; max-width: 120px; }
+  .v2-tlbar .hint { display: none; }
+  .v2-viewhost > .s3 { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 38%; }
+}
+html[data-motion="reduce"] .v2-panel { transition: none !important; }
