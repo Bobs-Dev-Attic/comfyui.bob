@@ -5,6 +5,27 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.133.0] - 2026-11-20
+
+### Fixed
+- **A push in no longer smears the bottom of the picture** (a 3D scene render from a photo, with the Qwen fill on).
+  - The cause: coming in close magnifies the photo, about twice for a push in. The ground in front turned into smeared
+    streaks as the photo's pixels stretched, and H3 followed the blur.
+  - The fix: where the camera move magnifies the photo most (over 1.4×), the render now draws that view and has Qwen
+    redraw it sharp, keeping every shape, colour and place. It's painted on from that camera and fades in over the
+    photo's background as the camera comes close.
+  - The objects still come from the photo, so a person isn't redrawn by Qwen. It adds about half a minute before the
+    video.
+
+### Added
+- **🎬 Render video shows what will be sent, before it's sent**, like the photo window:
+  - **Model settings:** H3 or H3 Reference, how closely it follows the rough animation, the quality and the size it
+    will come out at, the length in frames and seconds, the steps, the seed, and what's made before it (the photo of
+    the first frame, the Qwen fill and detail view).
+  - **The pictures it gets:** the first frame, the rough animation and its mask, and the objects' pictures on H3
+    Reference.
+  - **The whole prompt,** editable: Render sends it as it is, and ↻ Rebuild puts the built one back.
+
 ## [0.132.0] - 2026-11-20
 
 ### Added

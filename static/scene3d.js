@@ -1464,24 +1464,26 @@ const Scene3D = (() => {
       if (!s) throw new Error("The scene was closed");
       const t = f / FPS;
       let out = s.cv;
-      const gaps = gapLayers(proj, camForRender(t));
-      if (mask && gaps.length) {
+      const gaps = gapLayers(proj, camForRender(t)), details = (proj?.details || []).map(D => ({ D, a: detailAlpha(proj, camForRender(t), D) })).filter(x => x.a > 0.01);
+      if (mask && (gaps.length || details.length)) {
         // what H3 follows: the photo (objects too) and every filled view's background, together
         out = Object.assign(document.createElement("canvas"), { width: size[0], height: size[1] });
         const og = out.getContext("2d");
         draw({ size, t, cam: camForRender(t), mask, proj }); og.drawImage(s.cv, 0, 0, size[0], size[1]);
         og.globalCompositeOperation = "lighter";
-        for (const L of gaps) { draw({ size, t, cam: camForRender(t), mask, proj: L, skip: s.objs }); og.drawImage(s.cv, 0, 0, size[0], size[1]); }
+        for (const L of [...gaps, ...details.filter(x => x.a > 0.5).map(x => x.D.P)]) { draw({ size, t, cam: camForRender(t), mask, proj: L, skip: s.objs }); og.drawImage(s.cv, 0, 0, size[0], size[1]); }
       } else if (mask) draw({ size, t, cam: camForRender(t), mask, proj });
-      else if (proj && gaps.length) {
+      else if (proj && (gaps.length || details.length)) {
         // the filled views (the one nearest this frame's camera last), then the photo's background over them, then
         // the whole frame from the photo; what none of them saw: the empty scene's own sky and floor, or a blur
         out = Object.assign(document.createElement("canvas"), { width: size[0], height: size[1] });
         const og = out.getContext("2d");
         if (s.bg.empty) { draw({ size, t, cam: camForRender(t), skip: s.objs }); og.drawImage(s.cv, 0, 0, size[0], size[1]); }
         for (const L of [...gaps, proj]) { draw({ size, t, cam: camForRender(t), proj: L, skip: s.objs }); og.drawImage(s.cv, 0, 0, size[0], size[1]); }
+        // a sharp detail view over the photo's background as the camera gets close (faded in, so it doesn't pop)
+        for (const { D, a } of details) { draw({ size, t, cam: camForRender(t), proj: D.P, skip: s.objs }); og.globalAlpha = a; og.drawImage(s.cv, 0, 0, size[0], size[1]); og.globalAlpha = 1; }
         if (!s.bg.empty) out = fillHoles(out, size[0], size[1]);
-        draw({ size, t, cam: camForRender(t), proj });
+        draw({ size, t, cam: camForRender(t), proj, objsOnly: true });  // the objects, from the photo, on top
         out.getContext("2d").drawImage(s.cv, 0, 0, size[0], size[1]);
       } else {
         // The holes a camera move opens are filled from the background alone, so an object's colours don't bleed
@@ -1567,11 +1569,15 @@ const Scene3D = (() => {
         <optgroup label="A shot on the Shots step">${toShots().map(t => `<option value="${t.i}">${esc(t.label)}</option>`).join("")}
         <option value="new">A new shot</option></optgroup></select>
         <p class="hint s3r-to-h" hidden>The shot keeps this render's rough animation, mask and first picture; Generate on the Shots step makes it, in order with the other shots.${forShot() ? ` This scene is for shot ${forShot().i + 1}: What happens is that shot's.` : ""}</p></div>` : ""}
-      <label class="check s3r-tlf"><input type="checkbox" id="s3r-tl"${autoTl() ? " checked" : ""}> Add it to the timeline when it's done</label>`;
+      <label class="check s3r-tlf"><input type="checkbox" id="s3r-tl"${autoTl() ? " checked" : ""}> Add it to the timeline when it's done</label>
+      <section class="s3p-set" aria-label="Model settings"><h4>Model settings</h4><dl class="s3p-dl s3r-dl"></dl><div class="s3p-pics s3r-pics"></div></section>
+      <div class="field"><div class="s3p-ph"><label for="s3r-prompt">The prompt <span class="opt">the whole of it, as H3 gets it; edit it if you like</span></label>
+        <button type="button" class="link" data-a="rebuild" title="Build the prompt again from the settings above">↻ Rebuild</button></div>
+        <textarea id="s3r-prompt" rows="8" spellcheck="false"></textarea><p class="hint s3r-pnote"></p></div>`;
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
     foot.innerHTML = `<span class="hint s3r-st"></span><button type="button" class="btn ghost" data-a="cancel">Cancel</button><button type="button" class="btn primary" data-a="go">🎬 Render</button>`;
-    const win = WM.open({ id: "scene3d-render", title: `Render · ${s.sc.name}`, content: box, footer: foot, width: 560, height: 660, modal: true });
+    const win = WM.open({ id: "scene3d-render", title: `Render · ${s.sc.name}`, content: box, footer: foot, width: 600, height: 760, modal: true });
     const useRefs = () => !!box.querySelector("#s3r-refs")?.checked;
     const fromPhoto = () => { const v = box.querySelector("#s3r-first").value; return v === "newphoto" || v.startsWith("photo:"); };
     wireTags(box, box.querySelector("#s3r-what"), () => videoText(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder, useRefs(), fromPhoto()));
@@ -1586,6 +1592,34 @@ const Scene3D = (() => {
       if (!photo && !holdSel.dataset.touched) holdSel.value = "normal";
       box.querySelector("#s3r-what").dispatchEvent(new Event("input"));  // what H3 reads follows the start
     };
+    // the review: the settings H3 runs with, the pictures it gets, and the whole prompt (editable)
+    let edited = false;
+    const MP = { draft: 0.4, standard: 0.6, full: 0.98 }, HOLD = { loose: "loosely (its look carries through)", normal: "normally", tight: "tightly (close to the rough animation)" };
+    const review = () => {
+      const refs = useRefs(), v = firstSel.value, q = box.querySelector("#s3r-q").value, mp = MP[q] || 0.6, A = s.bg.aspect;
+      const w = Math.max(32, Math.round(Math.sqrt(mp * 1048576 * A) / 32) * 32), h = Math.max(32, Math.round(w / A / 32) * 32);
+      const fill = !!box.querySelector("#s3r-fill")?.checked && fromPhoto() && cameraMoves();
+      box.querySelector(".s3r-dl").innerHTML = [
+        ["Model", refs ? "MiniMax H3 Reference, image to video with the objects' pictures" : "MiniMax H3, image to video"],
+        ["Following", `the scene's rough animation (Time-to-Move), ${HOLD[holdSel.value] || holdSel.value}`],
+        ["Quality", `${box.querySelector("#s3r-q").selectedOptions[0].textContent}: about ${w}×${h} px (${mp} MP)`],
+        ["Length", `${frameCount()} frames, ${dur().toFixed(2)} s at ${FPS} fps`],
+        ["Sampling", refs ? "4 steps with H3 Reference's turbo LoRA (8 with an 8-step one)" : "8 steps with H3's turbo LoRA (4 with a 4-step one)"],
+        ["Seed", "a new one each time"],
+        ["Before it", v === "newphoto" ? `a photo of the first frame (the edit model)${fill ? ", then Qwen fills what the camera move reveals and redraws a sharp view where it comes close" : ""}` : fill ? "Qwen fills what the camera move reveals, and redraws a sharp view where it comes close" : "nothing: it starts at once"],
+      ].map(([k, x]) => `<dt>${esc(k)}</dt><dd>${esc(x)}</dd>`).join("");
+      const startName = v === "picture" ? "the scene's picture" : v === "newphoto" ? "the new photo of the first frame" : v.startsWith("photo:") ? "the chosen photo" : "the first frame as drawn";
+      box.querySelector(".s3r-pics").innerHTML = `<span class="s3p-pic"><span class="s3p-pic0">🖼</span><b>${refs ? "&lt;Picture 1&gt;" : "First frame"}</b> ${esc(startName)}</span>`
+        + `<span class="s3p-pic"><span class="s3p-pic0">🎞</span><b>Motion</b> the rough animation and its mask</span>`
+        + (refs ? picObjs().map((x, i) => `<span class="s3p-pic"><img src="${esc(mediaUrl(x.picture))}" alt=""><b>&lt;Picture ${i + 2}&gt;</b> ${esc(x.name)}</span>`).join("") : "");
+      if (!edited) box.querySelector("#s3r-prompt").value = renderPrompt(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder, refs, fromPhoto()).prompt;
+      box.querySelector(".s3r-pnote").innerHTML = (edited ? `<span class="warn">Edited: Render sends it as it is. ↻ Rebuild puts the built one back.</span> ` : "")
+        + (refs ? "H3 Reference also puts a line before it that ties &lt;Picture 1&gt; to the first frame." : "");
+    };
+    box.querySelector("#s3r-prompt").addEventListener("input", () => { if (!edited) { edited = true; review(); } });
+    box.querySelector('[data-a="rebuild"]').onclick = () => { edited = false; review(); };
+    box.addEventListener("change", review);
+    box.querySelector("#s3r-what").addEventListener("input", review);
     firstSel.value = startDefault; syncStart();
     firstSel.onchange = syncStart; holdSel.onchange = () => { holdSel.dataset.touched = "1"; };
     const toSel = box.querySelector("#s3r-to"), goBtn = foot.querySelector('[data-a="go"]');
@@ -1608,7 +1642,7 @@ const Scene3D = (() => {
         if (to === "now") try { localStorage.setItem("bob.sceneAutoTl", toTl ? "1" : "0"); } catch { /* not kept */ }
         const fill = !!box.querySelector("#s3r-fill")?.checked;
         if (box.querySelector("#s3r-fill")) try { localStorage.setItem("bob.sceneGapFill", fill ? "1" : "0"); } catch { /* not kept */ }
-        const r = await buildRender({ start, look, fill, refs: useRefs(), hold: holdSel.value, quality: box.querySelector("#s3r-q").value,
+        const r = await buildRender({ start, look, fill, refs: useRefs(), hold: holdSel.value, quality: box.querySelector("#s3r-q").value, prompt: edited ? box.querySelector("#s3r-prompt").value : null,
           what: box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder }, m => { st.textContent = m; });
         if (to !== "now") {  // into a shot: Generate on the Shots step sends it
           const k = Shots.useScene(to === "new" ? -1 : +to, r.shot);
@@ -1654,18 +1688,18 @@ const Scene3D = (() => {
         proj = await prepareProjection(photoPath, p.t, p.cam, say);
       }
       if (proj && o.fill !== false && cameraMoves()) {
-        try { const k = await fillGaps(proj, o.look || lastLook(), say); if (k) say(`Filled ${k} view${k === 1 ? "" : "s"} the photo couldn't see.`); }
+        try {
+          const k = await fillGaps(proj, o.look || lastLook(), say); if (k) say(`Filled ${k} view${k === 1 ? "" : "s"} the photo couldn't see.`);
+          if (await fillDetail(proj, o.look || lastLook(), say)) say("Added a sharp detail view for where the camera comes close.");
+        }
         catch (err) { if (!s) throw err; Media.toast(`Filling the gaps: ${err.message}. Rendering without it.`); for (const g of proj.gaps || []) freeProjection(g.P); proj.gaps = []; }
       }
       say("Drawing the rough animation…");
       const ref = await renderVideo("ref", [W, H], n, (f, N) => say(`Drawing the rough animation: frame ${f + 1} of ${N}`), proj);
       const mask = await renderVideo("mask", [W, H], n, (f, N) => say(`Drawing its mask: frame ${f + 1} of ${N}`), proj);
       say("Sending to H3…");
-      const what = videoText(o.what || defaultWhat(), o.refs, fromPhoto).text;
-      const glides = s.camKeys.length > 1 && s.camKeys.some(k => camDiff(k, s.camKeys[0]) > 1e-3);
-      const cam = [glides ? (shakes() ? "The camera moves through the scene." : "The camera moves smoothly through the scene.") : shakes() ? "" : "The camera holds a static shot.",
-        shakes() ? SHAKES[shakeStyle()].says : ""].filter(Boolean).join(" ");
-      const prompt = `integrated_multimodal_description: [Shot 1] ${what.replace(/\s+/g, " ")} ${cam}\n\noverall_soundscape: Natural sound of the scene.\n\nnon_diegetic_music: N/A`;
+      const built = renderPrompt(o.what, o.refs, fromPhoto), what = built.what;
+      const cam = built.cam, prompt = String(o.prompt || "").trim() || built.prompt;
       const req = { kind: "video", engine: "motion", prompt, seconds: n / FPS, aspect: "16:9", quality: o.quality || "standard",
         seed: -1, batch: 1, turbo: true, first_frame: null, motion_video: ref, motion_video_mask: mask,
         motion_hold: o.hold || "normal", motion_first: "picture", project: s.sc.project };
@@ -1684,6 +1718,14 @@ const Scene3D = (() => {
           motion_hold: req.motion_hold, quality: req.quality, references: req.references || [] } };
       return { req, shot };
     } finally { freeProjection(proj); if (s) { s.cv.width = keep[0]; s.cv.height = keep[1]; s.dirty = true; } }
+  }
+  // The render's prompt: what happens (tags filled in), the camera, and the sound fields.
+  function renderPrompt(whatText, refs, fromPhoto) {
+    const what = videoText(whatText || defaultWhat(), refs, fromPhoto).text;
+    const glides = s.camKeys.length > 1 && s.camKeys.some(k => camDiff(k, s.camKeys[0]) > 1e-3);
+    const cam = [glides ? (shakes() ? "The camera moves through the scene." : "The camera moves smoothly through the scene.") : shakes() ? "" : "The camera holds a static shot.",
+      shakes() ? SHAKES[shakeStyle()].says : ""].filter(Boolean).join(" ");
+    return { what, cam, prompt: `integrated_multimodal_description: [Shot 1] ${what.replace(/\s+/g, " ")} ${cam}\n\noverall_soundscape: Natural sound of the scene.\n\nnon_diegetic_music: N/A` };
   }
   // What happens, when nothing is written: whatever moves.
   function defaultWhat() {
@@ -1847,8 +1889,10 @@ const Scene3D = (() => {
     if (r?.proj) {  // the photo painted onto the scene from its camera; what that camera couldn't see is a hole
       const P = { ...r.proj, mask: !!r.mask };
       s.gpu.begin(W, H, [0, 0, 0], r.mask ? 1 : 0);
-      s.gpu.draw(s.bgMesh, { VP, M: ID, M0: ID, eye: e, key, proj: P });
-      s.gpu.draw(P.sphere, { VP, M: ID, M0: ID, eye: e, key, proj: P });
+      if (!r.objsOnly) {  // objsOnly: the objects alone, over a background composed elsewhere
+        s.gpu.draw(s.bgMesh, { VP, M: ID, M0: ID, eye: e, key, proj: P });
+        s.gpu.draw(P.sphere, { VP, M: ID, M0: ID, eye: e, key, proj: P });
+      }
       for (const o of s.objs) {
         if (!o.mesh || !o.pos || o.hidden || r.skip?.includes(o)) continue;
         s.gpu.draw(o.mesh, { VP, M: matOf(o, fitPose(o, t, P)), M0: matOf(o, fitPose(o, P.t0, P)), eye: e, key, proj: P, fit: P.fits?.[o.id] });
@@ -3362,7 +3406,7 @@ const Scene3D = (() => {
     const sphere = sphereMesh(e0, far * 0.8);
     const W0 = Math.min(2048, img.width), H0 = Math.round(W0 / A);
     for (const o of s.objs) figureMesh(o, t0);  // a Person in its pose at t0
-    const P = { VP0, near, far, t0, sphere };
+    const P = { VP0, near, far, t0, sphere, cam: camOf(cam) };
     try { await fitToPhoto(P, photoRef, e0, say); } catch (err) { console.warn("Fitting the photo:", err); }
     P.depth = s.gpu.depthPass(W0, H0, d => {
       const o0 = { VP: VP0, eye: e0, key: [0, 1, 0] };
@@ -3378,7 +3422,7 @@ const Scene3D = (() => {
     if (F) { q.pos = [q.pos[0] + F.d[0], q.pos[1], q.pos[2] + F.d[2]]; q.scale = (q.scale ?? 1) * F.k; }
     return q;
   }
-  function freeProjection(P) { if (!P || !s) return; s.gpu.free(P.depth); s.gpu.free(P.photo); s.gpu.free(P.cut); s.gpu.free(P.bgOnly?.cut); for (const g of P.gaps || []) freeProjection(g.P); }
+  function freeProjection(P) { if (!P || !s) return; s.gpu.free(P.depth); s.gpu.free(P.photo); s.gpu.free(P.cut); s.gpu.free(P.bgOnly?.cut); for (const g of [...(P.gaps || []), ...(P.details || [])]) freeProjection(g.P); }
   /* The photo as a background only, for the gap views: everything near an object in it (its stand-in's shape from the
      photo's camera, and what SAM found, grown well round, more downwards for its shadow) is a hole, so the bits of a
      person just outside a mannequin's shape don't lie on the ground as streaks (Qwen drew a second person from one). */
@@ -3437,6 +3481,46 @@ const Scene3D = (() => {
     + (look ? `The place: ${look.replace(/[.\s]+$/, "")}. ` : "")
     + "Keep the ground near the camera flat and open; put anything tall (plants, rocks, buildings) only in the distance. "
     + "Add no people, animals or large objects. No magenta remains. Keep everything that isn't magenta exactly the same.";
+  /* Detail: a camera that comes close (a push in, a zoom) enlarges the photo: at twice its size the ground in front
+     turns into smeared streaks and H3 follows the blur. Where the move magnifies it most (over DETAIL_MIN), the view
+     there is drawn from what the scene has, background only, and Qwen redraws it sharp, keeping every shape, colour
+     and place (and filling what's cut out round the objects); it's painted on from that camera and faded in over the
+     photo's background as the camera gets that close. The objects still come from the photo. */
+  const DETAIL_MIN = 1.4;
+  const magOf = (c0, c) => (c0.dist / Math.max(1e-6, c.dist)) * ((c.lens || baseLens()) / (c0.lens || baseLens()));
+  function detailAlpha(P, cam, D) {
+    if (!P?.cam) return 0;
+    const m = magOf(P.cam, cam), lo = 1.15, hi = Math.max(lo + 0.1, 1 + (D.m - 1) * 0.6), u = Math.max(0, Math.min(1, (m - lo) / (hi - lo)));
+    return u * u * (3 - 2 * u);
+  }
+  const DETAIL_TEXT = look => "This is an enlarged part of a photograph, soft and smeared, with some solid magenta areas. Redraw it as one sharp, "
+    + "detailed photograph: keep every shape, edge, colour, the light and the layout exactly where they are, and give the surfaces fine, real texture. "
+    + "Fill the magenta areas with what belongs there, continuing the surroundings. " + (look ? `The place: ${look.replace(/[.\s]+$/, "")}. ` : "")
+    + "Add no people, animals or objects. No magenta remains.";
+  async function fillDetail(P, look, say = () => {}) {
+    const models = editModels(); if (!models.length || !P?.cam) return 0;
+    const model = (models.find(m => m[0] === "qwen") || models[0])[0];
+    let best = null;
+    for (let f = 0, n = frameCount(); f < n; f += 6) { const t = f / FPS, c = camBase(t), m = magOf(P.cam, c); if (!best || m > best.m) best = { t, m, c }; }
+    if (!best || best.m < DETAIL_MIN) return 0;
+    const A = s.bg.aspect, W = Math.round((A >= 1 ? 1024 : 1024 * A) / 8) * 8, H = Math.round(W / A / 8) * 8, { t, c: cam } = best;
+    const view = Object.assign(document.createElement("canvas"), { width: W, height: H }), vg = view.getContext("2d", { willReadFrequently: true });
+    vg.fillStyle = "#ff00ff"; vg.fillRect(0, 0, W, H);
+    for (const L of [...gapLayers(P, cam), bgOnly(P)]) { draw({ size: [W, H], t, cam, proj: L, skip: s.objs }); vg.drawImage(s.cv, 0, 0, W, H); }
+    const px = vg.getImageData(0, 0, W, H), d = px.data;
+    for (let i = 0; i < d.length; i += 4) if (d[i + 3] < 250) { d[i] = 255; d[i + 1] = 0; d[i + 2] = 255; d[i + 3] = 255; }
+    vg.putImageData(px, 0, 0);
+    const blob = await new Promise(r => view.toBlob(r, "image/png")), fd = new FormData(); fd.append("file", blob, "scene_detail.png");
+    const up = await (await fetch("/api/upload", { method: "POST", body: fd })).json();
+    say(`The camera comes in ${best.m.toFixed(1)}× closer than the photo: Qwen redraws that view sharp (about half a minute)…`);
+    const items = await submit({ kind: "image", engine: "imgedit", edit_op: "instruct", source: up.ref, prompt: DETAIL_TEXT(look), edit_model: model, seed: -1, batch: 1, project: s.sc.project });
+    if (!items?.length) throw new Error("Qwen didn't take the detail view");
+    const it = await waitItem(items[0].id);
+    const path = (it.files || []).find(f => /^image\//.test(f.content_type || ""))?.path || it.files?.[0]?.path;
+    if (it.status !== "done" || !path) throw new Error("Qwen couldn't redraw the detail view");
+    P.details = [{ t, cam, m: best.m, ref: path, P: await prepareBgProjection(path, t, cam) }];
+    return 1;
+  }
   // Fill the gaps of a camera move from the photo P (adds P.gaps); `look`: how the place looks, in words.
   async function fillGaps(P, look, say = () => {}) {
     const models = editModels(); if (!models.length) return 0;
