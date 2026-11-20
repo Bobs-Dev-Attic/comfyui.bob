@@ -5,6 +5,25 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.128.0] - 2026-11-20
+
+### Changed
+- **📷 Generate photo and 🎬 Render video are in the 🏞 Scene menu** (V2 and the classic 3D scene window). The
+  footer only has the hint now.
+- **The position box is part of the side panel.** A selected object's (or the camera's) X, Y, Z, and the camera's pan,
+  tilt, roll, lens, focus, aperture and shake, sit in its details instead of floating over the 3D view. In V2 they come
+  right under its name and lines.
+
+### Added
+- **⚡ Quick photo and ⚡ Quick video** in the Scene menu, rough tests of an idea.
+  - **Quick photo:** what the camera sees at the playhead, small (0.4 MP), on Qwen Image Edit's 4 steps. Its own work
+    takes a few seconds, but the first one after another model (H3) was loaded waits for Qwen to load, a few minutes.
+  - **Quick video:** a Draft on H3 at 4 steps (half the usual turbo steps), with no photo first and no gap fill. When
+    the camera holds still, it starts from the scene's picture or a photo of its first frame that matches (a quick
+    photo at 0 s will do). When the camera moves, it starts from the scene as drawn, a test of the motion.
+- **Play controls:** ⏮ start, ⏴ a frame back, ▶ play, ⏵ a frame on, ⏭ end, and a Frame field to type the exact frame
+  (of how many). Keys: Home, End, comma and full stop.
+
 ## [0.127.0] - 2026-11-20
 
 ### Changed
