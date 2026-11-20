@@ -1350,9 +1350,19 @@ const Scene3D = (() => {
     for (let f = 0; f < n; f++) {
       if (!s) throw new Error("The scene was closed");
       const t = f / FPS;
-      draw({ size, t, cam: camForRender(t), mask, proj });
+      let out = s.cv;
+      if (mask) draw({ size, t, cam: camForRender(t), mask, proj });
+      else {
+        // The holes a camera move opens are filled from the background alone, so an object's colours don't bleed
+        // into them (H3 kept that as a glow round a person): the background drawn without the objects, its holes
+        // filled, then the whole frame drawn over it.
+        draw({ size, t, cam: camForRender(t), proj, skip: s.objs });
+        out = fillHoles(s.cv, size[0], size[1]);
+        draw({ size, t, cam: camForRender(t), proj });
+        out.getContext("2d").drawImage(s.cv, 0, 0, size[0], size[1]);
+      }
       // toDataURL is synchronous: toBlob's callback (and setTimeout) crawl when the tab is in the background
-      const url = (mask ? s.cv : fillHoles(s.cv, size[0], size[1])).toDataURL(mask ? "image/png" : "image/jpeg", 0.92), bin = atob(url.slice(url.indexOf(",") + 1));
+      const url = out.toDataURL(mask ? "image/png" : "image/jpeg", 0.92), bin = atob(url.slice(url.indexOf(",") + 1));
       const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
       fd.append("frame", new Blob([bytes], { type: mask ? "image/png" : "image/jpeg" }), `${String(f).padStart(5, "0")}.${mask ? "png" : "jpg"}`);
       if (f % 8 === 0) { progress(f, n); await new Promise(r => { const c = new MessageChannel(); c.port1.onmessage = r; c.port2.postMessage(0); }); }
@@ -1654,7 +1664,7 @@ const Scene3D = (() => {
       s.gpu.draw(s.bgMesh, { VP, M: ID, M0: ID, eye: e, key, proj: P });
       s.gpu.draw(P.sphere, { VP, M: ID, M0: ID, eye: e, key, proj: P });
       for (const o of s.objs) {
-        if (!o.mesh || !o.pos || o.hidden) continue;
+        if (!o.mesh || !o.pos || o.hidden || r.skip?.includes(o)) continue;
         s.gpu.draw(o.mesh, { VP, M: matOf(o, fitPose(o, t, P)), M0: matOf(o, fitPose(o, P.t0, P)), eye: e, key, proj: P, fit: P.fits?.[o.id] });
       }
       return;
@@ -2997,7 +3007,11 @@ const Scene3D = (() => {
   // carries only what was found (P.fits), and what was found, grown a little, is a hole on everything else (P.cut),
   // for H3 to fill in once it has gone. Without SAM 3, or when nothing is found, as before.
   async function fitToPhoto(P, photoRef, e0, say) {
-    const moving = s.objs.filter(o => o.mesh && o.pos && !o.hidden && o.keys?.length > 1).slice(0, 8);
+    // the objects that move, and, when the camera moves, every object: as the view turns, what the photo drew of a
+    // still object outside its stand-in's shape (a coat wider than a mannequin, its shadow) would stay painted on the
+    // ground behind it and slide off as a ghost
+    const camMoves = cameraMoves();
+    const moving = s.objs.filter(o => o.mesh && o.pos && !o.hidden && (o.keys?.length > 1 || camMoves)).slice(0, 8);
     if (!moving.length) return;
     const A = s.bg.aspect, W = 768, H = Math.round(W / A), N = W * H;
     // which stand-in covers each pixel at t0 (1 + its index; 0: none), top row first; pose(o) is where it is

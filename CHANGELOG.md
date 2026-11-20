@@ -5,6 +5,17 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.116.2] - 2026-11-19
+
+### Fixed
+- **A camera move started from a photo no longer leaves a ghost** (3D scene render, H3 and H3 Reference). The photo is
+  painted back onto the scene so H3 starts from it. Only objects that moved were cut out of it, so a still object's
+  real shape in the photo (a coat wider than the mannequin, its shadow) stayed painted on the ground behind it. As the
+  camera moved, that paint slid off as a see-through second person, which H3 copied. Now, when the camera moves,
+  every object in the photo is found (SAM 3) and cut out, and the gaps the move opens are left for H3.
+- **No glow round people after a camera move.** The gaps a camera move opens were filled from the colours next to them,
+  a person's included, and H3 kept that as a coloured halo. They're now filled from the background alone.
+
 ## [0.116.1] - 2026-11-19
 
 ### Fixed
