@@ -873,6 +873,8 @@ details.post-proc > .hint { margin: 0 0 10px; }
 .ex-menu .menu-sep { height: 1px; background: var(--line); margin: 4px 6px; }
 /* the photo window: the model's settings and the whole prompt */
 .s3r-row3 { grid-template-columns: 1fr 1fr 1fr; }
+.s3r-vref { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.s3r-vref select { width: auto; }
 @media (max-width: 560px) { .s3r-row3 { grid-template-columns: 1fr; } }
 .s3r-lv { margin-top: 4px; }
 .s3r-lvh { margin: 4px 0 0; }

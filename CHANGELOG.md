@@ -5,6 +5,24 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.134.9] - 2026-11-20
+
+### Changed
+- **H3 says each line once, and nothing more.** This is from H3-AudioRetake-studio's prompt rules. In V2, 3D scene
+  renders and text-to-video shots, each line is now "says once". After the lines, the prompt says only the words in
+  the dialogue tags are spoken, each line once, and that before, between and after them the speakers stay silent
+  with their lips closed. H3 tends to fill a shot's spare time with words of its own, more so with a voice reference.
+
+### Added
+- **A warning when a shot is much longer than its lines.**
+  - The lines' length is estimated as their syllables at 5.5 a second, plus half a second each.
+  - With more than 2.5 s to spare, the Render window and V2's Generate log say that H3 may fill the rest with words
+    of its own.
+  - The Render window's model settings show the lines' length.
+- **How closely H3 keeps to the voices**, beside "Use the speakers' voices" in the Render window:
+  - Close to the recording: the voice as recorded (reference).
+  - Loosely: its timbre, with more room to act the line (weak_reference).
+
 ## [0.134.8] - 2026-11-20
 
 ### Fixed
