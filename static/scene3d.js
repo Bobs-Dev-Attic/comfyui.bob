@@ -1167,6 +1167,7 @@ const Scene3D = (() => {
           </div>
           <label class="check"><input type="checkbox" data-opt="showBg" checked> <span class="s3-bglabel">Background</span></label>
           <label class="check"><input type="checkbox" data-opt="clay"> Clay (models without colour)</label>
+          <label class="check" title="With an aperture set (the camera's floating box), what the camera sees is blurred by its depth of field: looking through it, and in the corner preview. Renders and photos aren't blurred; H3 is told instead."><input type="checkbox" data-opt="dofBlur" checked> Depth of field blur</label>
           <p class="hint s3-bgnote"></p></section>
         <section><h3>Camera</h3>
           <p class="hint s3-camhint"></p>
@@ -1220,7 +1221,7 @@ const Scene3D = (() => {
     s = { id: sc.id, sc, win, root, cv, hud, gl, gpu: gl ? G().gpu(gl) : null, objs: (sc.objects || []).map(o => ({ ...o, keys: normKeys(o.keys) })), sel: -1, dirty: true, hist: null, hover: null,
       cam: { yaw: 0, pitch: 0, dist: 1, target: [0, 0, -1] }, showBg: true, clay: false, bg: null, tool: "move", modal: null, mouse: null,
       t: 0, seconds: +sc.seconds || 5, camKeys: (sc.camera_keys || []).slice().sort((a, b) => a.t - b.t), camFree: false, camObj: false, camSel: false,
-      floatOff: null, pip: (() => { try { return localStorage.getItem("bob.s3pip") !== "0"; } catch { return true; } })(),
+      floatOff: null, dofBlur: true, dofFb: null, dofProg: null, pip: (() => { try { return localStorage.getItem("bob.s3pip") !== "0"; } catch { return true; } })(),
       photos: (sc.photos || []).slice() };
     if (!gl) { hud.textContent = "This browser has no WebGL 2, so the scene can't be shown."; return; }
     s.ro = new ResizeObserver(() => { if (s) s.dirty = true; }); s.ro.observe(cv);
@@ -1555,6 +1556,9 @@ const Scene3D = (() => {
       return;
     }
     const sky = s.bg.empty ? hexRgb(s.sc.backdrop?.sky || "#c9d3de") : null;
+    // looking through the camera with an aperture: the scene goes through the depth-of-field blur (overlays after stay sharp)
+    const blur = !r && s.dofBlur && fstop() > 0 && !(s.camObj && s.camFree);
+    if (blur) dofBegin(W, H);
     if (sky && r?.mask) s.gpu.begin(W, H, [0, 0, 0], 1);  // the open sky is H3's to make
     else if (sky) s.gpu.begin(W, H, sky, 1);
     else s.gpu.begin(W, H, r ? [0, 0, 0] : G().themeBg(s.cv), r && !r.mask ? 0 : 1);  // a frame: holes stay see-through, to fill
@@ -1567,6 +1571,7 @@ const Scene3D = (() => {
       s.gpu.draw(o.mesh, { VP, M: matOf(o, poseAt(o, t)), eye: e, key, look: !r && s.clay ? 1 : 0,
         tint: !r && i === s.sel ? [0.06, 0.04, 0.0] : null, solid: r?.mask ? white : null });
     });
+    if (blur) dofEnd(0, 0, W, H, cam, tanY(W, H, cam));
     if (r) return;
     const o = s.objs[s.sel];
     s.gl.disable(s.gl.DEPTH_TEST);
@@ -1630,14 +1635,82 @@ const Scene3D = (() => {
     const m = 10, x = Math.round(m * dpr), y = Math.round(m * dpr), w = Math.round(pw * dpr), h = Math.round(ph * dpr);
     const c = camForRender(s.t), { e, VP } = viewProj(w, h, c), ky = (c.yaw - 40) * rad, key = [Math.sin(ky) * 0.6, 0.85, Math.cos(ky) * 0.6 + 0.3];
     const sky = s.bg.empty ? hexRgb(s.sc.backdrop?.sky || "#c9d3de") : [0.06, 0.06, 0.07];
-    gl.enable(gl.SCISSOR_TEST); gl.scissor(x, y, w, h); gl.viewport(x, y, w, h);
-    gl.clearColor(sky[0], sky[1], sky[2], 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); gl.enable(gl.DEPTH_TEST);
+    const blur = s.dofBlur && fstop() > 0;
+    if (blur) { dofBegin(w, h); s.gpu.begin(w, h, sky, 1); }
+    else { gl.enable(gl.SCISSOR_TEST); gl.scissor(x, y, w, h); gl.viewport(x, y, w, h); gl.clearColor(sky[0], sky[1], sky[2], 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); gl.enable(gl.DEPTH_TEST); }
     s.gpu.draw(s.bgMesh, { VP, M: ID, eye: e, key, unlit: true });
     for (const o of s.objs) if (o.mesh && o.pos && !o.hidden) s.gpu.draw(o.mesh, { VP, M: matOf(o, poseAt(o, s.t)), eye: e, key, look: s.clay ? 1 : 0 });
+    if (blur) { gl.enable(gl.SCISSOR_TEST); gl.scissor(x, y, w, h); dofEnd(x, y, w, h, c, tanY(w, h, c)); }
     gl.disable(gl.SCISSOR_TEST); gl.viewport(0, 0, W, H);
     Object.assign(el.style, { left: `${m - 1}px`, bottom: `${m - 1}px`, width: `${w / dpr + 2}px`, height: `${h / dpr + 2}px` });
     const lab = `🎥 ${s.t.toFixed(2)} s · ${Math.round(c.lens || baseLens())} mm${c.roll ? ` · roll ${Math.round(c.roll)}°` : ""}${fstop() ? ` · f/${fstop()} @ ${focusOf(c).toFixed(1)} m` : ""}`;
     const l = el.querySelector(".s3-pip-l"); if (l.textContent !== lab) l.textContent = lab;
+  }
+  /* The depth-of-field preview: the scene is drawn into a picture with its depth, then each pixel is blurred by its
+     circle of confusion (thin lens: aperture f/N, focal length, focus distance), gathered from 48 taps on a spiral.
+     A tap behind the pixel counts only as far as the pixel itself is blurred, so a sharp subject doesn't take on the
+     blurred background around it. Only for the view: renders, photos and what H3 follows stay sharp. */
+  function dofBegin(w, h) {
+    const gl = s.gl; let d = s.dofFb;
+    if (!d || d.w !== w || d.h !== h) {
+      if (d) { gl.deleteFramebuffer(d.fb); gl.deleteTexture(d.col); gl.deleteTexture(d.dep); }
+      const tx = (fmt, f, type, filt) => { const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t); gl.texImage2D(gl.TEXTURE_2D, 0, fmt, w, h, 0, f, type, null);
+        for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, filt], [gl.TEXTURE_MAG_FILTER, filt], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+        return t; };
+      const col = tx(gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, gl.LINEAR), dep = tx(gl.DEPTH_COMPONENT24, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, gl.NEAREST);
+      const fb = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, col, 0);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, dep, 0);
+      d = s.dofFb = { fb, col, dep, w, h };
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, d.fb);
+  }
+  const DOF_VS = "#version 300 es\nout vec2 vUv; void main() { vec2 q = vec2(float((gl_VertexID * 2) & 2), float(gl_VertexID & 2)); vUv = q; gl_Position = vec4(q * 2.0 - 1.0, 0.0, 1.0); }";
+  const DOF_FS = `#version 300 es
+    precision highp float;
+    uniform sampler2D uCol, uDep; uniform vec2 uPx; uniform float uNear, uFar, uF, uFocal, uAper, uScale, uMax;
+    in vec2 vUv; out vec4 outC;
+    float lin(float d) { float z = d * 2.0 - 1.0; return 2.0 * uNear * uFar / (uFar + uNear - z * (uFar - uNear)); }
+    float coc(float z) { float zm = max(z, 1e-3) * 1000.0, F = uF * 1000.0; return min(uAper * uFocal * abs(zm - F) / (zm * max(F - uFocal, 1.0)) * uScale, uMax); }
+    void main() {
+      float z0 = lin(texture(uDep, vUv).r), c0 = coc(z0);
+      vec3 acc = texture(uCol, vUv).rgb; float wsum = 1.0;
+      for (int i = 1; i < 48; i++) {
+        float rr = sqrt(float(i) / 48.0) * uMax, a = float(i) * 2.39996;
+        vec2 uv = vUv + vec2(cos(a), sin(a)) * rr * uPx;
+        float zt = lin(texture(uDep, uv).r), ct = coc(zt);
+        if (zt > z0) ct = min(ct, c0);
+        float w = clamp(ct - rr + 1.0, 0.0, 1.0);
+        acc += texture(uCol, uv).rgb * w; wsum += w;
+      }
+      outC = vec4(acc / wsum, 1.0);
+    }`;
+  function dofProg() {
+    if (s.dofProg) return s.dofProg;
+    const gl = s.gl, sh = (type, src) => { const x = gl.createShader(type); gl.shaderSource(x, src); gl.compileShader(x); if (!gl.getShaderParameter(x, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(x)); return x; };
+    const p = gl.createProgram();
+    gl.attachShader(p, sh(gl.VERTEX_SHADER, DOF_VS)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, DOF_FS));
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+    s.dofProg = { p, vao: gl.createVertexArray(), u: n => gl.getUniformLocation(p, n) };
+    return s.dofProg;
+  }
+  // draw the blurred picture into the canvas at (x, y, w, h), through camera c (ty: its vertical half-angle's tangent)
+  function dofEnd(x, y, w, h, c, ty) {
+    const gl = s.gl, d = s.dofFb;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    let P; try { P = dofProg(); } catch (e) { s.dofBlur = false; console.warn("DoF preview:", e); return; }
+    const f = c.lens || baseLens(), N = fstop();
+    gl.viewport(x, y, w, h); gl.disable(gl.DEPTH_TEST); gl.useProgram(P.p); gl.bindVertexArray(P.vao);
+    gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D, d.col); gl.uniform1i(P.u("uCol"), 5);
+    gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_2D, d.dep); gl.uniform1i(P.u("uDep"), 6);
+    gl.uniform2f(P.u("uPx"), 1 / w, 1 / h);
+    gl.uniform1f(P.u("uNear"), s.bg.dmed * 0.01); gl.uniform1f(P.u("uFar"), s.bg.dmed * 50);
+    gl.uniform1f(P.u("uF"), focusOf(c)); gl.uniform1f(P.u("uFocal"), f); gl.uniform1f(P.u("uAper"), f / N);
+    gl.uniform1f(P.u("uScale"), h / (2 * ty * f));  // pixels per millimetre on the sensor
+    gl.uniform1f(P.u("uMax"), Math.max(4, Math.min(24, h / 40)));
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.bindVertexArray(null); gl.enable(gl.DEPTH_TEST); gl.activeTexture(gl.TEXTURE0);
   }
   function loop() { if (!s || s.closed) return; if (s.dirty) { s.dirty = false; draw(); } s.raf = requestAnimationFrame(loop); }
 
