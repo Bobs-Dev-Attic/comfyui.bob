@@ -352,13 +352,16 @@ const V2 = (() => {
   }
   function dialogueOf(s, voices = [], plain = false) {
     const seen = new Set(String(s.action || "").match(/\{[^{}]+\}/g) || []);
-    return linesOf(s).map(l => {
+    const out = linesOf(s).map(l => {
       const text = String(l.text || "").trim().replace(/^["“]|["”]$/g, ""); if (!text) return "";
       const tag = l.speaker ? `{${l.speaker}}` : "", named = tag && seen.has(tag); if (tag) seen.add(tag);
       const who = !l.speaker ? "Someone" : plain ? l.speaker : named ? again(s, l.speaker) : tag;
       const k = voices.findIndex(v => v.name === l.speaker);
-      return `${who} says${k >= 0 ? `, using the voice timbre referenced from <Audio ${k + 1}>` : ""}: <d>[English] ${text}</d>`;
+      return `${who} says once${k >= 0 ? `, using the voice timbre referenced from <Audio ${k + 1}>` : ""}: <d>[English] ${text}</d>`;
     }).filter(Boolean).join(" ");
+    // ...and no words of H3's own around them (see Scene3D's linesText)
+    if (out) return `${out} Only the words inside the dialogue tags are spoken, each line once; before, between and after them the speakers stay silent with their lips closed.`;
+    return out;
   }
   const soundtrackOn = () => !!(st.board.settings.soundtrack?.on && st.board.settings.soundtrack?.style);
   const soundOf = s => `overall_soundscape: ${sentence(s.sound) || "Natural ambient sound of the scene."}\n\nnon_diegetic_music: ${soundtrackOn() ? "N/A" : String(s.music || "").trim() || "N/A"}`;
@@ -375,6 +378,8 @@ const V2 = (() => {
     const d = decide(s), say = m => { st.say.set(id, m); if (st.sel === id) $("v2-say").textContent = m; logLine(entry, m); };
     st.ctx = entry;
     say(`Model: ${d.label}.`);
+    { const talk = Scene3D.speechSeconds?.(linesOf(s)) || 0, len = +d.info?.seconds || +s.seconds || 0;
+      if (talk && len - talk > (Scene3D.SPARE_TALK || 2.5)) say(`⚠ The lines take about ${talk.toFixed(1)} s of this ${len.toFixed(1)} s shot: H3 may fill the rest with words of its own. A shorter shot, or more in What happens, keeps it to the lines.`); }
     st.busy.add(id); renderAll();
     try {
       let req;

@@ -1565,7 +1565,9 @@ const Scene3D = (() => {
           : "Needs H3 Reference's model (ref2va) in ComfyUI: see the Model step."}${s.objs.filter(o => o.mesh && o.pos && !o.hidden && o.picture).length > 8 ? " Only the first 8 pictures are used." : ""}</p>` : ""}
       ${v2x?.loras?.length ? `<label class="check"><input type="checkbox" id="s3r-loras" checked> Use the objects' LoRAs</label>
         <p class="hint">${v2x.loras.length} LoRA${v2x.loras.length === 1 ? "" : "s"} from the library objects in this shot, as Generate sends them.</p>` : ""}
-      ${v2x?.voices?.length ? `<label class="check"><input type="checkbox" id="s3r-voices" checked> Use the speakers' voices (H3 Reference)</label>
+      ${v2x?.voices?.length ? `<div class="s3r-vref"><label class="check"><input type="checkbox" id="s3r-voices" checked> Use the speakers' voices (H3 Reference)</label>
+        <select id="s3r-vref" aria-label="How closely H3 keeps to the voices" title="Close: the voice as recorded. Loose: its timbre, with more room for H3 to act the line (weak_reference)">
+          <option value="close">Close to the recording</option><option value="weak">Loosely: more room to act</option></select></div>
         <p class="hint">${v2x.voices.map((v, i) => `${esc(v.name)} speaks with &lt;Audio ${i + 1}&gt;`).join(", ")}: their library voices, so H3 says the lines in them. Runs on H3 Reference's model with the same motion.</p>` : ""}
       <div class="row2 s3r-row3"><div class="field"><label for="s3r-q">Quality</label><select id="s3r-q"><option value="draft">Draft</option><option value="standard" selected>Standard</option><option value="full">Full</option></select></div>
         <div class="field"><label for="s3r-sp">Speed</label><select id="s3r-sp" title="How many steps H3 takes: fewer is quicker and rougher">
@@ -1599,7 +1601,9 @@ const Scene3D = (() => {
     const fromPhoto = () => isPhoto(box.querySelector("#s3r-first").value);
     const useVoices = () => !!box.querySelector("#s3r-voices")?.checked;
     const useLoras = () => !!box.querySelector("#s3r-loras")?.checked;
-    const extraNow = () => v2x && { lines: v2x.lines || [], sound: v2x.sound, voices: useVoices() ? v2x.voices : [], loras: useLoras() ? v2x.loras : [] };
+    const extraNow = () => v2x && { lines: v2x.lines || [], sound: v2x.sound, voices: useVoices() ? v2x.voices : [], loras: useLoras() ? v2x.loras : [],
+      voiceRef: box.querySelector("#s3r-vref")?.value || "close" };
+    box.querySelector("#s3r-voices")?.addEventListener("change", e => { const v = box.querySelector("#s3r-vref"); if (v) v.disabled = !e.target.checked; });
     const withLines = t => { const d = linesText(extraNow(), useRefs(), t).text; return [d ? endOf(t) : t, d].filter(Boolean).join(" "); };
     box.querySelector("#s3r-voices")?.addEventListener("change", () => box.querySelector("#s3r-what").dispatchEvent(new Event("input")));
     wireTags(box, box.querySelector("#s3r-what"), () => videoText(withLines(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder), useRefs(), fromPhoto()));
@@ -1628,6 +1632,7 @@ const Scene3D = (() => {
         ["Following", `the scene's rough animation (Time-to-Move), ${HOLD[holdSel.value] || holdSel.value}`],
         ["Quality", `${box.querySelector("#s3r-q").selectedOptions[0].textContent}: about ${w}×${h} px (${mp} MP)`],
         ["Length", `${frameCount()} frames, ${dur().toFixed(2)} s at ${FPS} fps`],
+        ...((extraNow()?.lines || []).length ? [["Lines", `about ${speechSeconds(extraNow().lines).toFixed(1)} s of speech`]] : []),
         ["Sampling", !sp.turbo ? `${steps} steps, full sampling without the turbo LoRA (several times slower)`
           : sp.steps ? `${steps} steps with ${R ? "H3 Reference's" : "H3's"} turbo LoRA${steps < turboSteps ? " (fewer than it's made for: rougher, quicker)" : steps > turboSteps ? " (more than it's made for: a little finer, slower)" : ""}`
           : R ? "4 steps with H3 Reference's turbo LoRA (8 with an 8-step one)" : "8 steps with H3's turbo LoRA (4 with a 4-step one)"],
@@ -1642,7 +1647,8 @@ const Scene3D = (() => {
         + (refs ? picObjs().map((x, i) => `<span class="s3p-pic"><img src="${esc(mediaUrl(x.picture))}" alt=""><b>&lt;Picture ${i + 2}&gt;</b> ${esc(x.name)}</span>`).join("") : "")
         + voices.map((v, i) => `<span class="s3p-pic"><span class="s3p-pic0">🎙</span><b>&lt;Audio ${i + 1}&gt;</b> ${esc(v.name)}'s voice</span>`).join("");
       if (!edited) box.querySelector("#s3r-prompt").value = renderPrompt(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder, refs, fromPhoto(), extraNow()).prompt;
-      box.querySelector(".s3r-pnote").innerHTML = (edited ? `<span class="warn">Edited: Render sends it as it is. ↻ Rebuild puts the built one back.</span> ` : "")
+      const talk = speechSeconds(extraNow()?.lines || []), spare = talk ? dur() - talk : 0;
+      box.querySelector(".s3r-pnote").innerHTML = (spare > SPARE_TALK ? `<span class="warn">The lines take about ${talk.toFixed(1)} s of this ${dur().toFixed(1)} s shot: H3 may fill the rest with words of its own. A shorter shot, or more happening in What happens, keeps it to the lines.</span> ` : "") + (edited ? `<span class="warn">Edited: Render sends it as it is. ↻ Rebuild puts the built one back.</span> ` : "")
         + (refs ? "H3 Reference also puts a line before it that ties &lt;Picture 1&gt; to the first frame." : "");
     };
     box.querySelector("#s3r-prompt").addEventListener("input", () => { if (!edited) { edited = true; review(); } });
@@ -1790,9 +1796,19 @@ const Scene3D = (() => {
       const who = !l.speaker ? "Someone" : k >= 0 ? `<Subject ${k + 2}>` : !o ? l.speaker : tagged ? `the ${shortName(o)}` : `{${o.name}}`;
       if (o) named.add(o);
       const t = String(l.text).trim().replace(/^["“]|["”]$/g, "");
-      return `${who}${l.speaker ? ` (S${ids.get(l.speaker)})` : ""} says${a >= 0 ? `, using the voice timbre referenced from <Audio ${a + 1}>` : ""}: <d>[English] ${t}</d>`;
+      return `${who}${l.speaker ? ` (S${ids.get(l.speaker)})` : ""} says once${a >= 0 ? `, using the voice timbre referenced from <Audio ${a + 1}>` : ""}: <d>[English] ${t}</d>`;
     }).join(" ");
-    return { text: text.charAt(0).toUpperCase() + text.slice(1), ids };
+    // H3 fills time the lines leave over with speech of its own (more so with a voice reference): say there's none
+    return { text: `${text.charAt(0).toUpperCase() + text.slice(1)} Only the words inside the dialogue tags are spoken, each line once; before, between and after them the speakers stay silent with their lips closed.`, ids };
+  }
+  /* About how long lines take to say: their syllables at 5.5 a second, and half a second each to start (as
+     H3-AudioRetake-studio sizes a take). More than SPARE_TALK seconds of shot left over, H3 tends to fill it with
+     speech of its own. */
+  const SPARE_TALK = 2.5;
+  function speechSeconds(lines) {
+    const syl = w => { w = w.toLowerCase().replace(/[^a-z]/g, ""); if (!w) return 0; const n = (w.replace(/e$/, "").match(/[aeiouy]+/g) || []).length; return Math.max(1, n); };
+    const L = (lines || []).map(l => String(l.text || l || "").trim()).filter(Boolean);
+    return L.reduce((a, t) => a + t.split(/\s+/).reduce((b, w) => b + syl(w), 0) / 5.5 + 0.5, 0);
   }
   // "a young woman in a white dress, barefoot" -> "young woman"
   const shortName = o => { const w = String(o.becomes || "").trim().toLowerCase().split(/,|\b(?:in|with|wearing|who|holding|from|on|at|carrying)\b/)[0].replace(/^(a|an|the)\s+/, "").trim().split(/\s+/).slice(0, 4).join(" ");
@@ -1828,7 +1844,7 @@ const Scene3D = (() => {
       + (opening ? ` It opens as ${lc(opening)}.` : "");
     const retention = [
       ...pics.map((o, i) => `<Subject ${i + 2}> (appears in [Shot 1]): fully_preserved - the identity, face, hair, build and appearance from <Picture ${i + 2}> are retained.`),
-      ...voices.map((v, i) => `<Audio ${i + 1}>: reference - its voice timbre guides the delivery of ${owner(v)} without copying the original signal.`),
+      ...voices.map((v, i) => `<Audio ${i + 1}>: ${extra?.voiceRef === "weak" ? "weak_reference - its voice timbre loosely guides" : "reference - its voice timbre guides"} the delivery of ${owner(v)} without copying the original signal.`),
     ];
     const body = `[Shot 1] ${what.replace(/\s+/g, " ")} ${cam}`.replace(/<Picture (\d+)>/g, (m, n) => +n >= 2 ? `<Subject ${n}>` : m);
     const prompt = [`subject_definitions:\n${defs.join("\n")}`, `summary:\n${summary}`, `retention_analysis:\n${retention.join("\n")}`,
@@ -4003,7 +4019,7 @@ const Scene3D = (() => {
       save(); setTime(s.t); renderSide(); s.dirty = true; return true;
     },
   };
-  return { mount, autoRender, current, addFromLibrary, camEdit, objEdit, select: i => s?.bg && select(i), selectCam: () => s?.bg && selectCam(),
+  return { mount, autoRender, current, addFromLibrary, camEdit, objEdit, speechSeconds, SPARE_TALK, select: i => s?.bg && select(i), selectCam: () => s?.bg && selectCam(),
     rename: (i, name) => { const o = s?.objs[i]; if (!o || !String(name || "").trim()) return; o.name = String(name).trim().slice(0, 120); save(); renderSide(); }, CAM_MOVES, applyCameraMove, cameraOut, applySavedCamera, renderForShot, photoForShot, fromTemplate, setTemplate, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
     _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _fill: (P, look, say) => fillGaps(P, look, say), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
 })();
