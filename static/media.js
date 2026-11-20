@@ -590,20 +590,27 @@ const Media = (() => {
     menu(x, y, entries);
   }
 
+  // items: [label, action, disabled?], or null for a separator
   function menu(x, y, items) {
     document.querySelector(".ex-menu")?.remove();
     const m = document.createElement("div");
     m.className = "ex-menu"; m.setAttribute("role", "menu");
-    m.innerHTML = items.map(([l], i) => `<button type="button" role="menuitem" data-i="${i}">${esc(l)}</button>`).join("");
+    m.innerHTML = items.map((it, i) => !it ? '<div class="menu-sep" role="separator"></div>'
+      : `<button type="button" role="menuitem" data-i="${i}"${it[2] ? " disabled" : ""}>${esc(it[0])}</button>`).join("");
     document.body.appendChild(m);
     const r = m.getBoundingClientRect();
     Object.assign(m.style, { left: Math.min(x, innerWidth - r.width - 8) + "px", top: Math.min(y, innerHeight - r.height - 8) + "px", zIndex: 100000 });
     const close = () => { m.remove(); document.removeEventListener("pointerdown", outside, true); };
     const outside = ev => { if (!m.contains(ev.target)) close(); };
-    m.addEventListener("click", ev => { const b = ev.target.closest("button"); if (b) { close(); items[+b.dataset.i][1](); } });
+    m.addEventListener("click", ev => { const b = ev.target.closest("button"); if (b && !b.disabled) { close(); items[+b.dataset.i][1](); } });
     m.addEventListener("keydown", ev => { if (ev.key === "Escape") { ev.stopPropagation(); close(); } });
     setTimeout(() => document.addEventListener("pointerdown", outside, true));
-    m.querySelector("button")?.focus();
+    m.querySelector("button:not([disabled])")?.focus();
+    m.addEventListener("keydown", ev => {
+      const bs = [...m.querySelectorAll("button:not([disabled])")], at = bs.indexOf(document.activeElement);
+      if (ev.key === "ArrowDown") { ev.preventDefault(); bs[(at + 1) % bs.length]?.focus(); }
+      if (ev.key === "ArrowUp") { ev.preventDefault(); bs[(at - 1 + bs.length) % bs.length]?.focus(); }
+    });
   }
 
   function toast(msg) {

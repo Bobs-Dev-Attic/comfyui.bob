@@ -456,6 +456,8 @@ class ScenePatch(BaseModel):
     fx: dict[str, Any] | None = None
     # a template: listed under "From a template" in every project, to start new scenes from (POST .../copy)
     template: bool | None = None
+    # V2: the shot's words kept with its scene (setting, action, lines, sound, music, quality), so a template carries them
+    v2shot: dict[str, Any] | None = None
 
 
 @app.post("/api/scenes")

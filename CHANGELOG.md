@@ -5,6 +5,35 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.127.0] - 2026-11-20
+
+### Changed
+- **The 3D scene builder has a menu bar: 🏞 Scene, Edit and Add** (in V2 and the classic window).
+  - **Scene:** save as a template, save the view, and the three depth-map exports.
+  - **Edit:** undo, redo, and for the selected object: turn 90° left or right, set it down on the ground, duplicate,
+    delete. What doesn't apply is greyed out.
+  - **Add:** the shapes, a person and your 3D models.
+  - The "Drag to" tools are gone. Dragging an object moves it (Shift: up or down), and its gizmo now has the rotation
+    rings as well as the arrows. Size and stretch are in its properties, and G, R and S still grab, turn and scale from
+    the keyboard.
+  - The footer keeps 📷 Generate photo and 🎬 Render video.
+- **Shot templates carry the shot.** A shot's words (setting, what happens, dialogue, sound, music, quality, its
+  transition) are kept with its scene. A template made from it, listed in every project's ＋ New shot, starts new
+  shots with them as well as the set and the camera.
+- **V2's timeline, rebuilt.** It has a ruler and four layers:
+  - 🎥 **Camera:** each shot's camera keys where they fall in the part used, with a line where it moves and the eased
+    ones marked. Click to select that shot's camera.
+  - 🎞 **Video:** the shots with thumbnails, sized by the part used, transitions as striped overlaps. Drag to reorder.
+  - 🗣 **Sound:** each shot's dialogue lines and background sound.
+  - 🎵 **Music:** the soundtrack, with its player.
+
+  It folds away (▾), its height drags from its top edge (or ↑ ↓ on the grip), and it zooms (− Fit ＋).
+- **A log while something is being made.** When a shot, a photo, a gap fill, a soundtrack or an export starts, the
+  timeline gives way to the **Log**. Each job shows its steps and the studio's own log lines, with progress and elapsed
+  time, and the jobs it ran (photo → gap fill → video). The timeline comes back a few seconds after everything is done,
+  and either can be picked at any time.
+- The shared menus take separators and greyed-out items.
+
 ## [0.126.0] - 2026-11-20
 
 ### Changed

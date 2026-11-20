@@ -29,6 +29,12 @@
    topped by V2's part (an object's lines in this shot and its library entry; the camera's moves). The scene builder
    is laid straight into the page's grid for that (v2.css: display: contents), so nothing of it moves in the DOM.
 
+   The timeline has a ruler and four layers: 🎥 camera (each shot's camera keys, where they fall in its piece), 🎞 video
+   (the shots, sized by the part used, transitions as overlaps), 🗣 sound (each shot's lines and background sound) and
+   🎵 music (the soundtrack). It folds away and its height drags; zoom fits or magnifies. While something is being made
+   it shows the Log instead: every step and the studio's own log lines for each job, with progress, until it's done.
+   A shot's words are kept with its scene too (v2shot), so a scene template carries them to any project.
+
    The page uses the studio's API as the classic page does (projects, scenes, items), and gives the scene builder the
    few globals it expects from that page (state, api, esc, mediaUrl, submit, and Shots, which V2 replaces). A project's
    V2 shots are kept by the studio in data/v2/<project>.json (/api/v2/board). */
@@ -51,6 +57,7 @@ async function submit(req) {
   try {
     const { items } = await api("/api/generate", { method: "POST", body: JSON.stringify(req) });
     for (const it of items) state.items.set(it.id, it);
+    if (typeof V2 !== "undefined") V2.onSubmit(req, items);  // the log follows it (V2 is a const, not on window)
     return items;
   } catch (e) { Media.toast(`Generate: ${e.message}`); return null; }
 }
@@ -63,7 +70,7 @@ const V2 = (() => {
   const $ = id => document.getElementById(id);
   const uid = () => Math.random().toString(16).slice(2, 10);
   const PKEY = "bob.v2.project";
-  const st = { board: { shots: [], settings: {} }, sel: null, scenes: new Map(), busy: new Set(), saveT: 0, say: new Map(), objs: [], cams: [] };
+  const st = { board: { shots: [], settings: {} }, sel: null, scenes: new Map(), busy: new Set(), saveT: 0, say: new Map(), objs: [], cams: [], log: [], tlv: "tl" };
   const shotOf = id => st.board.shots.find(x => x.id === id);
   const cur = () => shotOf(st.sel);
   const status = t => { $("v2-status").textContent = t || ""; };
@@ -79,6 +86,13 @@ const V2 = (() => {
   }
   function save() {
     clearTimeout(st.saveT);
+    clearTimeout(st.wordsT);
+    st.wordsT = setTimeout(() => {  // the selected shot's words, kept with its scene
+      const s = cur(); if (!s) return;
+      const v2shot = { name: s.name, setting: s.setting || "", action: s.action || "", lines: linesOf(s), sound: s.sound || "", music: s.music || "",
+        quality: s.quality || "standard", transition: s.transition || "cut", tlen: s.tlen || "" };
+      api(`/api/scenes/${s.scene}`, { method: "PATCH", body: JSON.stringify({ v2shot }) }).catch(() => {});
+    }, 1200);
     st.saveT = setTimeout(() => {
       st.board.settings.sel = st.sel;
       api(`/api/v2/board?project=${encodeURIComponent(state.project?.id ?? "")}`, { method: "PUT", body: JSON.stringify(st.board) })
@@ -117,7 +131,10 @@ const V2 = (() => {
           objects: [{ id: uid(), name: "Cube", prim: "cube", color: "#c9c4ba", dims: [1, 1, 1] }] }) });
     } catch (e) { return Media.toast(`New shot: ${e.message}`); }
     st.scenes.set(sc.id, sc);
-    const shot = { id: uid(), scene: sc.id, name: how === "template" ? tpl.name : `Shot ${n}`, setting: "", action: "", lines: [], sound: "", music: "", quality: "standard", results: [] };
+    const w = how === "template" && tpl.v2shot && typeof tpl.v2shot === "object" ? tpl.v2shot : {};  // a template's words
+    const shot = { id: uid(), scene: sc.id, name: how === "template" ? tpl.name : `Shot ${n}`, setting: w.setting || "", action: w.action || "",
+      lines: Array.isArray(w.lines) ? w.lines.map(l => ({ speaker: String(l?.speaker || ""), text: String(l?.text || "") })) : [],
+      sound: w.sound || "", music: w.music || "", quality: w.quality || "standard", transition: w.transition || "cut", tlen: w.tlen || "", results: [] };
     st.board.shots.push(shot);
     save();
     await openShot(shot.id);
@@ -349,7 +366,10 @@ const V2 = (() => {
   /* ---- Generate */
   async function generate(id) {
     const s = shotOf(id); if (!s || st.busy.has(id)) return;
-    const d = decide(s), say = m => { st.say.set(id, m); if (st.sel === id) $("v2-say").textContent = m; };
+    const entry = logStart(`🎬 ${s.name}`, id);
+    const d = decide(s), say = m => { st.say.set(id, m); if (st.sel === id) $("v2-say").textContent = m; logLine(entry, m); };
+    st.ctx = entry;
+    say(`Model: ${d.label}.`);
     st.busy.add(id); renderAll();
     try {
       let req;
@@ -371,8 +391,8 @@ const V2 = (() => {
       s.results = [items[0].id, ...(s.results || [])].slice(0, 20);
       save();
       say("Queued: it shows here when it's done.");
-    } catch (e) { say(`⚠ ${e.message}`); Media.toast(`${s.name}: ${e.message}`); }
-    finally { st.busy.delete(id); renderAll(); }
+    } catch (e) { say(`⚠ ${e.message}`); Media.toast(`${s.name}: ${e.message}`); entry.failed = e.message; }
+    finally { st.busy.delete(id); entry.prep = false; if (st.ctx === entry) st.ctx = null; renderAll(); renderLog(); }
   }
   async function generateAll() {
     for (const s of st.board.shots.slice()) await generate(s.id);
@@ -426,6 +446,7 @@ const V2 = (() => {
         const it = await api("/api/v2/export", { method: "POST", body: JSON.stringify({ project: state.project?.id ?? null, name: o.name, clips,
           music: box.querySelector("#ve-xmusic").checked && mf ? mf.path : null, music_volume: o.music, shots_volume: o.shots, format: o.format }) });
         state.items.set(it.id, it);
+        onSubmit({ engine: "timeline" }, [it]);
         st.board.settings.lastExport = it.id; save(); renderExport();
         win.close();
         Media.toast("Exporting: it shows in the timeline bar, and in the classic page's gallery, when it's done.");
@@ -479,18 +500,75 @@ const V2 = (() => {
     };
   }
   function renderSoundtrack() {
-    const t = st.board.settings.soundtrack, lane = $("v2-tlmusic");
     $("v2-musichint").hidden = !soundtrackOn();
     $("v2-music").disabled = soundtrackOn();
-    lane.hidden = !t?.style;
-    if (lane.hidden) return;
-    const it = t.result && state.items.get(t.result), f = it?.status === "done" ? it.files?.[0] : null;
-    const want = `${t.on}:${t.style}:${it?.id}:${it?.status}`;
-    if (lane.dataset.k === want) return;
-    lane.dataset.k = want;
-    lane.classList.toggle("off", !t.on);
-    lane.innerHTML = `<button type="button" class="v2-tlmb" data-a="music" title="Edit the soundtrack">🎵 ${esc(t.style.slice(0, 80))}${t.on ? "" : " (off)"}</button>
-      ${f ? `<audio controls src="${esc(f.url)}"></audio>` : `<span class="hint">${it ? `${esc(it.status)}…` : "not made yet"}</span>`}`;
+  }
+
+  /* ---- the log: what's being made, step by step, with the studio's own log lines and progress */
+  const LOG_MAX = 12;
+  const engineTitle = req => req.engine === "imgedit" ? (/^Replace every solid magenta/.test(req.prompt || "") ? "🧩 Qwen fills what the photo can't see" : "📷 Photo of the first frame")
+    : req.engine === "motion" ? "🎬 Video (H3 following the scene)" : req.engine === "h3" || req.engine === "h3ref" ? "🎬 Video (H3)" : req.engine === "music3" ? "🎵 Soundtrack (Music 3)"
+    : req.engine === "timeline" ? "⬇ Export" : `⚙ ${req.engine}`;
+  function logStart(title, shot = null) {
+    const e = { key: uid(), title, shot, t0: Date.now() / 1000, lines: [], items: [], prep: true, failed: null };
+    st.log.unshift(e); st.log.length = Math.min(st.log.length, LOG_MAX);
+    st.logAuto = true; showTlView("log");
+    renderLog();
+    return e;
+  }
+  const logLine = (e, msg) => { e.lines.push({ t: Date.now() / 1000, msg }); renderLog(); };
+  function onSubmit(req, items) {
+    const id = items?.[0]?.id; if (!id) return;
+    if (st.ctx) { st.ctx.items.push({ id, title: engineTitle(req) }); return renderLog(); }
+    const e = logStart(engineTitle(req)); e.prep = false; e.items.push({ id, title: engineTitle(req) }); renderLog();
+  }
+  const FIN = ["done", "failed", "cancelled"];
+  // while anything runs, the log redraws every second (elapsed time, progress)
+  setInterval(() => { if (st.tlv === "log" && st.log.some(entryBusy)) renderLog(); }, 1000);
+  const entryBusy = e => e.prep || e.items.some(x => !FIN.includes(state.items.get(x.id)?.status || "queued"));
+  function renderLog() {
+    const box = $("v2-log"), busy = st.log.filter(entryBusy).length;
+    $("v2-logn").textContent = busy ? `· ${busy}` : "";
+    if (box.hidden) return;
+    if (!st.log.length) { box.innerHTML = `<p class="hint">Nothing made yet in this window. When a shot, photo, soundtrack or export is being made, every step shows here.</p>`; return; }
+    const keep = box.scrollTop;
+    box.innerHTML = st.log.map(e => {
+      const its = e.items.map(x => ({ ...x, it: state.items.get(x.id) }));
+      const last = its.at(-1)?.it, status = e.failed ? "failed" : entryBusy(e) ? (e.prep && !last ? "preparing" : last?.status || "queued") : last?.status || "done";
+      const pct = last && !FIN.includes(last.status) ? Math.round((last.progress || 0) * 100) : status === "done" ? 100 : 0;
+      const lines = [...e.lines.map(l => ({ ...l, who: "" })), ...its.flatMap(x => (x.it?.log || []).map(l => ({ t: l.t, msg: l.msg, level: l.level, who: x.title })))]
+        .sort((a, b) => a.t - b.t).slice(-40);
+      const dur = Math.max(0, ((FIN.includes(last?.status) ? (last.finished || Date.now() / 1000) : Date.now() / 1000) - e.t0));
+      return `<article class="v2-logjob ${esc(status)}"><header><b>${esc(e.title)}</b><span class="v2-logst">${esc(status)}${e.failed ? `: ${esc(e.failed)}` : ""}</span>
+          <span class="hint">${Math.floor(dur / 60) ? `${Math.floor(dur / 60)} m ` : ""}${Math.round(dur % 60)} s</span>
+          ${its.length ? `<span class="hint">${its.map(x => esc(x.title)).join(" → ")}</span>` : ""}</header>
+        <div class="v2-logbar"><i style="width:${pct}%"></i></div>
+        <ol>${lines.map(l => `<li class="${l.level === "error" ? "err" : ""}"><time>${new Date(l.t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>${l.who ? `<span class="v2-logwho">${esc(l.who.replace(/^\S+\s/, ""))}</span>` : ""} ${esc(l.msg)}</li>`).join("")}</ol></article>`;
+    }).join("");
+    box.scrollTop = keep;
+    // everything done: back to the timeline a moment later (if the log came up by itself)
+    clearTimeout(st.logBackT);
+    if (!busy && st.logAuto && st.tlv === "log") st.logBackT = setTimeout(() => { if (!st.log.some(entryBusy) && st.logAuto) showTlView("tl"); }, 6000);
+  }
+  function showTlView(v) {
+    st.tlv = v;
+    document.querySelectorAll(".v2-tlview [data-tlv]").forEach(b => { const on = b.dataset.tlv === v; b.classList.toggle("on", on); b.setAttribute("aria-selected", String(on)); });
+    $("v2-tlbody").hidden = v !== "tl"; $("v2-log").hidden = v !== "log";
+    document.querySelector(".v2-tlzoom").hidden = v !== "tl";
+    if (v === "log") renderLog(); else renderTimeline();
+  }
+
+  /* ---- the timeline's size: folded or not, its height, its zoom (kept in this browser) */
+  const TLK = "bob.v2.tl";
+  const tlUI = (() => { try { return { h: 210, fold: false, z: 0, ...JSON.parse(localStorage.getItem(TLK) || "{}") }; } catch { return { h: 210, fold: false, z: 0 }; } })();
+  const saveTlUI = () => { try { localStorage.setItem(TLK, JSON.stringify(tlUI)); } catch {} };
+  function applyTlUI() {
+    const tl = $("v2-tl"), h = Math.max(110, Math.min(Math.round(innerHeight * 0.7), tlUI.h));
+    tl.classList.toggle("folded", tlUI.fold);
+    tl.style.height = tlUI.fold ? "" : `${h}px`;
+    $("v2-tlfold").textContent = tlUI.fold ? "▸" : "▾";
+    $("v2-tlfold").setAttribute("aria-expanded", String(!tlUI.fold));
+    $("v2-tlfold").title = tlUI.fold ? "Open the timeline" : "Fold the timeline away";
   }
 
   /* ---- the object library */
@@ -656,15 +734,58 @@ const V2 = (() => {
         <button type="button" class="v2-x" data-x="${esc(s.id)}" title="Remove this shot" aria-label="Remove ${esc(s.name)}">✕</button></div>`;
     }).join("");
   }
+  // Where each shot sits: its start on the timeline (after the overlap of a transition), the part of its video used.
+  function layout() {
+    const L = st.board.shots; let end = 0;
+    return L.map((s, i) => { const p = pieceOf(s), start = i ? Math.max(0, end - joinOf(L[i - 1], i - 1, L)) : 0; end = start + p.d; return { s, i, start, p }; });
+  }
+  const camKeysOf = s => { const c = Scene3D.current(); return (c && c.id === s.scene ? c.camKeys : st.scenes.get(s.scene)?.camera_keys) || []; };
+  const LABEL = 96;
   function renderTimeline() {
-    const tr = $("v2-tltrack"), shots = st.board.shots, secs = shots.map(s => pieceOf(s).d), T = totalSeconds();
-    $("v2-total").textContent = shots.length ? `${shots.length} shot${shots.length === 1 ? "" : "s"} · ${T.toFixed(1)} s` : "";
-    tr.innerHTML = shots.map((s, i) => {
-      const it = latest(s);
-      return `<div class="v2-clip${s.id === st.sel ? " sel" : ""}${it?.status === "done" ? " done" : ""}" draggable="true" data-id="${esc(s.id)}" style="flex:${secs[i]} 1 0" title="${esc(s.name)} · ${secs[i].toFixed(1)} s">
-        <b>${i + 1}</b> ${esc(s.name)} <span>${secs[i].toFixed(1)} s ${badge(it)}</span></div>`
-        + (joinOf(s, i, shots) ? `<span class="v2-join" title="${esc(document.querySelector(`#v2-trans option[value="${s.transition}"]`)?.textContent || s.transition)}, ${joinOf(s, i, shots).toFixed(1)} s">⧖</span>` : "");
+    const box = $("v2-tracks"), shots = st.board.shots, L = layout(), T = Math.max(1, totalSeconds());
+    $("v2-total").textContent = shots.length ? `${shots.length} shot${shots.length === 1 ? "" : "s"} · ${totalSeconds().toFixed(1)} s` : "";
+    if (st.tlv === "log" || tlUI.fold) return;
+    const fitW = Math.max(200, ($("v2-tlbody").clientWidth || 800) - LABEL - 16), pps = fitW / T * 2 ** tlUI.z, W = Math.ceil(T * pps);
+    const x = t => `${(t * pps).toFixed(1)}px`, w = d => `${Math.max(2, d * pps).toFixed(1)}px`;
+    const step = [0.5, 1, 2, 5, 10, 15, 30, 60].find(v => v * pps >= 46) || 60;
+    const ticks = []; for (let t = 0; t <= T + 1e-6; t += step) ticks.push(`<span class="v2-tick" style="left:${x(t)}">${t % 1 ? t.toFixed(1) : t}s</span>`);
+    const tname = s => document.querySelector(`#v2-trans option[value="${s.transition}"]`)?.textContent || s.transition;
+    // 🎥 camera: each shot's keys inside the part of its video used; a line between keys where it moves
+    const cam = L.map(({ s, start, p }) => {
+      const K = camKeysOf(s), inside = K.filter(k => k.t >= p.a - 1e-3 && k.t <= p.b + 1e-3);
+      const moves = K.length > 1 && K.some(k => Math.abs(k.yaw - K[0].yaw) + Math.abs(k.pitch - K[0].pitch) + Math.abs(k.dist - K[0].dist) + Math.abs((k.lens || 0) - (K[0].lens || 0)) > 1e-3);
+      const lens = K.some(k => k.lens && Math.abs(k.lens - (K[0].lens || k.lens)) > 0.5);
+      return `<div class="v2-camseg${s.id === st.sel ? " sel" : ""}" data-cam="${esc(s.id)}" style="left:${x(start)};width:${w(p.d)}" title="${esc(s.name)}: ${K.length} camera key${K.length === 1 ? "" : "s"}${moves ? ", moving" : ", holding still"}${lens ? ", zooming" : ""}">
+          ${moves && inside.length > 1 ? `<i class="v2-camline" style="left:${x(inside[0].t - p.a)};width:${w(inside.at(-1).t - inside[0].t)}"></i>` : ""}
+          ${inside.map(k => `<b class="v2-key${k.ease ? " ease" : ""}" style="left:${x(k.t - p.a)}" title="${k.t.toFixed(2)} s${k.lens ? ` · ${Math.round(k.lens)} mm` : ""}${k.shake ? ` · shake ${k.shake}%` : ""}${k.ease ? " · eased" : ""}">◆</b>`).join("")}
+          <span class="v2-camtxt">${!K.length ? "no camera keys" : moves ? `${lens ? "zoom · " : ""}${inside.length} keys` : "still"}</span></div>`;
     }).join("");
+    // 🎞 video: the shots, a transition where two overlap
+    const vid = L.map(({ s, i, start, p }) => {
+      const it = latest(s), j = i < L.length - 1 ? joinOf(s, i, shots) : 0, th = thumbOf(s);
+      return `<div class="v2-clip${s.id === st.sel ? " sel" : ""}${it?.status === "done" ? " done" : ""}" draggable="true" data-id="${esc(s.id)}" style="left:${x(start)};width:${w(p.d)}" title="${esc(s.name)} · ${p.d.toFixed(1)} s${p.a ? ` (from ${p.a.toFixed(1)} s in)` : ""}">
+          ${th ? `<img src="${esc(th)}" alt="" loading="lazy">` : ""}<span class="v2-cliptx"><b>${i + 1}</b> ${esc(s.name)}</span><span class="v2-clipd">${p.d.toFixed(1)} s ${badge(it)}</span></div>`
+        + (j ? `<div class="v2-trans" style="left:${x(start + p.d - j)};width:${w(j)}" title="${esc(tname(s))}, ${j.toFixed(1)} s">⧖</div>` : "");
+    }).join("");
+    // 🗣 sound: each shot's lines and background sound
+    const snd = L.map(({ s, start, p }) => {
+      const lines = linesOf(s).filter(l => String(l.text || "").trim());
+      return `<div class="v2-sndseg" data-id="${esc(s.id)}" style="left:${x(start)};width:${w(p.d)}" title="${esc([s.sound, ...lines.map(l => `${l.speaker || "Someone"}: ${l.text}`)].filter(Boolean).join("\n") || "No sound described")}">
+          ${lines.map(l => `<span class="v2-line-chip">🗣 ${esc(l.speaker || "Someone")}: ${esc(l.text)}</span>`).join("")}${s.sound ? `<span class="v2-amb">${esc(s.sound)}</span>` : ""}</div>`;
+    }).join("");
+    // 🎵 music: the soundtrack under it all
+    const t = st.board.settings.soundtrack, mit = t?.result && state.items.get(t.result), mf = mit?.status === "done" ? mit.files?.[0] : null;
+    const mus = t?.style ? `<div class="v2-musclip${t.on ? "" : " off"}" style="left:0;width:${w(Math.min(T, +t.seconds || T))}">
+          <button type="button" class="v2-tlmb" data-a="music" title="Edit the soundtrack">🎵 ${esc(t.style.slice(0, 80))}${t.on ? "" : " (off)"}</button>
+          ${mf ? `<audio controls src="${esc(mf.url)}"></audio>` : `<span class="hint">${mit ? `${esc(mit.status)}…` : "not made yet"}</span>`}</div>`
+      : `<button type="button" class="v2-tlmb v2-musadd" data-a="music" style="left:0">🎵 Add a soundtrack…</button>`;
+    box.style.setProperty("--tlw", `${W}px`);
+    box.innerHTML = !shots.length ? `<p class="hint v2-tlnone">Shots line up here in order, with their camera, sound and music.</p>` : `
+      <div class="v2-trow v2-ruler"><span class="v2-tlab"></span><div class="v2-lane">${ticks.join("")}</div></div>
+      <div class="v2-trow v2-tcam"><span class="v2-tlab" title="Each shot's camera keys">🎥 Camera</span><div class="v2-lane">${cam}</div></div>
+      <div class="v2-trow v2-tvid"><span class="v2-tlab" title="The shots, in order; drag one to move it">🎞 Video</span><div class="v2-lane">${vid}</div></div>
+      <div class="v2-trow v2-tsnd"><span class="v2-tlab" title="Each shot's dialogue and background sound">🗣 Sound</span><div class="v2-lane">${snd}</div></div>
+      <div class="v2-trow v2-tmus"><span class="v2-tlab" title="One piece of music under every shot">🎵 Music</span><div class="v2-lane">${mus}</div></div>`;
   }
   function renderPanel(keepFocus = false) {
     const s = cur();
@@ -706,7 +827,7 @@ const V2 = (() => {
         <button type="button" class="v2-x" data-lrm="${k}" aria-label="Remove line ${k + 1}" title="Remove this line">✕</button></div>`;
     }).join("");
   }
-  function renderAll() { renderShots(); renderTimeline(); renderPanel(true); renderSoundtrack(); renderExport(); }
+  function renderAll() { renderShots(); renderTimeline(); renderPanel(true); renderSoundtrack(); renderExport(); renderLog(); }
 
   /* ---- wiring */
   function wire() {
@@ -788,7 +909,7 @@ const V2 = (() => {
     $("v2-lines").addEventListener("click", e => { const s = cur(), k = e.target.closest("[data-lrm]")?.dataset.lrm; if (s && k != null) { linesOf(s).splice(+k, 1); save(); $("v2-lines").dataset.shot = ""; renderPanel(true); } });
     // the soundtrack
     $("v2-music-btn").onclick = soundtrackDialog;
-    $("v2-tlmusic").addEventListener("click", e => { if (e.target.closest('[data-a="music"]')) soundtrackDialog(); });
+
     for (const [id, k] of fields) $(id).addEventListener(id === "v2-quality" || id === "v2-trans" ? "change" : "input", e => {
       const s = cur(); if (!s) return;
       s[k] = e.target.value; save();
@@ -803,10 +924,33 @@ const V2 = (() => {
     });
     $("v2-gen").onclick = () => st.sel && generate(st.sel);
     $("v2-genall").onclick = generateAll;
-    // the timeline: click to open a shot, drag to reorder
-    const tr = $("v2-tltrack");
+    // the timeline: fold, height, zoom, timeline or log; click a clip to open its shot (its camera from the camera
+    // layer), drag a clip to reorder
+    applyTlUI();
+    $("v2-tlfold").onclick = () => { tlUI.fold = !tlUI.fold; saveTlUI(); applyTlUI(); renderTimeline(); };
+    document.querySelectorAll(".v2-tlview [data-tlv]").forEach(b => b.onclick = () => { st.logAuto = false; if (tlUI.fold) { tlUI.fold = false; saveTlUI(); applyTlUI(); } showTlView(b.dataset.tlv); });
+    document.querySelector(".v2-tlzoom").addEventListener("click", e => {
+      const z = e.target.closest("[data-z]")?.dataset.z; if (!z) return;
+      tlUI.z = z === "fit" ? 0 : Math.max(0, Math.min(5, tlUI.z + (z === "+" ? 0.5 : -0.5))); saveTlUI(); renderTimeline();
+    });
+    const grip = $("v2-tlgrip");
+    grip.addEventListener("pointerdown", e => {
+      if (tlUI.fold) return;
+      e.preventDefault(); grip.setPointerCapture(e.pointerId);
+      const y0 = e.clientY, h0 = $("v2-tl").getBoundingClientRect().height;
+      const mv = ev => { tlUI.h = h0 + (y0 - ev.clientY); applyTlUI(); };
+      const up = () => { grip.removeEventListener("pointermove", mv); grip.removeEventListener("pointerup", up); saveTlUI(); renderTimeline(); };
+      grip.addEventListener("pointermove", mv); grip.addEventListener("pointerup", up);
+    });
+    grip.addEventListener("keydown", e => { if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); tlUI.h += e.key === "ArrowUp" ? 20 : -20; applyTlUI(); saveTlUI(); renderTimeline(); } });
+    addEventListener("resize", () => { applyTlUI(); renderTimeline(); });
+    const tr = $("v2-tracks");
     let drag = null;
-    tr.addEventListener("click", e => { const c = e.target.closest(".v2-clip"); if (c) openShot(c.dataset.id); });
+    tr.addEventListener("click", e => {
+      if (e.target.closest('[data-a="music"]')) return soundtrackDialog();
+      const k = e.target.closest("[data-cam]"); if (k) { openShot(k.dataset.cam).then(() => { Scene3D.selectCam(); }); return; }
+      const c = e.target.closest(".v2-clip, .v2-sndseg"); if (c) openShot(c.dataset.id);
+    });
     tr.addEventListener("dragstart", e => { const c = e.target.closest(".v2-clip"); if (!c) return; drag = c.dataset.id; e.dataTransfer.effectAllowed = "move"; });
     tr.addEventListener("dragover", e => { if (drag) e.preventDefault(); });
     tr.addEventListener("drop", e => {
@@ -826,6 +970,7 @@ const V2 = (() => {
       state.items.set(ev.item.id, ev.item);
       Scene3D.onItem?.(ev.item);
       if (ev.item.id === st.board.settings.lastExport) renderExport();
+      if (st.log.some(e2 => e2.items.some(x => x.id === ev.item.id))) renderLog();
       if ((st.board.shots.some(s => s.results?.includes(ev.item.id)) || st.board.settings.soundtrack?.result === ev.item.id) && prev?.status !== ev.item.status) renderAll();
     };
   }
@@ -842,5 +987,5 @@ const V2 = (() => {
     await loadProjects();
     await loadBoard();
   }
-  return { init, decide, generate, _st: st };
+  return { init, decide, generate, onSubmit, _st: st };
 })();

@@ -865,6 +865,11 @@ const Scene3D = (() => {
     const H = s.cv.clientHeight || 1, L = Math.hypot(...sub(c, eye())) * 2 * tanY(s.cv.clientWidth, H) * 80 / H;
     const Ry = RY(((P.yaw || 0) + (P.heading || 0)) * rad), Rx = mul4(Ry, RX((P.pitch || 0) * rad)), R = rotOf(P), hs = [];
     if (mode === "move" || mode === "lift") for (const i of mode === "lift" ? [1] : [0, 1, 2]) hs.push({ kind: "move", i, axis: colOf(ALIGN[i], 1), A: ALIGN[i] });
+    if (mode === "move") {  // with no tool picked, its rings too (a little wider than the arrows), as the camera has
+      const K = S(1.35);
+      hs.push({ kind: "rot", i: 0, axis: colOf(Ry, 0), A: mul4(mul4(Ry, ALIGN[0]), K) }, { kind: "rot", i: 1, axis: [0, 1, 0], A: K },
+        { kind: "rot", i: 2, axis: colOf(Rx, 2), A: mul4(mul4(Rx, ALIGN[2]), K) });
+    }
     if (mode === "rotate") hs.push({ kind: "rot", i: 0, axis: colOf(Ry, 0), A: mul4(Ry, ALIGN[0]) }, { kind: "rot", i: 1, axis: [0, 1, 0], A: ID },
       { kind: "rot", i: 2, axis: colOf(Rx, 2), A: mul4(Rx, ALIGN[2]) });
     if (mode === "scale") { for (const i of [0, 1, 2]) hs.push({ kind: "scale", i, axis: norm(colOf(R, i)), A: mul4(R, ALIGN[i]) }); hs.push({ kind: "uni", i: -1, axis: null, A: ID }); }
@@ -1090,6 +1095,37 @@ const Scene3D = (() => {
       [s.bg.empty ? "🎥 Back to the start view" : "🎥 Back to the picture's camera", () => toShot()],
     ]);
   }
+  /* The menu bar: Scene (template, save view, depth map), Edit (undo, redo, the selected object) and Add. Each item
+     does what its old button did (a click on a stand-in button, so there's one place that handles it). */
+  function act(a, data = {}) {
+    const b = document.createElement("button"); b.type = "button"; b.hidden = true; b.dataset.act = a;
+    Object.assign(b.dataset, data); s.root.querySelector(".s3-menubar").appendChild(b); b.click(); b.remove();
+  }
+  function openMenu(which, btn) {
+    const r = btn.getBoundingClientRect(), o = s.objs[s.sel], ok = !!(o?.mesh && o.pos), at = s.camKeys.length ? ` (${s.t.toFixed(2)} s)` : "";
+    const items = which === "scene" ? [
+      [s.sc.template ? "⭐ A template: stop being one" : "☆ Save as template", () => act("tpl")],
+      null,
+      ["💾 Save the view (PNG)", () => act("pic")],
+      [`🌫 Depth map: this frame${at} (PNG)`, () => saveDepth("frame")],
+      [`🌫 Depth map: the whole clip (${frameCount()} frames, video)`, () => saveDepth("video")],
+      [`🌫 Depth map: the whole clip (full-size PNGs in a .zip)`, () => saveDepth("pngs")],
+    ] : which === "edit" ? [
+      ["↶ Undo   Ctrl+Z", () => act("undo"), !s.hist?.past.length],
+      ["↷ Redo   Ctrl+Y", () => act("redo"), !s.hist?.future.length],
+      null,
+      ["↺ Turn it 90° left", () => act("turnl"), !ok],
+      ["↻ Turn it 90° right", () => act("turnr"), !ok],
+      ["⬇ Set it down on the ground", () => act("floor"), !ok],
+      ["⧉ Duplicate it   Shift+D", () => act("dup"), !ok],
+      ["🗑 Delete it   Del", () => act("remove"), !o],
+    ] : [
+      ...Object.entries(PRIMS).map(([k, d]) => [`${d.icon} ${d.label}`, () => act("prim", { prim: k })]),
+      null,
+      ["🧊 One of your 3D models…", () => act("models")],
+    ];
+    Media.menu(r.left, r.bottom + 4, items);
+  }
   function renderTools() {
     const R = s.root, o = s.objs[s.sel], ok = !!(o?.mesh && o.pos);
     R.querySelectorAll("[data-tool]").forEach(b => { b.classList.toggle("on", b.dataset.tool === s.tool); b.setAttribute("aria-pressed", String(b.dataset.tool === s.tool)); });
@@ -1178,24 +1214,12 @@ const Scene3D = (() => {
     root.className = "s3";
     root.innerHTML = `
       <div class="s3-stage">
-        <div class="s3-tools" role="toolbar" aria-label="Scene tools">
-          <div class="s3-tg" role="group" aria-label="History">
-            <button type="button" class="s3-tb" data-act="undo" title="Undo (Ctrl+Z)" disabled>↶<span class="s3-tx"> Undo</span></button>
-            <button type="button" class="s3-tb" data-act="redo" title="Redo (Ctrl+Y)" disabled>↷<span class="s3-tx"> Redo</span></button></div>
-          <div class="s3-tg" role="group" aria-label="Add"><span class="s3-tl">Add</span>
-            ${Object.entries(PRIMS).map(([k, d]) => `<button type="button" class="s3-tb" data-act="prim" data-prim="${k}" title="Add a ${d.label.toLowerCase()} (right-click the ground to add it there)"><span aria-hidden="true">${d.icon}</span><span class="s3-tx"> ${d.label}</span></button>`).join("")}
-            <button type="button" class="s3-tb" data-act="models" title="Add one of your 3D models (🧊 Make 3D)"><span aria-hidden="true">🧊</span><span class="s3-tx"> Model</span></button></div>
-          <div class="s3-tg" role="group" aria-label="Dragging an object"><span class="s3-tl">Drag to</span>
-            <button type="button" class="s3-tb" data-tool="move" title="Move: drag an object over the ground, or an arrow along its axis (G)">✥<span class="s3-tx"> Move</span></button>
-            <button type="button" class="s3-tb" data-tool="lift" title="Drag an object up or down (L, or Shift+drag)">↕<span class="s3-tx"> Raise</span></button>
-            <button type="button" class="s3-tb" data-tool="rotate" title="Rotate: drag an object left or right, or a ring to turn it about that axis (R)">⟳<span class="s3-tx"> Rotate</span></button>
-            <button type="button" class="s3-tb" data-tool="scale" title="Resize: drag an object right or up, a handle to stretch it along that axis, or the ball (S)">⤢<span class="s3-tx"> Resize</span></button></div>
-          <div class="s3-tg" role="group" aria-label="The selected object">
-            <button type="button" class="s3-tb" data-act="turnl" data-needsel="1" title="Turn it 90° left">↺</button>
-            <button type="button" class="s3-tb" data-act="turnr" data-needsel="1" title="Turn it 90° right">↻</button>
-            <button type="button" class="s3-tb" data-act="floor" data-needsel="1" title="Set it down on the ground">⬇</button>
-            <button type="button" class="s3-tb" data-act="dup" data-needsel="1" title="Duplicate it (Shift+D)">⧉</button>
-            <button type="button" class="s3-tb" data-act="remove" data-needsel="any" title="Delete it (Del)">🗑</button></div>
+        <div class="s3-tools s3-menubar" role="menubar" aria-label="Scene menus">
+          <button type="button" class="s3-mb" role="menuitem" data-menu="scene" aria-haspopup="menu" title="The scene: keep it as a template, save the view or a depth map">🏞 Scene ▾</button>
+          <button type="button" class="s3-mb" role="menuitem" data-menu="edit" aria-haspopup="menu" title="Undo, redo, and the selected object: turn, set down, duplicate, delete">Edit ▾</button>
+          <button type="button" class="s3-mb" role="menuitem" data-menu="add" aria-haspopup="menu" title="Add a shape, a person or one of your 3D models (or right-click the ground)">Add ▾</button>
+          <span class="s3-mbhint hint">Drag an object to move it (Shift: up or down); its arrows and rings move and turn it.</span>
+          <button type="button" data-act="undo" hidden disabled></button><button type="button" data-act="redo" hidden disabled></button>
         </div>
         <div class="s3-box"><canvas class="m3-canvas s3-canvas" tabindex="0" aria-label="The 3D scene: drag an object to move it, drag elsewhere to orbit, wheel to zoom"></canvas>
         <div class="m3-hud hint s3-hud">Making the background…</div><div class="s3-frame" aria-hidden="true"></div>
@@ -1288,8 +1312,7 @@ const Scene3D = (() => {
       </aside>`;
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
-    foot.innerHTML = `<span class="hint s3-foot">Drag: orbit · Right-drag: pan · Wheel: zoom · Right-click: menu</span><button type="button" class="btn ghost" data-act="tpl">☆ Save as template</button><button type="button" class="btn ghost" data-act="pic" title="Save the view as it is drawn here">💾 Save view</button>
-      <button type="button" class="btn ghost" data-act="depth" title="A depth map of what the camera frames (near is white, far is black), for a depth ControlNet">🌫 Save depth map…</button>
+    foot.innerHTML = `<span class="hint s3-foot">Drag: orbit · Right-drag: pan · Wheel: zoom · Right-click: menu</span>
       <button type="button" class="btn" data-act="photo" title="A photograph of what the camera frames, made by the image editor's edit model">📷 Generate photo…</button>
       <button type="button" class="btn primary" data-act="render" title="Make the video with H3, following this scene">🎬 Render video…</button>`;
     const onClose = () => { if (s) { cancelAnimationFrame(s.raf); clearTimeout(s.poll); clearTimeout(s.saveT); s.ro?.disconnect(); s.closed = true; } s = null; meshCache.clear(); };
@@ -2116,8 +2139,9 @@ const Scene3D = (() => {
     });
     const all = [root, foot];
     all.forEach(el => el.addEventListener("click", e => {
-      const b = e.target.closest("[data-act],[data-tool],[data-i]"); if (!b || !s) return;
+      const b = e.target.closest("[data-act],[data-tool],[data-menu],[data-i]"); if (!b || !s) return;
       const a = b.dataset.act, o = s.objs[s.sel];
+      if (b.dataset.menu) return openMenu(b.dataset.menu, b);
       if (a === "shot") { if (s.bg) toShot(); return; }
       if (a === "cam-sel") { if (s.bg) { if (!camShown()) { s.cam = outsideView(); s.camFree = true; } selectCam(); } return; }
       if (a === "cam-through") { if (s.bg) { s.cam = camForRender(s.t); s.camFree = false; s.camSel = false; renderSide(); s.dirty = true; } return; }
