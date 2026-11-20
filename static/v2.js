@@ -7,6 +7,10 @@
    frame (the Qwen gap fill paints in what the camera move reveals); objects with pictures go on H3 Reference. Shots are
    laid out in order on the timeline below, and Generate makes one or all of them.
 
+   The object library (the Objects tab, shared by every project, /api/v2/objects): people, props and 3D models, each
+   with what it becomes, reference pictures and LoRAs. Drag one onto the viewport and it stands where you drop it
+   (Scene3D.addFromLibrary); its first picture goes to H3 Reference, and the LoRAs of the objects in a shot go with it.
+
    The page uses the studio's API as the classic page does (projects, scenes, items), and gives the scene builder the
    few globals it expects from that page (state, api, esc, mediaUrl, submit, and Shots, which V2 replaces). A project's
    V2 shots are kept by the studio in data/v2/<project>.json (/api/v2/board). */
@@ -41,7 +45,7 @@ const V2 = (() => {
   const $ = id => document.getElementById(id);
   const uid = () => Math.random().toString(16).slice(2, 10);
   const PKEY = "bob.v2.project";
-  const st = { board: { shots: [], settings: {} }, sel: null, scenes: new Map(), busy: new Set(), saveT: 0, say: new Map() };
+  const st = { board: { shots: [], settings: {} }, sel: null, scenes: new Map(), busy: new Set(), saveT: 0, say: new Map(), objs: [] };
   const shotOf = id => st.board.shots.find(x => x.id === id);
   const cur = () => shotOf(st.sel);
   const status = t => { $("v2-status").textContent = t || ""; };
@@ -131,10 +135,10 @@ const V2 = (() => {
     clearInterval(watchT);
     watchT = setInterval(() => {
       const c = Scene3D.current(); if (!c) return;
-      const sig = JSON.stringify([c.id, c.objs.map(o => [o.name, !!o.picture, o.keys?.length || 0, o.hidden]), c.camKeys.length, c.seconds]);
+      const sig = JSON.stringify([c.id, c.objs.map(o => [o.name, !!o.picture, o.lib, o.keys?.length || 0, o.hidden]), c.camKeys.length, c.seconds]);
       if (sig === lastSig) return;
       lastSig = sig;
-      const sc = st.scenes.get(c.id); if (sc) Object.assign(sc, { seconds: c.seconds, camera_keys: c.camKeys, objects: c.objs.map(o => ({ name: o.name, picture: o.picture, keys: o.keys, hidden: o.hidden, mesh: !!o.mesh })) });
+      const sc = st.scenes.get(c.id); if (sc) Object.assign(sc, { seconds: c.seconds, camera_keys: c.camKeys, objects: c.objs.map(o => ({ name: o.name, picture: o.picture, lib: o.lib, keys: o.keys, hidden: o.hidden, mesh: !!o.mesh })) });
       renderPanel(true); renderShots(); renderTimeline();
     }, 700);
   }
@@ -153,6 +157,14 @@ const V2 = (() => {
       camMoves: K.length > 1 && K.some(k => Math.abs(k.yaw - K[0].yaw) + Math.abs(k.pitch - K[0].pitch) + Math.abs(k.dist - K[0].dist) > 1e-3),
       objMoves: objs.some(o => o.keys?.length > 1), picture: !!sc.picture, seconds: +sc.seconds || 5, edit: null, live: false };
   }
+  // The LoRAs a shot takes: those of the library objects in its scene, each once, up to 8.
+  function lorasFor(s) {
+    const c = Scene3D.current();
+    const objs = (c && c.id === s.scene ? c.objs : st.scenes.get(s.scene)?.objects || []).filter(o => !o.hidden && o.lib);
+    const out = new Map();
+    for (const o of objs) for (const l of st.objs.find(x => x.id === o.lib)?.loras || []) if (l?.name && !out.has(l.name)) out.set(l.name, { name: l.name, strength: +l.strength || 1 });
+    return [...out.values()].slice(0, 8);
+  }
   /* decide(shot) -> {engine: "h3" | "scene", ref, label, why: [reasons]} */
   function decide(s) {
     const i = sceneInfo(s), caps = state.caps || {}, why = [];
@@ -168,6 +180,8 @@ const V2 = (() => {
     if (i.camMoves && !i.picture) why.push("What the camera move shows that the photo can't is painted in by Qwen first.");
     if (ref) why.push(`${i.pictures} object${i.pictures === 1 ? " has a picture" : "s have pictures"}: H3 Reference keeps ${i.pictures === 1 ? "its" : "their"} look.`);
     else if (i.pictures) why.push("Objects have pictures, but H3 Reference isn't installed: they go by their descriptions.");
+    const L = lorasFor(s);
+    if (L.length) why.push(`${L.length} LoRA${L.length === 1 ? "" : "s"} from the objects go${L.length === 1 ? "es" : ""} along.`);
     return { engine: "scene", ref, label: ref ? "MiniMax H3 Reference · 3D scene render" : "MiniMax H3 · 3D scene render", why, info: i };
   }
 
@@ -202,7 +216,7 @@ const V2 = (() => {
         if (Scene3D._state()?.id !== s.scene) { await openShot(id); }
         const what = [sentence(s.action), lineOf(s)].filter(Boolean).join(" ");
         const r = await Scene3D.autoRender(s.scene, { text: what, look: String(s.setting || "").trim(), quality: s.quality, fill: true }, say);
-        req = { ...r.req, project: state.project?.id ?? null };
+        req = { ...r.req, project: state.project?.id ?? null, loras: lorasFor(s) };
         req.prompt = req.prompt.replace(/overall_soundscape:[\s\S]*$/, soundOf(s));
       }
       say("Sending to H3…");
@@ -216,6 +230,101 @@ const V2 = (() => {
   }
   async function generateAll() {
     for (const s of st.board.shots.slice()) await generate(s.id);
+  }
+
+  /* ---- the object library */
+  const SHAPES = [["figure", "🧍 Person"], ["cube", "▢ Cube"], ["sphere", "◯ Sphere"], ["cylinder", "⌭ Cylinder"], ["cone", "△ Cone"], ["plane", "▱ Plane"], ["torus", "◎ Ring"]];
+  const shapeIcon = e => e.kind === "model" ? "🧊" : (SHAPES.find(x => x[0] === e.prim)?.[1] || "🧍").split(" ")[0];
+  async function loadObjects() {
+    try { st.objs = (await api("/api/v2/objects")).objects || []; } catch (e) { st.objs = []; status(`Objects: ${e.message}`); }
+    renderObjects();
+  }
+  function renderObjects() {
+    const q = ($("v2-objq").value || "").trim().toLowerCase();
+    const list = st.objs.slice().sort((a, b) => a.name.localeCompare(b.name)).filter(e => !q || `${e.name} ${e.becomes}`.toLowerCase().includes(q));
+    $("v2-noobjs").hidden = st.objs.length > 0;
+    $("v2-objgrid").innerHTML = list.map(e => `<div class="v2-obj" role="listitem" draggable="true" tabindex="0" data-oid="${esc(e.id)}" title="${esc(e.becomes || e.name)}: drag onto the scene, or ＋; double-click to edit">
+        <div class="v2-objth">${e.pictures?.[0] ? `<img src="${esc(mediaUrl(e.pictures[0]))}" alt="" loading="lazy">` : `<span>${shapeIcon(e)}</span>`}</div>
+        <b>${esc(e.name)}</b><span class="hint">${e.pictures?.length ? `${e.pictures.length} 🖼` : ""}${e.loras?.length ? ` ${e.loras.length} 🧩` : ""}</span>
+        <button type="button" class="v2-objadd" data-add="${esc(e.id)}" title="Put ${esc(e.name)} in the scene, in front of the camera" aria-label="Add ${esc(e.name)} to the scene">＋</button></div>`).join("");
+  }
+  async function place(id, cx = null, cy = null) {
+    const e = st.objs.find(x => x.id === id); if (!e) return;
+    if (!Scene3D.current()) return Media.toast("Open a shot first: its scene is where objects go.");
+    const o = await Scene3D.addFromLibrary(e, cx, cy);
+    if (o) Media.toast(`${o.name} is in the scene${e.pictures?.length ? " (its picture keeps its look on H3 Reference)" : ""}.`);
+  }
+  async function objectEditor(e0 = null) {
+    const e = e0 ? structuredClone(e0) : { id: uid(), name: "", kind: "prim", prim: "figure", model: null, becomes: "", pictures: [], loras: [], notes: "" };
+    let models = [], loras = [];
+    try { models = ((await api("/api/models3d")).models || []).filter(m => m.status === "done"); } catch { /* none */ }
+    try { loras = ((await api("/api/loras")).loras || []).filter(l => l.family === "h3" && !l.turbo && !l.missing_file); } catch { /* none */ }
+    const box = document.createElement("div");
+    box.className = "v2-ed";
+    const shapeVal = () => e.kind === "model" ? `model:${e.model}` : e.prim || "figure";
+    const draw = () => {
+      box.innerHTML = `<div class="field"><label for="ve-name">Name <span class="opt">how you call it in the shot: {Name}</span></label><input id="ve-name" maxlength="60" value="${esc(e.name)}" placeholder="Woman"></div>
+        <div class="field"><label for="ve-shape">Stand-in in the scene</label><select id="ve-shape">
+          <optgroup label="Shapes">${SHAPES.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</optgroup>
+          ${models.length ? `<optgroup label="3D models">${models.map(m => `<option value="model:${esc(m.id)}">🧊 ${esc(m.name)}</option>`).join("")}</optgroup>` : ""}</select></div>
+        <div class="field"><label for="ve-becomes">What it is <span class="opt">what the photo and video make of it</span></label>
+          <textarea id="ve-becomes" rows="2" maxlength="300" placeholder="a young woman in a flowing white linen sundress, barefoot">${esc(e.becomes)}</textarea></div>
+        <div class="field"><span class="v2-lbl">Reference pictures <span class="opt">the first goes to H3 Reference, to keep its look</span></span>
+          <div class="v2-pics">${e.pictures.map((p, k) => `<span class="v2-pic"><img src="${esc(mediaUrl(p))}" alt="Picture ${k + 1}">${k === 0 ? `<i>used</i>` : ""}<button type="button" data-rmpic="${k}" aria-label="Remove picture ${k + 1}">✕</button></span>`).join("")}
+            <button type="button" class="v2-picadd" data-act="addpic" title="Upload pictures">＋</button></div>
+          <input type="file" id="ve-files" accept="image/png,image/jpeg,image/webp" multiple hidden></div>
+        <div class="field"><span class="v2-lbl">LoRAs <span class="opt">MiniMax H3 LoRAs: a character, a style</span></span>
+          ${e.loras.map((l, k) => `<div class="v2-lora"><select data-lname="${k}">${loras.some(x => x.name === l.name) ? "" : `<option value="${esc(l.name)}">${esc(l.name)} (not found)</option>`}${loras.map(x => `<option value="${esc(x.name)}"${x.name === l.name ? " selected" : ""}>${esc(x.title || x.name)}</option>`).join("")}</select>
+            <input type="number" data-lstr="${k}" min="0" max="2" step="0.05" value="${+l.strength || 1}" aria-label="Strength"><button type="button" class="btn sm ghost" data-rmlora="${k}" aria-label="Remove this LoRA">✕</button></div>`).join("")}
+          ${loras.length ? `<button type="button" class="btn sm" data-act="addlora"${e.loras.length >= 4 ? " disabled" : ""}>＋ LoRA</button>` : `<p class="hint">No MiniMax H3 LoRAs found in ComfyUI.</p>`}</div>
+        <div class="field"><label for="ve-notes">Notes <span class="opt">not sent to the model</span></label><textarea id="ve-notes" rows="2" maxlength="2000">${esc(e.notes)}</textarea></div>`;
+      box.querySelector("#ve-shape").value = shapeVal();
+    };
+    const read = () => {
+      e.name = box.querySelector("#ve-name").value.trim(); e.becomes = box.querySelector("#ve-becomes").value.trim(); e.notes = box.querySelector("#ve-notes").value;
+      const v = box.querySelector("#ve-shape").value;
+      if (v.startsWith("model:")) { e.kind = "model"; e.model = v.slice(6); e.prim = null; } else { e.kind = "prim"; e.prim = v; e.model = null; }
+      box.querySelectorAll("[data-lname]").forEach(el => { e.loras[+el.dataset.lname].name = el.value; });
+      box.querySelectorAll("[data-lstr]").forEach(el => { e.loras[+el.dataset.lstr].strength = Math.max(0, Math.min(2, +el.value || 1)); });
+    };
+    draw();
+    box.addEventListener("click", async ev => {
+      const t = ev.target.closest("button"); if (!t) return;
+      read();
+      if (t.dataset.act === "addpic") return box.querySelector("#ve-files").click();
+      if (t.dataset.rmpic != null) { e.pictures.splice(+t.dataset.rmpic, 1); return draw(); }
+      if (t.dataset.act === "addlora" && loras.length) { e.loras.push({ name: loras[0].name, strength: 1 }); return draw(); }
+      if (t.dataset.rmlora != null) { e.loras.splice(+t.dataset.rmlora, 1); return draw(); }
+    });
+    box.addEventListener("change", async ev => {
+      if (ev.target.id !== "ve-files") return;
+      read();
+      for (const f of [...ev.target.files].slice(0, 9 - e.pictures.length)) {
+        const fd = new FormData(); fd.append("file", f, f.name);
+        try { const r = await fetch("/api/upload", { method: "POST", body: fd }); if (!r.ok) throw new Error(r.statusText); e.pictures.push((await r.json()).ref); }
+        catch (err) { Media.toast(`Upload: ${err.message}`); }
+      }
+      draw();
+    });
+    const foot = document.createElement("div");
+    foot.className = "wm-foot-row";
+    foot.innerHTML = `${e0 ? `<button type="button" class="btn ghost danger" data-a="del">🗑 Delete</button>` : ""}<span class="grow"></span>
+      <button type="button" class="btn ghost" data-a="cancel">Cancel</button><button type="button" class="btn primary" data-a="save">Save</button>`;
+    const win = WM.open({ id: "v2-object", title: e0 ? `Object · ${e0.name}` : "New object", content: box, footer: foot, width: 520, height: 640, modal: true });
+    foot.querySelector('[data-a="cancel"]').onclick = () => win.close();
+    foot.querySelector('[data-a="del"]')?.addEventListener("click", async () => {
+      if (!confirm(`Delete “${e0.name}” from the library? Objects already in scenes stay there.`)) return;
+      try { await api(`/api/v2/objects/${e0.id}`, { method: "DELETE" }); win.close(); await loadObjects(); } catch (err) { Media.toast(err.message); }
+    });
+    foot.querySelector('[data-a="save"]').onclick = async () => {
+      read();
+      if (!e.name) { box.querySelector("#ve-name").focus(); return Media.toast("Give it a name."); }
+      try {
+        await api(`/api/v2/objects/${e.id}`, { method: "PUT", body: JSON.stringify({ id: e.id, name: e.name, kind: e.kind, prim: e.prim, model: e.model, becomes: e.becomes, pictures: e.pictures, loras: e.loras, notes: e.notes }) });
+        win.close(); await loadObjects(); renderPanel(true);
+      } catch (err) { Media.toast(`Save: ${err.message}`); }
+    };
+    setTimeout(() => box.querySelector("#ve-name")?.focus(), 50);
   }
 
   /* ---- drawing */
@@ -278,6 +387,30 @@ const V2 = (() => {
   /* ---- wiring */
   function wire() {
     $("v2-new").onclick = newMenu;
+    // the library tabs
+    document.querySelectorAll(".v2-tabs [data-tab]").forEach(b => b.onclick = () => {
+      document.querySelectorAll(".v2-tabs [data-tab]").forEach(x => { const on = x === b; x.classList.toggle("on", on); x.setAttribute("aria-selected", String(on)); });
+      document.querySelectorAll(".v2-pane").forEach(p => { p.hidden = p.dataset.pane !== b.dataset.tab; });
+    });
+    // the object library: new, find, edit, add, drag onto the viewport
+    $("v2-objnew").onclick = () => objectEditor();
+    $("v2-objq").addEventListener("input", renderObjects);
+    const grid = $("v2-objgrid");
+    grid.addEventListener("click", e => { const a = e.target.closest("[data-add]"); if (a) place(a.dataset.add); });
+    grid.addEventListener("dblclick", e => { const c = e.target.closest(".v2-obj"); if (c && !e.target.closest("[data-add]")) objectEditor(st.objs.find(x => x.id === c.dataset.oid)); });
+    grid.addEventListener("keydown", e => { const c = e.target.closest(".v2-obj"); if (c && e.key === "Enter") objectEditor(st.objs.find(x => x.id === c.dataset.oid)); });
+    grid.addEventListener("dragstart", e => { const c = e.target.closest(".v2-obj"); if (!c) return; e.dataTransfer.setData("text/x-bob-obj", c.dataset.oid); e.dataTransfer.effectAllowed = "copy"; });
+    const view = $("v2-view").parentElement;
+    view.addEventListener("dragover", e => { if ([...e.dataTransfer.types].includes("text/x-bob-obj")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; view.classList.add("v2-drop"); } });
+    view.addEventListener("dragleave", e => { if (!view.contains(e.relatedTarget)) view.classList.remove("v2-drop"); });
+    view.addEventListener("drop", e => {
+      const id = e.dataTransfer.getData("text/x-bob-obj"); view.classList.remove("v2-drop");
+      if (!id) return;
+      e.preventDefault();
+      const cv = view.querySelector(".s3-canvas"), r = cv?.getBoundingClientRect();
+      const inside = r && e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+      place(id, inside ? e.clientX : null, inside ? e.clientY : null);
+    });
     $("v2-shotlist").addEventListener("click", e => {
       const x = e.target.closest("[data-x]"); if (x) return removeShot(x.dataset.x);
       const b = e.target.closest(".v2-shot"); if (b) openShot(b.dataset.id);
@@ -330,6 +463,7 @@ const V2 = (() => {
     try { state.caps = await api("/api/capabilities"); } catch (e) { status(`Capabilities: ${e.message}`); }
     try { for (const it of (await api("/api/items")).items || []) state.items.set(it.id, it); } catch {}
     events();
+    await loadObjects();
     await loadProjects();
     await loadBoard();
   }

@@ -1145,7 +1145,7 @@ const Scene3D = (() => {
   }
 
   /* ---------------------------------------------------------------- saving */
-  const objectsOut = () => s.objs.map(o => ({ id: o.id, name: o.name, becomes: (o.becomes || "").trim(), picture: o.picture || null, model: o.model, mask: o.mask, pos: o.pos, yaw: o.yaw || 0, pitch: o.pitch || 0, roll: o.roll || 0,
+  const objectsOut = () => s.objs.map(o => ({ id: o.id, name: o.name, becomes: (o.becomes || "").trim(), picture: o.picture || null, ...(o.lib ? { lib: o.lib } : {}), model: o.model, mask: o.mask, pos: o.pos, yaw: o.yaw || 0, pitch: o.pitch || 0, roll: o.roll || 0,
     stretch: o.stretch || null, scale: o.scale, auto_scale: o.auto_scale, hidden: !!o.hidden, face: !!o.face, keys: o.keys || [],
     ...(o.prim ? { prim: o.prim, color: o.color || PRIM_COLOR, dims: o.dims || PRIMS[o.prim].dims, tilt: o.tilt || [0, 0] } : {}),
     ...(o.prim === "figure" ? { pose: o.pose || "standing", gait: o.gait || null } : {}) }));
@@ -2306,6 +2306,23 @@ const Scene3D = (() => {
     await loadObjects();
     if (at && o.pos) { o.pos = at.slice(); save(); s.dirty = true; }
   }
+  /* V2's object library: an entry dropped on the viewport at (clientX, clientY), or in front of the camera: its shape
+     or 3D model, standing where that point meets the ground, with its name, what it becomes, its first picture (H3
+     Reference keeps its look) and the entry it came from (lib: its LoRAs go with the shot). Returns the object. */
+  async function addFromLibrary(e, cx = null, cy = null) {
+    if (!s?.bg || !e) return null;
+    let at = null;
+    if (cx != null && cy != null) { const r = s.cv.getBoundingClientRect(); at = surfaceHit(rayAt(cx - r.left, cy - r.top)); }
+    const n0 = s.objs.length;
+    if (e.kind === "model" && e.model) await addModel(e.model, at); else await addPrim(PRIMS[e.prim] ? e.prim : "figure", at);
+    if (s.objs.length === n0) return null;
+    const o = s.objs.at(-1), base = String(e.name || "Object").trim().slice(0, 60) || "Object";
+    let name = base, k = 2;
+    while (s.objs.some(x => x !== o && x.name.toLowerCase() === name.toLowerCase())) name = `${base} ${k++}`;
+    o.name = name; o.becomes = String(e.becomes || "").trim(); o.picture = e.pictures?.[0] || null; o.lib = e.id;
+    save(); renderSide(); s.dirty = true;
+    return o;
+  }
   async function make3d(i) {
     const o = s.objs[i]; if (!o?.mask) return;
     try {
@@ -3426,6 +3443,6 @@ const Scene3D = (() => {
     requestAnimationFrame(step); renderTime();
   }
 
-  return { mount, autoRender, current, renderForShot, photoForShot, fromTemplate, setTemplate, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
+  return { mount, autoRender, current, addFromLibrary, renderForShot, photoForShot, fromTemplate, setTemplate, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
     _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _fill: (P, look, say) => fillGaps(P, look, say), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
 })();
