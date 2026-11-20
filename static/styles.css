@@ -366,6 +366,24 @@ details.advanced .field + .field, details.advanced .row2 + .field { margin-top: 
 
 .meta { display: flex; flex-direction: column; gap: 10px; }
 .meta .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+/* Score (app.js scoreCard) */
+.s-good { --sc: #3fb950; } .s-ok { --sc: #d29922; } .s-bad { --sc: #f85149; }
+.mb-score { flex: none; border: 1px solid var(--sc, var(--line)); color: var(--sc, var(--text)); background: color-mix(in srgb, var(--sc, transparent) 14%, transparent);
+  border-radius: 999px; padding: 1px 8px; font-size: 12px; font-weight: 700; cursor: pointer; font-variant-numeric: tabular-nums; }
+.scorecard { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: grid; gap: 4px; }
+.sc-head { display: flex; align-items: center; gap: 10px; }
+.sc-overall { font-size: 26px; line-height: 1; color: var(--sc, var(--text)); font-variant-numeric: tabular-nums; min-width: 2ch; }
+.sc-row > summary { display: grid; grid-template-columns: 140px 1fr 3ch; gap: 8px; align-items: center; cursor: pointer; font-size: 13px; list-style: none; padding: 2px 0; }
+.sc-row > summary::-webkit-details-marker { display: none; }
+.sc-bar { height: 6px; border-radius: 3px; background: var(--panel-2); overflow: hidden; }
+.sc-bar i { display: block; height: 100%; background: var(--sc, var(--muted)); }
+.sc-n { text-align: right; color: var(--sc, var(--muted)); font-variant-numeric: tabular-nums; }
+.sc-body { font-size: 12.5px; padding: 2px 0 6px 8px; }
+.sc-body ul { margin: 0; padding-left: 4px; list-style: none; display: grid; gap: 3px; }
+.sc-body p { margin: 4px 0; }
+.sc-y { color: #3fb950; font-weight: 700; } .sc-x { color: #f85149; font-weight: 700; }
+.sc-frames { display: flex; gap: 4px; overflow-x: auto; }
+.sc-frames img { height: 54px; border-radius: 4px; border: 1px solid var(--line); }
 .meta .facts { display: flex; flex-wrap: wrap; gap: 6px; }
 .meta .facts span { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .meta .prompt-text {

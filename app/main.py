@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, appsettings, audiotools, config, llm, media, model3d, modelpaths, models, projects, prompts, render, syscheck, tracking, updater, workflows
+from . import __version__, appsettings, audiotools, config, llm, media, model3d, modelpaths, models, projects, prompts, render, score, syscheck, tracking, updater, workflows
 from .comfy import ComfyService
 from .jobs import EnhanceOpts, GenerateRequest, JobManager, media_path
 
@@ -741,6 +741,35 @@ async def generate(req: GenerateRequest):
 @app.get("/api/items")
 async def items():
     return {"items": jobs.list()}
+
+
+class ScoreReq(BaseModel):  # the vision model: the Prompt writer's (Settings)
+    backend: str | None = None
+    url: str | None = None
+    model: str | None = None
+
+
+_scoring: set[str] = set()
+
+
+@app.post("/api/items/{item_id}/score")
+async def score_result(item_id: str, req: ScoreReq):
+    """Score a finished result in five checks (app/score.py); the scorecard is kept on the item."""
+    it = jobs.items.get(item_id)
+    if not it:
+        raise HTTPException(404, "No such result")
+    if item_id in _scoring:
+        raise HTTPException(409, "It's being scored already")
+    _scoring.add(item_id)
+    try:
+        res = await score.score_item(it, media_path, req.model_dump(), say=lambda m: jobs.log(it, f"Score: {m}"))
+    except score.ScoreError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    finally:
+        _scoring.discard(item_id)
+    jobs._update(it, score=res)
+    jobs.log(it, f"Score: {res['overall']} overall")
+    return res
 
 
 @app.post("/api/items/{item_id}/cancel")
