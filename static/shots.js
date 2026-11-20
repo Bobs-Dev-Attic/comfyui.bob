@@ -491,7 +491,7 @@ const Shots = (() => {
     if (img) {
       const sc = sh.list.map((_, i) => sceneStill(i) ? i + 1 : 0).filter(Boolean);
       document.getElementById("shots-hint").innerHTML = `Generate makes <b>${n === 1 ? "one picture" : `${n} pictures`}</b>${n > 1 ? ", one per shot" : " from this shot"}.`
-        + (sc.length ? ` Shot${sc.length > 1 ? "s" : ""} ${sc.join(", ")}: a photo of ${sc.length > 1 ? "their 3D scenes" : "its 3D scene"} from the shot camera, made by the edit model with the shot's text.` : "")
+        + (sc.length ? ` Shot${sc.length > 1 ? "s" : ""} ${sc.join(", ")}: a photo of ${sc.length > 1 ? "their 3D scenes" : "its 3D scene"} from the shot camera, made by the edit model with the shot's text, at the Settings step's aspect and quality.` : "")
         + ` ${warn.map(w => `<span class="warn">⚠ ${esc(w)}</span>`).join(" ")}`;
       document.getElementById("shots-prompt").textContent = previewText();
       return;
@@ -1234,7 +1234,7 @@ const Shots = (() => {
         if (sceneStill(i)) {
           Media.toast(`Shot ${i + 1}: drawing its 3D scene from the shot camera…`);
           const it = await Scene3D.photoForShot(s.sceneLink.id, stillLook(i),
-            m => { err.textContent = `Shot ${i + 1}, 3D scene: ${m}`; });
+            m => { err.textContent = `Shot ${i + 1}, 3D scene: ${m}`; }, { aspect: base.aspect, quality: base.quality });
           err.textContent = "";
           ids.push(it.id); continue;
         }

@@ -126,6 +126,9 @@ class GenerateRequest(BaseModel):
     edit_bg: Literal["transparent", "white", "black"] = "transparent"
     # Model for erase, replace and instruct: Qwen Image Edit 2511 or MiniMax H3 Image.
     edit_model: Literal["qwen", "h3image", "mossedit"] = "qwen"
+    # Instruct: the size the edit model works at and returns, in megapixels, with the source's shape (a 3D scene's
+    # photo for an H3 Image shot follows the Quality setting). None: the model's own size, returned at the source's size.
+    edit_megapixels: float | None = Field(None, ge=0.25, le=16.0)
     source: str | None = Field(None, max_length=2000)  # enhance: the picture or video to improve (a media ref)
     enhance_opts: EnhanceOpts | None = None  # engine "enhance": the chain
     enhance_of: str | None = Field(None, max_length=64)  # enhance: the studio item it came from
@@ -724,6 +727,7 @@ class JobManager:
                 req.edit_op, files if req.edit_op != "remove_bg" else None, prompt=req.prompt, strength=req.edit_strength,
                 seed=seed, steps=req.steps, background=req.edit_bg, bg_model=(files or {}).get("bg_model"), edit_model=req.edit_model, prefix=prefix,
                 references=len(req.references) if req.edit_op == "instruct" else 0,
+                megapixels=req.edit_megapixels if req.edit_op == "instruct" else None,
             )
         if req.engine == "klein":
             mp = workflows.KLEIN_QUALITY.get(req.quality, 1.0)
