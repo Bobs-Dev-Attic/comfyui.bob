@@ -1226,5 +1226,7 @@ const V2 = (() => {
   const shotWhat = sceneId => String(st.board.shots.find(x => x.scene === sceneId)?.action || "").trim();
   // ...and its setting (the photo's look starts from it, as Generate uses it)
   const shotSetting = sceneId => String(st.board.shots.find(x => x.scene === sceneId)?.setting || "").trim();
-  return { init, decide, generate, onSubmit, shotWhat, shotSetting, _st: st };
+  // ...and its dialogue and sound, as Generate puts them in the prompt (the Render window adds them to its own)
+  const shotExtra = sceneId => { const s = st.board.shots.find(x => x.scene === sceneId); return s ? { dialogue: dialogueOf(s), sound: soundOf(s) } : null; };
+  return { init, decide, generate, onSubmit, shotWhat, shotSetting, shotExtra, _st: st };
 })();
