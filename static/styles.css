@@ -899,6 +899,10 @@ details.post-proc > .hint { margin: 0 0 10px; }
 .s3-float-xyz .ax0 { color: #f0455a; } .s3-float-xyz .ax1 { color: #73cc33; } .s3-float-xyz .ax2 { color: #458cfa; }
 .s3-float-xyz input { width: 100%; min-width: 0; padding: 3px 4px; font-variant-numeric: tabular-nums; }
 .s3-float .hint { margin: 6px 0 0; font-size: 11px; }
+.s3-float-lens { display: flex; align-items: center; gap: 8px; }
+.s3-float-lens label { display: flex; align-items: center; gap: 4px; }
+.s3-float-lens input { width: 64px; padding: 3px 4px; font-variant-numeric: tabular-nums; }
+.s3-float .s3-float-lens .hint { margin: 0; }
 /* what the camera frames; outside it is shaded */
 .s3-frame { position: absolute; pointer-events: none; border: 1px solid rgba(255, 255, 255, .7); box-shadow: 0 0 0 9999px rgba(0, 0, 0, .38); }
 .s3-listbar { display: flex; justify-content: flex-end; padding: 2px 4px 8px; }
