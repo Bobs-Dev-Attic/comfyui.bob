@@ -24,6 +24,11 @@
    ⬇ Export renders the shots' latest videos as one, in order, with the soundtrack under them (/api/v2/export,
    rendered as the classic timeline is). It shows up as a studio result.
 
+   The right-hand column follows what's selected: the shot (picked in the list, or nothing selected in the scene)
+   shows the Shot details; an object or the camera in the viewport shows the scene builder's own properties there,
+   topped by V2's part (an object's lines in this shot and its library entry; the camera's moves). The scene builder
+   is laid straight into the page's grid for that (v2.css: display: contents), so nothing of it moves in the DOM.
+
    The page uses the studio's API as the classic page does (projects, scenes, items), and gives the scene builder the
    few globals it expects from that page (state, api, esc, mediaUrl, submit, and Shots, which V2 replaces). A project's
    V2 shots are kept by the studio in data/v2/<project>.json (/api/v2/board). */
@@ -108,12 +113,19 @@ const V2 = (() => {
     try {
       sc = how === "template"
         ? await api(`/api/scenes/${tpl.id}/copy`, { method: "POST", body: JSON.stringify({ name: tpl.name, project: state.project?.id ?? null }) })
-        : await api("/api/scenes", { method: "POST", body: JSON.stringify({ picture: null, name: `Shot ${n}`, project: state.project?.id ?? null, seconds: 5, aspect: "16:9" }) });
+        : await api("/api/scenes", { method: "POST", body: JSON.stringify({ picture: null, name: `Shot ${n}`, project: state.project?.id ?? null, seconds: 5, aspect: "16:9",
+          objects: [{ id: uid(), name: "Cube", prim: "cube", color: "#c9c4ba", dims: [1, 1, 1] }] }) });
     } catch (e) { return Media.toast(`New shot: ${e.message}`); }
     st.scenes.set(sc.id, sc);
-    const shot = { id: uid(), scene: sc.id, name: how === "template" ? tpl.name : `Shot ${n}`, setting: "", action: "", speaker: "", line: "", sound: "", music: "", quality: "standard", results: [] };
+    const shot = { id: uid(), scene: sc.id, name: how === "template" ? tpl.name : `Shot ${n}`, setting: "", action: "", lines: [], sound: "", music: "", quality: "standard", results: [] };
     st.board.shots.push(shot);
-    save(); openShot(shot.id);
+    save();
+    await openShot(shot.id);
+    if (how !== "template") {  // a new set: a camera on the cube, a little way back
+      for (let k = 0; k < 30 && !Scene3D.current()?.objs.every(o => o.pos); k++) await new Promise(r => setTimeout(r, 100));
+      Scene3D.applyCameraMove("static", { framing: "wide" });
+      Scene3D.select(-1);
+    }
   }
   async function newMenu(e) {
     const r = e.currentTarget.getBoundingClientRect();
@@ -135,10 +147,14 @@ const V2 = (() => {
   async function openShot(id, quiet = false) {
     const s = shotOf(id); if (!s) return;
     st.sel = id; if (!quiet) save();
+    if (Scene3D.current()?.id === s.scene) Scene3D.select(-1);
+    inspect("shot");
     renderAll();
     if (Scene3D._state()?.id !== s.scene) {
       $("v2-viewempty").hidden = true;
       await Scene3D.open(s.scene);
+      document.querySelector(".v2-main").classList.add("scene");
+      st.names = null;
     }
     watchScene();
   }
@@ -148,12 +164,93 @@ const V2 = (() => {
     clearInterval(watchT);
     watchT = setInterval(() => {
       const c = Scene3D.current(); if (!c) return;
+      // the selection picks what the right-hand column shows
+      const selKey = c.camSel ? "cam" : c.sel >= 0 ? c.objs[c.sel]?.id : "";
+      if (selKey !== st.selKey) { st.selKey = selKey; inspect(selKey ? "scene" : "shot"); }
+      else if (selKey) renderObjx();
+      // an object renamed: the shot's {Name} tags and speakers follow
+      const names = new Map(c.objs.map(o => [o.id, o.name])), s0 = st.board.shots.find(x => x.scene === c.id);
+      if (st.names && s0) for (const [id, n] of names) {
+        const was = st.names.get(id); if (!was || was === n) continue;
+        s0.action = String(s0.action || "").split(`{${was}}`).join(`{${n}}`);
+        for (const l of linesOf(s0)) if (l.speaker === was) l.speaker = n;
+        save(); $("v2-lines").dataset.shot = "";
+      }
+      st.names = names;
       const sig = JSON.stringify([c.id, c.objs.map(o => [o.name, !!o.picture, o.lib, o.keys?.length || 0, o.hidden]), c.camKeys.length, c.seconds]);
       if (sig === lastSig) return;
       lastSig = sig;
       const sc = st.scenes.get(c.id); if (sc) Object.assign(sc, { seconds: c.seconds, camera_keys: c.camKeys, objects: c.objs.map(o => ({ name: o.name, picture: o.picture, lib: o.lib, keys: o.keys, hidden: o.hidden, mesh: !!o.mesh })) });
       renderPanel(true); renderShots(); renderTimeline();
     }, 700);
+  }
+
+  /* ---- the right-hand column: the shot, or what's selected in the scene */
+  function inspect(mode) {
+    const main = document.querySelector(".v2-main");
+    main.classList.toggle("insp-scene", mode === "scene");
+    const c = Scene3D.current(), o = c && c.sel >= 0 ? c.objs[c.sel] : null;
+    main.classList.toggle("insp-cam", mode === "scene" && !!c?.camSel);
+    const side = document.querySelector("#v2-view .s3-side"); if (side && mode === "scene") side.scrollTop = 0;
+    $("v2-paneltoggle").textContent = mode !== "scene" ? "📝 Shot" : c?.camSel ? "🎥 Camera" : `🧱 ${o?.name || "Object"}`;
+    if (mode === "scene") renderObjx(true);
+  }
+  // V2's part above the scene builder's properties: an object's lines in this shot and its library entry, or the camera's moves.
+  function renderObjx(force = false) {
+    const side = document.querySelector("#v2-view .s3-side"), c = Scene3D.current(), s = cur();
+    if (!side || !c || !s) return;
+    let box = side.querySelector(".v2-objx");
+    if (!box) {
+      box = document.createElement("section"); box.className = "v2-objx"; side.prepend(box);
+      // the builder's sections, named so v2.css can put the selected thing's first
+      for (const sec of side.querySelectorAll(":scope > section")) {
+        const h = sec.querySelector("h3")?.textContent.trim();
+        if (h === "View") sec.classList.add("v2s-view"); else if (h === "Camera") sec.classList.add("v2s-cam"); else if (h === "Objects") sec.classList.add("v2s-objs");
+      }
+    }
+    if (!force && box.contains(document.activeElement)) return;
+    const o = c.sel >= 0 ? c.objs[c.sel] : null;
+    const key = JSON.stringify([c.camSel, o?.id, o?.name, o?.lib, linesOf(s).filter(l => o && l.speaker === o.name), st.objs.length, st.cams.length]);
+    if (!force && box.dataset.k === key) return;
+    box.dataset.k = key;
+    const back = `<button type="button" class="btn sm ghost v2-back" data-x="shot" title="The shot's words, sound and settings">← 🎞 ${esc(s.name)}</button>`;
+    if (c.camSel) {
+      box.innerHTML = `${back}<h3>🎥 Camera</h3>
+        <div class="v2-xrow"><select data-x="move" aria-label="Camera move">${(Scene3D.CAM_MOVES || []).map(m => `<option value="${esc(m.id)}">${m.icon} ${esc(m.name)}</option>`).join("")}</select>
+          <select data-x="frame" aria-label="Framing"><option value="close">Close-up</option><option value="medium" selected>Medium</option><option value="wide">Wide</option><option value="extreme">Extreme wide</option></select>
+          <button type="button" class="btn sm" data-x="apply">Apply</button></div>
+        <div class="v2-xrow"><button type="button" class="btn sm ghost" data-x="savecam">💾 Save this camera</button><span class="hint">${c.camKeys.length} key${c.camKeys.length === 1 ? "" : "s"}</span></div>`;
+      return;
+    }
+    if (!o) { box.innerHTML = back; return; }
+    const lib = o.lib && st.objs.find(x => x.id === o.lib), mine = linesOf(s).map((l, k) => [l, k]).filter(([l]) => l.speaker === o.name);
+    box.innerHTML = `${back}<h3>${esc(o.name)}</h3>
+      <div class="field"><label for="v2-oname">Name <span class="opt">{Name} in the shot's words</span></label><input id="v2-oname" maxlength="60" value="${esc(o.name)}"></div>
+      <div class="field"><span class="v2-flbl">Lines in this shot</span>
+        ${mine.map(([l, k]) => `<div class="v2-xline"><input data-xl="${k}" maxlength="300" value="${esc(l.text || "")}" placeholder="What ${esc(o.name)} says" aria-label="Line ${k + 1}"><button type="button" class="v2-x" data-xrm="${k}" aria-label="Remove this line">✕</button></div>`).join("")}
+        <button type="button" class="btn sm" data-x="addline">＋ Line for ${esc(o.name)}</button>
+        <p class="hint">The shot's dialogue keeps every line in order${lib?.voice ? `; ${esc(o.name)} speaks with the voice from the library` : ""}.</p></div>
+      <div class="v2-xrow">${lib ? `<span class="hint">From the library: <b>${esc(lib.name)}</b></span><button type="button" class="btn sm ghost" data-x="editlib">Edit…</button>`
+        : `<button type="button" class="btn sm ghost" data-x="savelib" title="Keep it in the object library, with its shape, what it is and its picture">💾 Save to the library</button>`}</div>`;
+  }
+  async function objxClick(e) {
+    const b = e.target.closest("[data-x], [data-xrm]"); if (!b) return;
+    const c = Scene3D.current(), s = cur(); if (!c || !s) return;
+    const o = c.sel >= 0 ? c.objs[c.sel] : null, x = b.dataset.x;
+    if (x === "shot") { Scene3D.select(-1); return inspect("shot"); }
+    if (x === "apply") { const box = b.closest(".v2-objx"); Scene3D.applyCameraMove(box.querySelector('[data-x="move"]').value, { framing: box.querySelector('[data-x="frame"]').value }); return renderPanel(true); }
+    if (x === "savecam") return saveCamera();
+    if (b.dataset.xrm != null) { linesOf(s).splice(+b.dataset.xrm, 1); save(); $("v2-lines").dataset.shot = ""; return renderObjx(true); }
+    if (!o) return;
+    if (x === "addline") { linesOf(s).push({ speaker: o.name, text: "" }); save(); $("v2-lines").dataset.shot = ""; renderObjx(true);
+      const ins = document.querySelectorAll(".v2-objx [data-xl]"); ins[ins.length - 1]?.focus(); return; }
+    if (x === "editlib") return objectEditor(st.objs.find(y => y.id === o.lib));
+    if (x === "savelib") {
+      const e2 = { id: uid(), name: o.name, kind: o.prim ? "prim" : "model", prim: o.prim || null, model: o.prim ? null : o.model || null, becomes: o.becomes || "",
+        pictures: o.picture ? [o.picture] : [], loras: [], voice: null, notes: "" };
+      try { await api(`/api/v2/objects/${e2.id}`, { method: "PUT", body: JSON.stringify(e2) }); o.lib = e2.id; Scene3D.rename(c.sel, o.name); await loadObjects(); renderObjx(true);
+        Media.toast(`${o.name} is in the object library: drag it into other shots.`); } catch (err) { Media.toast(`Save: ${err.message}`); }
+    }
   }
 
   /* ---- the model, from what's in the shot */
@@ -625,10 +722,21 @@ const V2 = (() => {
       if (!again) setRight(false);
     }));
     // a click in the viewport or timeline closes a drawer; so do Esc and picking a shot
-    document.querySelector(".v2-view").addEventListener("pointerdown", () => { if (narrow()) { main.classList.remove("left-open"); setRight(false); } });
+    document.querySelector(".v2-view").addEventListener("pointerdown", e => { if (narrow() && !e.target.closest(".s3-side")) { main.classList.remove("left-open"); setRight(false); } });
     document.querySelector(".v2-tl").addEventListener("pointerdown", () => { if (narrow()) main.classList.remove("left-open"); });
     document.addEventListener("keydown", e => { if (e.key === "Escape" && narrow() && !document.querySelector(".wm-win")) { main.classList.remove("left-open"); setRight(false); } });
     $("v2-shotlist").addEventListener("click", e => { if (narrow() && e.target.closest(".v2-shot") && !e.target.closest("[data-x]")) main.classList.remove("left-open"); });
+    // the inspector's V2 part (inside the scene builder's properties)
+    const host = $("v2-view");
+    host.addEventListener("click", e => { if (e.target.closest(".v2-objx")) objxClick(e); });
+    host.addEventListener("input", e => {
+      const s = cur(), k = e.target.dataset.xl; if (!s || k == null) return;
+      linesOf(s)[+k].text = e.target.value; save(); $("v2-lines").dataset.shot = ""; renderPanel(true);
+    });
+    host.addEventListener("change", e => {
+      if (e.target.id !== "v2-oname") return;
+      const c = Scene3D.current(); if (c && c.sel >= 0) Scene3D.rename(c.sel, e.target.value);
+    });
     // the library tabs
     document.querySelectorAll(".v2-tabs [data-tab]").forEach(b => b.onclick = () => {
       document.querySelectorAll(".v2-tabs [data-tab]").forEach(x => { const on = x === b; x.classList.toggle("on", on); x.setAttribute("aria-selected", String(on)); });

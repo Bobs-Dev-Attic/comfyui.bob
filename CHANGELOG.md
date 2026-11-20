@@ -5,6 +5,23 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.126.0] - 2026-11-20
+
+### Changed
+- **V2's right-hand column follows the selection.**
+  - Picking a shot in the list, or clicking empty space in the scene, shows the **Shot** details.
+  - Selecting an object or the camera in the viewport shows **its** details there: the scene builder's own properties,
+    with the selected thing's section first.
+  - The 3D viewport takes the whole middle column.
+  - Below 1180 px the same details open as a drawer from the top bar's button, which names what's selected
+    (📝 Shot, 🧱 Box, 🎥 Camera).
+- **Object details** start with its name (renaming it updates `{Name}` and the speakers in the shot's words) and its
+  **lines in this shot**. ＋ Line adds one it says; the lines stay in the shot's dialogue, in order. Then its library
+  entry (Edit…) or 💾 Save to the library (its shape, what it is and its picture).
+- **Camera details** start with a camera move to apply at a framing, and 💾 Save this camera.
+- **A new empty shot has a cube and a camera on it.** The camera is shown as an object in the scene, to select and
+  move.
+
 ## [0.125.2] - 2026-11-20
 
 ### Fixed

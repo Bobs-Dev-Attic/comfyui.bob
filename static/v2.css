@@ -106,6 +106,33 @@ body.v2 { height: 100vh; overflow: hidden; display: grid; grid-template-rows: au
 .v2-picadd { width: 72px; height: 72px; border-radius: 6px; border: 1px dashed var(--line); background: none; color: var(--muted); font-size: 22px; cursor: pointer; }
 .v2-lora { display: grid; grid-template-columns: minmax(0, 1fr) 76px auto; gap: 6px; align-items: center; }
 
+/* the scene builder laid into the page's grid: its stage is the viewport, its footer under it, and its properties
+   panel the right-hand column while an object or the camera is selected (.insp-scene); else the Shot details */
+.v2-main { grid-template-rows: minmax(0, 1fr) auto auto; grid-template-areas: "shots view panel" "shots foot panel" "tl tl tl"; }
+.v2-main.scene .v2-view, .v2-main.scene .v2-viewhost, .v2-main.scene .v2-viewhost > .s3 { display: contents; }
+.v2-main.scene .s3-stage { grid-area: view; padding: 8px 8px 0; min-width: 0; min-height: 0; }
+.v2-main.scene .s3-hostfoot { grid-area: foot; padding: 6px 8px 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.v2-main.scene .s3-side { grid-area: panel; border-left: 1px solid var(--line); background: var(--panel); overflow: auto; padding: 8px 12px 16px; min-height: 0; }
+.v2-main.scene.insp-scene .v2-panel { display: none; }
+.v2-main.scene.insp-scene .s3-side { display: flex; flex-direction: column; }
+.v2-main.scene.insp-scene .s3-side > section { flex: none; }
+.v2-main.scene .s3-side > .v2-objx { order: -3; }
+.v2-main.scene .s3-side > .s3-sel { order: -2; }
+.v2-main.scene .s3-side > .v2s-objs { order: -1; }
+.v2-main.scene.insp-cam .s3-side > .v2s-cam { order: -2; }
+.v2-main.scene.insp-cam .s3-side > .v2s-view { order: -1; }
+.v2-main.scene:not(.insp-scene) .s3-side { display: none; }
+.v2-main.scene .v2-viewempty { display: none; }
+.v2-objx { display: grid; gap: 8px; padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--line); }
+.v2-objx h3 { margin: 0; font-size: 15px; }
+.v2-objx .field { display: grid; gap: 4px; margin: 0; }
+.v2-objx input, .v2-objx select { width: 100%; }
+.v2-back { justify-self: start; }
+.v2-xrow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.v2-xrow select { flex: 1; min-width: 0; width: auto; }
+.v2-xline { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; }
+.v2-xline .v2-x { visibility: visible; }
+
 /* the viewport: the scene builder fills it */
 .v2-viewhost { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
 .v2-viewhost:empty { display: none; }
@@ -156,7 +183,10 @@ body.v2 { height: 100vh; overflow: hidden; display: grid; grid-template-rows: au
   .v2-proj select { max-width: 160px; }
 }
 @media (max-width: 1180px) {
-  .v2-main { grid-template-columns: 46px minmax(0, 1fr); grid-template-areas: "shots view" "tl tl"; overflow: clip; }
+  .v2-main { grid-template-columns: 46px minmax(0, 1fr); grid-template-areas: "shots view" "shots foot" "tl tl"; overflow: clip; }
+  .v2-main.scene .s3-side { grid-area: auto; position: absolute; right: 0; top: 0; bottom: 0; width: min(340px, calc(100vw - 60px)); z-index: 30;
+    transform: translateX(100%); visibility: hidden; transition: transform .18s ease, visibility 0s .18s; box-shadow: var(--shadow, 0 10px 30px rgba(0, 0, 0, .4)); }
+  .v2-main.scene.right-open .s3-side { transform: none; visibility: visible; transition: transform .18s ease; }
   .v2-shots { overflow: visible; z-index: 30; }
   .v2-tabs { flex-direction: column; border-bottom: 0; padding: 6px 4px; gap: 4px; }
   .v2-tabs button { padding: 8px 0; border-radius: 8px; font-size: 18px; }
@@ -179,6 +209,5 @@ body.v2 { height: 100vh; overflow: hidden; display: grid; grid-template-rows: au
   .v2-proj { font-size: 0; }
   .v2-proj select { font-size: 13px; max-width: 120px; }
   .v2-tlbar .hint { display: none; }
-  .v2-viewhost > .s3 { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 38%; }
 }
 html[data-motion="reduce"] .v2-panel { transition: none !important; }

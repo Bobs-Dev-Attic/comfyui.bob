@@ -1320,7 +1320,7 @@ const Scene3D = (() => {
       await buildEmpty();
       if (!s) return;
       toShot(); setTime(0);
-      if (shotLinked()) setCamObj(true);
+      if (shotLinked() || host) setCamObj(true);  // V2: the camera is an object to select
       root.querySelector(".s3-empty").hidden = false;
       root.querySelector(".s3-shotbtn").textContent = "🎥 Start view";
       root.querySelector(".s3-shotbtn").title = "Back to the view the scene starts with";
@@ -1340,7 +1340,7 @@ const Scene3D = (() => {
     if (!s) return;
     toShot();
     setTime(0);
-    if (shotLinked()) setCamObj(true);
+    if (shotLinked() || host) setCamObj(true);  // V2: the camera is an object to select
     hud.textContent = `Camera ${Math.round(2 * Math.atan(s.bg.t) / rad)}° wide`;
     root.querySelector(".s3-bgnote").textContent = sc.plate ? "The background is the empty background from Animate objects."
       : "The background is the picture itself, so objects that have a 3D model show twice. Make the empty background in 🎬 Animate objects to avoid that.";
@@ -1700,7 +1700,7 @@ const Scene3D = (() => {
     return { ...r, start, refs };
   }
   // The open scene (V2's viewport), for its panels: its objects, camera and length as the builder has them now.
-  const current = () => s && s.bg ? { id: s.id, sc: s.sc, objs: s.objs, camKeys: s.camKeys, seconds: s.seconds, t: s.t,
+  const current = () => s && s.bg ? { id: s.id, sc: s.sc, objs: s.objs, camKeys: s.camKeys, seconds: s.seconds, t: s.t, sel: s.sel, camSel: !!s.camSel,
     moves: cameraMoves(), pictures: picObjs().length, refsReady: refsReady(), edit: editModels().map(m => m[0]) } : null;
   /* A crane (jib) move: the camera on an arm of a given length round a pivot behind it. From the playhead, over the
      length of the move, the arm rises or falls (boom, degrees up from level) and swings round (degrees, + to the left),
@@ -3574,6 +3574,7 @@ const Scene3D = (() => {
     requestAnimationFrame(step); renderTime();
   }
 
-  return { mount, autoRender, current, addFromLibrary, CAM_MOVES, applyCameraMove, cameraOut, applySavedCamera, renderForShot, photoForShot, fromTemplate, setTemplate, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
+  return { mount, autoRender, current, addFromLibrary, select: i => s?.bg && select(i), selectCam: () => s?.bg && selectCam(),
+    rename: (i, name) => { const o = s?.objs[i]; if (!o || !String(name || "").trim()) return; o.name = String(name).trim().slice(0, 120); save(); renderSide(); }, CAM_MOVES, applyCameraMove, cameraOut, applySavedCamera, renderForShot, photoForShot, fromTemplate, setTemplate, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
     _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _fill: (P, look, say) => fillGaps(P, look, say), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
 })();
