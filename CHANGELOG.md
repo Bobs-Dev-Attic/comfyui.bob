@@ -5,6 +5,16 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.134.4] - 2026-11-20
+
+### Added
+- **Render video in V2 sends the speakers' voices**, as Generate does.
+  - When the shot's speakers have library voices and H3 Reference is installed, a new option, "Use the speakers'
+    voices (H3 Reference)", is on. Each voice goes as <Audio N>, and each line says which voice it's spoken in.
+  - The render then runs on H3 Reference's model, with the same motion.
+  - The review shows the model, the voices among the pictures, and the lines with their voices.
+  - Untick it, and H3 picks the voices.
+
 ## [0.134.3] - 2026-11-20
 
 ### Fixed
