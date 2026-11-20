@@ -37,6 +37,36 @@ body.v2 { height: 100vh; overflow: hidden; display: grid; grid-template-rows: au
 .v2-x:hover { color: var(--text); background: var(--panel-2); }
 .v2-empty { padding: 0 12px; }
 
+/* the library tabs and objects */
+.v2-tabs { display: flex; gap: 2px; padding: 8px 8px 0; border-bottom: 1px solid var(--line); }
+.v2-tabs button { flex: 1; border: 0; background: none; color: var(--muted); padding: 6px 8px; border-radius: 6px 6px 0 0; cursor: pointer; font: inherit; font-size: 13px; }
+.v2-tabs button.on { color: var(--text); background: var(--panel-2); box-shadow: inset 0 -2px 0 var(--accent); }
+.v2-pane { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.v2-pane[hidden] { display: none; }
+.v2-objsearch { padding: 0 8px 6px; }
+.v2-objsearch input { width: 100%; }
+.v2-objgrid { overflow: auto; padding: 0 8px 8px; display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; align-content: start; }
+.v2-obj { position: relative; display: grid; gap: 2px; padding: 4px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2); cursor: grab; font-size: 12px; min-width: 0; }
+.v2-obj:hover { border-color: var(--accent); }
+.v2-obj b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.v2-obj .hint { font-size: 10.5px; min-height: 1em; }
+.v2-objth { aspect-ratio: 1; border-radius: 6px; overflow: hidden; background: var(--panel); display: grid; place-items: center; font-size: 26px; }
+.v2-objth img { width: 100%; height: 100%; object-fit: cover; }
+.v2-objadd { position: absolute; top: 6px; right: 6px; width: 22px; height: 22px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-ink); cursor: pointer; opacity: 0; font-weight: 700; }
+.v2-obj:hover .v2-objadd, .v2-obj:focus-within .v2-objadd { opacity: 1; }
+.v2-view.v2-drop { outline: 2px dashed var(--accent); outline-offset: -6px; }
+/* the object editor */
+.v2-ed { display: grid; gap: 10px; padding: 4px 2px; }
+.v2-ed .field { display: grid; gap: 4px; margin: 0; }
+.v2-ed input, .v2-ed select, .v2-ed textarea { width: 100%; }
+.v2-pics { display: flex; flex-wrap: wrap; gap: 6px; }
+.v2-pic { position: relative; width: 72px; height: 72px; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); }
+.v2-pic img { width: 100%; height: 100%; object-fit: cover; }
+.v2-pic i { position: absolute; left: 2px; bottom: 2px; font-size: 10px; font-style: normal; background: var(--accent); color: var(--accent-ink); padding: 0 4px; border-radius: 4px; }
+.v2-pic button { position: absolute; top: 2px; right: 2px; border: 0; border-radius: 50%; width: 18px; height: 18px; font-size: 10px; cursor: pointer; background: rgba(0, 0, 0, .6); color: #fff; }
+.v2-picadd { width: 72px; height: 72px; border-radius: 6px; border: 1px dashed var(--line); background: none; color: var(--muted); font-size: 22px; cursor: pointer; }
+.v2-lora { display: grid; grid-template-columns: minmax(0, 1fr) 76px auto; gap: 6px; align-items: center; }
+
 /* the viewport: the scene builder fills it */
 .v2-viewhost { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
 .v2-viewhost:empty { display: none; }

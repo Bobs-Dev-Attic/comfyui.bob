@@ -5,6 +5,21 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.122.0] - 2026-11-20
+
+### Added
+- **V2: the object library (phase 2).** A 🧱 Objects tab next to 🎞 Shots holds people, props and 3D models to use
+  in any project's shots.
+  - Each object has a name (`{Name}` in a shot's text), a stand-in (a person, a shape or one of your 3D models), what it
+    is, up to 9 reference pictures and up to 4 MiniMax H3 LoRAs with their strengths.
+  - **Drag an object onto the 3D viewport** and it stands where you drop it, on the ground under the cursor. ＋ on an
+    object puts it in front of the camera. Double-click an object to edit it.
+  - In the scene, an object keeps its name, what it is and its first picture. A shot with pictured objects is made on
+    H3 Reference, which keeps their look. The LoRAs of the library objects in a shot go with it to H3, and the shot's
+    Model box says so.
+  - The library is kept by the studio (`data/v2/objects.json`, `/api/v2/objects`). A scene's objects remember the
+    entry they came from.
+
 ## [0.121.0] - 2026-11-20
 
 ### Added

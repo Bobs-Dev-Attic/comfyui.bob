@@ -348,6 +348,8 @@ Other features:
 - **Bob Studio V2** (`/v2`, `static/v2.html`, `static/v2.js`): shot by shot in a 3D scene. The scene builder is
   the main view, each shot has its setting, action, dialogue, sound and music, and the model is chosen from what's in
   the shot. The shots line up on a timeline.
+  Its object library (🧱 Objects) holds people, props and 3D models with their pictures and LoRAs, to drag into a
+  shot's scene.
 - **3D scene templates**: ☆ Save as template keeps a scene (its set, objects, camera path, length and effects) to
   start new scenes from, in any project (⭐ From a template…; `POST /api/scenes/{id}/copy`).
 - **MiniMax H3 Image, shot by shot**: its reference pictures on the Inputs step, and its pictures planned on the Shots

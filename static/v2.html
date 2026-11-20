@@ -25,11 +25,24 @@
 
   <main class="v2-main">
     <!-- the shots: each one is a 3D scene with its own words, sound and settings -->
-    <aside class="v2-shots" aria-label="Shots">
-      <div class="v2-h"><h2>Shots</h2>
-        <button type="button" class="btn sm primary" id="v2-new" aria-haspopup="menu" title="A new shot: an empty set, or one of your scene templates">＋ New shot</button></div>
-      <div class="v2-shotlist" id="v2-shotlist" role="listbox" aria-label="Shots"></div>
-      <p class="hint v2-empty" id="v2-noshots" hidden>No shots yet. ＋ New shot starts one: a floor and a sky to place objects and the camera on, or one of your scene templates.</p>
+    <aside class="v2-shots" aria-label="Shots and objects">
+      <div class="v2-tabs" role="tablist" aria-label="Library">
+        <button type="button" role="tab" class="on" aria-selected="true" data-tab="shots">🎞 Shots</button>
+        <button type="button" role="tab" aria-selected="false" data-tab="objects">🧱 Objects</button></div>
+      <div class="v2-pane" data-pane="shots" role="tabpanel">
+        <div class="v2-h"><h2>Shots</h2>
+          <button type="button" class="btn sm primary" id="v2-new" aria-haspopup="menu" title="A new shot: an empty set, or one of your scene templates">＋ New shot</button></div>
+        <div class="v2-shotlist" id="v2-shotlist" role="listbox" aria-label="Shots"></div>
+        <p class="hint v2-empty" id="v2-noshots" hidden>No shots yet. ＋ New shot starts one: a floor and a sky to place objects and the camera on, or one of your scene templates.</p>
+      </div>
+      <div class="v2-pane" data-pane="objects" role="tabpanel" hidden>
+        <div class="v2-h"><h2>Objects</h2>
+          <button type="button" class="btn sm primary" id="v2-objnew" title="A new object for the library: a shape or 3D model, what it is, its pictures and LoRAs">＋ New object</button></div>
+        <div class="v2-objsearch"><input id="v2-objq" type="search" placeholder="Find an object" aria-label="Find an object"></div>
+        <div class="v2-objgrid" id="v2-objgrid" role="list" aria-label="Object library"></div>
+        <p class="hint v2-empty" id="v2-noobjs" hidden>No objects yet. ＋ New object adds one: a person, a prop or a 3D model, with pictures of what it should look like.</p>
+        <p class="hint v2-empty">Drag an object onto the scene to place it there, or press ＋ on it. Double-click to edit.</p>
+      </div>
     </aside>
 
     <!-- the 3D viewport: the scene builder, drawn here -->

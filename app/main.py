@@ -8,6 +8,7 @@ import os
 import random
 import re
 import subprocess
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -398,6 +399,7 @@ class SceneObject(BaseModel):
     # a picture of what it should look like (a media ref), for a render on H3 Reference: <Picture N> in the prompt
     picture: str | None = Field(None, max_length=2000)
     model: str | None = Field(None, max_length=40)  # a 3D model's id
+    lib: str | None = Field(None, max_length=40)  # the V2 object library entry it came from (its LoRAs go with the shot)
     mask: str | None = Field(None, max_length=2000)  # where it was in the picture (white = the object)
     # placement, set by the page: position (scene units; camera at the origin looking down -Z, Y up), turn in degrees
     # about the vertical, scale of the model; none until placed
@@ -539,6 +541,71 @@ async def v2_board_put(req: V2Board, project: str | None = None):
     tmp = f.with_suffix(".tmp")
     tmp.write_text(json.dumps(req.model_dump(), ensure_ascii=False, indent=1), "utf-8")
     tmp.replace(f)
+    return {"ok": True}
+
+
+# V2's object library, shared by every project: things to drag into a shot's scene, each a shape or a 3D model with
+# what it becomes, its reference pictures and its LoRAs (data/v2/objects.json).
+V2_OBJECTS = V2_DIR / "objects.json"
+
+
+class V2Object(BaseModel):
+    id: str = Field(..., min_length=1, max_length=40, pattern=r"^[A-Za-z0-9_-]+$")
+    name: str = Field(..., min_length=1, max_length=80)
+    kind: Literal["prim", "model"] = "prim"
+    prim: str | None = Field(None, max_length=20)  # cube, sphere, cylinder, cone, plane, torus, figure
+    model: str | None = Field(None, max_length=40)  # a 3D model's id (/api/models3d)
+    becomes: str = Field("", max_length=300)  # what it is in the picture
+    pictures: list[str] = Field(default_factory=list, max_length=9)  # reference pictures (media refs); the first goes to H3 Reference
+    loras: list[dict[str, Any]] = Field(default_factory=list, max_length=8)  # [{name, strength}] for H3
+    notes: str = Field("", max_length=2000)
+
+
+def _v2_objects() -> list[dict[str, Any]]:
+    try:
+        return json.loads(V2_OBJECTS.read_text("utf-8")).get("objects", [])
+    except (OSError, ValueError):
+        return []
+
+
+def _v2_objects_write(items: list[dict[str, Any]]) -> None:
+    V2_OBJECTS.parent.mkdir(parents=True, exist_ok=True)
+    tmp = V2_OBJECTS.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"objects": items}, ensure_ascii=False, indent=1), "utf-8")
+    tmp.replace(V2_OBJECTS)
+
+
+@app.get("/api/v2/objects")
+async def v2_objects_list():
+    return {"objects": _v2_objects()}
+
+
+@app.put("/api/v2/objects/{obj_id}")
+async def v2_objects_put(obj_id: str, req: V2Object):
+    if req.id != obj_id:
+        raise HTTPException(400, "The id doesn't match")
+    for ref in req.pictures:
+        try:
+            if media.kind_of(ref) != "image" or not media_path(ref).is_file():
+                raise HTTPException(400, f"Not a picture: {ref}")
+        except (media.MediaError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+    item = {**req.model_dump(), "updated": time.time()}
+    items = [o for o in _v2_objects() if o.get("id") != obj_id]
+    old = next((o for o in _v2_objects() if o.get("id") == obj_id), None)
+    item["created"] = (old or {}).get("created", item["updated"])
+    items.append(item)
+    _v2_objects_write(items)
+    return item
+
+
+@app.delete("/api/v2/objects/{obj_id}")
+async def v2_objects_delete(obj_id: str):
+    items = _v2_objects()
+    keep = [o for o in items if o.get("id") != obj_id]
+    if len(keep) == len(items):
+        raise HTTPException(404, "No such object")
+    _v2_objects_write(keep)
     return {"ok": True}
 
 
