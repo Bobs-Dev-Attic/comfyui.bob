@@ -5,6 +5,19 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.110.0] - 2026-11-19
+
+### Added
+- **Roll for the shot camera.** Its gimbal has a third, smaller ring about the way the camera looks, and the floating
+  box has **Roll** next to Pan and Tilt, in degrees (+ leans the top of the frame to the right, up to ±180). Ctrl snaps
+  it to 5°. Roll is keyed with the camera like the rest, so rolling between keys makes a Dutch-angle move. The view
+  through the camera, its drawn frame, 🎬 Render and 📷 Generate photo all follow it. A roll alone counts as a camera move.
+- Stepping outside the camera (orbiting, panning or zooming after 👁 Look through it) gives a level view at the scene's
+  lens, not the camera's roll and zoom.
+
+### Fixed
+- Dragging the camera's gimbal between keys could lose a keyed lens (the new key took the scene's lens).
+
 ## [0.109.0] - 2026-11-19
 
 ### Added
