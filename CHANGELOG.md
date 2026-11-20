@@ -5,6 +5,16 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.114.0] - 2026-11-19
+
+### Added
+- **Depth of field blur in the view.** With an aperture set on the shot camera, what it sees is blurred by its depth of
+  field: in the view while you look through the camera, and in the 📺 corner preview from outside. It follows the focus
+  distance (rack focus too), lens and aperture as you scrub or play, computed per pixel from the scene's depth (a thin
+  lens). A sharp subject keeps clean edges against a blurred background.
+  - View › **Depth of field blur** turns it off. Renders, photos and what H3 follows stay sharp: H3 and the photo are
+    told the depth of field instead. 💾 Save view saves the view as drawn, blur included.
+
 ## [0.113.0] - 2026-11-19
 
 ### Fixed
