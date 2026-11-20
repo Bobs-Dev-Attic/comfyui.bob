@@ -5,6 +5,20 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.130.0] - 2026-11-20
+
+### Added
+- **V2: edit objects' keys on the timeline.** Under 🎥 Camera, each object in the open shot has a row (↳ its name),
+  with its keys (◆) where they fall in the shot and a line where it moves:
+  - **Drag a key** to retime it, snapped to frames. The object keeps its place, turn and size at that key, now at the
+    new time.
+  - **Click** the row or a key to select the object and go to that moment.
+  - **Double-click** the row to key the object there, where it is (so a move starts or ends there). Then move, turn or
+    size it with its gizmo or its details.
+  - **Right-click a key** to go to it or delete it (with two keys left, deleting one leaves the object still).
+    Right-click the row to key it there or open its details.
+  - Each edit is saved, and ↶ Undo in the scene takes it back.
+
 ## [0.129.0] - 2026-11-20
 
 ### Added

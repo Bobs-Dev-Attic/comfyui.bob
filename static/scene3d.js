@@ -3671,7 +3671,32 @@ const Scene3D = (() => {
     },
     EASES: Object.fromEntries(Object.entries(EASES).map(([k, v]) => [k, v.label])),
   };
-  return { mount, autoRender, current, addFromLibrary, camEdit, select: i => s?.bg && select(i), selectCam: () => s?.bg && selectCam(),
+  /* An object's keys, edited from V2's timeline the same way (i: the object's index). A key keeps the object's place,
+     turn and size at its time; moving one keeps it, at the new time. */
+  const objEdit = {
+    add(i, t) {  // a key where the object is at t (it doesn't move it; the key is there to change)
+      const o = s?.bg && s.objs[i]; if (!o?.mesh || !o.pos) return false;
+      select(i); toFrame(t * FPS);
+      if (!o.keys?.length) o.keys = [{ t: 0, ...baseOf(o) }];
+      if (!o.keys.some(q => near(q.t, s.t))) { const p = poseAt(o, s.t); o.keys.push({ t: s.t, pos: p.pos.slice(), yaw: p.yaw, pitch: p.pitch || 0, roll: p.roll || 0, scale: p.scale, ...(p.pose ? { pose: p.pose } : {}) }); o.keys.sort((a, b) => a.t - b.t); }
+      fromFirstKey(o); save(); renderSide(); s.dirty = true; return true;
+    },
+    move(i, k, t) {
+      const o = s?.bg && s.objs[i], q = o?.keys?.[k]; if (!q) return false;
+      t = Math.max(0, Math.min(dur(), Math.round(t * FPS) / FPS));
+      if (o.keys.some((x, j) => j !== k && near(x.t, t))) { Media.toast(`${o.name} has a key at that frame already.`); return false; }
+      q.t = t; o.keys.sort((a, b) => a.t - b.t); fromFirstKey(o);
+      save(); setTime(s.t); renderSide(); s.dirty = true; return true;
+    },
+    remove(i, k) {
+      const o = s?.bg && s.objs[i]; if (!o?.keys?.[k]) return false;
+      o.keys.splice(k, 1);
+      if (o.keys.length) fromFirstKey(o);
+      if (o.keys.length < 2) o.keys = [];  // one key left is just its place
+      save(); setTime(s.t); renderSide(); s.dirty = true; return true;
+    },
+  };
+  return { mount, autoRender, current, addFromLibrary, camEdit, objEdit, select: i => s?.bg && select(i), selectCam: () => s?.bg && selectCam(),
     rename: (i, name) => { const o = s?.objs[i]; if (!o || !String(name || "").trim()) return; o.name = String(name).trim().slice(0, 120); save(); renderSide(); }, CAM_MOVES, applyCameraMove, cameraOut, applySavedCamera, renderForShot, photoForShot, fromTemplate, setTemplate, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
     _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _fill: (P, look, say) => fillGaps(P, look, say), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
 })();

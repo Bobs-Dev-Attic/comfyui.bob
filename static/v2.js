@@ -197,7 +197,7 @@ const V2 = (() => {
       }
       st.names = names;
       placePlayhead();
-      const sig = JSON.stringify([c.id, c.objs.map(o => [o.name, !!o.picture, o.lib, o.keys?.length || 0, o.hidden]), c.camKeys.map(k => [k.t, k.ease || "", k.lens || 0]), c.seconds]);
+      const sig = JSON.stringify([c.id, c.objs.map(o => [o.name, !!o.picture, o.lib, (o.keys || []).map(k => k.t), o.hidden]), c.camKeys.map(k => [k.t, k.ease || "", k.lens || 0]), c.seconds, c.sel]);
       if (sig === lastSig) return;
       lastSig = sig;
       const sc = st.scenes.get(c.id); if (sc) Object.assign(sc, { seconds: c.seconds, camera_keys: c.camKeys, objects: c.objs.map(o => ({ name: o.name, picture: o.picture, lib: o.lib, keys: o.keys, hidden: o.hidden, mesh: !!o.mesh })) });
@@ -787,6 +787,7 @@ const V2 = (() => {
     box.innerHTML = !shots.length ? `<p class="hint v2-tlnone">Shots line up here in order, with their camera, sound and music.</p>` : `
       <div class="v2-trow v2-ruler"><span class="v2-tlab"></span><div class="v2-lane">${ticks.join("")}</div></div>
       <div class="v2-trow v2-tcam"><span class="v2-tlab" title="Each shot's camera keys">🎥 Camera</span><div class="v2-lane">${cam}</div></div>
+      ${objRows(L, x, w)}
       <div class="v2-trow v2-tvid"><span class="v2-tlab" title="The shots, in order; drag one to move it">🎞 Video</span><div class="v2-lane">${vid}</div></div>
       <div class="v2-trow v2-tsnd"><span class="v2-tlab" title="Each shot's dialogue and background sound">🗣 Sound</span><div class="v2-lane">${snd}</div></div>
       <div class="v2-trow v2-tmus"><span class="v2-tlab" title="One piece of music under every shot">🎵 Music</span><div class="v2-lane">${mus}</div></div>
@@ -794,6 +795,20 @@ const V2 = (() => {
     placePlayhead();
   }
   const openOf = s => Scene3D.current()?.id === s.scene;
+  // The open shot's objects, a row each: their keys (where each was keyed) inside the shot, a line where it moves.
+  function objRows(L, x, w) {
+    const c = Scene3D.current(), at = L.find(q => q.s.scene === c?.id); if (!c || !at) return "";
+    const { s, start, p } = at;
+    return c.objs.map((o, i) => [o, i]).filter(([o]) => o.mesh && o.pos && !o.hidden).map(([o, i]) => {
+      const K = o.keys || [], inside = K.filter(k => k.t >= p.a - 1e-3 && k.t <= p.b + 1e-3);
+      const moves = K.length > 1;
+      return `<div class="v2-trow v2-tobj${i === c.sel ? " sel" : ""}"><span class="v2-tlab" title="${esc(o.name)}: ${K.length ? `${K.length} keys` : "where it stands (no keys)"}">↳ ${esc(o.name)}</span><div class="v2-lane">
+          <div class="v2-objseg" data-obj="${i}" data-shot="${esc(s.id)}" style="left:${x(start)};width:${w(p.d)}" title="${esc(o.name)}: double-click to key it here; right-click for more">
+            ${moves && inside.length > 1 ? `<i class="v2-objline" style="left:${x(inside[0].t - p.a)};width:${w(inside.at(-1).t - inside[0].t)}"></i>` : ""}
+            ${inside.map(k => `<b class="v2-okey" data-o="${i}" data-k="${K.indexOf(k)}" style="left:${x(k.t - p.a)}" title="${k.t.toFixed(2)} s · frame ${Math.round(k.t * 24)}\nDrag to retime · right-click for more">◆</b>`).join("")}
+            ${!K.length ? `<span class="v2-camtxt">no keys: it stays where it is</span>` : ""}</div></div></div>`;
+    }).join("");
+  }
   // The playhead: the open shot's time, where that shot sits on the timeline.
   function placePlayhead() {
     const ph = $("v2-playhead"), c = Scene3D.current(); if (!ph) return;
@@ -812,6 +827,53 @@ const V2 = (() => {
   async function openAt(L) { if (!openOf(L.s)) { await openShot(L.s.id); for (let k = 0; k < 40 && !openOf(L.s); k++) await new Promise(r => setTimeout(r, 100)); } }
   // The camera layer: drag a key to retime it, click it to go there, double-click to add one, right-click for more.
   function wireCamLayer(tr) {
+    tr.addEventListener("pointerdown", e => {
+      const ok = e.target.closest(".v2-okey"); if (!ok || e.button !== 0) return;
+      const at = st.layout.find(q => openOf(q.s)), c = Scene3D.current(); if (!at || !c) return;
+      e.preventDefault(); e.stopPropagation();
+      const i = +ok.dataset.o, k = +ok.dataset.k, t0 = c.objs[i]?.keys?.[k]?.t ?? 0, x0 = e.clientX, L = at;
+      let t = t0, moved = false;
+      ok.setPointerCapture(e.pointerId); ok.classList.add("drag");
+      const mv = ev => {
+        const dx = ev.clientX - x0; if (Math.abs(dx) > 3) moved = true;
+        t = Math.max(L.p.a, Math.min(L.p.b, Math.round((t0 + dx / st.pps) * 24) / 24));
+        ok.style.left = `${((t - L.p.a) * st.pps).toFixed(1)}px`; ok.title = `${t.toFixed(2)} s · frame ${Math.round(t * 24)}`;
+      };
+      const up = () => {
+        ok.removeEventListener("pointermove", mv); ok.removeEventListener("pointerup", up); ok.classList.remove("drag");
+        if (moved && Math.abs(t - t0) > 1e-3) Scene3D.objEdit.move(i, k, t);
+        Scene3D.select(i); Scene3D.camEdit.seek(moved ? t : t0);
+        renderTimeline();
+      };
+      ok.addEventListener("pointermove", mv); ok.addEventListener("pointerup", up);
+    });
+    tr.addEventListener("dblclick", e => {
+      const seg = e.target.closest("[data-obj]"); if (!seg || e.target.closest(".v2-okey")) return;
+      const at = timeAt(e.clientX); if (!at || !openOf(at.L.s)) return;
+      if (Scene3D.objEdit.add(+seg.dataset.obj, at.t)) Media.toast(`Key at ${at.t.toFixed(2)} s: move, turn or size it there (its gizmo or details) to make it move.`);
+      renderTimeline();
+    });
+    tr.addEventListener("contextmenu", e => {
+      const seg = e.target.closest("[data-obj]"); if (!seg) return;
+      e.preventDefault(); e.stopPropagation();
+      const at = timeAt(e.clientX); if (!at || !openOf(at.L.s)) return;
+      const i = +seg.dataset.obj, ok = e.target.closest(".v2-okey"), o = Scene3D.current().objs[i];
+      if (ok) {
+        const k = +ok.dataset.k, q = o.keys[k];
+        return Media.menu(e.clientX, e.clientY, [
+          [`◆ Go to this key (${q.t.toFixed(2)} s)`, () => { Scene3D.select(i); Scene3D.camEdit.seek(q.t); }],
+          [`🗑 Delete this key${o.keys.length <= 2 ? ` (${o.name} then stays still)` : ""}`, () => { Scene3D.objEdit.remove(i, k); renderTimeline(); }],
+        ]);
+      }
+      Media.menu(e.clientX, e.clientY, [
+        [`◆ Key ${o.name} here (${at.t.toFixed(2)} s)`, () => { Scene3D.objEdit.add(i, at.t); renderTimeline(); }],
+        [`🧱 ${o.name}'s details`, () => { Scene3D.select(i); Scene3D.camEdit.seek(at.t); }],
+      ]);
+    });
+    tr.addEventListener("click", e => {
+      const seg = e.target.closest("[data-obj]"); if (!seg || e.target.closest(".v2-okey")) return;
+      const at = timeAt(e.clientX); if (at && openOf(at.L.s)) { Scene3D.select(+seg.dataset.obj); Scene3D.camEdit.seek(at.t); }
+    });
     tr.addEventListener("pointerdown", e => {
       const key = e.target.closest(".v2-key"); if (!key || e.button !== 0) return;
       const seg = key.closest("[data-cam]"), s = shotOf(seg.dataset.cam); if (!s) return;
