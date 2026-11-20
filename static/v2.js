@@ -1224,5 +1224,7 @@ const V2 = (() => {
   }
   // What happens in the shot that has this scene (the builder's Render window starts from it)
   const shotWhat = sceneId => String(st.board.shots.find(x => x.scene === sceneId)?.action || "").trim();
-  return { init, decide, generate, onSubmit, shotWhat, _st: st };
+  // ...and its setting (the photo's look starts from it, as Generate uses it)
+  const shotSetting = sceneId => String(st.board.shots.find(x => x.scene === sceneId)?.setting || "").trim();
+  return { init, decide, generate, onSubmit, shotWhat, shotSetting, _st: st };
 })();

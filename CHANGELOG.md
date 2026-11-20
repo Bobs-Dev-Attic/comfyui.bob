@@ -5,6 +5,13 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.134.2] - 2026-11-20
+
+### Fixed
+- **In V2, the photo's look starts from the shot's setting.** In Generate photo, Quick photo and Render video (the
+  new or quick photo of the first frame), "How the photo should look" is filled in from the open shot's setting, as
+  V2's Generate already uses it. Without a setting it's the last look you wrote, as before. It's still yours to edit.
+
 ## [0.134.1] - 2026-11-20
 
 ### Fixed
