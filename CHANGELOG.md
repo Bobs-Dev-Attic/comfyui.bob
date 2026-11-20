@@ -5,6 +5,25 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.134.7] - 2026-11-20
+
+### Fixed
+- **A push in (or a dolly or zoom towards a person) no longer tears them apart** in a 3D scene render from a photo.
+  - The cause: the person in the photo was painted onto their stand-in figure. The figure's shape isn't theirs (hands
+    on hips are wider, a dress is fuller), so close up the photo took the figure's shape. A dress opened up, an arm
+    slid off and the face went blank, and H3 followed it.
+  - Now someone the camera only comes closer to, seen from about the way the photo saw them all through (the view of
+    them turns less than 18°), is painted on a flat card standing at their front, facing the photo's camera.
+  - The card carries exactly what the photo has of them, at any distance, and goes where they go.
+  - For an orbit, which turns the view of them more than that, the stand-in is kept as before.
+- **No more thin horizontal stripes across the frame** in a render from a photo.
+  - The cause: far out, just below the horizon, the ground is seen almost edge on, so one pixel of the photo
+    camera's depth spans metres of it. Thin bands of it then counted as unseen, and became holes in the rough
+    animation and its mask.
+  - Each point is now checked against the farthest of that depth pixel and its neighbours.
+- What the photo has outside a found object's shape, on its stand-in or card, is now left out (what's behind shows),
+  where it used to cover what's behind with a hole.
+
 ## [0.134.6] - 2026-11-20
 
 ### Added
