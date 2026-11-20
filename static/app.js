@@ -1164,7 +1164,7 @@ async function action(a, it) {
   if (a === "reuse") {
     applyParams(it.params); $("#seed").value = it.seed;
     // Video: the result's prompt comes back as a new shot with its own prompt, so the shot list isn't replaced.
-    if (it.params?.kind === "video" && it.params.prompt) { const i = Shots.reuse(it.params.prompt, it.params.seconds); scheduleSave(); showStep("shots"); Shots.openModal(i); return; }
+    if ((it.params?.kind === "video" || it.params?.engine === "h3image") && it.params.prompt) { const i = Shots.reuse(it.params.prompt, it.params.seconds); scheduleSave(); showStep("shots"); Shots.openModal(i); return; }
     scheduleSave(); showStep("prompt"); return;
   }
   if (a === "reroll") return submit({ ...it.params, seed: -1, batch: 1 });

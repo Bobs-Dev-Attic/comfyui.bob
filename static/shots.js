@@ -29,9 +29,16 @@ const Shots = (() => {
     framing: "medium shot", angle: "", setting: "", action: "", position: "", camera: "holds a static shot", dialogue: "", voice: "", speaker: "" });
   const isVideo = () => state.kind === "video";
   const isRef = () => state.engine.video === "h3ref";
+  /* MiniMax H3 Image plans its pictures here too: one picture per shot, from the shot's framing, angle, camera
+     position, place and subject (no length, camera move or spoken line), with the Inputs step's reference pictures
+     as <Picture N>. A shot mapped to a 3D scene is a photo of what the scene's shot camera sees (Scene3D.photoForShot). */
+  const isImg = () => state.kind === "image" && state.engine.image === "h3image";
+  const picRefs = () => isRef() || isImg();  // the shots name the Inputs step's reference pictures as <Picture N>
+  const keyframes = () => isVideo() && !isRef();  // the Inputs step's first and last frame
+  const modeOf = () => isImg() ? "each" : state.shots?.mode;  // pictures: always one per shot
   // A list is usable once ensure() has upgraded it; while a project loads (state.loading) it may still be the old shape.
   const upgraded = () => state.shots?.v === V && Array.isArray(state.shots.list);
-  const on = () => isVideo() && upgraded() && state.shots.list.length > 0;
+  const on = () => (isVideo() || isImg()) && upgraded() && state.shots.list.length > 0;
   const total = () => state.shots.list.reduce((a, s) => a + (+s.seconds || 0), 0);
   const fmtT = t => P()?.fmtTime(t) || t.toFixed(2);
   const clampSec = v => Math.max(1, Math.min(15, Math.round((+v || 1) * 2) / 2));
@@ -84,7 +91,7 @@ const Shots = (() => {
     const text = (prompt ?? document.getElementById("prompt")?.value ?? "").trim();
     if (!sh.list.length) {
       const s = blank(settingsSeconds());
-      if (text && isVideo()) Object.assign(s, { raw: text, rawOn: true, title: "From the Prompt step" });
+      if (text && (isVideo() || isImg())) Object.assign(s, { raw: text, rawOn: true, title: "From the Prompt step" });
       sh.list.push(s);
     }
     checked.add(sh.list);
@@ -297,8 +304,24 @@ const Shots = (() => {
     }).join("\n");
     return `integrated_multimodal_description: ${body}\n\n${audioFields()}`;
   }
+  /* H3 Image: one shot's picture, in the order its guide gives (medium and style, subject, setting, light and camera):
+     the look, the framing and angle, what's there and happening, where, and where the camera stands. */
+  function stillPrompt(i) {
+    const sh = state.shots, H = P(), s0 = sh.list[i];
+    if (s0.rawOn && s0.raw.trim()) return Prompts.final(s0.raw);
+    const s = resolveShots(sh.list)[i];
+    const look = H.sentence(sh.style || "") || "A cinematic still photograph, natural light.";
+    const head = H.shotHead(s.angle, (s.framing || "medium shot").trim()), pos = H.positionText(s.position);
+    return [look, H.sentence(head), H.sentence(s.action), H.sentence(s.setting), pos ? `The camera is ${pos}.` : ""].filter(Boolean).join(" ");
+  }
+  // H3 Image, a shot mapped to a 3D scene: what it says, its place and the look, for the photo of the scene.
+  function stillLook(i) {
+    const s = resolveShots(state.shots.list)[i], raw = s.rawOn && s.raw.trim();
+    return { text: raw ? Prompts.final(s.raw) : s.action, setting: raw ? "" : s.setting, style: state.shots.style || "" };
+  }
   // One shot's own prompt (one video per shot), or the whole multi-shot prompt (only = null).
   function prompt(only = null, withCont = true) {
+    if (isImg()) return only != null ? stillPrompt(only) : state.shots.list.map((_, i) => stillPrompt(i)).join("\n\n");
     const sh = state.shots, H = P();
     const style = H.sentence(sh.style || "") || "Cinematic live-action, natural light.";
     if (only != null) {
@@ -319,11 +342,13 @@ const Shots = (() => {
      moving along their paths (engine "motion": H3 image-to-video with Time-to-Move, app/motion.py). Its own text,
      length and settings still make the video; it doesn't take reference pictures, voices or the last frame of the shot
      before (it starts from its own picture, so it comes after a cut). */
-  const motionOn = i => state.shots?.mode === "each" && !!state.shots.list[i]?.motion && !(state.shots.list[i].rawOn && state.shots.list[i].raw.trim()) && !sceneOn(i);
+  const motionOn = i => !isImg() && state.shots?.mode === "each" && !!state.shots.list[i]?.motion && !(state.shots.list[i].rawOn && state.shots.list[i].raw.trim()) && !sceneOn(i);
   /* A 3D scene's render (one video per shot): the rough animation and its mask were drawn when it was put in the shot,
      so the shot sends them as they are (engine "motion", as the scene's own 🎬 Render does), with the scene's text and
      length; the shot list's sound and music, and the Settings step, still apply. It starts with a cut. */
-  const sceneOn = i => state.shots?.mode === "each" && !!state.shots.list[i]?.scene;
+  const sceneOn = i => !isImg() && state.shots?.mode === "each" && !!state.shots.list[i]?.scene;
+  // H3 Image: a shot mapped to a 3D scene is made as a photo of it.
+  const sceneStill = i => isImg() && !!state.shots.list[i]?.sceneLink && sceneFits();
   const scenePrompt = s => `integrated_multimodal_description: [Shot 1] ${oneLine(s.scene.what) || "The scene comes to life"}. ${s.scene.cam || ""}`.replace(/\.\. /g, ". ").trim()
     + `\n\n${audioFields()}`;
   function motionPictures() {
@@ -395,19 +420,29 @@ const Shots = (() => {
   /* ---------------------------------------------------------------- the step */
   const thumbOf = (s, i) => {
     if (s.scene?.thumb) return s.scene.thumb;
-    if (isRef()) { const k = picsIn(s.rawOn ? s.raw : s.action)[0] ?? 0; return state.refs[k]?.url || s.sceneLink?.thumb || ""; }
+    if (isImg() && s.sceneLink?.thumb) return s.sceneLink.thumb;
+    if (picRefs()) { const k = picsIn(s.rawOn ? s.raw : s.action)[0] ?? 0; return state.refs[k]?.url || s.sceneLink?.thumb || ""; }
     const f = framesOf(i); return (f.first_frame || f.last_frame)?.url || s.sceneLink?.thumb || "";
   };
   function summary(s) {
-    if (s.scene) return `🏞 ${s.scene.name}: ${oneLine(s.scene.what)}`;
+    if (s.scene && !isImg()) return `🏞 ${s.scene.name}: ${oneLine(s.scene.what)}`;
     if (s.rawOn && s.raw.trim()) return s.raw.trim();
     return [s.action, s.setting].map(x => x.trim()).filter(Boolean).join(" · ");
   }
   function render() {
     const box = document.getElementById("shot-list");
     if (!box || state.loading && !upgraded()) return;  // applySettings upgrades it once the prompt is in
-    const sh = ensure();
+    const sh = ensure(), img = isImg();
     $$("#shots-mode button").forEach(b => b.classList.toggle("active", b.dataset.m === sh.mode));
+    // pictures: one per shot, no timeline, sound or lengths
+    document.getElementById("shots-mode").hidden = img;
+    $$(".step[data-step=\"shots\"] .shots-autotl").forEach(l => { if (l.querySelector("#shots-autotl")) l.hidden = img; });
+    const sm = document.getElementById("shots-sound")?.closest(".row2"); if (sm) sm.hidden = img;
+    const am0 = document.getElementById("shots-automatch")?.closest("label"); if (am0) am0.hidden = img;
+    const il = document.getElementById("shots-idea-s")?.closest("label"); if (il) il.hidden = img;
+    const lk = document.querySelector(".shots-look > summary"); if (lk) lk.firstChild.textContent = img ? "Look " : "Look, sound and music ";
+    const ideaTa = document.getElementById("shots-idea");
+    if (ideaTa) ideaTa.placeholder = img ? "A woman walks her dog in a park at sunset: the dog runs off, she laughs, they rest on a bench" : "A woman walks her dog in a park at sunset; the dog runs off and she laughs";
     for (const [id, k] of [["shots-style", "style"], ["shots-sound", "soundscape"], ["shots-music", "music"], ["shots-idea", "idea"]]) {
       const el = document.getElementById(id); if (el && document.activeElement !== el) el.value = sh[k] || "";
     }
@@ -415,28 +450,30 @@ const Shots = (() => {
     const am = document.getElementById("shots-automatch"); if (am) am.checked = sh.autoMatch !== false;
     const atl = document.getElementById("shots-autotl"); if (atl) atl.checked = sh.autoTimeline !== false;
     const cont = document.getElementById("shots-cont");
-    if (cont) { cont.checked = sh.continuity !== false; cont.closest("label").hidden = !(isRef() && sh.mode === "each" && sh.list.length > 1); }
+    if (cont) { cont.checked = sh.continuity !== false; cont.closest("label").hidden = !(isVideo() && isRef() && sh.mode === "each" && sh.list.length > 1); }
     const ideaS = document.getElementById("shots-idea-s"); if (ideaS && document.activeElement !== ideaS) ideaS.value = sh.ideaSeconds || 10;
     renderCreat();
     renderSubjects();
     if (typeof Scene3D !== "undefined") Scene3D.refreshPanel(false);  // the 3D scenes panel (H3, H3 Reference)
     const T = total(), n = sh.list.length;
-    document.getElementById("shots-total").textContent = `${n} shot${n === 1 ? "" : "s"} · ${T.toFixed(1)} s`;
+    document.getElementById("shots-total").textContent = img ? `${n} shot${n === 1 ? "" : "s"} · ${n} picture${n === 1 ? "" : "s"}` : `${n} shot${n === 1 ? "" : "s"} · ${T.toFixed(1)} s`;
     let t = 0;
     box.innerHTML = sh.list.map((s, i) => {
       const t0 = t; t += +s.seconds || 0;
       const thumb = thumbOf(s, i), text = summary(s);
-      const meta = s.scene ? ["3D scene", s.scene.cam?.includes("moves") ? "camera moves" : "static camera"] : s.rawOn && s.raw.trim() ? ["own prompt"] : [s.framing, s.angle, s.camera].filter(Boolean);
-      const badges = [s.scene ? `<span class="sb-badge" title="Renders the 3D scene ${esc(s.scene.name)}">🏞</span>`
+      const meta = sceneStill(i) ? ["3D scene", "photo from its shot camera"] : s.scene && !img ? ["3D scene", s.scene.cam?.includes("moves") ? "camera moves" : "static camera"]
+        : s.rawOn && s.raw.trim() ? ["own prompt"] : [s.framing, s.angle, img ? "" : s.camera].filter(Boolean);
+      const badges = [sceneStill(i) ? `<span class="sb-badge" title="Mapped to the 3D scene ${esc(s.sceneLink.name)}: Generate makes this picture from what its shot camera sees">🏞</span>`
+        : s.scene && !img ? `<span class="sb-badge" title="Renders the 3D scene ${esc(s.scene.name)}">🏞</span>`
         : s.sceneLink && sceneFits() ? `<span class="sb-badge sb-dim" title="Mapped to the 3D scene ${esc(s.sceneLink.name)}: Generate draws it into this shot first">🏞</span>` : "", motionOn(i) ? `<span class="sb-badge" title="Objects in motion: ${esc(s.motion.layers.map(l => l.name).join(", "))}, from ${esc(s.motion.picture.name || "a picture")}">🎬</span>` : "",
-        joins(i) ? `<span class="sb-badge" title="Continues shot ${i} without a cut">↪</span>` : "", s.dialogue.trim() && !s.rawOn ? `<span class="sb-badge" title="${esc(speakerOf(s) ? `${s.speaker} says` : "Spoken line")}: ${esc(s.dialogue)}">🗣</span>` : "",
+        joins(i) ? `<span class="sb-badge" title="Continues shot ${i} without a cut">↪</span>` : "", s.dialogue.trim() && !s.rawOn && !img ? `<span class="sb-badge" title="${esc(speakerOf(s) ? `${s.speaker} says` : "Spoken line")}: ${esc(s.dialogue)}">🗣</span>` : "",
         s.notes.trim() ? `<span class="sb-badge" title="${esc(s.notes)}">📝</span>` : ""].join("");
       return `<div class="shot-block${hasContent(s) ? "" : " sb-blank"}" data-i="${i}" ${n > 1 ? 'draggable="true"' : ""} role="listitem" aria-label="Shot ${i + 1}${s.title ? `: ${esc(s.title)}` : ""}">
         <span class="sb-grip" title="${n > 1 ? "Drag to reorder" : ""}" aria-hidden="true">${n > 1 ? "⠿" : ""}</span>
         <div class="sb-thumb">${thumb ? `<img src="${esc(thumb)}" alt="">` : `<span>${i + 1}</span>`}</div>
         <div class="sb-main" data-shot-act="edit" title="Edit this shot (double-click)">
           <div class="sb-top"><b>Shot ${i + 1}</b>${s.title ? `<span class="sb-title">${esc(s.title)}</span>` : ""}
-            <span class="sb-time">${fmtT(t0)} – ${fmtT(t)} · ${(+s.seconds).toFixed(1)} s</span>${badges}</div>
+            ${img ? "" : `<span class="sb-time">${fmtT(t0)} – ${fmtT(t)} · ${(+s.seconds).toFixed(1)} s</span>`}${badges}</div>
           <div class="sb-meta">${esc(meta.join(" · "))}</div>
           <div class="sb-text">${text ? esc(text) : '<span class="sb-empty">Empty: click to describe it, or write it with ✨</span>'}</div>
         </div>
@@ -444,13 +481,21 @@ const Shots = (() => {
       </div>`;
     }).join("");
     const warn = [];
-    if (sh.mode === "multi" && T > 15) warn.push(`H3 makes up to about 15 s in one video; this is ${T.toFixed(1)} s. Use “One video per shot”, or shorten.`);
-    if (sh.mode === "multi" && n > 6) warn.push("More than 6 shots in one video crowds it; H3 does best with 1–5.");
-    if (sh.mode === "multi" && sh.list.some(s => s.scene)) warn.push("A 3D scene renders only in “One video per shot”: in one multi-shot video its shot has no text.");
-    const unrendered = sceneFits() && sh.mode === "each" ? sh.list.map((s, i) => s.sceneLink && !s.scene ? i + 1 : 0).filter(Boolean) : [];
+    if (!img && sh.mode === "multi" && T > 15) warn.push(`H3 makes up to about 15 s in one video; this is ${T.toFixed(1)} s. Use “One video per shot”, or shorten.`);
+    if (!img && sh.mode === "multi" && n > 6) warn.push("More than 6 shots in one video crowds it; H3 does best with 1–5.");
+    if (!img && sh.mode === "multi" && sh.list.some(s => s.scene)) warn.push("A 3D scene renders only in “One video per shot”: in one multi-shot video its shot has no text.");
+    const unrendered = !img && sceneFits() && sh.mode === "each" ? sh.list.map((s, i) => s.sceneLink && !s.scene ? i + 1 : 0).filter(Boolean) : [];
     if (unrendered.length) warn.push(`Shot${unrendered.length > 1 ? "s" : ""} ${unrendered.join(", ")}: Generate first draws ${unrendered.length > 1 ? "their 3D scenes" : "its 3D scene"} (the camera move, and a photo of the first frame when needed, about a minute), then makes the video from it.`);
-    const empty = sh.list.map((s, i) => hasContent(s) ? 0 : i + 1).filter(Boolean);
+    const empty = sh.list.map((s, i) => hasContent(s) || sceneStill(i) ? 0 : i + 1).filter(Boolean);
     if (empty.length) warn.push(`Shot${empty.length > 1 ? "s" : ""} ${empty.join(", ")} ${empty.length > 1 ? "are" : "is"} empty.`);
+    if (img) {
+      const sc = sh.list.map((_, i) => sceneStill(i) ? i + 1 : 0).filter(Boolean);
+      document.getElementById("shots-hint").innerHTML = `Generate makes <b>${n === 1 ? "one picture" : `${n} pictures`}</b>${n > 1 ? ", one per shot" : " from this shot"}.`
+        + (sc.length ? ` Shot${sc.length > 1 ? "s" : ""} ${sc.join(", ")}: a photo of ${sc.length > 1 ? "their 3D scenes" : "its 3D scene"} from the shot camera, made by the edit model with the shot's text.` : "")
+        + ` ${warn.map(w => `<span class="warn">⚠ ${esc(w)}</span>`).join(" ")}`;
+      document.getElementById("shots-prompt").textContent = previewText();
+      return;
+    }
     document.getElementById("shots-hint").innerHTML = `${sh.mode === "multi"
       ? `Generate makes <b>one ${T.toFixed(1)} s video</b> from these shots.`
       : n > 1 ? `Generate makes <b>${n} videos</b>, one per shot${chainOn() ? ", one after another, each starting from the last frame of the one before" : ""}${sh.autoTimeline !== false ? ", and puts them on the timeline in order" : ""}.` : "Generate makes <b>one video</b> from this shot."}${sh.autoTimeline !== false && (sh.mode === "multi" || n === 1) ? " It goes on the timeline when it's done." : ""} ${warn.map(w => `<span class="warn">⚠ ${esc(w)}</span>`).join(" ")}`;
@@ -508,7 +553,7 @@ const Shots = (() => {
     const n = state.shots.list.length;
     const s = state.shots.list[i];
     const items = [["✎  Edit…", () => openModal(i)],
-      ...(sceneFits() && state.shots.mode === "each" ? s.sceneLink ? [["🏞  Open its 3D scene", () => Scene3D.open(s.sceneLink.id)]]
+      ...(sceneFits() && modeOf() === "each" ? s.sceneLink ? [["🏞  Open its 3D scene", () => Scene3D.open(s.sceneLink.id)]]
         : [["🏞  New 3D scene from this shot", () => newScene(i, shotPictures(i)[0]?.ref || null)]] : []), null,
       ["↑  Move up", () => move(i, i - 1), i === 0], ["↓  Move down", () => move(i, i + 1), i === n - 1], null,
       ["⧉  Duplicate", () => duplicate(i)], ["🗑  Delete", () => remove(i), n <= 1]];
@@ -536,7 +581,7 @@ const Shots = (() => {
   /* ---------------------------------------------------------------- ✨ AI (the prompt writer, /api/prompt/write) */
   function aiBase() {
     const v = id => document.getElementById(id)?.value ?? "";
-    return { kind: "video", engine: state.engine.video, aspect: v("aspect") || "16:9",
+    return { kind: "video", engine: isImg() ? (state.refs.length ? "h3ref" : "h3") : state.engine.video, aspect: v("aspect") || "16:9",
       backend: v("llm-backend") || null, url: v("llm-url").trim() || null, model: v("llm-model") || null,
       voices: isRef() ? state.arefs.length : 0, creativity: state.shots.creativity ?? 50 };
   }
@@ -562,9 +607,9 @@ const Shots = (() => {
     if (speakerOf(s)) idea += `\n\n(The spoken line is said by the person in ${s.speaker}.)`;
     if (prev && hasContent(prev)) idea += `\n\n(For continuity only, don't film it: the shot before this one is ${summary(prev).slice(0, 300)})`;
     const f = framesOf(i);
-    const refs = isRef() ? state.refs.map(r => r.ref) : [];
-    const body = { ...aiBase(), idea, seconds: +s.seconds || 5, shots: 1, dialogue: !!s.dialogue.trim() || wantsLine(brief),
-      first_frame: !isRef() ? f.first_frame?.ref ?? null : null, last_frame: !isRef() ? f.last_frame?.ref ?? null : null,
+    const refs = picRefs() ? state.refs.map(r => r.ref) : [];
+    const body = { ...aiBase(), idea, seconds: +s.seconds || 5, shots: 1, dialogue: !isImg() && (!!s.dialogue.trim() || wantsLine(brief)),
+      first_frame: keyframes() ? f.first_frame?.ref ?? null : null, last_frame: keyframes() ? f.last_frame?.ref ?? null : null,
       references: refs, locked: projectLocks(), draft: enhance ? { ...projectLocks(), shots: [shotFields(s)] } : {} };
     const j = await api("/api/prompt/write", { method: "POST", body: JSON.stringify(body) });
     const got = j.fields?.shots?.[0];
@@ -582,9 +627,9 @@ const Shots = (() => {
     if (!idea) return Media.toast("Write your idea first.");
     if (sh.list.some(hasContent) && !confirm("Replace the shots you have with new ones written from this idea?")) return;
     const seconds = Math.max(2, Math.min(60, +sh.ideaSeconds || 10));
-    const body = { ...aiBase(), idea, seconds: Math.min(15, seconds), shots: sh.ideaShots ? +sh.ideaShots : null, dialogue: wantsLine(idea),
-      first_frame: !isRef() ? state.frames.first_frame?.ref ?? null : null, last_frame: !isRef() ? state.frames.last_frame?.ref ?? null : null,
-      references: isRef() ? state.refs.map(r => r.ref) : [], locked: projectLocks(), draft: {} };
+    const body = { ...aiBase(), idea, seconds: Math.min(15, seconds), shots: sh.ideaShots ? +sh.ideaShots : null, dialogue: !isImg() && wantsLine(idea),
+      first_frame: keyframes() ? state.frames.first_frame?.ref ?? null : null, last_frame: keyframes() ? state.frames.last_frame?.ref ?? null : null,
+      references: picRefs() ? state.refs.map(r => r.ref) : [], locked: projectLocks(), draft: {} };
     if (seconds > 15 && !body.shots) body.shots = Math.max(2, Math.min(6, Math.round(seconds / 3.5)));
     const j = await api("/api/prompt/write", { method: "POST", body: JSON.stringify(body) });
     const shots = j.fields?.shots || [];
@@ -705,7 +750,7 @@ const Shots = (() => {
   function renderModal(focus = false) {
     const sh = state.shots, n = sh.list.length;
     if (modal.i >= n) modal.i = n - 1;
-    const i = modal.i, s = sh.list[i], H = P(), multi = sh.mode === "multi";
+    const i = modal.i, s = sh.list[i], H = P(), multi = modeOf() === "multi", img = isImg();
     const box = modal.root.querySelector(".shot-modal");
     // Keep the focused field, its caret and the scroll position across the rebuild.
     const ae = document.activeElement && box.contains(document.activeElement) ? document.activeElement : null;
@@ -721,7 +766,7 @@ const Shots = (() => {
     const rawOn = s.rawOn, busy = modal.busy;
     // Chips that insert a tag into a field: the reference pictures (hover for the picture) and this prompt's own tags.
     const tagChips = field => {
-      const pics = isRef() ? state.refs.map((r, k) => `<span class="pic-chip">
+      const pics = picRefs() ? state.refs.map((r, k) => `<span class="pic-chip">
           <button type="button" class="chip-btn" data-tag="<Picture ${k + 1}>" data-for="${field}" title="Insert <Picture ${k + 1}>">Picture ${k + 1}</button>
           <span class="pic-pop"><button type="button" data-sm="goto-inputs" title="Open the Inputs step"><img src="${esc(r.url)}" alt="Picture ${k + 1}"><span>Picture ${k + 1} · Inputs ›</span></button></span></span>`) : [];
       const own = Object.keys(state.promptTags || {}).map(k => `<button type="button" class="chip-btn own" data-tag="<${esc(k)}>" data-for="${field}" title="Insert your tag <${esc(k)}>">&lt;${esc(k)}&gt;</button>`);
@@ -735,7 +780,7 @@ const Shots = (() => {
         <h2 id="sm-h">Shot ${i + 1} <small>of ${n}</small></h2>
         <button type="button" class="set-x" data-sm="next" title="Next shot (Alt+→)" ${i < n - 1 ? "" : "disabled"} aria-label="Next shot">›</button>
         <input class="sm-title" data-sf="title" value="${esc(s.title)}" placeholder="Title (optional): Arrival at the door" aria-label="Shot title">
-        <span class="sm-time">${fmtT(t0)} – ${fmtT(t0 + (+s.seconds || 0))}</span>
+        ${img ? "" : `<span class="sm-time">${fmtT(t0)} – ${fmtT(t0 + (+s.seconds || 0))}</span>`}
         <button type="button" class="set-x" data-sm="close" title="Close (Esc)" aria-label="Close">✕</button>
       </header>
       <div class="sm-body">
@@ -755,18 +800,23 @@ const Shots = (() => {
             </div>
           </section>
 
-          ${!multi && !s.scene && sceneFits() ? `<section class="sm-scene"><h3>🏞 3D scene <span class="opt">optional</span></h3>
-            ${s.sceneLink ? `<div class="sm-mo">${s.sceneLink.thumb ? `<img src="${esc(s.sceneLink.thumb)}" alt="">` : `<span class="sm-mo-ph" aria-hidden="true">🏞</span>`}
+          ${!multi && (img || !s.scene) && sceneFits() ? `<section class="sm-scene"><h3>🏞 3D scene <span class="opt">optional</span></h3>
+            ${s.sceneLink && img ? `<div class="sm-mo">${s.sceneLink.thumb ? `<img src="${esc(s.sceneLink.thumb)}" alt="">` : `<span class="sm-mo-ph" aria-hidden="true">🏞</span>`}
+                <div><b>${esc(s.sceneLink.name)}</b>
+                  <div class="sm-mo-acts"><button type="button" class="btn sm" data-sm="link-open" title="Place the objects and the shot camera">🏞 Open the scene</button>
+                  <button type="button" class="btn sm ghost" data-sm="link-off" title="This shot no longer uses the scene (the scene stays)">Unlink</button></div></div></div>
+              <p class="hint">Generate makes this shot's picture from the scene: what its shot camera sees at 0 s, drawn and turned into a photo by the edit model (MiniMax H3 Image when it's there), which keeps where everything is. This shot's text says how it looks; its &lt;Picture N&gt; tags become the objects that have those pictures (a Person without one takes it), and those pictures go along.</p>`
+            : s.sceneLink ? `<div class="sm-mo">${s.sceneLink.thumb ? `<img src="${esc(s.sceneLink.thumb)}" alt="">` : `<span class="sm-mo-ph" aria-hidden="true">🏞</span>`}
                 <div><b>${esc(s.sceneLink.name)}</b> · not rendered in yet
                   <div class="sm-mo-acts"><button type="button" class="btn sm" data-sm="link-open" title="Build the shot in 3D, then 🎬 Render: it goes to this shot">🏞 Open the scene</button>
                   <button type="button" class="btn sm ghost" data-sm="link-off" title="This shot no longer uses the scene (the scene stays)">Unlink</button></div></div></div>
               <p class="hint">Generate draws this scene into the shot first (its camera move, and a photo of its first frame when needed), with this shot's What happens; its &lt;Picture N&gt; tags become the objects that have those pictures (a Person without one takes it). The scene's 🎬 Render does the same with your choices.</p>`
             : `<div class="sm-mo-acts"><button type="button" class="btn sm" data-sm="link-new" title="A 3D scene made from this shot's inputs: its picture, length and text">＋ New scene from this shot…</button>
                 <button type="button" class="btn sm ghost" data-sm="link-pick" title="One of this project's 3D scenes">Use a scene…</button></div>
-              <p class="hint">Stage this shot in 3D. The scene starts from ${shotPictures(i).length ? `this shot's ${esc(shotPictures(i).map(p => p.label.toLowerCase()).join(", "))} (or another Inputs picture, or none)` : "an Inputs picture, or none"}, with this shot's length; its 🎬 Render then goes to this shot.</p>`}
+              <p class="hint">Stage this shot in 3D. The scene starts from ${shotPictures(i).length ? `this shot's ${esc(shotPictures(i).map(p => p.label.toLowerCase()).join(", "))} (or another Inputs picture, or none)` : "an Inputs picture, or none"}${img ? "; Generate then makes this shot's picture from what its shot camera sees." : ", with this shot's length; its 🎬 Render then goes to this shot."}</p>`}
           </section>` : ""}
 
-          ${s.scene ? `<section class="sm-scene"><h3>🏞 3D scene</h3>
+          ${s.scene && !img ? `<section class="sm-scene"><h3>🏞 3D scene</h3>
             <div class="sm-mo"><img src="${esc(s.scene.thumb || "")}" alt="">
               <div><b>${esc(s.scene.name)}</b> · ${(+s.scene.seconds).toFixed(2)} s · ${esc(s.scene.cam || "")}
                 <div class="sm-mo-acts"><button type="button" class="btn sm" data-sm="scene-open" title="Open the scene; 🎬 Render › Goes to this shot again replaces this render">🏞 Open the scene</button>
@@ -776,37 +826,37 @@ const Shots = (() => {
             <p class="hint">${multi ? `<span class="warn">⚠ A 3D scene renders only in “One video per shot”.</span>` : "This shot is the scene's render: its rough animation, mask and first picture as they were when it was put here. The fields below aren't used; its length is the scene's. The shot list's sound, music and the Settings step still apply."}</p>
           </section>` : ""}
 
-          <section${s.scene && !multi ? ' class="sm-dim"' : ""}>
+          <section${s.scene && !multi && !img ? ' class="sm-dim"' : ""}>
             <h3>Shot</h3>
             ${i > 0 && !multi && isRef() ? `<div class="field sm-join"><label for="sm-join">From shot ${i}</label>
               <select id="sm-join" data-sf="join" title="Continue without a cut: H3 carries on from the last moments of shot ${i} (its picture, motion and sound), so the two play as one shot">
                 ${opt("cut", "Cut to a new shot", s.join)}${opt("continue", "Continue without a cut", s.join)}</select></div>` : ""}
             <div class="sm-grid">
-              <div class="field"><label for="sm-sec">Length</label><div class="sm-sec"><input type="number" id="sm-sec" data-sf="seconds" min="1" max="15" step="0.5" value="${s.seconds}"${s.scene ? " disabled title=\"The 3D scene's length\"" : ""}> s</div></div>
+              ${img ? "" : `<div class="field"><label for="sm-sec">Length</label><div class="sm-sec"><input type="number" id="sm-sec" data-sf="seconds" min="1" max="15" step="0.5" value="${s.seconds}"${s.scene ? " disabled title=\"The 3D scene's length\"" : ""}> s</div></div>`}
               <div class="field"><label>Framing</label><select data-sf="framing">${framings.map(f => opt(f, f, s.framing)).join("")}</select></div>
               <div class="field"><label>Angle</label><select data-sf="angle" title="The camera's height and angle">${opt("", "Any", s.angle)}${angles.map(a => opt(a, a, s.angle)).join("")}</select></div>
             </div>
             <div class="row2">
               <div class="field"><label>Camera position <span class="opt">optional</span></label><input data-sf="position" value="${esc(s.position)}" placeholder="behind her at shoulder height" title="Where the camera stands, relative to the subject"></div>
-              <div class="field"><label>Camera move</label><input list="shot-cams" data-sf="camera" value="${esc(s.camera)}" placeholder="holds a static shot"></div>
+              ${img ? "" : `<div class="field"><label>Camera move</label><input list="shot-cams" data-sf="camera" value="${esc(s.camera)}" placeholder="holds a static shot"></div>`}
             </div>
             <div class="field"><label>Where <span class="opt">place and light</span></label><input data-sf="setting" value="${esc(s.setting)}" placeholder="A rain-soaked back alley at night, neon signs further down"></div>
-            <div class="field"><div class="sm-lbl">What happens ${tagChips("action")}</div>
-              <textarea rows="3" data-sf="action" placeholder="${isRef() ? "The woman from <Picture 1> turns around and smiles" : "The woman turns around and smiles"}">${esc(s.action)}</textarea></div>
-            <div class="field"><div class="sm-lbl">Spoken line <span class="opt">optional</span> ${tagChips("dialogue")}</div>
+            <div class="field"><div class="sm-lbl">${img ? "Who and what is there" : "What happens"} ${tagChips("action")}</div>
+              <textarea rows="3" data-sf="action" placeholder="${img ? (state.refs.length ? "The woman from <Picture 1> in a red coat, laughing, her dog at her feet" : "A woman in a red coat, laughing, her dog at her feet") : isRef() ? "The woman from <Picture 1> turns around and smiles" : "The woman turns around and smiles"}">${esc(s.action)}</textarea></div>
+            ${img ? "" : `<div class="field"><div class="sm-lbl">Spoken line <span class="opt">optional</span> ${tagChips("dialogue")}</div>
               <textarea rows="3" data-sf="dialogue" placeholder="See you tomorrow.">${esc(s.dialogue)}</textarea></div>
             <div class="sm-say">
                 ${isRef() ? `<div class="field"><label>Speaker</label><select data-sf="speaker" title="Which reference picture's person says the line" ${state.refs.length ? "" : "disabled"}>${opt("", "Anyone", s.speaker)}${state.refs.map((_, k) => opt(`<Picture ${k + 1}>`, `<Picture ${k + 1}>`, s.speaker)).join("")}</select></div>` : ""}
                 <div class="field"><label>Voice</label><select data-sf="voice" ${voices.length ? "" : "disabled title='Add reference sounds on the Inputs step to choose a voice'"}>${opt("", speakerVoice ? `Speaker's · ${speakerVoice}` : "Any", s.voice)}${voices.map(v => opt(v, v, s.voice)).join("")}</select></div>
-            </div>
-            <p class="hint sm-syntax">In Where, What happens and Spoken line: your tags (＋ Tag),
+            </div>`}
+            <p class="hint sm-syntax">In Where, ${img ? "Who and what is there" : "What happens and Spoken line"}: your tags (＋ Tag),
               <code>{a|b}</code> choices, <code>&lt;list&gt;</code> and <code>&lt;maybe&gt;</code> are filled in when the prompt is built; the preview shows one roll.</p>
             <label class="sm-check"><input type="checkbox" data-sf="rawOn"${rawOn ? " checked" : ""}> Write the prompt myself <span class="opt">this shot sends the text below instead of the fields above</span></label>
             ${rawOn ? `<div class="field"><textarea rows="6" data-sf="raw" class="sm-raw" placeholder="The whole prompt for this shot, in H3's format">${esc(s.raw)}</textarea>
-              <p class="hint">${multi ? `In one multi-shot video this text becomes Shot ${i + 1}'s description.` : "Tags like <Picture 1> and {a|b} choices work as on the Prompt step."}</p></div>` : ""}
+              <p class="hint">${multi ? `In one multi-shot video this text becomes Shot ${i + 1}'s description.` : "Tags like <Picture 1> and {a|b} choices work as on the Prompt step."}${img && s.sceneLink ? " With a 3D scene, this text says how the photo of it looks." : ""}</p></div>` : ""}
           </section>
 
-          ${!multi && !s.scene ? (() => {
+          ${!multi && !s.scene && !img ? (() => {
             const mo = s.motion, pics = motionPictures(), holdName = { loose: "loosely", normal: "normally", tight: "tightly" };
             return `<section class="sm-motion"><h3>Objects in motion <span class="opt">optional</span></h3>
             ${mo ? `<div class="sm-mo"><img src="${esc(mo.picture.url)}" alt="">
@@ -827,7 +877,7 @@ const Shots = (() => {
           </section>
         </div>
         <aside class="sm-side">
-          <div class="label-row"><h3>Prompt ${multi ? "<span class=\"opt\">the whole multi-shot video</span>" : "<span class=\"opt\">this shot's video</span>"}</h3>
+          <div class="label-row"><h3>Prompt ${multi ? "<span class=\"opt\">the whole multi-shot video</span>" : img ? `<span class="opt">${sceneStill(i) ? "how the photo of its 3D scene looks" : "this shot's picture"}</span>` : "<span class=\"opt\">this shot's video</span>"}</h3>
             <span class="sm-side-acts"><button type="button" class="link" data-sm="rebuild" title="Read every field again and rebuild the prompt">↻ Rebuild</button>
             <button type="button" class="link" data-sm="copy" title="Copy the prompt">Copy</button></span></div>
           <pre class="sm-prompt">${esc(preview)}</pre>
@@ -853,7 +903,7 @@ const Shots = (() => {
   }
   function refreshPreview() {
     if (!modal) return;
-    const multi = state.shots.mode === "multi", text = multi ? prompt() : prompt(modal.i);
+    const multi = modeOf() === "multi", text = multi ? prompt() : prompt(modal.i);
     const pre = modal.root.querySelector(".sm-prompt");
     if (pre && pre.textContent !== text) {
       pre.textContent = text;
@@ -1079,11 +1129,12 @@ const Shots = (() => {
   async function generateRun(base) {
     const sh = ensure(), isR = base.engine === "h3ref", err = document.getElementById("form-error");
     err.textContent = "";
-    const empty = sh.list.findIndex(s => !hasContent(s));
+    const empty = sh.list.findIndex((s, i) => !hasContent(s) && !sceneStill(i));
     if (empty >= 0) {
       err.textContent = `Shot ${empty + 1} is empty: describe it (Shots step › Edit), or write it with ✨.`;
       Media.toast(err.textContent); showStep("shots"); return;
     }
+    if (isImg()) return generateStills(base, sh);
     if (isR && missingSubjects().length) {  // the prompt defines every subject: have the vision model write the missing ones
       try { await describeMissing(k => Media.toast(`Defining <Picture ${k + 1}> for the prompt…`)); base = { ...base }; }
       catch (e) { Media.toast(`Couldn't define the subjects (${e.message}); generating without them.`); }
@@ -1170,6 +1221,33 @@ const Shots = (() => {
     if (autoTl) { pending.set(ids[0], { ids, project: state.project?.id ?? "experiment", place: true }); savePending(); }
     renderGallery(); renderQueue(); select(ids[0]);
     Media.toast(autoTl ? `${ids.length} shots queued: they go on the timeline in order when all are done.` : `${ids.length} shots queued.`);
+  }
+  /* H3 Image: one picture per shot (a single shot keeps its takes). A shot mapped to a 3D scene is a photo of what its
+     shot camera sees, made by the edit model with the shot's text (Scene3D.photoForShot); the others are H3 Image
+     from their prompt and the Inputs step's reference pictures, all with one seed so they look alike. */
+  async function generateStills(base, sh) {
+    const err = document.getElementById("form-error"), n = sh.list.length, ids = [];
+    if (n > 1 && !(+base.seed >= 0)) base = { ...base, seed: Math.floor(Math.random() * 2 ** 31) };
+    for (let i = 0; i < n; i++) {
+      const s = sh.list[i];
+      try {
+        if (sceneStill(i)) {
+          Media.toast(`Shot ${i + 1}: drawing its 3D scene from the shot camera…`);
+          const it = await Scene3D.photoForShot(s.sceneLink.id, stillLook(i),
+            m => { err.textContent = `Shot ${i + 1}, 3D scene: ${m}`; });
+          err.textContent = "";
+          ids.push(it.id); continue;
+        }
+        const req = { ...base, prompt: prompt(i), ...(n > 1 ? { batch: 1 } : {}) };
+        if (n === 1) return await submit(req);
+        const { items } = await api("/api/generate", { method: "POST", body: JSON.stringify(req) });
+        for (const it of items) { state.items.set(it.id, it); Activity.onEvent({ type: "item", item: it }); }
+        ids.push(items[0].id);
+      } catch (e) { err.textContent = `Shot ${i + 1}: ${e.message}`; Media.toast(err.textContent); break; }
+    }
+    if (!ids.length) return;
+    renderGallery(); renderQueue(); select(ids[0]);
+    if (n > 1) Media.toast(`${ids.length} picture${ids.length === 1 ? "" : "s"} queued, one per shot.`);
   }
   // Called for every studio item update: when a whole batch is done, lay it out on the timeline.
   const FINAL = ["done", "failed", "cancelled"];
@@ -1262,6 +1340,9 @@ const Shots = (() => {
   // Exactly what Generate sends: the multi-shot prompt, or each shot's own prompt.
   function previewText() {
     const sh = state.shots;
+    if (isImg()) return sh.list.length === 1 && !sceneStill(0) ? prompt(0) : sh.list.map((_, i) =>
+      sceneStill(i) ? `── Shot ${i + 1} · 🏞 a photo of the 3D scene ${sh.list[i].sceneLink.name} from its shot camera; how it looks ──\n${(l => [l.text, l.setting, l.style].map(x => String(x || "").trim()).filter(Boolean).join(". ") || "(as the scene is)")(stillLook(i))}`
+        : `── Shot ${i + 1} ──\n${prompt(i)}`).join("\n\n");
     if (sh.mode !== "multi" && sh.list.length === 1 && (sceneOn(0) || motionOn(0))) return prompt(0);  // as Generate sends it
     return sh.mode === "multi" || sh.list.length === 1 ? prompt() : sh.list.map((_, i) =>
       `── Shot ${i + 1}${sceneOn(i) ? ` · 🏞 the 3D scene ${state.shots.list[i].scene.name}` : ""}${motionOn(i) ? ` · 🎬 objects in motion, from ${state.shots.list[i].motion.picture.name || "a picture"}` : ""}${joins(i) ? ` · continues shot ${i} without a cut` : ""}${carries(i) ? ` · ${joins(i) ? "its" : `carries on from shot ${i}'s`} last frame is sent as <Picture ${contPic()}>` : ""} ──\n${prompt(i)}`).join("\n\n");
@@ -1269,11 +1350,12 @@ const Shots = (() => {
   function describe() {
     if (!upgraded()) return { text: "", first: "", empty: 0, prompt: "", missing: 0 };
     const sh = state.shots, n = sh.list.length, T = total();
-    const empty = sh.list.filter(s => !hasContent(s)).length;
+    const empty = sh.list.filter((s, i) => !hasContent(s) && !sceneStill(i)).length;
+    if (isImg()) return { text: `${n} shot${n === 1 ? "" : "s"} · ${n === 1 ? "one picture" : `${n} pictures, one per shot`}`, first: summary(sh.list[0]), empty, prompt: previewText(), missing: 0 };
     return { text: `${n} shot${n === 1 ? "" : "s"} · ${T.toFixed(1)} s · ${sh.mode === "multi" ? "one multi-shot video" : n > 1 ? "one video per shot" : "one video"}`,
       first: summary(sh.list[0]), empty, prompt: previewText(), missing: missingSubjects().length };
   }
-  const ready = () => on() && state.shots.list.some(hasContent);
+  const ready = () => on() && state.shots.list.some((s, i) => hasContent(s) || sceneStill(i));
   // Reuse on a video result: its prompt as a shot with its own prompt (fills an empty single shot, else is added).
   /* A 3D scene's render, put in a shot (scene3d.js): `at` is a shot index, or -1 for a new shot (it fills an empty
      single shot). Returns the shot's index. */
@@ -1297,11 +1379,11 @@ const Shots = (() => {
      or ends on and the reference pictures its text names; a scene made from it starts from one of those (in depth) or
      from nothing, takes its length (and, empty, the project's picture shape), and is linked to it, so the scene's
      🎬 Render goes to this shot with its text. */
-  const sceneFits = () => isVideo() && ["h3", "h3ref"].includes(state.engine.video);
+  const sceneFits = () => (isVideo() && ["h3", "h3ref"].includes(state.engine.video)) || isImg();
   function shotPictures(i) {
     const s = state.shots.list[i], f = framesOf(i), out = [];
     const add = (r, label) => { if (r?.ref && r.url && !out.some(p => p.ref === r.ref)) out.push({ ref: r.ref, url: r.url, label, name: r.ref.split("/").pop().replace(/\.[^.]+$/, "") }); };
-    add(f.first_frame, "First frame"); add(f.last_frame, "Last frame");
+    if (!isImg()) { add(f.first_frame, "First frame"); add(f.last_frame, "Last frame"); }  // pictures have no keyframes
     for (const k of picsIn(s.rawOn ? s.raw : s.action)) add(state.refs[k], `Picture ${k + 1}`);
     return out;
   }
@@ -1336,7 +1418,7 @@ const Shots = (() => {
     return { i, label: `Shot ${i + 1}${s.title ? `: ${s.title}` : ""}`, action: s.rawOn ? "" : s.action || "" };
   }
   // The shots a scene's render can go to (for its Render window).
-  const targets = () => on() ? state.shots.list.map((s, i) => ({ i, label: `Shot ${i + 1}${s.title ? `: ${s.title}` : ""}${s.scene ? " (its 3D scene)" : hasContent(s) ? "" : " (empty)"}` })) : [];
+  const targets = () => on() && !isImg() ? state.shots.list.map((s, i) => ({ i, label: `Shot ${i + 1}${s.title ? `: ${s.title}` : ""}${s.scene ? " (its 3D scene)" : hasContent(s) ? "" : " (empty)"}` })) : [];
   function reuse(text, seconds) {
     const sh = ensure(), only = sh.list.length === 1 && !hasContent(sh.list[0]);
     const s = { ...blank(clampSec(seconds || settingsSeconds())), raw: text, rawOn: true, title: "Reused from a result" };
@@ -1345,5 +1427,6 @@ const Shots = (() => {
     return only ? 0 : sh.list.length - 1;
   }
 
-  return { init, render, renderBanner, prompt, previewText, on, ready, generate, onItem, resume, ensure, describe, openModal, reuse, describeMissing, placeWhenDone, useScene, targets, shotOfScene, linkScene, unlinkScene, sceneFits };
+  const each = () => on() && modeOf() === "each";  // shots map to 3D scenes one by one
+  return { init, render, renderBanner, prompt, previewText, on, ready, each, isImage: isImg, generate, onItem, resume, ensure, describe, openModal, reuse, describeMissing, placeWhenDone, useScene, targets, shotOfScene, linkScene, unlinkScene, sceneFits };
 })();

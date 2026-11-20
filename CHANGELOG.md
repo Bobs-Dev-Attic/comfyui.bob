@@ -5,6 +5,29 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.118.0] - 2026-11-20
+
+### Added
+- **MiniMax H3 Image has the Inputs and Shots steps**, with 3D scenes, as H3 video has. The Shots step takes the place
+  of the Prompt step, and Generate makes one picture per shot.
+  - **Inputs** holds its reference pictures (1 to 9), called `<Picture 1>`, `<Picture 2>`… in the shots.
+  - **A shot** has a framing, an angle, a camera position, where it is (place and light), and who and what is there.
+    Its prompt follows H3 Image's order: the look, the framing, the subject, the place, the camera. Length, camera
+    move, spoken line, sound and music are left out, since a picture has none. "Write the prompt myself" works as
+    for video, and ✨ Write and 🪄 Enhance write the fields (with the reference pictures in view).
+  - **Several shots** make one picture each, with one seed so they look alike. A single shot keeps its takes.
+  - **A shot mapped to a 3D scene** (＋ New scene from this shot, Use a scene…, or the 🏞 3D scenes panel) becomes a
+    photo of that scene: what its shot camera sees at 0 s, turned into a photograph by the edit model (MiniMax H3
+    Image when it's there). It keeps where everything is, and the shot's text and the look say how it looks. Its
+    `<Picture N>` tags become the objects that have those pictures (a Person without one takes it), and those
+    pictures go along.
+  - Reuse on an H3 Image result brings its prompt back as a shot.
+- **MOSS Edit has the Inputs step** for its pictures (the photo to edit, then up to 3 references).
+
+### Fixed
+- H3 Image's and MOSS Edit's pictures were on the Inputs step, which only showed for video, so there was no step to
+  add them on.
+
 ## [0.117.0] - 2026-11-19
 
 ### Added
