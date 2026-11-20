@@ -5,6 +5,15 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.119.1] - 2026-11-20
+
+### Fixed
+- **A big camera move from a photo no longer leaves black where the photo couldn't see** (3D scene render, H3). In a
+  360° orbit, half of every frame is behind what the photo shows. Those gaps were filled from a blur of the photo,
+  which ran out and went black, and H3 kept the black. In an empty scene, the gaps now show the scene's own sky and
+  floor under the photo, so H3 carries the place on round the back. In a scene from a picture, a gap bigger than the
+  blur takes the picture's average colour instead of black.
+
 ## [0.119.0] - 2026-11-20
 
 ### Added

@@ -1369,8 +1369,17 @@ const Scene3D = (() => {
       levels.push(c); prev = c;
     }
     let base = levels.at(-1) || mk(1, 1);
-    const g0 = base.getContext("2d", { willReadFrequently: true }), d = g0.getImageData(0, 0, base.width, base.height);
-    for (let i = 3; i < d.data.length; i += 4) d.data[i] = 255;  // the tiniest level, opaque: average colours
+    const g0 = base.getContext("2d", { willReadFrequently: true }), d = g0.getImageData(0, 0, base.width, base.height), D = d.data;
+    // the tiniest level, opaque: each cell its average colour; a cell with nothing in it (a hole bigger than the cell,
+    // as half the frame is in a 360° orbit) takes the average of the whole picture, not black
+    let r = 0, gg = 0, b = 0, a = 0;
+    for (let i = 0; i < D.length; i += 4) { const w = D[i + 3]; r += D[i] * w; gg += D[i + 1] * w; b += D[i + 2] * w; a += w; }
+    const avg = a ? [r / a, gg / a, b / a] : [128, 128, 128];
+    for (let i = 0; i < D.length; i += 4) {
+      const k = D[i + 3] / 255;  // the colours are unpremultiplied: blend what's there with the average by its cover
+      for (let j = 0; j < 3; j++) D[i + j] = D[i + j] * k + avg[j] * (1 - k);
+      D[i + 3] = 255;
+    }
     g0.putImageData(d, 0, 0);
     for (let i = levels.length - 2; i >= -1; i--) {
       const top = i >= 0 ? levels[i] : src, tw = i >= 0 ? top.width : W, th = i >= 0 ? top.height : H;
@@ -1394,7 +1403,16 @@ const Scene3D = (() => {
         // into them (H3 kept that as a glow round a person): the background drawn without the objects, its holes
         // filled, then the whole frame drawn over it.
         draw({ size, t, cam: camForRender(t), proj, skip: s.objs });
-        out = fillHoles(s.cv, size[0], size[1]);
+        if (proj && s.bg.empty) {
+          // an empty scene: what the photo never saw is the scene's own sky and floor (its colours), under the photo, so H3
+          // carries the place on round the back of a turn (a blur of the photo's edges went dark over half a 360° orbit)
+          out = Object.assign(document.createElement("canvas"), { width: size[0], height: size[1] });
+          const og = out.getContext("2d"), photo = Object.assign(document.createElement("canvas"), { width: size[0], height: size[1] });
+          photo.getContext("2d").drawImage(s.cv, 0, 0, size[0], size[1]);
+          draw({ size, t, cam: camForRender(t), skip: s.objs });
+          og.drawImage(s.cv, 0, 0, size[0], size[1]);
+          og.drawImage(photo, 0, 0);
+        } else out = fillHoles(s.cv, size[0], size[1]);
         draw({ size, t, cam: camForRender(t), proj });
         out.getContext("2d").drawImage(s.cv, 0, 0, size[0], size[1]);
       }
