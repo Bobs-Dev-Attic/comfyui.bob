@@ -354,6 +354,7 @@ Other features:
   dolly zoom, follow…) and the cameras you save from shots.
   Shots have dialogue lines (an object with a voice in the library speaks with it) and background sound, and a
   Music 3 soundtrack can run under the whole timeline.
+  Shots are trimmed and joined with cuts or transitions, and ⬇ Export makes them one video with the soundtrack.
 - **3D scene templates**: ☆ Save as template keeps a scene (its set, objects, camera path, length and effects) to
   start new scenes from, in any project (⭐ From a template…; `POST /api/scenes/{id}/copy`).
 - **MiniMax H3 Image, shot by shot**: its reference pictures on the Inputs step, and its pictures planned on the Shots

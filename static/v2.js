@@ -20,6 +20,10 @@
    piece of music for all of it (MiniMax Music 3, as long as the shots together); while it's on, the shots are made
    without their own music.
 
+   Export: each shot can be trimmed (start and end in its video) and join the next with a cut or a transition;
+   ⬇ Export renders the shots' latest videos as one, in order, with the soundtrack under them (/api/v2/export,
+   rendered as the classic timeline is). It shows up as a studio result.
+
    The page uses the studio's API as the classic page does (projects, scenes, items), and gives the scene builder the
    few globals it expects from that page (state, api, esc, mediaUrl, submit, and Shots, which V2 replaces). A project's
    V2 shots are kept by the studio in data/v2/<project>.json (/api/v2/board). */
@@ -277,8 +281,69 @@ const V2 = (() => {
     for (const s of st.board.shots.slice()) await generate(s.id);
   }
 
+  /* ---- the timeline: each shot's piece of its video, and how it joins the next */
+  const num = (v, d = null) => v === "" || v == null || !isFinite(+v) ? d : +v;
+  // its video's length (the latest result when there is one, else the scene's), and the part used
+  function pieceOf(s) {
+    const it = latest(s), len = num(it?.status === "done" ? it.params?.seconds : null, decide(s).info.seconds);
+    const a = Math.max(0, Math.min(num(s.trim_in, 0), len - 0.2)), b = Math.max(a + 0.2, Math.min(num(s.trim_out, len), len));
+    return { len, a, b, d: b - a };
+  }
+  const joinOf = (s, i, list) => i < list.length - 1 && s.transition && s.transition !== "cut"
+    ? Math.min(num(s.tlen, 0.5), pieceOf(s).d / 2, pieceOf(list[i + 1]).d / 2) : 0;
+  const totalSeconds = () => { const L = st.board.shots; return L.reduce((a, s, i) => a + pieceOf(s).d - joinOf(s, i, L), 0); };
+
+  /* ---- export: the shots as one video, with the soundtrack under them */
+  function exportDialog() {
+    const L = st.board.shots, rows = L.map((s, i) => ({ s, i, it: latest(s), f: fileOf(latest(s)) }));
+    const missing = rows.filter(r => !r.f);
+    const t = st.board.settings.soundtrack, mit = t?.result && state.items.get(t.result), mf = t?.on && mit?.status === "done" ? mit.files?.[0] : null;
+    const ex = { name: `${state.project?.name || "Experiment"} · V2`, music: 0.6, shots: 1, format: "mp4-h264", ...(st.board.settings.export || {}) };
+    const box = document.createElement("div");
+    box.className = "v2-ed";
+    box.innerHTML = `<p class="hint">The shots' latest videos, in order, trimmed and joined as set under each shot's “On the timeline”, ${totalSeconds().toFixed(1)} s.</p>
+      <ul class="v2-exl">${rows.map(r => `<li>${r.f ? "✓" : "⚠"} ${r.i + 1}. ${esc(r.s.name)} <span class="hint">${r.f ? `${pieceOf(r.s).d.toFixed(1)} s${r.s.transition && r.s.transition !== "cut" && r.i < L.length - 1 ? ` · ${esc(document.querySelector(`#v2-trans option[value="${r.s.transition}"]`)?.textContent || r.s.transition)}` : ""}`
+        : r.it ? esc(r.it.status) : "not made yet"}</span></li>`).join("")}</ul>
+      ${missing.length ? `<p class="warn">${missing.length === L.length ? "No shot has a video yet: Generate them first." : `${missing.length} shot${missing.length === 1 ? " has" : "s have"} no video yet and ${missing.length === 1 ? "is" : "are"} left out.`}</p>` : ""}
+      <div class="field"><label for="ve-name">Name</label><input id="ve-xname" maxlength="100" value="${esc(ex.name)}"></div>
+      <label class="check"><input type="checkbox" id="ve-xmusic"${mf ? " checked" : " disabled"}> The soundtrack under the shots ${mf ? "" : `<span class="opt">${t?.style ? "not made yet, or off" : "none: 🎵 Soundtrack makes one"}</span>`}</label>
+      <div class="row2"><div class="field"><label for="ve-xmv">Soundtrack level</label><input type="range" id="ve-xmv" min="0" max="1.5" step="0.05" value="${ex.music}"></div>
+        <div class="field"><label for="ve-xsv">The shots' own sound</label><input type="range" id="ve-xsv" min="0" max="1.5" step="0.05" value="${ex.shots}"></div></div>
+      <div class="field"><label for="ve-xfmt">Format</label><select id="ve-xfmt"><option value="mp4-h264">MP4 · H.264 (plays everywhere)</option><option value="mp4-h265">MP4 · H.265 (smaller)</option>
+        <option value="webm-vp9">WebM · VP9 (web)</option><option value="mov-prores">MOV · ProRes 422 HQ (editing)</option></select></div>`;
+    box.querySelector("#ve-xfmt").value = ex.format;
+    const foot = document.createElement("div");
+    foot.className = "wm-foot-row";
+    foot.innerHTML = `<span class="grow"></span><button type="button" class="btn ghost" data-a="close">Cancel</button>
+      <button type="button" class="btn primary" data-a="go"${missing.length === L.length ? " disabled" : ""}>⬇ Export</button>`;
+    const win = WM.open({ id: "v2-export", title: "Export", content: box, footer: foot, width: 520, height: 560, modal: true });
+    foot.querySelector('[data-a="close"]').onclick = () => win.close();
+    foot.querySelector('[data-a="go"]').onclick = async e => {
+      const o = { name: box.querySelector("#ve-xname").value.trim() || "V2 export", music: +box.querySelector("#ve-xmv").value, shots: +box.querySelector("#ve-xsv").value, format: box.querySelector("#ve-xfmt").value };
+      st.board.settings.export = o; save();
+      const use = rows.filter(r => r.f);
+      const clips = use.map((r, k) => { const p = pieceOf(r.s); return { ref: r.f.path, name: r.s.name, trim_in: p.a, trim_out: p.b,
+        transition: k < use.length - 1 ? r.s.transition || "cut" : "cut", tlen: Math.max(0.1, Math.min(3, num(r.s.tlen, 0.5))) }; });
+      e.target.disabled = true;
+      try {
+        const it = await api("/api/v2/export", { method: "POST", body: JSON.stringify({ project: state.project?.id ?? null, name: o.name, clips,
+          music: box.querySelector("#ve-xmusic").checked && mf ? mf.path : null, music_volume: o.music, shots_volume: o.shots, format: o.format }) });
+        state.items.set(it.id, it);
+        st.board.settings.lastExport = it.id; save(); renderExport();
+        win.close();
+        Media.toast("Exporting: it shows in the timeline bar, and in the classic page's gallery, when it's done.");
+      } catch (err) { e.target.disabled = false; Media.toast(`Export: ${err.message}`); }
+    };
+  }
+  function renderExport() {
+    const it = st.board.settings.lastExport && state.items.get(st.board.settings.lastExport), el = $("v2-exportst");
+    if (!it) { el.innerHTML = ""; return; }
+    const f = it.status === "done" ? it.files?.[0] : null;
+    el.innerHTML = f ? `Exported: <a href="${esc(f.url)}" target="_blank" rel="noopener">▶ ${esc(f.name || "the video")}</a>`
+      : it.status === "failed" ? `<span class="warn">Export failed: ${esc(it.error || "")}</span>` : `Exporting… ${Math.round((it.progress || 0) * 100)}%`;
+  }
+
   /* ---- the soundtrack: one piece of music for the whole timeline (MiniMax Music 3) */
-  const totalSeconds = () => st.board.shots.reduce((a, s) => a + decide(s).info.seconds, 0);
   function soundtrackDialog() {
     const t = { on: true, style: "", lyrics: "", ...(st.board.settings.soundtrack || {}) }, T = totalSeconds();
     const it = t.result && state.items.get(t.result), f = it?.status === "done" ? it.files?.[0] : null;
@@ -495,12 +560,13 @@ const V2 = (() => {
     }).join("");
   }
   function renderTimeline() {
-    const tr = $("v2-tltrack"), shots = st.board.shots, secs = shots.map(s => decide(s).info.seconds), T = secs.reduce((a, b) => a + b, 0);
+    const tr = $("v2-tltrack"), shots = st.board.shots, secs = shots.map(s => pieceOf(s).d), T = totalSeconds();
     $("v2-total").textContent = shots.length ? `${shots.length} shot${shots.length === 1 ? "" : "s"} · ${T.toFixed(1)} s` : "";
     tr.innerHTML = shots.map((s, i) => {
       const it = latest(s);
       return `<div class="v2-clip${s.id === st.sel ? " sel" : ""}${it?.status === "done" ? " done" : ""}" draggable="true" data-id="${esc(s.id)}" style="flex:${secs[i]} 1 0" title="${esc(s.name)} · ${secs[i].toFixed(1)} s">
-        <b>${i + 1}</b> ${esc(s.name)} <span>${secs[i].toFixed(1)} s ${badge(it)}</span></div>`;
+        <b>${i + 1}</b> ${esc(s.name)} <span>${secs[i].toFixed(1)} s ${badge(it)}</span></div>`
+        + (joinOf(s, i, shots) ? `<span class="v2-join" title="${esc(document.querySelector(`#v2-trans option[value="${s.transition}"]`)?.textContent || s.transition)}, ${joinOf(s, i, shots).toFixed(1)} s">⧖</span>` : "");
     }).join("");
   }
   function renderPanel(keepFocus = false) {
@@ -509,8 +575,10 @@ const V2 = (() => {
     $("v2-shot-title").textContent = s ? s.name : "Shot";
     if (!s) return;
     const d = decide(s);
-    for (const [id, k] of [["v2-name", "name"], ["v2-setting", "setting"], ["v2-action", "action"], ["v2-sound", "sound"], ["v2-music", "music"], ["v2-quality", "quality"]]) {
-      const el = $(id); if (!(keepFocus && document.activeElement === el)) el.value = s[k] ?? (k === "quality" ? "standard" : "");
+    const DEF = { quality: "standard", transition: "cut" };
+    for (const [id, k] of [["v2-name", "name"], ["v2-setting", "setting"], ["v2-action", "action"], ["v2-sound", "sound"], ["v2-music", "music"], ["v2-quality", "quality"],
+      ["v2-tin", "trim_in"], ["v2-tout", "trim_out"], ["v2-trans", "transition"], ["v2-tlen", "tlen"]]) {
+      const el = $(id); if (!(keepFocus && document.activeElement === el)) el.value = s[k] ?? DEF[k] ?? "";
     }
     const names = d.info.names;
     $("v2-tags").innerHTML = names.map(n => `<button type="button" class="chip-btn" data-tag="${esc(n)}" title="Put {${esc(n)}} in">${esc(n)}</button>`).join("");
@@ -541,7 +609,7 @@ const V2 = (() => {
         <button type="button" class="v2-x" data-lrm="${k}" aria-label="Remove line ${k + 1}" title="Remove this line">✕</button></div>`;
     }).join("");
   }
-  function renderAll() { renderShots(); renderTimeline(); renderPanel(true); renderSoundtrack(); }
+  function renderAll() { renderShots(); renderTimeline(); renderPanel(true); renderSoundtrack(); renderExport(); }
 
   /* ---- wiring */
   function wire() {
@@ -587,7 +655,9 @@ const V2 = (() => {
       const b = e.target.closest(".v2-shot"); if (b) openShot(b.dataset.id);
     });
     $("v2-shotlist").addEventListener("keydown", e => { const b = e.target.closest(".v2-shot"); if (b && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openShot(b.dataset.id); } });
-    const fields = [["v2-name", "name"], ["v2-setting", "setting"], ["v2-action", "action"], ["v2-sound", "sound"], ["v2-music", "music"], ["v2-quality", "quality"]];
+    const fields = [["v2-name", "name"], ["v2-setting", "setting"], ["v2-action", "action"], ["v2-sound", "sound"], ["v2-music", "music"], ["v2-quality", "quality"],
+      ["v2-tin", "trim_in"], ["v2-tout", "trim_out"], ["v2-trans", "transition"], ["v2-tlen", "tlen"]];
+    $("v2-export").onclick = exportDialog;
     // the dialogue lines
     $("v2-addline").onclick = () => { const s = cur(); if (!s) return; linesOf(s).push({ speaker: "", text: "" }); save(); $("v2-lines").dataset.shot = ""; renderPanel(true); $("v2-lines").querySelector(`[data-ltx="${s.lines.length - 1}"]`)?.focus(); };
     $("v2-lines").addEventListener("input", e => { const s = cur(), k = e.target.dataset.ltx; if (s && k != null) { linesOf(s)[+k].text = e.target.value; save(); renderPanel(true); } });
@@ -596,9 +666,10 @@ const V2 = (() => {
     // the soundtrack
     $("v2-music-btn").onclick = soundtrackDialog;
     $("v2-tlmusic").addEventListener("click", e => { if (e.target.closest('[data-a="music"]')) soundtrackDialog(); });
-    for (const [id, k] of fields) $(id).addEventListener(id === "v2-quality" ? "change" : "input", e => {
+    for (const [id, k] of fields) $(id).addEventListener(id === "v2-quality" || id === "v2-trans" ? "change" : "input", e => {
       const s = cur(); if (!s) return;
       s[k] = e.target.value; save();
+      if (["trim_in", "trim_out", "transition", "tlen"].includes(k)) renderTimeline();
       if (k === "name") { renderShots(); renderTimeline(); $("v2-shot-title").textContent = s.name; }
     });
     $("v2-tags").addEventListener("click", e => {
@@ -631,6 +702,7 @@ const V2 = (() => {
       const prev = state.items.get(ev.item.id);
       state.items.set(ev.item.id, ev.item);
       Scene3D.onItem?.(ev.item);
+      if (ev.item.id === st.board.settings.lastExport) renderExport();
       if ((st.board.shots.some(s => s.results?.includes(ev.item.id)) || st.board.settings.soundtrack?.result === ev.item.id) && prev?.status !== ev.item.status) renderAll();
     };
   }

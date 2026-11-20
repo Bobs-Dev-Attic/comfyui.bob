@@ -86,6 +86,14 @@ body.v2 { height: 100vh; overflow: hidden; display: grid; grid-template-rows: au
 .v2-main { grid-template-rows: minmax(0, 1fr) auto; }
 .v2-tltrack { min-height: 54px; }
 
+/* the timeline: trims, transitions, export */
+.v2-tlset { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+.v2-tlset > summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.v2-tlset[open] > summary { margin-bottom: 6px; }
+.v2-join { align-self: center; flex: none; width: 18px; text-align: center; color: var(--accent); font-size: 13px; margin: 0 -6px; z-index: 1; }
+.v2-exl { margin: 0; padding-left: 4px; list-style: none; display: grid; gap: 2px; font-size: 13px; max-height: 160px; overflow: auto; }
+#v2-exportst a { color: var(--accent); }
+
 /* the object editor */
 .v2-ed { display: grid; gap: 10px; padding: 4px 2px; }
 .v2-ed .field { display: grid; gap: 4px; margin: 0; }

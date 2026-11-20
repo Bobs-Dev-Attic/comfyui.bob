@@ -1554,6 +1554,72 @@ async def timeline_render(req: RenderReq):
         raise HTTPException(400, str(exc)) from exc
 
 
+# ------------------------------------------------------------------ V2: export the shots as one video
+class V2ExportClip(BaseModel):
+    ref: str = Field(..., max_length=2000)  # the shot's video (a media ref)
+    name: str = Field("", max_length=120)
+    trim_in: float = Field(0, ge=0)
+    trim_out: float | None = Field(None, gt=0)  # none: to its end
+    transition: str = Field("cut", max_length=20)  # into the next shot: "cut" or one of projectfile.TRANSITIONS
+    tlen: float = Field(0.5, ge=0.1, le=3)
+
+
+class V2Export(BaseModel):
+    project: str | None = Field(None, max_length=200)
+    name: str = Field("V2 export", max_length=120)
+    clips: list[V2ExportClip] = Field(..., min_length=1, max_length=200)
+    music: str | None = Field(None, max_length=2000)  # the soundtrack (a media ref), under every shot
+    music_volume: float = Field(0.6, ge=0, le=2)
+    shots_volume: float = Field(1.0, ge=0, le=2)
+    format: str = "mp4-h264"
+    quality: Literal["high", "medium", "small"] = "high"
+
+
+@app.post("/api/v2/export")
+async def v2_export(req: V2Export):
+    """V2's timeline as one video: the shots in order, trimmed, joined by cuts or transitions (an overlap), their
+    own sound at shots_volume and the soundtrack under them at music_volume, faded out at the end. It's rendered
+    as the classic timeline is (app/render.py) and shows up as a studio result."""
+    from .projectfile import TRANSITIONS, Clip, Timeline, Track, Transition
+
+    def length(ref: str) -> float:
+        info = _project_call(media.probe, ref)
+        if not info.get("duration"):
+            raise HTTPException(400, f"Not a video with a length: {ref}")
+        return float(info["duration"])
+
+    V, A = Track(kind="video", name="Shots"), Track(kind="audio", name="Soundtrack")
+    tl = Timeline(tracks=[V, A], link_audio=False)
+    t = 0.0
+    prev: Clip | None = None
+    for k, c in enumerate(req.clips):
+        dur = await asyncio.to_thread(length, c.ref)
+        a = min(c.trim_in, max(0.0, dur - 0.2))
+        b = min(c.trim_out or dur, dur)
+        if b - a < 0.2:
+            raise HTTPException(400, f"Shot {k + 1} is trimmed to nothing")
+        clip = Clip(track=V.id, ref=c.ref, kind="video", name=c.name or f"Shot {k + 1}", start=0, trim_in=a, trim_out=b,
+                    source_duration=dur, volume=req.shots_volume)
+        if prev is not None:
+            tr = req.clips[k - 1].transition
+            overlap = min(req.clips[k - 1].tlen, (prev.trim_out - prev.trim_in) / 2, (b - a) / 2) if tr in TRANSITIONS else 0.0
+            clip.start = max(0.0, t - overlap)
+            if overlap > 0:
+                tl.transitions.append(Transition(track=V.id, a=prev.id, b=clip.id, type=tr))
+        tl.clips.append(clip)
+        t = clip.end
+        prev = clip
+    if req.music:
+        mdur = await asyncio.to_thread(length, req.music)
+        tl.clips.append(Clip(track=A.id, ref=req.music, kind="audio", name="Soundtrack", start=0, trim_in=0, trim_out=min(mdur, t),
+                             source_duration=mdur, volume=req.music_volume, fade_out=min(1.5, t / 4)))
+    try:
+        return await render.render(jobs, req.project or None, tl, name=req.name,
+                                   opts={"format": req.format, "quality": req.quality, "filename": re.sub(r"\s+", " ", re.sub(r"[^\w .-]+", " - ", req.name)).strip(" -")[:80]})
+    except (ValueError, media.MediaError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 class DepthReq(BaseModel):
     project: str = "experiment"
     clip: str = Field(..., max_length=64)
