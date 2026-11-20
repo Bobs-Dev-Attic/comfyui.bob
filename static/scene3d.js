@@ -1724,7 +1724,7 @@ const Scene3D = (() => {
         say(qk ? "Making a quick photo of the first frame (keep the scene open)…" : "Making the photo of the first frame (about a minute; keep the scene open)…");
         const A = s.bg.aspect, PW = Math.round((A >= 1 ? Lg : Lg * A) / 8) * 8, PH = Math.round(PW / A / 8) * 8;
         const model = qk && editModels().some(m => m[0] === "qwen") ? "qwen" : editModels()[0][0];
-        const photo = await makePhoto([PW, PH], 0, camForRender(0), o.look || "", model, o.refs, false, true, qk ? 0.4 : null);
+        const photo = await makePhoto([PW, PH], 0, camForRender(0), o.look || "", model, o.refs, false, true, qk ? 0.4 : null, null, o.extra?.loras);
         const it = await waitItem(photo.id);
         photoPath = (it.files || []).find(f => /^image\//.test(f.content_type || ""))?.path || it.files?.[0]?.path;
         if (it.status !== "done" || !photoPath) throw new Error("The photo didn't come out");
@@ -3304,7 +3304,7 @@ const Scene3D = (() => {
   // A photo of the scene at time t through `cam` (queued with the edit model); it's remembered on the scene.
   // `megapixels`: the size the edit model makes it at (the render's shape); else its own, at the render's size.
   // `prompt0`: the prompt as reviewed (and maybe edited) in the photo window, used as it is.
-  async function makePhoto(size, t, cam, look, model, usePics = false, useDepth = false, dof = false, megapixels = null, prompt0 = null) {
+  async function makePhoto(size, t, cam, look, model, usePics = false, useDepth = false, dof = false, megapixels = null, prompt0 = null, loras = null) {
     if (dof && fstop()) look = [look, dofLine(false, t)].filter(Boolean).join(" ");
     // the depth map, drawn through the same camera at the same size, so it lines up with the render
     let depthRef = null;
@@ -3321,6 +3321,7 @@ const Scene3D = (() => {
     const refs = [depthRef, ...pics.map(o => o.picture)].filter(Boolean);
     const items = await submit({ kind: "image", engine: "imgedit", edit_op: "instruct", source: ref, prompt, edit_model: model,
       ...(refs.length ? { references: refs } : {}), ...(megapixels ? { edit_megapixels: megapixels } : {}),
+      ...(loras?.length ? { loras: loras.map(l => ({ name: l.name, strength: l.strength })) } : {}),  // V2's shot: its objects' LoRAs
       seed: -1, batch: 1, project: s.sc.project });
     if (!items?.length) throw new Error("The edit model didn't take it (the reason is on the Generate step)");
     s.photos.push({ id: items[0].id, t, cam: camOf(cam) });
@@ -3339,6 +3340,7 @@ const Scene3D = (() => {
     if (!s?.bg) return;
     const quick = !!o.quick;
     const models = editModels();
+    const v2Loras = v2Extra()?.loras || [], useLoras = () => !!document.querySelector("#s3p-loras")?.checked;  // V2's shot
     if (!models.length) return Media.toast("Generate photo needs an edit model: Qwen Image Edit 2511 or MiniMax H3 Image.");
     const pc = shotView(), keep = startLook(), inView = cast(s.t, pc).filter(x => !x.off);
     const box = document.createElement("div");
@@ -3353,6 +3355,7 @@ const Scene3D = (() => {
       <div class="field"><label for="s3p-model">Model</label><select id="s3p-model">${models.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></div>
       <label class="check s3p-depthf" title="Sends a depth map of the view along (Qwen only): it holds the layout and shapes when the look changes a lot, e.g. a whole new setting or style"><input type="checkbox" id="s3p-depth"${lastDepth() ? " checked" : ""}> Use the depth map <span class="opt">keeps the layout in a big restyle</span></label>
       ${cast(s.t, pc).some(x => !x.off && x.o.picture) ? `<label class="check"><input type="checkbox" id="s3p-pics" checked> Use the objects' pictures</label>` : ""}
+      ${v2Loras.length ? `<label class="check"><input type="checkbox" id="s3p-loras" checked> Use the objects' LoRAs <span class="opt">${v2Loras.length} from the shot's library objects</span></label>` : ""}
       <section class="s3p-set" aria-label="Model settings"><h4>Model settings</h4><dl class="s3p-dl"></dl><div class="s3p-pics"></div></section>
       <div class="field"><div class="s3p-ph"><label for="s3p-prompt">The prompt <span class="opt">the whole of it, as the model gets it; edit it if you like</span></label>
         <button type="button" class="link" data-a="rebuild" title="Build the prompt again from the settings above">↻ Rebuild</button></div>
@@ -3385,6 +3388,7 @@ const Scene3D = (() => {
       box.querySelector(".s3p-dl").innerHTML = [
         ["Model", EDIT_NAMES[m] || m], ["Sampling", `${R.steps || "its own"} · ${R.cfg || ""}`],
         ["Works at", `${mp || R.mp || 1} MP${quick ? " (quick)" : ""}`], ["Picture", `${out} px, the scene's shape`],
+        ...(useLoras() ? [["LoRAs", v2Loras.map(l => `${l.name.split(/[\\/]/).pop().replace(/\.safetensors$/i, "")} (${l.strength})`).join(", ")]] : []),
         ["Seed", "a new one each time"], ["Camera", `${s.camObj ? "the shot camera" : "the view"} at ${s.t.toFixed(2)} s${dof && fstop() ? `, f/${fstop()}` : ""}`],
       ].map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
       box.querySelector(".s3p-pics").innerHTML = `<span class="s3p-pic"><span class="s3p-pic0">🖼</span><b>${esc(tag(1))}</b> the render${plan.paste.length ? `, with ${esc(plan.paste.map(o => o.name).join(" and "))} pasted in` : ""}</span>`
@@ -3415,7 +3419,7 @@ const Scene3D = (() => {
       try {
         st.textContent = "Drawing the view and sending it to the edit model…";
         try { localStorage.setItem("bob.scenePhotoDepth", box.querySelector("#s3p-depth")?.checked ? "1" : "0"); } catch { /* not kept */ }
-        await makePhoto([W, H], s.t, pc, look, model(), usePics(), useDepth(), dof, quick ? 0.4 : null, edited ? box.querySelector("#s3p-prompt").value : null);
+        await makePhoto([W, H], s.t, pc, look, model(), usePics(), useDepth(), dof, quick ? 0.4 : null, edited ? box.querySelector("#s3p-prompt").value : null, useLoras() ? v2Loras : null);
         win.close();
         Media.toast("3D scene: the photo is being made. It shows up in the gallery.");
       } catch (err) { st.textContent = ""; e.target.disabled = false; Media.toast(`Photo: ${err.message}`); }

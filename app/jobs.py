@@ -729,6 +729,7 @@ class JobManager:
                 seed=seed, steps=req.steps, background=req.edit_bg, bg_model=(files or {}).get("bg_model"), edit_model=req.edit_model, prefix=prefix,
                 references=len(req.references) if req.edit_op == "instruct" else 0,
                 megapixels=req.edit_megapixels if req.edit_op == "instruct" else None,
+                loras=[(lu.name, lu.strength) for lu in req.loras] if req.edit_op == "instruct" else None,
             )
         if req.engine == "klein":
             mp = workflows.KLEIN_QUALITY.get(req.quality, 1.0)

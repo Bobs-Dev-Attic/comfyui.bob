@@ -1322,10 +1322,10 @@ EDIT_MEGAPIXELS = {"qwen": 1.0, "h3image": 4.0, "mossedit": 1.0}
 
 
 def _edit_model(g: Graph, which: str, files: dict, ref: Any, text: Any, *, seed: int, steps: int | None,
-                extra: list | None = None) -> tuple[list, dict]:
+                extra: list | None = None, loras: list[tuple[str, float]] | None = None) -> tuple[list, dict]:
     """An instruction edit of one picture (``ref``, a node) with the chosen model -> (decoded image output, info).
-    ``extra``: more pictures (nodes) the instruction can point at as Picture 2... The result's size is the model's
-    own; callers scale it back."""
+    ``extra``: more pictures (nodes) the instruction can point at as Picture 2... ``loras``: the user's LoRAs (name,
+    strength), after the model's own LoRAs. The result's size is the model's own; callers scale it back."""
     o = Graph.out
     extra = list(extra or [])
     if len(extra) > EDIT_EXTRA_REFS[which]:
@@ -1337,6 +1337,7 @@ def _edit_model(g: Graph, which: str, files: dict, ref: Any, text: Any, *, seed:
         clip = g.add("CLIPLoader", clip_name=files["clip"], type="moss_image", device="default")
         vae = g.add("VAELoader", vae_name=files["vae"])
         model = g.add("LoraLoaderModelOnly", model=o(unet), lora_name=files["edit_lora"], strength_model=1.0)
+        model = chain_loras(g, model, loras)
         model = g.add("SkipLayerGuidanceDiTSimple", model=o(model), double_layers="", single_layers="22",
                       start_percent=0.0, end_percent=1.0)
         pics = {"images.image_0": o(ref), **{f"images.image_{i + 1}": o(x) for i, x in enumerate(extra)}}
@@ -1360,7 +1361,8 @@ def _edit_model(g: Graph, which: str, files: dict, ref: Any, text: Any, *, seed:
                      **{"images.image_1": o(ref)}, **{f"images.image_{i + 2}": o(x) for i, x in enumerate(extra)})
         neg = g.add("ConditioningZeroOut", conditioning=o(cond, 0))
         n_steps = 6
-        sampled = g.add("KSampler", model=o(unet), positive=o(cond, 0), negative=o(neg), latent_image=o(cond, 1),
+        model = chain_loras(g, unet, loras)
+        sampled = g.add("KSampler", model=o(model), positive=o(cond, 0), negative=o(neg), latent_image=o(cond, 1),
                         seed=int(seed), steps=n_steps, cfg=1.0, sampler_name="euler", scheduler="simple", denoise=1.0)
         return o(g.add("VAEDecode", samples=o(sampled), vae=o(vae))), {"model": EDIT_MODELS["h3image"], "steps": n_steps}
     unet = g.add("UNETLoader", unet_name=files["unet"], weight_dtype="default")
@@ -1370,6 +1372,7 @@ def _edit_model(g: Graph, which: str, files: dict, ref: Any, text: Any, *, seed:
     model = unet
     if fast:
         model = g.add("LoraLoaderModelOnly", model=o(model), lora_name=files["lightning_lora"], strength_model=1.0)
+    model = chain_loras(g, model, loras)
     model = g.add("ModelSamplingAuraFlow", model=o(model), shift=3.1)
     model = g.add("CFGNorm", model=o(model), strength=1.0)
     more = {f"image{i + 2}": o(x) for i, x in enumerate(extra)}
@@ -1398,6 +1401,7 @@ def build_imgedit(
     prefix: str = "bob/edit",
     references: int = 0,
     megapixels: float | None = None,
+    loras: list[tuple[str, float]] | None = None,
 ) -> Built:
     """One AI edit of a picture. image_inputs: source; edit_mask for the selection ops; and
     edit_rect (the selection's bounding rectangle, made by jobs) for replace.
@@ -1451,7 +1455,9 @@ def build_imgedit(
             load = g.add("LoadImage", image="")
             inputs[f"ref_{i}"] = load
             extra.append(g.add("ImageScaleToTotalPixels", image=o(load), upscale_method="lanczos", megapixels=1.0, resolution_steps=32))
-        decoded, model_info = _edit_model(g, edit_model, files, ref, prompt.strip(), seed=seed, steps=steps, extra=extra)
+        decoded, model_info = _edit_model(g, edit_model, files, ref, prompt.strip(), seed=seed, steps=steps, extra=extra, loras=loras)
+        if loras:
+            model_info["loras"] = len([1 for _, k in loras if abs(float(k)) >= 1e-6])
         if references:
             model_info["references"] = references
         if megapixels:
