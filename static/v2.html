@@ -80,6 +80,15 @@
           <p class="hint" id="v2-musichint" hidden>The soundtrack plays over every shot, so the shots are made without their own music.</p></div>
         <div class="row2"><div class="field"><label for="v2-quality">Quality</label><select id="v2-quality"><option value="draft">Draft</option><option value="standard" selected>Standard</option><option value="full">Full</option></select></div>
           <div class="field"><label>Length</label><div class="v2-len" id="v2-len">–</div></div></div>
+        <details class="v2-tlset" id="v2-tlset"><summary>On the timeline <span class="opt">trim, transition</span></summary>
+          <div class="row2"><div class="field"><label for="v2-tin">Start at <span class="opt">s into its video</span></label><input type="number" id="v2-tin" min="0" step="0.1" placeholder="0"></div>
+            <div class="field"><label for="v2-tout">End at <span class="opt">s; empty: its end</span></label><input type="number" id="v2-tout" min="0" step="0.1" placeholder="the end"></div></div>
+          <div class="row2"><div class="field"><label for="v2-trans">Into the next shot</label><select id="v2-trans">
+              <option value="cut">Cut</option><option value="fade">Cross dissolve</option><option value="fadeblack">Dip to black</option><option value="fadewhite">Dip to white</option>
+              <option value="wipeleft">Wipe left</option><option value="slideleft">Slide left</option><option value="smoothleft">Smooth left</option>
+              <option value="circleopen">Circle open</option><option value="zoomin">Zoom in</option><option value="hblur">Blur</option></select></div>
+            <div class="field"><label for="v2-tlen">Its length <span class="opt">s</span></label><input type="number" id="v2-tlen" min="0.1" max="3" step="0.1" placeholder="0.5"></div></div>
+        </details>
         <section class="v2-model" id="v2-model" aria-live="polite"></section>
         <div class="v2-go"><button type="button" class="btn primary" id="v2-gen">🎬 Generate shot</button><span class="hint" id="v2-say"></span></div>
         <div class="v2-result" id="v2-result"></div>
@@ -89,7 +98,9 @@
     <!-- the shots in order: a video timeline -->
     <section class="v2-tl" aria-label="Shot timeline">
       <div class="v2-tlbar"><b>Timeline</b><span class="hint" id="v2-total"></span><span class="v2-grow"></span>
+        <span class="hint" id="v2-exportst"></span>
         <button type="button" class="btn sm" id="v2-music-btn" title="One piece of music for the whole timeline (MiniMax Music 3)">🎵 Soundtrack</button>
+        <button type="button" class="btn sm" id="v2-export" title="All the shots as one video, with their transitions and the soundtrack">⬇ Export</button>
         <button type="button" class="btn sm" id="v2-genall" title="Generate every shot, in order">🎬 Generate all</button></div>
       <div class="v2-tltrack" id="v2-tltrack"></div>
       <div class="v2-tlmusic" id="v2-tlmusic" hidden></div>

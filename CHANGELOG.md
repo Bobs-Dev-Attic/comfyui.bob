@@ -5,6 +5,20 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.125.0] - 2026-11-20
+
+### Added
+- **V2: composing and export (phase 5).**
+  - **On the timeline,** in each shot's panel: where its video starts and ends (a trim), and how it joins the next
+    shot. That's a cut, or a transition with a length: cross dissolve, dip to black or white, wipe, slide, smooth,
+    circle, zoom or blur. The timeline sizes each shot by the part used and marks a transition with ⧖. The total
+    allows for the overlaps.
+  - **⬇ Export** renders the shots' latest videos as one, in order, trimmed and joined as set. The soundtrack goes
+    under them at its own level, fading out at the end, and the shots' own sound at theirs. The format is MP4 (H.264
+    or H.265), WebM or ProRes. A shot with no video yet is left out, and the dialog says so.
+  - It's rendered as the classic timeline is (`app/render.py`, `/api/v2/export`) and shows up as a studio result in the
+    project. The timeline bar shows its progress, then a link to the video.
+
 ## [0.124.0] - 2026-11-20
 
 ### Added
