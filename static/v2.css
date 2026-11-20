@@ -171,7 +171,8 @@ body.v2 { height: 100vh; overflow: hidden; display: grid; grid-template-rows: au
 .v2-main.scene.insp-scene .v2-panel { display: none; }
 .v2-main.scene.insp-scene .s3-side { display: flex; flex-direction: column; }
 .v2-main.scene.insp-scene .s3-side > section { flex: none; }
-.v2-main.scene .s3-side > .v2-objx { order: -3; }
+.v2-main.scene .s3-side > .v2-objx { order: -4; }
+.v2-main.scene .s3-side > .s3-float { order: -3; }
 .v2-main.scene .s3-side > .s3-sel { order: -2; }
 .v2-main.scene .s3-side > .v2s-objs { order: -1; }
 .v2-main.scene.insp-cam .s3-side > .v2s-cam { order: -2; }

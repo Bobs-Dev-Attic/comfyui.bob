@@ -1097,6 +1097,32 @@ const Scene3D = (() => {
   }
   /* The menu bar: Scene (template, save view, depth map), Edit (undo, redo, the selected object) and Add. Each item
      does what its old button did (a click on a stand-in button, so there's one place that handles it). */
+  /* Quick tests: a photo at 0.4 MP on the fastest edit model (Qwen, 4 steps), or a Draft video straight from the scene
+     as drawn (no photo of the first frame, no gap fill), with whatever moves. Seconds instead of minutes, rough. */
+  async function quick(kind) {
+    if (!s?.bg) return;
+    const size0 = [s.cv.width, s.cv.height];
+    try {
+      if (kind === "photo") {
+        const m = editModels(), model = (m.find(x => x[0] === "qwen") || m[0])?.[0]; if (!model) return;
+        const A = s.bg.aspect, W = Math.round((A >= 1 ? 768 : 768 * A) / 8) * 8, H = Math.round(W / A / 8) * 8;
+        Media.toast("Quick photo: a rough, small one on its way.");
+        await makePhoto([W, H], s.t, shotView(), lastLook(), model, true, false, true, 0.4);
+      } else {
+        // from the scene's picture, or (the camera holding still) a photo of its first frame that matches: a quick photo
+        // at 0 s will do. A moving camera without the gap fill turns a photo into flat sky and floor within a second, so
+        // then it's the scene as drawn: a rough test of the motion.
+        const cam0 = camForRender(0), photo = cameraMoves() ? null : s.photos.map(p => ({ ...p, it: state.items.get(p.id) })).filter(p => p.it?.status === "done" && p.it.files?.length)
+          .reverse().find(p => Math.abs(p.t) < 0.5 / FPS && camDiff(p.cam, cam0) < 0.02);
+        const start = s.sc.picture && startsAsPicture() ? "picture" : photo ? `photo:${photo.id}` : "composite";
+        Media.toast(`Quick video: a rough Draft from ${start === "composite" ? "the scene as drawn" : start === "picture" ? "the scene's picture" : "the photo of its first frame"}…`);
+        const r = await buildRender({ start, look: "", fill: false, refs: false, hold: start === "composite" ? "normal" : "loose", quality: "draft", what: defaultWhat() }, () => {});
+        const items = await submit({ ...r.req, steps: 4 });  // half the turbo steps: rough, and quicker
+        if (items?.length) Media.toast("Quick video: queued. It shows in the gallery when it's done.");
+      }
+    } catch (err) { Media.toast(`Quick ${kind}: ${err.message}`); }
+    finally { if (s) { s.cv.width = size0[0]; s.cv.height = size0[1]; s.dirty = true; } }
+  }
   function act(a, data = {}) {
     const b = document.createElement("button"); b.type = "button"; b.hidden = true; b.dataset.act = a;
     Object.assign(b.dataset, data); s.root.querySelector(".s3-menubar").appendChild(b); b.click(); b.remove();
@@ -1104,6 +1130,12 @@ const Scene3D = (() => {
   function openMenu(which, btn) {
     const r = btn.getBoundingClientRect(), o = s.objs[s.sel], ok = !!(o?.mesh && o.pos), at = s.camKeys.length ? ` (${s.t.toFixed(2)} s)` : "";
     const items = which === "scene" ? [
+      ["📷 Generate photo…", () => act("photo"), !editModels().length],
+      ["🎬 Render video…", () => act("render")],
+      null,
+      ["⚡ Quick photo: a rough, small one to test the idea", () => quick("photo"), !editModels().length],
+      ["⚡ Quick video: a rough draft to test the motion", () => quick("video"), state.caps?.editor?.motion === false],
+      null,
       [s.sc.template ? "⭐ A template: stop being one" : "☆ Save as template", () => act("tpl")],
       null,
       ["💾 Save the view (PNG)", () => act("pic")],
@@ -1248,9 +1280,15 @@ const Scene3D = (() => {
           <p class="hint s3-float-t"></p>
         </div></div>
         <div class="mo-transport">
-          <button type="button" class="btn sm" data-act="play" title="Play (Space)">▶</button>
+          <span class="s3-transport" role="group" aria-label="Play controls">
+            <button type="button" class="btn sm" data-act="t-start" title="To the start (Home)" aria-label="To the start">⏮</button>
+            <button type="button" class="btn sm" data-act="t-prev" title="Back one frame (,)" aria-label="Back one frame">⏴</button>
+            <button type="button" class="btn sm" data-act="play" title="Play (Space)">▶</button>
+            <button type="button" class="btn sm" data-act="t-next" title="Forward one frame (.)" aria-label="Forward one frame">⏵</button>
+            <button type="button" class="btn sm" data-act="t-end" title="To the end (End)" aria-label="To the end">⏭</button></span>
           <input type="range" class="mo-scrub s3-scrub" min="0" step="${1 / FPS}" value="0" aria-label="Time">
           <span class="mo-time s3-time"></span>
+          <label class="s3-frame-in" title="The frame at the playhead (${FPS} a second): type one to go there">Frame <input type="number" class="s3-fr" min="0" step="1" aria-label="Frame"> <span class="s3-frn"></span></label>
           <label class="s3-len">Length <input type="number" class="s3-sec" min="1" max="10" step="0.5" aria-label="Length in seconds"> s</label></div></div>
       <aside class="mo-side s3-side">
         <section><h3>View</h3>
@@ -1312,9 +1350,7 @@ const Scene3D = (() => {
       </aside>`;
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
-    foot.innerHTML = `<span class="hint s3-foot">Drag: orbit · Right-drag: pan · Wheel: zoom · Right-click: menu</span>
-      <button type="button" class="btn" data-act="photo" title="A photograph of what the camera frames, made by the image editor's edit model">📷 Generate photo…</button>
-      <button type="button" class="btn primary" data-act="render" title="Make the video with H3, following this scene">🎬 Render video…</button>`;
+    foot.innerHTML = `<span class="hint s3-foot">Drag: orbit · Right-drag: pan · Wheel: zoom · Right-click: menu · 🏞 Scene › Generate photo or Render video</span>`;
     const onClose = () => { if (s) { cancelAnimationFrame(s.raf); clearTimeout(s.poll); clearTimeout(s.saveT); s.ro?.disconnect(); s.closed = true; } s = null; meshCache.clear(); };
     const win = host ? embed(host, root, foot, onClose)
       : WM.open({ id: "scene3d", title: `🏞 ${sc.name}`, content: root, footer: foot, width: 1100, height: 720, minWidth: 720, minHeight: 480, onClose });
@@ -1329,6 +1365,7 @@ const Scene3D = (() => {
     if (!gl) { hud.textContent = "This browser has no WebGL 2, so the scene can't be shown."; return; }
     s.ro = new ResizeObserver(() => { if (s) s.dirty = true; }); s.ro.observe(cv);
     wire(root, foot);
+    { const fl = root.querySelector(".s3-float"); fl.classList.add("s3-docked"); root.querySelector(".s3-side").prepend(fl); }  // in the side panel
     wireFloat(root);
     renderSide();
     // wait for the background
@@ -2132,6 +2169,9 @@ const Scene3D = (() => {
       else if ((e.key === "Delete" || e.key === "Backspace") && o) { e.preventDefault(); removeSel(); }
       else if (e.key === "Escape" && (s.sel >= 0 || s.camSel)) { e.stopPropagation(); s.sel = -1; s.camSel = false; renderSide(); s.dirty = true; }
       else if (e.key === " ") { e.preventDefault(); play(); }
+      else if (e.key === "Home") { e.preventDefault(); toFrame(0); }
+      else if (e.key === "End") { e.preventDefault(); toFrame(frameCount() - 1); }
+      else if (e.key === "," || e.key === ".") { e.preventDefault(); toFrame(Math.round(s.t * FPS) + (e.key === "." ? 1 : -1)); }
     });
     root.querySelector(".s3-objs").addEventListener("contextmenu", e => {
       const li = e.target.closest("[data-i]"); if (!li) return;
@@ -2142,6 +2182,9 @@ const Scene3D = (() => {
       const b = e.target.closest("[data-act],[data-tool],[data-menu],[data-i]"); if (!b || !s) return;
       const a = b.dataset.act, o = s.objs[s.sel];
       if (b.dataset.menu) return openMenu(b.dataset.menu, b);
+      if (a === "t-start") return toFrame(0);
+      if (a === "t-end") return toFrame(frameCount() - 1);
+      if (a === "t-prev" || a === "t-next") return toFrame(Math.round(s.t * FPS) + (a === "t-next" ? 1 : -1));
       if (a === "shot") { if (s.bg) toShot(); return; }
       if (a === "cam-sel") { if (s.bg) { if (!camShown()) { s.cam = outsideView(); s.camFree = true; } selectCam(); } return; }
       if (a === "cam-through") { if (s.bg) { s.cam = camForRender(s.t); s.camFree = false; s.camSel = false; renderSide(); s.dirty = true; } return; }
@@ -2309,6 +2352,8 @@ const Scene3D = (() => {
       else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); e.stopPropagation(); redo(); }
     });
     root.querySelector(".s3-scrub").addEventListener("input", e => { if (s.playing) stop(); setTime(+e.target.value); renderSide(); });
+    root.querySelector(".s3-fr").addEventListener("change", e => toFrame(+e.target.value || 0));
+    root.querySelector(".s3-fr").addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Enter") { toFrame(+e.target.value || 0); e.target.blur(); } });
     root.querySelector(".s3-sec").addEventListener("change", e => {
       s.seconds = Math.max(1, Math.min(10, +e.target.value || 5)); e.target.value = String(s.seconds);
       const D = dur();  // keys past the new end move to it
@@ -3552,7 +3597,12 @@ const Scene3D = (() => {
     s.root.querySelector(".s3-time").textContent = `${s.t.toFixed(2)} / ${D.toFixed(2)} s`;
     const sec = s.root.querySelector(".s3-sec"); if (document.activeElement !== sec) sec.value = String(s.seconds);
     s.root.querySelector('[data-act="play"]').textContent = s.playing ? "⏸" : "▶";
+    const fr = s.root.querySelector(".s3-fr"), last = frameCount() - 1;
+    if (fr && document.activeElement !== fr) { fr.max = String(last); fr.value = String(Math.round(s.t * FPS)); }
+    const fn = s.root.querySelector(".s3-frn"); if (fn) fn.textContent = `/ ${last}`;
   }
+  // Go to a frame (clamped), stopping playback.
+  function toFrame(f) { if (s.playing) stop(); setTime(Math.max(0, Math.min(frameCount() - 1, Math.round(f))) / FPS); renderSide(); s.dirty = true; }
   // The camera's keys as chips (time, lens, easing), and the easing of the move from the key at the playhead.
   function camKeysHtml(K) {
     const chips = K.map((q, j) => `<button type="button" class="chip-btn${near(q.t, s.t) ? " on" : ""}" data-act="cam-key" data-k="${j}">${q.t.toFixed(2)} s${q.lens ? ` · ${Math.round(q.lens)} mm` : ""}${q.focus && fstop() ? ` · ⌖ ${q.focus.toFixed(1)}` : ""}${q.shake ? ` · shake ${Math.round(q.shake)}%` : ""}${q.ease && j < K.length - 1 ? ` · ${EASES[q.ease].short}` : ""}</button><button type="button" class="set-x" data-act="del-cam-key" data-k="${j}" aria-label="Remove the camera key at ${q.t.toFixed(2)} s">×</button>`).join(" ");
