@@ -449,6 +449,8 @@ class ScenePatch(BaseModel):
     photos: list[dict[str, Any]] | None = Field(None, max_length=200)
     # depth of field: {fstop} (none: everything sharp); the focus distance is keyed with the camera
     dof: dict[str, Any] | None = None
+    # camera effects: {shake_style} (the shake amount is keyed with the camera)
+    fx: dict[str, Any] | None = None
 
 
 @app.post("/api/scenes")

@@ -136,6 +136,8 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   an aperture (Off, f/1.4 to f/16), drawn from outside as the plane in focus and told to H3 and the first-frame photo.
   Looking through the camera, and in the corner preview, the view is **blurred by that depth of field** (View › Depth of
   field blur).
+  **Camera shake** (floating box): a keyed amount (0 to 100 %) and a style (handheld, walking, vehicle, earthquake),
+  added on top of the camera's path in the view, the preview and the render, and told to H3.
   **Generate** on the Shots step draws a mapped scene into its shot first when it isn't there or the scene changed, so
   the shot always follows the scene's camera; a Person without a picture takes the shot's `<Picture N>`.
   **Empty scenes** (☰ › New empty 3D scene) start from nothing: a floor with a 1 m grid, a sky colour and an optional

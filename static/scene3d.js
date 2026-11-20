@@ -111,7 +111,7 @@ const Scene3D = (() => {
   }
   function fromFirstKey(o) { const k = o.keys[0]; Object.assign(o, { pos: k.pos.slice(), yaw: k.yaw, pitch: k.pitch || 0, roll: k.roll || 0, scale: k.scale, ...(k.pose ? { pose: k.pose } : {}) }); }
   // A camera: an orbit (yaw, pitch, dist about target) and, keyed for a zoom, its lens (mm on a 36 mm wide frame).
-  const camOf = c => ({ yaw: c.yaw, pitch: c.pitch, dist: c.dist, target: c.target.slice(), ...(c.lens ? { lens: c.lens } : {}), ...(c.roll ? { roll: c.roll } : {}), ...(c.focus ? { focus: c.focus } : {}) });
+  const camOf = c => ({ yaw: c.yaw, pitch: c.pitch, dist: c.dist, target: c.target.slice(), ...(c.lens ? { lens: c.lens } : {}), ...(c.roll ? { roll: c.roll } : {}), ...(c.focus ? { focus: c.focus } : {}), ...(typeof c.shake === "number" ? { shake: c.shake } : {}) });
   // A camera's axes: forward, right and up, turned by its roll (degrees about forward; + leans the top to the right).
   function axesOf(c) {
     const f = norm(sub(c.target, eyeOf(c))), r0 = norm(cross(f, [0, 1, 0])), u0 = cross(r0, f), a = (c.roll || 0) * rad, co = Math.cos(a), si = Math.sin(a);
@@ -119,12 +119,13 @@ const Scene3D = (() => {
   }
   function camAt(t) {
     // keys without a lens have the scene's (so a zoom eases from it and back)
-    const lens = s.camKeys.some(k => k.lens), roll = s.camKeys.some(k => k.roll), focus = s.camKeys.some(k => k.focus);
+    const lens = s.camKeys.some(k => k.lens), roll = s.camKeys.some(k => k.roll), focus = s.camKeys.some(k => k.focus), shake = s.camKeys.some(k => typeof k.shake === "number");
     // a key without a focus distance keeps the one before it (or, before any, the first keyed one): focus pulls only
     // between keys that set it
-    let held = s.camKeys.find(k => k.focus)?.focus;
-    const K = lens || roll || focus ? s.camKeys.map(k => { if (k.focus) held = k.focus;
-      return { ...k, ...(lens ? { lens: k.lens || baseLens() } : {}), ...(roll ? { roll: k.roll || 0 } : {}), ...(focus ? { focus: k.focus || held } : {}) }; }) : s.camKeys;
+    let held = s.camKeys.find(k => k.focus)?.focus, sh = s.camKeys.find(k => typeof k.shake === "number")?.shake;
+    const K = lens || roll || focus || shake ? s.camKeys.map(k => { if (k.focus) held = k.focus; if (typeof k.shake === "number") sh = k.shake;
+      return { ...k, ...(lens ? { lens: k.lens || baseLens() } : {}), ...(roll ? { roll: k.roll || 0 } : {}), ...(focus ? { focus: k.focus || held } : {}),
+        ...(shake ? { shake: sh } : {}) }; }) : s.camKeys;
     const c = interp(K, easeT(t), ["yaw", "pitch", "dist", "target"]);
     return { ...camOf(c), dist: Math.max(s.bg.dmed * 0.02, c.dist) };
   }
@@ -142,6 +143,34 @@ const Scene3D = (() => {
     const a = K[i], b = K[i + 1], e = EASES[a.ease]?.f; if (!e) return t;
     return a.t + e((t - a.t) / Math.max(1e-6, b.t - a.t)) * (b.t - a.t);
   }
+  /* Camera shake: an amount keyed with the camera (0 to 100 %, held from the key before) and the scene camera's style.
+     It's smooth noise (a few sine waves per axis at unrelated rates) that turns the camera a little about its eye and
+     moves it a little, on top of its path: never stored in the keys, drawn in the view, the preview and the render (so
+     H3 follows it), and told to H3. */
+  const SHAKES = {
+    handheld: { label: "Handheld", f: 0.7, rot: [0.8, 0.6, 0.5], pos: [0.012, 0.01], says: "The camera is handheld, with a natural slight shake." },
+    walking: { label: "Walking", f: 1.8, rot: [0.6, 1.0, 0.9], pos: [0.012, 0.03], bob: true, says: "The handheld camera bobs and sways with the operator's steps." },
+    vehicle: { label: "Vehicle", f: 7, rot: [0.25, 0.35, 0.2], pos: [0.006, 0.008], says: "The camera vibrates as if it is mounted on a moving vehicle." },
+    impact: { label: "Earthquake", f: 3, rot: [2.2, 2.2, 1.6], pos: [0.04, 0.04], says: "The camera shakes violently." },
+  };
+  const shakeStyle = () => SHAKES[s.sc.fx?.shake_style] ? s.sc.fx.shake_style : "handheld";
+  // smooth noise in about -1..1 for channel i at time t (seconds)
+  const wobble = (t, i, f) => 0.55 * Math.sin(2 * Math.PI * f * t + i * 1.9) + 0.3 * Math.sin(2 * Math.PI * f * 2.31 * t + i * 4.1 + 1)
+    + 0.15 * Math.sin(2 * Math.PI * f * 5.17 * t + i * 2.7 + 2);
+  function withShake(c, t) {
+    const a = (typeof c.shake === "number" ? c.shake : 0) / 100;
+    if (!(a > 0) || !s?.bg) return c;
+    const st = SHAKES[shakeStyle()], k = st.f;
+    const n = [0, 1, 2, 3, 4].map(i => wobble(t, i, k));
+    let up = st.pos[1] * n[4];
+    if (st.bob) up = st.pos[1] * (0.5 - Math.abs(Math.sin(Math.PI * k * t))) + st.pos[1] * 0.3 * n[4];  // a step every half cycle
+    const turned = turnCam(c, c.yaw + a * st.rot[0] * n[0], c.pitch + a * st.rot[1] * n[1]);
+    turned.roll = (c.roll || 0) + a * st.rot[2] * n[2];
+    const { r: rr, u } = axesOf({ ...turned, roll: 0 }), d = addv(mulv(rr, a * st.pos[0] * n[3]), mulv(u, a * up));
+    return { ...turned, target: addv(turned.target, d) };
+  }
+  const shakes = () => s.camKeys.some(k => (k.shake || 0) > 0);
+
   /* Depth of field: the scene's aperture (s.sc.dof.fstop; none = everything sharp) and the camera's focus distance (keyed:
      a rack focus between keys; unkeyed, where it looks). Shown from outside as the plane in focus with the near and far
      limits of what's sharp; H3 and the photo are told what's in focus and how soft the rest is. */
@@ -179,7 +208,7 @@ const Scene3D = (() => {
   // The playhead moved: the camera goes back on its path.
   function setTime(t) {
     s.t = Math.max(0, Math.min(dur(), t));
-    if (s.camKeys.length && s.bg && !(s.camObj && s.camFree)) { s.cam = camAt(s.t); s.camFree = false; }
+    if (s.camKeys.length && s.bg && !(s.camObj && s.camFree)) { s.cam = withShake(camAt(s.t), s.t); s.camFree = false; }
     s.dirty = true; renderTime();
   }
 
@@ -809,11 +838,11 @@ const Scene3D = (() => {
      as a frame with a body, it has its own gimbal: X, Y and Z arrows move it, and two rings pan it (about Y) and tilt
      it (about its own sideways axis). A change keys it at the playhead (its first change makes its first key). */
   const CAM = { name: "Shot camera", isCam: true };
-  const camShown = () => !!(s?.camObj && s.bg && (s.camFree || camDiff(s.cam, camForRender(s.t)) > 1e-3));
+  const camShown = () => !!(s?.camObj && s.bg && (s.camFree || camDiff(s.cam, camBase(s.t)) > 1e-3));
   const dirOf = c => eyeOf({ ...c, dist: 1, target: [0, 0, 0] });
   function camGizmo() {
     if (!s.camSel || !camShown() || s.playing) return null;
-    const c = camForRender(s.t), E = eyeOf(c), H = s.cv.clientHeight || 1;
+    const c = camBase(s.t), E = eyeOf(c), H = s.cv.clientHeight || 1;
     const L = Math.hypot(...sub(E, eye())) * 2 * tanY(s.cv.clientWidth, H) * 80 / H, Ry = RY(c.yaw * rad), K = S(1.35);
     const hs = [0, 1, 2].map(i => ({ kind: "move", i, axis: colOf(ALIGN[i], 1), A: ALIGN[i] }));
     hs.push({ kind: "rot", i: 1, axis: [0, 1, 0], A: K, f: "yaw" }, { kind: "rot", i: 0, axis: colOf(Ry, 0), A: mul4(mul4(Ry, ALIGN[0]), K), f: "pitch" });
@@ -826,7 +855,7 @@ const Scene3D = (() => {
   // Set the shot camera at the playhead: its key there, or a new key.
   function editCam(c) {
     const q = { yaw: Math.round(c.yaw * 100) / 100, pitch: Math.max(-89, Math.min(89, Math.round(c.pitch * 100) / 100)), dist: c.dist, target: c.target.slice(),
-      ...(c.lens ? { lens: Math.round(c.lens * 10) / 10 } : {}), ...(c.roll ? { roll: Math.round(c.roll * 100) / 100 } : {}), ...(c.focus ? { focus: Math.round(c.focus * 1000) / 1000 } : {}) };
+      ...(c.lens ? { lens: Math.round(c.lens * 10) / 10 } : {}), ...(c.roll ? { roll: Math.round(c.roll * 100) / 100 } : {}), ...(c.focus ? { focus: Math.round(c.focus * 1000) / 1000 } : {}), ...(typeof c.shake === "number" ? { shake: Math.max(0, Math.min(100, Math.round(c.shake))) } : {}) };
     if (!q.roll) for (const k of s.camKeys) if (near(k.t, s.t)) delete k.roll;  // back to level
     const k = s.camKeys.find(x => near(x.t, s.t));
     if (k) Object.assign(k, q); else { s.camKeys.push({ t: s.t, ...q }); s.camKeys.sort((a, b) => a.t - b.t); }
@@ -838,7 +867,7 @@ const Scene3D = (() => {
     return { ...n, target: sub(E, mulv(dirOf(n), c.dist)) };
   }
   // A view from outside, behind and above the camera, looking at where it looks.
-  function outsideView(c = camForRender(s.t)) {
+  function outsideView(c = camBase(s.t)) {
     const E = eyeOf(c), f = mulv(dirOf(c), -1), d = s.bg.dmed;
     return { yaw: c.yaw + 35, pitch: Math.max(-60, Math.min(70, c.pitch + 28)), dist: d * 1.3, target: addv(E, mulv(f, d * 0.35)) };
   }
@@ -1036,7 +1065,7 @@ const Scene3D = (() => {
   /* ---------------------------------------------------------------- undo and redo: the whole scene, after each change */
   const sameArr = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
   function snapOf() {
-    return JSON.stringify({ objects: objectsOut(), cam: s.camKeys, seconds: +s.seconds || 5, dof: s.sc.dof || {},
+    return JSON.stringify({ objects: objectsOut(), cam: s.camKeys, seconds: +s.seconds || 5, dof: s.sc.dof || {}, fx: s.sc.fx || {},
       ...(s.sc.kind === "empty" ? { aspect: s.sc.aspect, lens: s.sc.lens, backdrop: s.sc.backdrop } : {}) });
   }
   function record() {
@@ -1059,7 +1088,7 @@ const Scene3D = (() => {
       }
       return o;
     });
-    s.camKeys = d.cam; s.seconds = d.seconds; s.sc.dof = d.dof || {};
+    s.camKeys = d.cam; s.seconds = d.seconds; s.sc.dof = d.dof || {}; s.sc.fx = d.fx || {};
     if (s.sc.kind === "empty" && (d.aspect !== s.sc.aspect || d.lens !== s.sc.lens || !sameArr(d.backdrop, s.sc.backdrop))) {
       Object.assign(s.sc, { aspect: d.aspect, lens: d.lens, backdrop: d.backdrop,
         backdrop_url: d.backdrop?.picture ? `/api/media/file?path=${encodeURIComponent(d.backdrop.picture)}` : null });
@@ -1084,7 +1113,7 @@ const Scene3D = (() => {
     stretch: o.stretch || null, scale: o.scale, auto_scale: o.auto_scale, hidden: !!o.hidden, face: !!o.face, keys: o.keys || [],
     ...(o.prim ? { prim: o.prim, color: o.color || PRIM_COLOR, dims: o.dims || PRIMS[o.prim].dims, tilt: o.tilt || [0, 0] } : {}),
     ...(o.prim === "figure" ? { pose: o.pose || "standing", gait: o.gait || null } : {}) }));
-  const saveBody = () => JSON.stringify({ objects: objectsOut(), seconds: +s.seconds || 5, camera_keys: s.camKeys, photos: s.photos, dof: s.sc.dof || {},
+  const saveBody = () => JSON.stringify({ objects: objectsOut(), seconds: +s.seconds || 5, camera_keys: s.camKeys, photos: s.photos, dof: s.sc.dof || {}, fx: s.sc.fx || {},
     ...(s.sc.kind === "empty" ? { aspect: s.sc.aspect, lens: s.sc.lens, backdrop: s.sc.backdrop } : {}) });
   function save() {
     clearTimeout(s.saveT);
@@ -1143,6 +1172,9 @@ const Scene3D = (() => {
               <select class="s3-fstop" aria-label="Aperture" title="The aperture: smaller numbers blur more of what's nearer or farther than the focus; Off keeps everything sharp">
                 <option value="">Off</option>${FSTOPS.map(n => `<option value="${n}">f/${n}</option>`).join("")}</select></div>
             <p class="hint s3-float-dof"></p>
+            <div class="s3-float-l">Shake <span class="opt">%, keyed</span></div>
+            <div class="s3-float-lens"><label><input type="number" class="s3f-in" data-ax="shake" min="0" max="100" step="5" aria-label="Shake amount in percent"> %</label>
+              <select class="s3-shakestyle" aria-label="Shake style" title="How it shakes, for the whole camera">${Object.entries(SHAKES).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join("")}</select></div>
             <datalist id="s3-lenses">${[18, 24, 28, 35, 50, 85, 135, 200].map(v => `<option value="${v}">`).join("")}</datalist></div>
           <p class="hint s3-float-t"></p>
         </div></div>
@@ -1277,11 +1309,12 @@ const Scene3D = (() => {
   // An empty scene starts at eye height (the origin) looking a little down at the floor 3.5 m ahead.
   function emptyStart() { const ty = s.bg.floor + 0.6, z = 3.5; return { yaw: 0, pitch: Math.atan2(-ty, z) / rad, dist: Math.hypot(z, ty), target: [0, ty, -z] }; }
   // The camera of the render at time t: its path, or (without keys) the picture's own camera.
-  const camForRender = t => s.camKeys.length ? camAt(t) : shotCam();
+  const camBase = t => s.camKeys.length ? camAt(t) : shotCam();
+  const camForRender = t => withShake(camBase(t), t);
   const camDiff = (a, b) => Math.abs(a.yaw - b.yaw) + Math.abs(a.pitch - b.pitch) + Math.abs(a.dist - b.dist) / s.bg.dmed
     + Math.abs(Math.log((a.lens || baseLens()) / (b.lens || baseLens()))) + Math.abs((a.roll || 0) - (b.roll || 0))
     + Math.hypot(...sub(a.target, b.target)) / s.bg.dmed;
-  const cameraMoves = () => s.camKeys.length > 1 && s.camKeys.some(k => camDiff(k, s.camKeys[0]) > 1e-3);
+  const cameraMoves = () => shakes() || s.camKeys.length > 1 && s.camKeys.some(k => camDiff(k, s.camKeys[0]) > 1e-3);
   const startsAsPicture = () => camDiff(camForRender(0), shotCam()) < 0.02;
   const frameCount = () => Math.round(dur() * FPS) + 1;
 
@@ -1470,7 +1503,9 @@ const Scene3D = (() => {
       const mask = await renderVideo("mask", [W, H], n, (f, N) => say(`Drawing its mask: frame ${f + 1} of ${N}`), proj);
       say("Sending to H3…");
       const what = videoText(o.what || defaultWhat(), o.refs, fromPhoto).text;
-      const cam = cameraMoves() ? "The camera moves smoothly through the scene." : "The camera holds a static shot.";
+      const glides = s.camKeys.length > 1 && s.camKeys.some(k => camDiff(k, s.camKeys[0]) > 1e-3);
+      const cam = [glides ? (shakes() ? "The camera moves through the scene." : "The camera moves smoothly through the scene.") : shakes() ? "" : "The camera holds a static shot.",
+        shakes() ? SHAKES[shakeStyle()].says : ""].filter(Boolean).join(" ");
       const prompt = `integrated_multimodal_description: [Shot 1] ${what.replace(/\s+/g, " ")} ${cam}\n\noverall_soundscape: Natural sound of the scene.\n\nnon_diegetic_music: N/A`;
       const req = { kind: "video", engine: "motion", prompt, seconds: n / FPS, aspect: "16:9", quality: o.quality || "standard",
         seed: -1, batch: 1, turbo: true, first_frame: null, motion_video: ref, motion_video_mask: mask,
@@ -1643,7 +1678,7 @@ const Scene3D = (() => {
     if (blur) { gl.enable(gl.SCISSOR_TEST); gl.scissor(x, y, w, h); dofEnd(x, y, w, h, c, tanY(w, h, c)); }
     gl.disable(gl.SCISSOR_TEST); gl.viewport(0, 0, W, H);
     Object.assign(el.style, { left: `${m - 1}px`, bottom: `${m - 1}px`, width: `${w / dpr + 2}px`, height: `${h / dpr + 2}px` });
-    const lab = `🎥 ${s.t.toFixed(2)} s · ${Math.round(c.lens || baseLens())} mm${c.roll ? ` · roll ${Math.round(c.roll)}°` : ""}${fstop() ? ` · f/${fstop()} @ ${focusOf(c).toFixed(1)} m` : ""}`;
+    const lab = `🎥 ${s.t.toFixed(2)} s · ${Math.round(c.lens || baseLens())} mm${c.roll ? ` · roll ${Math.round(c.roll)}°` : ""}${fstop() ? ` · f/${fstop()} @ ${focusOf(c).toFixed(1)} m` : ""}${c.shake ? ` · shake ${Math.round(c.shake)}%` : ""}`;
     const l = el.querySelector(".s3-pip-l"); if (l.textContent !== lab) l.textContent = lab;
   }
   /* The depth-of-field preview: the scene is drawn into a picture with its depth, then each pixel is blurred by its
@@ -1910,12 +1945,13 @@ const Scene3D = (() => {
       if (a === "play") return play();
       if (a === "key-cam" && s.camObj && s.camFree) {  // from outside: key the camera as it is at the playhead
         if (!s.bg) return;
-        editCam(camForRender(s.t)); save(); renderCam(); return;
+        editCam(camBase(s.t)); save(); renderCam(); return;
       }
       if (a === "key-cam") {
         if (!s.bg) return;
         const k = s.camKeys.find(q => near(q.t, s.t));
-        if (k) Object.assign(k, camOf(s.cam)); else { s.camKeys.push({ t: s.t, ...camOf(s.cam) }); s.camKeys.sort((p, q) => p.t - q.t); }
+        const v = camOf(s.camFree ? s.cam : camBase(s.t));  // the path's own camera, not its shake
+        if (k) Object.assign(k, v); else { s.camKeys.push({ t: s.t, ...v }); s.camKeys.sort((p, q) => p.t - q.t); }
         s.camFree = false; save(); renderCam(); s.dirty = true; return;
       }
       if (a === "clear-cam") { s.camKeys = []; s.camFree = false; save(); renderCam(); s.dirty = true; return; }
@@ -2078,19 +2114,20 @@ const Scene3D = (() => {
     if (box.hidden === show) box.hidden = !show;
     if (!show) return;
     let pos, c = null;
-    if (cam) { c = camForRender(s.t); pos = eyeOf(c); } else pos = poseAt(o, s.t).pos;
+    if (cam) { c = camBase(s.t); pos = eyeOf(c); } else pos = poseAt(o, s.t).pos;
     s.root.querySelector(".s3-float-n").textContent = cam ? "🎥 Shot camera" : o.name;
     s.root.querySelector(".s3-float-u").textContent = s.bg.empty ? "metres" : "scene units";
     s.root.querySelector(".s3-float-cam").hidden = !cam;
     if (cam) {
       const fs = s.root.querySelector(".s3-fstop"); if (document.activeElement !== fs) fs.value = fstop() ? String(fstop()) : "";
+      const ss = s.root.querySelector(".s3-shakestyle"); if (document.activeElement !== ss) ss.value = shakeStyle();
       s.root.querySelector(".s3-float-fu").textContent = s.bg.empty ? "m" : "units";
       const dr = dofRange(c);
       s.root.querySelector(".s3-float-dof").textContent = dr ? `Sharp from ${dr.near.toFixed(1)} to ${Number.isFinite(dr.far) ? dr.far.toFixed(1) : "∞"}: ${focusSubject(s.t, c)} in focus` : "Aperture off: everything is sharp.";
     }
     const st = s.bg.empty ? 0.1 : +(s.bg.dmed * 0.02).toPrecision(2);
     box.querySelectorAll(".s3f-in").forEach(inp => {
-      const ax = inp.dataset.ax, v = ax === "yaw" ? c?.yaw : ax === "pitch" ? (c ? -c.pitch : null) : ax === "lens" ? (c ? Math.round((c.lens || baseLens()) * 10) / 10 : null) : ax === "roll" ? (c ? c.roll || 0 : null) : ax === "focus" ? (c ? Math.round(focusOf(c) * 100) / 100 : null) : pos[+ax];  // tilt: up is +
+      const ax = inp.dataset.ax, v = ax === "yaw" ? c?.yaw : ax === "pitch" ? (c ? -c.pitch : null) : ax === "lens" ? (c ? Math.round((c.lens || baseLens()) * 10) / 10 : null) : ax === "roll" ? (c ? c.roll || 0 : null) : ax === "focus" ? (c ? Math.round(focusOf(c) * 100) / 100 : null) : ax === "shake" ? (c ? c.shake || 0 : null) : pos[+ax];  // tilt: up is +
       if (ax === "lens") inp.title = `The camera's focal length at the playhead, keyed there: key another at another time to zoom. Unkeyed it's the scene's, ${Math.round(baseLens())} mm${s.bg.empty ? " (View › Lens)" : " (the picture's)"}.`;
       if (v == null) return;
       if (ax.length === 1) inp.step = String(st);
@@ -2127,12 +2164,12 @@ const Scene3D = (() => {
     box.querySelector(".s3-float-x").onclick = () => { s.floatOff = floatKey(); box.hidden = true; };
     box.querySelector(".s3-focus-on").onclick = e => {  // focus on an object: its distance along the camera's view
       if (!s?.bg || !s.camSel) return;
-      const c = camForRender(s.t), E = eyeOf(c), { f } = axesOf(c), rc = e.target.getBoundingClientRect();
+      const c = camBase(s.t), E = eyeOf(c), { f } = axesOf(c), rc = e.target.getBoundingClientRect();
       const list = cast(s.t, c).filter(x => !x.off).map(x => ({ x, z: dot3(sub(poseAt(x.o, s.t).pos, E), f) })).filter(q => q.z > 0.05);
       if (!list.length) return Media.toast("The camera sees no objects here.");
       Media.menu(rc.left, rc.bottom + 4, list.map(q => [`⌖ ${q.x.o.name} (${q.z.toFixed(1)} ${s.bg.empty ? "m" : "units"})`, () => {
         if (!fstop()) { s.sc.dof = { fstop: 2.8 }; Media.toast("Aperture set to f/2.8 so the focus shows; Off keeps everything sharp."); }
-        editCam({ ...camForRender(s.t), focus: q.z }); save(); renderCam(); s.dirty = true;
+        editCam({ ...camBase(s.t), focus: q.z }); save(); renderCam(); s.dirty = true;
       }]));
     };
     ["pointerdown", "wheel", "contextmenu"].forEach(t => box.addEventListener(t, e => e.stopPropagation()));
@@ -2140,19 +2177,21 @@ const Scene3D = (() => {
     box.addEventListener("input", e => e.stopPropagation());
     box.addEventListener("change", async e => {
       e.stopPropagation();
+      if (e.target.classList.contains("s3-shakestyle")) { s.sc.fx = { ...(s.sc.fx || {}), shake_style: e.target.value }; save(); s.dirty = true; return; }
       if (e.target.classList.contains("s3-fstop")) { s.sc.dof = e.target.value ? { fstop: +e.target.value } : {}; save(); renderCam(); s.dirty = true; return; }
       const inp = e.target.closest(".s3f-in"); if (!inp || !s?.bg) return;
       const ax = inp.dataset.ax, v = parseFloat(inp.value);
       if (!Number.isFinite(v)) return syncFloat();
       if (s.camSel && ax === "lens") {  // keyed at the playhead: a zoom between keys
-        editCam({ ...camForRender(s.t), lens: Math.max(10, Math.min(300, v)) }); save(); renderCam(); s.dirty = true; return;
+        editCam({ ...camBase(s.t), lens: Math.max(10, Math.min(300, v)) }); save(); renderCam(); s.dirty = true; return;
       }
       if (s.camSel) {
-        const c = camForRender(s.t);
+        const c = camBase(s.t);
         if (ax === "yaw") editCam(turnCam(c, v, c.pitch));
         else if (ax === "pitch") editCam(turnCam(c, c.yaw, -v));
         else if (ax === "roll") editCam({ ...c, roll: Math.max(-180, Math.min(180, v)) });
         else if (ax === "focus") editCam({ ...c, focus: Math.max(0.05, v) });
+        else if (ax === "shake") editCam({ ...c, shake: Math.max(0, Math.min(100, v)) });
         else { const E = eyeOf(c), d = [0, 0, 0]; d[+ax] = v - E[+ax]; editCam({ ...c, target: addv(c.target, d) }); }
         save(); renderCam();
       } else {
@@ -3012,7 +3051,7 @@ const Scene3D = (() => {
   }
   // The camera's keys as chips (time, lens, easing), and the easing of the move from the key at the playhead.
   function camKeysHtml(K) {
-    const chips = K.map((q, j) => `<button type="button" class="chip-btn${near(q.t, s.t) ? " on" : ""}" data-act="cam-key" data-k="${j}">${q.t.toFixed(2)} s${q.lens ? ` · ${Math.round(q.lens)} mm` : ""}${q.focus && fstop() ? ` · ⌖ ${q.focus.toFixed(1)}` : ""}${q.ease && j < K.length - 1 ? ` · ${EASES[q.ease].short}` : ""}</button><button type="button" class="set-x" data-act="del-cam-key" data-k="${j}" aria-label="Remove the camera key at ${q.t.toFixed(2)} s">×</button>`).join(" ");
+    const chips = K.map((q, j) => `<button type="button" class="chip-btn${near(q.t, s.t) ? " on" : ""}" data-act="cam-key" data-k="${j}">${q.t.toFixed(2)} s${q.lens ? ` · ${Math.round(q.lens)} mm` : ""}${q.focus && fstop() ? ` · ⌖ ${q.focus.toFixed(1)}` : ""}${q.shake ? ` · shake ${Math.round(q.shake)}%` : ""}${q.ease && j < K.length - 1 ? ` · ${EASES[q.ease].short}` : ""}</button><button type="button" class="set-x" data-act="del-cam-key" data-k="${j}" aria-label="Remove the camera key at ${q.t.toFixed(2)} s">×</button>`).join(" ");
     const i = K.findIndex(q => near(q.t, s.t));
     const row = i >= 0 && i < K.length - 1 ? `<div class="field s3-ease"><label for="s3-ease">From ${K[i].t.toFixed(2)} s to the next key (${K[i + 1].t.toFixed(2)} s)</label>
       <select id="s3-ease" title="How the camera speeds up and slows down on its way to the next key (move, turn, zoom and roll)">${Object.entries({ "": { label: "Steady: the same speed all the way" }, ...EASES }).map(([v, e]) => `<option value="${v}"${(K[i].ease || "") === v ? " selected" : ""}>${e.label}</option>`).join("")}</select></div>`

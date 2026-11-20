@@ -5,6 +5,23 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.115.0] - 2026-11-19
+
+### Added
+- **Camera shake** for the shot camera, in the floating box:
+  - **Shake**: an amount from 0 to 100 %, keyed with the camera. A key without one keeps the amount before it, so key
+    0 % and 60 % to make it start shaking, or ramp it down.
+  - **Style**, for the whole camera:
+    - Handheld: a gentle sway.
+    - Walking: bobs and sways with each step.
+    - Vehicle: a fast vibration.
+    - Earthquake: violent.
+  - The shake is smooth, natural-looking noise that turns the camera a little about its eye and moves it a little, on
+    top of its path. The keys and the gimbal stay on the smooth path, so editing never bakes the shake in.
+  - You see it when you look through the camera, in the corner preview and on the camera drawn from outside, as you
+    scrub or play. The 🎬 Render draws it, so H3 follows it, and H3 is told ("The camera is handheld, with a natural
+    slight shake."). A shake alone counts as a camera move. Key chips and the preview's label show the amount.
+
 ## [0.114.0] - 2026-11-19
 
 ### Added
