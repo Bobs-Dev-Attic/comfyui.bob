@@ -71,10 +71,13 @@
         <div class="field"><div class="v2-lbl"><label for="v2-action">What happens</label><span class="v2-tags" id="v2-tags"></span></div>
           <textarea id="v2-action" rows="3" placeholder="{Woman} walks towards the sea and looks back, smiling"></textarea>
           <p class="hint">Click an object's name to put it in: <code>{Name}</code> becomes that object as the scene describes it.</p></div>
-        <div class="row2"><div class="field"><label for="v2-speaker">Who speaks</label><select id="v2-speaker"></select></div>
-          <div class="field"><label for="v2-line">Dialogue <span class="opt">optional</span></label><input id="v2-line" maxlength="300" placeholder="Come on in, the water's warm!"></div></div>
+        <div class="field"><div class="v2-lbl"><span class="v2-flbl">Dialogue</span><span class="opt">who says what, in order</span></div>
+          <div class="v2-lines" id="v2-lines"></div>
+          <button type="button" class="btn sm" id="v2-addline">＋ Line</button>
+          <p class="hint">An object with a voice in the library speaks with it (H3 Reference).</p></div>
         <div class="field"><label for="v2-sound">Background sound</label><input id="v2-sound" maxlength="300" placeholder="Waves rolling in, a light breeze, distant gulls"></div>
-        <div class="field"><label for="v2-music">Music <span class="opt">optional</span></label><input id="v2-music" maxlength="300" placeholder="Soft acoustic guitar, warm and relaxed"></div>
+        <div class="field"><label for="v2-music">Music <span class="opt">in this shot</span></label><input id="v2-music" maxlength="300" placeholder="Soft acoustic guitar, warm and relaxed">
+          <p class="hint" id="v2-musichint" hidden>The soundtrack plays over every shot, so the shots are made without their own music.</p></div>
         <div class="row2"><div class="field"><label for="v2-quality">Quality</label><select id="v2-quality"><option value="draft">Draft</option><option value="standard" selected>Standard</option><option value="full">Full</option></select></div>
           <div class="field"><label>Length</label><div class="v2-len" id="v2-len">–</div></div></div>
         <section class="v2-model" id="v2-model" aria-live="polite"></section>
@@ -86,8 +89,10 @@
     <!-- the shots in order: a video timeline -->
     <section class="v2-tl" aria-label="Shot timeline">
       <div class="v2-tlbar"><b>Timeline</b><span class="hint" id="v2-total"></span><span class="v2-grow"></span>
+        <button type="button" class="btn sm" id="v2-music-btn" title="One piece of music for the whole timeline (MiniMax Music 3)">🎵 Soundtrack</button>
         <button type="button" class="btn sm" id="v2-genall" title="Generate every shot, in order">🎬 Generate all</button></div>
       <div class="v2-tltrack" id="v2-tltrack"></div>
+      <div class="v2-tlmusic" id="v2-tlmusic" hidden></div>
     </section>
   </main>
 

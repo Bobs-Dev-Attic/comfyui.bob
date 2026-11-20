@@ -430,7 +430,7 @@ class JobManager:
         else:
             sets = ([models.ALL_SETS["h3"], models.ALL_SETS["klein"]] if req.engine == "reshoot"
                     # a 3D scene with object pictures renders on H3 Reference (workflows.build_motion)
-                    else [models.ALL_SETS["h3ref" if req.references else "h3"]] if req.engine == "motion"
+                    else [models.ALL_SETS["h3ref" if req.references or req.ref_audios else "h3"]] if req.engine == "motion"
                     else [models.ALL_SETS[req.engine]])
         files: dict[str, Any] = {}
         for mset in sets:
@@ -639,7 +639,7 @@ class JobManager:
             raise ValueError("Prompt is empty")
         if req.aspect not in workflows.ASPECTS:
             raise ValueError(f"Unknown aspect ratio {req.aspect}")
-        if req.ref_audios and req.engine != "h3ref":
+        if req.ref_audios and req.engine not in ("h3ref", "motion"):
             raise ValueError("Reference sounds (voice cloning) need the H3 Reference model")
         for ref in req.ref_audios:
             if media.kind_of(ref) not in ("audio", "video"):
@@ -720,7 +720,8 @@ class JobManager:
             return workflows.build_motion(
                 files, prompt=req.prompt, width=w, height=h, seconds=req.seconds, seed=seed, turbo=req.turbo, steps=req.steps,
                 hold=req.motion_hold, edge=edge, prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras],
-                references=len(req.references),
+                references=len(req.references), audios=len(req.ref_audios),
+                clean_audio=req.clean_audio and self.has_node("H3RefAudioPrep"),
             )
         if req.engine == "imgedit":
             return workflows.build_imgedit(
