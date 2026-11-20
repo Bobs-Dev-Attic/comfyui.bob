@@ -130,6 +130,8 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   camera: two keys with different lenses make a zoom.
   From outside, a moving camera's **dolly path** shows a dot each second and a faint camera at each key, and **📺 Preview
   what it sees** puts the camera's view at the playhead in a corner of the view while you scrub or play.
+  Each camera key can **ease** to the next one (steady, ease in, ease out, ease in and out): choose it under the keys
+  with the playhead on that key.
   **Empty scenes** (☰ › New empty 3D scene) start from nothing: a floor with a 1 m grid, a sky colour and an optional
   backdrop picture, with the shot's shape and lens chosen in the View section; add 3D models and frame the shot.
   **📷 Generate photo…** (any scene) draws what the camera frames and has Qwen Image Edit 2511 (or MiniMax H3 Image)

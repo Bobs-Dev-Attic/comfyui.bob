@@ -5,6 +5,18 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.112.0] - 2026-11-19
+
+### Added
+- **Easing for camera keys.** Each camera key sets how the camera gets to the next key: **Steady** (the same speed all
+  the way, as before), **Ease in** (starts slowly), **Ease out** (slows into the next key) or **Ease in and out**.
+  - Move the playhead to a key (click its chip) and choose under the keys in the Camera section. The chip shows it
+    (0.00 s · 35 mm · ease in-out).
+  - It shapes the whole move, turn, zoom and roll on that stretch, and the camera still reaches every key at the time
+    it was keyed.
+  - The dolly path's dots each second show it: they bunch up where the camera is slow. The view, the preview, 🎬 Render
+    and 📷 Generate photo all follow it.
+
 ## [0.111.0] - 2026-11-19
 
 ### Added

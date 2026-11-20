@@ -778,6 +778,8 @@ details.post-proc > .hint { margin: 0 0 10px; }
 .mo-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .mo-keys { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-bottom: 8px; }
 .mo-keys .chip-btn.on { outline: 2px solid var(--accent); }
+.mo-keys .s3-ease, .mo-keys .s3-ease-h { flex-basis: 100%; margin: 4px 0 0; }
+.mo-keys .s3-ease select { width: 100%; }
 .mo-foot-st { margin-right: auto; }
 @media (max-width: 760px) { .mo { grid-template-columns: 1fr; } }
 
