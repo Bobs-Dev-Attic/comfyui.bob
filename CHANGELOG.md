@@ -5,6 +5,15 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.108.0] - 2026-11-19
+
+### Added
+- **Lens in the floating position box** while the shot camera is selected: its focal length in mm (on a 36 mm wide
+  frame) with how wide it sees. Type any value from 10 to 300 mm, or pick 18, 24, 28, 35, 50, 85, 135 or 200 from its
+  list. In an empty scene it is the scene's lens (the same as View › Lens, which then shows a typed value too), so it
+  changes the frame and the render, and undo takes it back. A picture scene shows the picture's own lens, estimated from
+  it, and keeps it (the field is read-only there).
+
 ## [0.107.0] - 2026-11-19
 
 ### Added

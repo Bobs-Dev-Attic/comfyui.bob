@@ -1059,7 +1059,11 @@ const Scene3D = (() => {
           <div class="s3-float-xyz">${["X", "Y", "Z"].map((a, j) => `<label><span class="ax${j}">${a}</span><input type="number" class="s3f-in" data-ax="${j}" step="0.1"></label>`).join("")}</div>
           <div class="s3-float-cam" hidden><div class="s3-float-l">Turn <span class="opt">degrees</span></div>
             <div class="s3-float-xyz"><label><span title="Pan, about Y">Pan</span><input type="number" class="s3f-in" data-ax="yaw" step="1"></label>
-              <label><span title="Tilt: up is +, down is −">Tilt</span><input type="number" class="s3f-in" data-ax="pitch" step="1" min="-89" max="89"></label></div></div>
+              <label><span title="Tilt: up is +, down is −">Tilt</span><input type="number" class="s3f-in" data-ax="pitch" step="1" min="-89" max="89"></label></div>
+            <div class="s3-float-l">Lens <span class="opt">focal length, 36 mm frame</span></div>
+            <div class="s3-float-lens"><label><input type="number" class="s3f-in" data-ax="lens" min="10" max="300" step="1" list="s3-lenses" aria-label="Focal length in mm"> mm</label>
+              <span class="hint s3-float-fov"></span></div>
+            <datalist id="s3-lenses">${[18, 24, 28, 35, 50, 85, 135, 200].map(v => `<option value="${v}">`).join("")}</datalist></div>
           <p class="hint s3-float-t"></p>
         </div></div>
         <div class="mo-transport">
@@ -1814,6 +1818,8 @@ const Scene3D = (() => {
   /* ---------------------------------------------------------------- the floating position box
      While an object (or the shot camera) is selected: its X, Y, Z at the playhead (and the camera's pan and tilt),
      to read and type. Drag it by its top; × hides it until something else is selected. */
+  // The camera's focal length in mm on a 36 mm wide frame: an empty scene's lens, or the picture's (estimated).
+  const lensMM = () => s.bg.empty ? Math.round(+s.sc.lens || 35) : Math.round(18 / (s.bg.t || 1));
   const floatKey = () => s.camSel ? "cam" : s.objs[s.sel]?.id || null;
   function syncFloat() {
     const box = s.root.querySelector(".s3-float"); if (!box) return;
@@ -1828,11 +1834,13 @@ const Scene3D = (() => {
     s.root.querySelector(".s3-float-cam").hidden = !cam;
     const st = s.bg.empty ? 0.1 : +(s.bg.dmed * 0.02).toPrecision(2);
     box.querySelectorAll(".s3f-in").forEach(inp => {
-      const ax = inp.dataset.ax, v = ax === "yaw" ? c?.yaw : ax === "pitch" ? (c ? -c.pitch : null) : pos[+ax];  // tilt: up is +
+      const ax = inp.dataset.ax, v = ax === "yaw" ? c?.yaw : ax === "pitch" ? (c ? -c.pitch : null) : ax === "lens" ? (c ? lensMM() : null) : pos[+ax];  // tilt: up is +
+      if (ax === "lens") { inp.disabled = !s.bg.empty; inp.title = s.bg.empty ? "The camera's focal length: smaller is wider (the scene's Lens, in View)" : "The picture's own lens (estimated from it): a picture scene keeps it"; }
       if (v == null) return;
       if (ax.length === 1) inp.step = String(st);
       if (document.activeElement !== inp) { const t = (Math.round(v * 1000) / 1000).toString(); if (inp.value !== t) inp.value = t; }
     });
+    if (cam) s.root.querySelector(".s3-float-fov").textContent = `${Math.round(2 * Math.atan(s.bg.t) / rad)}° wide${s.bg.empty ? "" : " · the picture's"}`;
     const keyed = cam ? s.camKeys.some(k => near(k.t, s.t)) : o.keys?.some(k => near(k.t, s.t));
     s.root.querySelector(".s3-float-t").textContent = `At ${s.t.toFixed(2)} s${keyed ? " (a key)" : (cam ? s.camKeys.length : o.keys?.length) ? ": typing keys it here" : ""}`;
   }
@@ -1860,11 +1868,15 @@ const Scene3D = (() => {
     ["pointerdown", "wheel", "contextmenu"].forEach(t => box.addEventListener(t, e => e.stopPropagation()));
     box.addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { e.target.blur(); s.cv.focus(); } });
     box.addEventListener("input", e => e.stopPropagation());
-    box.addEventListener("change", e => {
+    box.addEventListener("change", async e => {
       e.stopPropagation();
       const inp = e.target.closest(".s3f-in"); if (!inp || !s?.bg) return;
       const ax = inp.dataset.ax, v = parseFloat(inp.value);
       if (!Number.isFinite(v)) return syncFloat();
+      if (s.camSel && ax === "lens") {  // the scene's lens (an empty scene's; a picture keeps its own)
+        if (!s.bg.empty) return syncFloat();
+        s.sc.lens = Math.max(10, Math.min(300, Math.round(v))); await emptyChanged(); return;
+      }
       if (s.camSel) {
         const c = camForRender(s.t);
         if (ax === "yaw") editCam(turnCam(c, v, c.pitch));
@@ -1963,7 +1975,10 @@ const Scene3D = (() => {
   function renderEmpty() {
     const sc = s.sc, R = s.root;
     R.querySelector("#s3-aspect").value = sc.aspect || "16:9";
-    R.querySelector("#s3-lens").value = String(Math.round(+sc.lens || 35));
+    const ls = R.querySelector("#s3-lens"), lv = String(Math.round(+sc.lens || 35));
+    ls.querySelector("[data-own]")?.remove();
+    if (![...ls.options].some(op => op.value === lv)) { const op = new Option(`${lv} mm`, lv); op.dataset.own = "1"; ls.add(op); }  // typed in the floating box
+    ls.value = lv;
     R.querySelector("#s3-sky").value = sc.backdrop?.sky || "#c9d3de";
     R.querySelector("#s3-floor").value = sc.backdrop?.floor || "#8b9098";
     const pic = sc.backdrop?.picture;
