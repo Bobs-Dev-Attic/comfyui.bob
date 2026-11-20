@@ -5,6 +5,18 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.134.6] - 2026-11-20
+
+### Added
+- **Quick photo and Generate photo in V2 send the objects' LoRAs**, as Render video does.
+  - When the shot's library objects have LoRAs, the photo window has a "Use the objects' LoRAs" option, on by
+    default. The review lists the LoRAs with their strengths.
+  - Render video's photo of the first frame (new or quick) gets them too.
+- **The edit models take LoRAs** (the AI edit's instruct step, which the scene photo uses).
+  - On Qwen Image Edit they go after the Lightning LoRA; on MOSS-Image Edit, after its edit LoRA; on MiniMax H3
+    Image, on the model.
+  - A LoRA made for a different model than the one picked may do nothing or spoil the photo.
+
 ## [0.134.5] - 2026-11-20
 
 ### Added
