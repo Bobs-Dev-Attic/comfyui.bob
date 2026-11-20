@@ -5,6 +5,16 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.125.1] - 2026-11-20
+
+### Fixed
+- **A person no longer appears twice in a photo of a 3D scene** (📷 Generate photo, a scene render's photo of its
+  first frame, and V2). A Person with a picture is pasted into the render in the mannequin's place, and the same
+  picture was also sent to the edit model as a reference. The model then drew that person a second time, as the
+  picture shows them, beside the one pasted in. Now a pasted person's picture isn't sent. The edit model is told
+  they were pasted in from a photo, to keep their face, hair and clothes, and that they appear once. Other objects'
+  pictures still go along, and since pasted people no longer take up the edit model's picture slots, more of them fit.
+
 ## [0.125.0] - 2026-11-20
 
 ### Added
