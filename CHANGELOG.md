@@ -5,6 +5,26 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.134.0] - 2026-11-20
+
+### Added
+- **Levels in 🎬 Render video, from rough to final.** At the top of the window, pick one:
+  - **🧊 Sketch:** the scene's 3D objects as drawn, Draft, 4 steps. It tests the motion and is the fastest.
+  - **🟫 Rough:** a small, quick photo of the first frame (0.4 MP on Qwen, about 20 s), then a Draft video. It
+    tests the look.
+  - **🎬 Final:** a full photo of the first frame (or the scene's picture), the Qwen fill and detail view,
+    Standard quality and the turbo's full steps.
+  - A level only sets the options under it, which you can still change one by one. Changing one by hand makes it
+    your own mix. The last level you rendered with is remembered.
+- **Speed** beside Quality: Fastest (4 steps), Normal (the turbo's own), Finer (12 steps) or Best (no turbo, 20
+  steps, slow). The model settings in the review show the steps it will take.
+- **A quick photo as the start:** "Start from" has a new choice, a quick, small photo of the first frame.
+
+### Changed
+- **⚡ Quick video now opens the Render window on Sketch** instead of sending straight away, so you see its
+  settings and the whole prompt first, and can step it up to Rough or Final.
+- A shot made from a render keeps the render's speed (its steps and turbo) when Generate on the Shots step sends it.
+
 ## [0.133.0] - 2026-11-20
 
 ### Fixed

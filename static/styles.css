@@ -872,6 +872,10 @@ details.post-proc > .hint { margin: 0 0 10px; }
 .ex-menu button[disabled] { opacity: .45; cursor: default; }
 .ex-menu .menu-sep { height: 1px; background: var(--line); margin: 4px 6px; }
 /* the photo window: the model's settings and the whole prompt */
+.s3r-row3 { grid-template-columns: 1fr 1fr 1fr; }
+@media (max-width: 560px) { .s3r-row3 { grid-template-columns: 1fr; } }
+.s3r-lv { margin-top: 4px; }
+.s3r-lvh { margin: 4px 0 0; }
 .s3p-set { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--panel-2); }
 .s3p-set h4 { margin: 0 0 6px; font-size: 12.5px; }
 .s3p-dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 12px; margin: 0; font-size: 12.5px; }
