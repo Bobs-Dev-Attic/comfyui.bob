@@ -5,6 +5,24 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.134.8] - 2026-11-20
+
+### Fixed
+- **A 3D scene render on H3 Reference now tells H3 who is who, and whose voice is whose.** This applies to Render
+  video, Quick video and V2's Generate, with the objects' pictures or the speakers' voices.
+  - It used to send H3's plain prompt, so nothing said that <Picture 2> is the woman or that <Audio 1> is her voice.
+    H3 had to guess, and the voice and lines often came out wrong.
+  - It's now in H3 Reference's full form, as the Shots step writes it:
+    - **subject_definitions:** each picture's subject, and each voice with whose it is and their speaker ID.
+    - **summary**
+    - **retention_analysis:** each subject's look and each voice kept.
+    - **The description**, where a pictured object is its <Subject N> (where it is in the frame) and each line is
+      spoken by its <Subject N> (S1), in its <Audio N>.
+- **Lines get a speaker ID** (S1, S2… in order of first speaking) on plain H3 too. Someone already named is called by
+  a short name ("the young woman"), not the whole description again.
+- **The subject's words no longer break mid-sentence** ("…blonde hair. from <Picture 2> (…hair. in the middle…)").
+  A description ending in a full stop is trimmed, and someone from a picture is described once.
+
 ## [0.134.7] - 2026-11-20
 
 ### Fixed

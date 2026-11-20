@@ -1599,8 +1599,8 @@ const Scene3D = (() => {
     const fromPhoto = () => isPhoto(box.querySelector("#s3r-first").value);
     const useVoices = () => !!box.querySelector("#s3r-voices")?.checked;
     const useLoras = () => !!box.querySelector("#s3r-loras")?.checked;
-    const extraNow = () => v2x && { dialogue: useVoices() ? v2x.voiced : v2x.dialogue, sound: v2x.sound, voices: useVoices() ? v2x.voices : [], loras: useLoras() ? v2x.loras : [] };
-    const withLines = t => [endOf(t), extraNow()?.dialogue].filter(Boolean).join(" ");
+    const extraNow = () => v2x && { lines: v2x.lines || [], sound: v2x.sound, voices: useVoices() ? v2x.voices : [], loras: useLoras() ? v2x.loras : [] };
+    const withLines = t => { const d = linesText(extraNow(), useRefs(), t).text; return [d ? endOf(t) : t, d].filter(Boolean).join(" "); };
     box.querySelector("#s3r-voices")?.addEventListener("change", () => box.querySelector("#s3r-what").dispatchEvent(new Event("input")));
     wireTags(box, box.querySelector("#s3r-what"), () => videoText(withLines(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder), useRefs(), fromPhoto()));
     box.querySelector("#s3r-refs")?.addEventListener("change", () => box.querySelector("#s3r-what").dispatchEvent(new Event("input")));
@@ -1775,12 +1775,65 @@ const Scene3D = (() => {
   // The render's prompt: what happens (tags filled in), the camera, and the sound fields.
   // extra (V2's shot): { dialogue: its said lines, after what happens; sound: its soundscape and music fields }
   const endOf = t => { t = String(t || "").trim(); return !t || /[.!?"”]$/.test(t) ? t : `${t}.`; };  // a full stop before what's said
+  /* The shot's lines (V2: extra.lines), as the Shots step words them: who says it (their <Subject N> when their
+     picture goes to H3 Reference, else {Name}, or a short name once they're named), a speaker ID (S1, S2… in order of
+     first speaking) and the voice they speak with (<Audio N>, extra.voices). -> { text, ids: speaker -> ID } */
+  function linesText(extra, refs, whatText = "") {
+    const L = (extra?.lines || []).filter(l => String(l.text || "").trim()), ids = new Map();
+    if (!L.length) return { text: "", ids };
+    for (const l of L) if (l.speaker && !ids.has(l.speaker)) ids.set(l.speaker, ids.size + 1);
+    const pics = refs ? picObjs() : [], named = new Set();
+    const text = L.map(l => {
+      const o = l.speaker ? s.objs.find(x => x.name.trim().toLowerCase() === l.speaker.trim().toLowerCase()) : null;
+      const k = o ? pics.indexOf(o) : -1, a = (extra.voices || []).findIndex(v => v.name === l.speaker);
+      const tagged = o && (named.has(o) || new RegExp(`\\{\\s*${o.name.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\}`, "i").test(whatText));
+      const who = !l.speaker ? "Someone" : k >= 0 ? `<Subject ${k + 2}>` : !o ? l.speaker : tagged ? `the ${shortName(o)}` : `{${o.name}}`;
+      if (o) named.add(o);
+      const t = String(l.text).trim().replace(/^["“]|["”]$/g, "");
+      return `${who}${l.speaker ? ` (S${ids.get(l.speaker)})` : ""} says${a >= 0 ? `, using the voice timbre referenced from <Audio ${a + 1}>` : ""}: <d>[English] ${t}</d>`;
+    }).join(" ");
+    return { text: text.charAt(0).toUpperCase() + text.slice(1), ids };
+  }
+  // "a young woman in a white dress, barefoot" -> "young woman"
+  const shortName = o => { const w = String(o.becomes || "").trim().toLowerCase().split(/,|\b(?:in|with|wearing|who|holding|from|on|at|carrying)\b/)[0].replace(/^(a|an|the)\s+/, "").trim().split(/\s+/).slice(0, 4).join(" ");
+    return w || (o.prim === "figure" ? "person" : bare(o.name).toLowerCase()); };
+  const subjectOf = o => (o.becomes ? bare(o.becomes) : o.prim === "figure" ? "a person" : bare(o.name)).replace(/[\s.;,]+$/, "");
+  /* The render's prompt: what happens (tags filled in), the lines, the camera, and the sound fields. On H3 Reference
+     (the objects' pictures, or the speakers' voices) it's in full-reference form, as the Shots step writes it:
+     subject_definitions (each picture's subject, each voice and whose it is, with their speaker ID), summary,
+     retention_analysis, then the description, in which a pictured object is its <Subject N>. Without them H3 has no
+     way to tell whose voice <Audio 1> is, or who <Picture 2> is. */
   function renderPrompt(whatText, refs, fromPhoto, extra = null) {
-    const what = videoText([extra?.dialogue ? endOf(whatText || defaultWhat()) : whatText || defaultWhat(), extra?.dialogue].filter(Boolean).join(" "), refs, fromPhoto).text;
+    const w = whatText || defaultWhat(), lines = linesText(extra, refs, w), voices = extra?.voices || [];
+    const full = (refs && picObjs().length > 0) || voices.length > 0;  // H3 Reference's full form
+    const what = videoText([lines.text ? endOf(w) : w, lines.text].filter(Boolean).join(" "), refs, fromPhoto, full).text;
     const glides = s.camKeys.length > 1 && s.camKeys.some(k => camDiff(k, s.camKeys[0]) > 1e-3);
     const cam = [glides ? (shakes() ? "The camera moves through the scene." : "The camera moves smoothly through the scene.") : shakes() ? "" : "The camera holds a static shot.",
       shakes() ? SHAKES[shakeStyle()].says : ""].filter(Boolean).join(" ");
-    return { what, cam, prompt: `integrated_multimodal_description: [Shot 1] ${what.replace(/\s+/g, " ")} ${cam}\n\n${extra?.sound || "overall_soundscape: Natural sound of the scene.\n\nnon_diegetic_music: N/A"}` };
+    const sound = extra?.sound || "overall_soundscape: Natural sound of the scene.\n\nnon_diegetic_music: N/A";
+    const pics = refs ? picObjs() : [];
+    if (!pics.length && !voices.length) return { what, cam, prompt: `integrated_multimodal_description: [Shot 1] ${what.replace(/\s+/g, " ")} ${cam}\n\n${sound}` };
+    const lc = t => t.charAt(0).toLowerCase() + t.slice(1);
+    const defs = pics.map((o, i) => `<Subject ${i + 2}> is the subject of <Picture ${i + 2}>: ${lc(subjectOf(o))}.`);
+    // whose each voice is: the speaker's <Subject N>, or what they are
+    const owner = v => { const o = s.objs.find(x => x.name.trim().toLowerCase() === String(v.name).trim().toLowerCase()), k = o ? pics.indexOf(o) : -1;
+      return k >= 0 ? `<Subject ${k + 2}>` : o ? `the ${shortName(o)}` : String(v.name); };
+    voices.forEach((v, i) => { const sid = lines.ids.get(v.name); defs.push(`<Audio ${i + 1}> is the voice-timbre reference for ${owner(v)}${sid ? ` (S${sid})` : ""}.`); });
+    const who = pics.map((o, i) => `<Subject ${i + 2}>`), whoText = who.length > 1 ? `${who.slice(0, -1).join(", ")} and ${who.at(-1)}` : who[0] || "the people in it";
+    const tasks = ["reference generation", ...(voices.length ? ["audio reference"] : [])];
+    const first = videoText(w, refs, fromPhoto, true).text.replace(/<Picture (\d+)>/g, (m, n) => +n >= 2 ? `<Subject ${n}>` : m).split(/(?<=[.!?])\s+/)[0];
+    const opening = first.split(/\s+/).length <= 40 ? first.replace(/[.\s]+$/, "") : "";
+    const summary = `[${tasks.join(" + ")}] The target video is a single ${dur().toFixed(1)}-second scene with ${whoText}`
+      + (voices.length ? `, using ${voices.map((v, i) => `<Audio ${i + 1}> as the voice-timbre reference for ${owner(v)}`).join(" and ")}` : "") + "."
+      + (opening ? ` It opens as ${lc(opening)}.` : "");
+    const retention = [
+      ...pics.map((o, i) => `<Subject ${i + 2}> (appears in [Shot 1]): fully_preserved - the identity, face, hair, build and appearance from <Picture ${i + 2}> are retained.`),
+      ...voices.map((v, i) => `<Audio ${i + 1}>: reference - its voice timbre guides the delivery of ${owner(v)} without copying the original signal.`),
+    ];
+    const body = `[Shot 1] ${what.replace(/\s+/g, " ")} ${cam}`.replace(/<Picture (\d+)>/g, (m, n) => +n >= 2 ? `<Subject ${n}>` : m);
+    const prompt = [`subject_definitions:\n${defs.join("\n")}`, `summary:\n${summary}`, `retention_analysis:\n${retention.join("\n")}`,
+      `integrated_multimodal_description:\n${body}`, sound.replace(/^(overall_soundscape|non_diegetic_music): */gm, "$1:\n")].join("\n\n");
+    return { what, cam, prompt };
   }
   // What happens, when nothing is written: whatever moves.
   function defaultWhat() {
@@ -1849,7 +1902,7 @@ const Scene3D = (() => {
     const best = photos.reverse().find(p => Math.abs(p.t) < 0.5 / FPS && camDiff(p.cam, cam0) < 0.02);
     const start = o.start || (s.sc.picture && startsAsPicture() ? "picture" : best ? `photo:${best.id}` : editModels().length ? "newphoto" : s.sc.picture ? "picture" : "composite");
     const refs = picObjs().length > 0 && refsReady();
-    const r = await buildRender({ start, look: o.look ?? lastLook(), fill: o.fill ?? lastFill(), refs, hold: start === "newphoto" || start === "quickphoto" || start.startsWith("photo:") ? "loose" : "normal",
+    const r = await buildRender({ start, look: o.look ?? lastLook(), fill: o.fill ?? lastFill(), refs, extra: o.extra || null, hold: start === "newphoto" || start === "quickphoto" || start.startsWith("photo:") ? "loose" : "normal",
       quality: ["draft", "standard", "full"].includes(o.quality) ? o.quality : "standard", what: fromShot(text) || defaultWhat() }, say);
     return { ...r, start, refs };
   }
@@ -2896,7 +2949,7 @@ const Scene3D = (() => {
       if (!a.off && a.part < 0.6) x.where += ", partly out of frame";
       if (!a.off && ds.length > 1 && a.d < med * 0.7) x.where += ", in front";
       else if (!a.off && ds.length > 1 && a.d > med * 1.4) x.where += ", at the back";
-      x.becomes = (x.o.becomes || "").trim();
+      x.becomes = (x.o.becomes || "").trim().replace(/[\s.;,]+$/, "");
       if (photo && (x.becomes || x.o.prim === "figure")) { x.looks = x.becomes ? bare(x.becomes) : "person"; x.photo = true; }
     }
     // Two that would read the same are told apart left to right.
@@ -2919,7 +2972,7 @@ const Scene3D = (() => {
   }
   // "the wooden crate (the red cube on the left)", or just what it looks like when it Becomes nothing; with its picture
   // as <Picture k> (a render on H3 Reference), "the wooden crate from <Picture 2> (the red cube on the left)".
-  const refOf = (x, k = 0) => x.photo && !k ? `the ${x.looks}${x.off ? "" : ` (${[x.where, x.pose].filter(Boolean).join(", ")})`}` : k ? `the ${x.becomes ? bare(x.becomes) : x.o.name.trim().toLowerCase()} from <Picture ${k}> (${tidy(x.seen)})`
+  const refOf = (x, k = 0) => x.photo && !k ? `the ${x.looks}${x.off ? "" : ` (${[x.where, x.pose].filter(Boolean).join(", ")})`}` : k ? `the ${x.becomes ? bare(x.becomes) : x.o.name.trim().toLowerCase()} from <Picture ${k}>${x.photo ? ([x.where, x.pose].filter(Boolean).length && !x.off ? ` (${[x.where, x.pose].filter(Boolean).join(", ")})` : "") : ` (${tidy(x.seen)})`}`
     : x.becomes ? `the ${bare(x.becomes)} (${tidy(x.seen)})` : x.seen;
   // A pose's closing comma before a full stop, semicolon or bracket goes: "…, sitting,." -> "…, sitting."
   const tidy = t => String(t).replace(/,\s*([.;:!?)]|$)/g, "$1").replace(/,\s*,/g, ",");
@@ -2927,12 +2980,14 @@ const Scene3D = (() => {
   const picObjs = () => s.objs.filter(o => o.mesh && o.pos && !o.hidden && o.picture).slice(0, 8);
   const refsReady = () => !!state.caps?.engines?.h3ref?.ready;
   // {Name} -> that object's description; unknown names lose their braces and are reported.
-  function expandTags(text, list, picOf = () => 0) {
+  function expandTags(text, list, picOf = () => 0, short = false) {
     const unknown = [];
     const out = String(text || "").replace(/\{([^{}]{1,120})\}/g, (m, n) => {
       const x = list.find(q => q.o.name.trim().toLowerCase() === n.trim().toLowerCase());
       if (!x) { unknown.push(n.trim()); return n.trim(); }
-      return refOf(x, picOf(x));
+      const k = picOf(x);
+      if (short && k) { const at = x.photo ? [x.where, x.pose].filter(Boolean).join(", ") : tidy(x.seen); return `<Picture ${k}>${at && !x.off ? ` (${at})` : ""}`; }
+      return refOf(x, k);
     });
     return { text: out, unknown, used: list.filter(x => new RegExp(`\\{\\s*${x.o.name.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\}`, "i").test(text)) };
   }
@@ -2975,13 +3030,15 @@ const Scene3D = (() => {
   const depthOk = model => model === "qwen";
   const lastDepth = () => { try { return localStorage.getItem("bob.scenePhotoDepth") === "1"; } catch { return false; } };
   // The video's text: tags expanded, and what the other objects are (as the first frame shows them).
-  function videoText(what, refs = false, photo = false) {
+  // short: in H3 Reference's full form, where subject_definitions says what each picture's subject is, an object with
+  // a picture is just its <Picture N> and where it is ("<Picture 2> (the light grey figure in the middle)")
+  function videoText(what, refs = false, photo = false, short = false) {
     const pics = refs ? picObjs() : [], picOf = x => { const i = pics.indexOf(x.o); return i < 0 ? 0 : i + 2; };
-    const list = cast(0, camForRender(0), true, photo), r = expandTags(what, list, picOf);
+    const list = cast(0, camForRender(0), true, photo), r = expandTags(what, list, picOf, short);
     // from a photo, what an object becomes is already in the first frame
     const rest = list.filter(x => !r.used.includes(x) && (picOf(x) || (x.becomes && !x.off && !x.photo)));
     const cap = t => t[0].toUpperCase() + t.slice(1);
-    const extra = rest.map(x => picOf(x) ? `${cap(x.seen)} looks like <Picture ${picOf(x)}>${x.becomes ? `: ${x.becomes}` : ""}.` : `${cap(x.seen)} is ${x.becomes}.`).join(" ");
+    const extra = rest.map(x => picOf(x) ? (short ? `<Picture ${picOf(x)}> is ${tidy(x.seen)}.` : `${cap(x.seen)} looks like <Picture ${picOf(x)}>${x.becomes ? `: ${x.becomes}` : ""}.`) : `${cap(x.seen)} is ${x.becomes}.`).join(" ");
     let text = r.text.trim();
     if (text) text = cap(text);
     if (text && !/([.!?]|<\/d>)$/.test(text)) text += ".";  // a said line (<d>…</d>) ends itself
