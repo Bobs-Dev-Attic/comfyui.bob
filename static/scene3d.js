@@ -1397,8 +1397,26 @@ const Scene3D = (() => {
       if (!s) throw new Error("The scene was closed");
       const t = f / FPS;
       let out = s.cv;
-      if (mask) draw({ size, t, cam: camForRender(t), mask, proj });
-      else {
+      const gaps = gapLayers(proj, camForRender(t));
+      if (mask && gaps.length) {
+        // what H3 follows: the photo (objects too) and every filled view's background, together
+        out = Object.assign(document.createElement("canvas"), { width: size[0], height: size[1] });
+        const og = out.getContext("2d");
+        draw({ size, t, cam: camForRender(t), mask, proj }); og.drawImage(s.cv, 0, 0, size[0], size[1]);
+        og.globalCompositeOperation = "lighter";
+        for (const L of gaps) { draw({ size, t, cam: camForRender(t), mask, proj: L, skip: s.objs }); og.drawImage(s.cv, 0, 0, size[0], size[1]); }
+      } else if (mask) draw({ size, t, cam: camForRender(t), mask, proj });
+      else if (proj && gaps.length) {
+        // the filled views (the one nearest this frame's camera last), then the photo's background over them, then
+        // the whole frame from the photo; what none of them saw: the empty scene's own sky and floor, or a blur
+        out = Object.assign(document.createElement("canvas"), { width: size[0], height: size[1] });
+        const og = out.getContext("2d");
+        if (s.bg.empty) { draw({ size, t, cam: camForRender(t), skip: s.objs }); og.drawImage(s.cv, 0, 0, size[0], size[1]); }
+        for (const L of [...gaps, proj]) { draw({ size, t, cam: camForRender(t), proj: L, skip: s.objs }); og.drawImage(s.cv, 0, 0, size[0], size[1]); }
+        if (!s.bg.empty) out = fillHoles(out, size[0], size[1]);
+        draw({ size, t, cam: camForRender(t), proj });
+        out.getContext("2d").drawImage(s.cv, 0, 0, size[0], size[1]);
+      } else {
         // The holes a camera move opens are filled from the background alone, so an object's colours don't bleed
         // into them (H3 kept that as a glow round a person): the background drawn without the objects, its holes
         // filled, then the whole frame drawn over it.
@@ -1474,6 +1492,7 @@ const Scene3D = (() => {
         ${editModels().length ? `<option value="newphoto">A new photo of the first frame (made first, about a minute, then the video)</option>` : ""}
         ${photos.map(p => `<option value="photo:${p.id}">The photo from ${when(p.it)}${p.match ? " (the first frame)" : " (another view: the video may jump)"}</option>`).join("")}
         <option value="composite">The scene's first frame as drawn (plain)</option></select></div>
+      ${cameraMoves() ? `<label class="check s3r-fillf" title="Where the camera move shows what the photo never saw (the far side of a turn), Qwen paints the place in first, from up to ${MAX_GAPS} views along the move, so H3 follows the same surroundings all the way round"><input type="checkbox" id="s3r-fill"${lastFill() ? " checked" : ""}> Fill what the photo can't see with Qwen first <span class="opt">about half a minute per view</span></label>` : ""}
       <div class="field s3r-lookf"><label for="s3r-look">How the photo should look <span class="opt">optional</span></label>
         <textarea id="s3r-look" rows="2" placeholder="Soft daylight, shot on 35 mm film.">${esc(lastLook())}</textarea></div>
       ${toShots().length ? `<div class="field"><label for="s3r-to">Goes to</label><select id="s3r-to">
@@ -1495,6 +1514,7 @@ const Scene3D = (() => {
     const syncStart = () => {
       const v = firstSel.value, photo = v === "newphoto" || v.startsWith("photo:");
       box.querySelector(".s3r-lookf").hidden = v !== "newphoto";
+      const ff = box.querySelector(".s3r-fillf"); if (ff) ff.hidden = !photo;
       if (photo && !holdSel.dataset.touched) holdSel.value = "loose";
       if (!photo && !holdSel.dataset.touched) holdSel.value = "normal";
       box.querySelector("#s3r-what").dispatchEvent(new Event("input"));  // what H3 reads follows the start
@@ -1519,7 +1539,9 @@ const Scene3D = (() => {
         const to = toSel?.value ?? "now";
         const toTl = to === "now" && box.querySelector("#s3r-tl").checked;
         if (to === "now") try { localStorage.setItem("bob.sceneAutoTl", toTl ? "1" : "0"); } catch { /* not kept */ }
-        const r = await buildRender({ start, look, refs: useRefs(), hold: holdSel.value, quality: box.querySelector("#s3r-q").value,
+        const fill = !!box.querySelector("#s3r-fill")?.checked;
+        if (box.querySelector("#s3r-fill")) try { localStorage.setItem("bob.sceneGapFill", fill ? "1" : "0"); } catch { /* not kept */ }
+        const r = await buildRender({ start, look, fill, refs: useRefs(), hold: holdSel.value, quality: box.querySelector("#s3r-q").value,
           what: box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder }, m => { st.textContent = m; });
         if (to !== "now") {  // into a shot: Generate on the Shots step sends it
           const k = Shots.useScene(to === "new" ? -1 : +to, r.shot);
@@ -1563,6 +1585,10 @@ const Scene3D = (() => {
         if (!p || !photoPath) throw new Error("That photo isn't there anymore");
         say("Painting the photo onto the scene…");
         proj = await prepareProjection(photoPath, p.t, p.cam, say);
+      }
+      if (proj && o.fill !== false && cameraMoves()) {
+        try { const k = await fillGaps(proj, o.look || lastLook(), say); if (k) say(`Filled ${k} view${k === 1 ? "" : "s"} the photo couldn't see.`); }
+        catch (err) { if (!s) throw err; Media.toast(`Filling the gaps: ${err.message}. Rendering without it.`); for (const g of proj.gaps || []) freeProjection(g.P); proj.gaps = []; }
       }
       say("Drawing the rough animation…");
       const ref = await renderVideo("ref", [W, H], n, (f, N) => say(`Drawing the rough animation: frame ${f + 1} of ${N}`), proj);
@@ -1649,7 +1675,7 @@ const Scene3D = (() => {
     const best = photos.reverse().find(p => Math.abs(p.t) < 0.5 / FPS && camDiff(p.cam, cam0) < 0.02);
     const start = s.sc.picture && startsAsPicture() ? "picture" : best ? `photo:${best.id}` : editModels().length ? "newphoto" : s.sc.picture ? "picture" : "composite";
     const refs = picObjs().length > 0 && refsReady();
-    const r = await buildRender({ start, look: lastLook(), refs, hold: start === "newphoto" || start.startsWith("photo:") ? "loose" : "normal",
+    const r = await buildRender({ start, look: lastLook(), fill: lastFill(), refs, hold: start === "newphoto" || start.startsWith("photo:") ? "loose" : "normal",
       quality: ["draft", "standard", "full"].includes(opts.quality) ? opts.quality : "standard", what: fromShot(text) }, say);
     Shots.useScene(i, r.shot);
     return r;
@@ -2857,6 +2883,7 @@ const Scene3D = (() => {
     return photoPrompt(said, pics.length || d ? tag(1) : "", free, person) + (d ? depthLine(tag, model) : "") + photoObjects(t, cam, pics, model, 2 + d, free, pasted);
   }
   const lastLook = () => { try { return localStorage.getItem("bob.scenePhotoLook") || ""; } catch { return ""; } };
+  const lastFill = () => { try { return localStorage.getItem("bob.sceneGapFill") !== "0"; } catch { return true; } };
   const EDIT_NAMES = { qwen: "Qwen Image Edit 2511", h3image: "MiniMax H3 Image", mossedit: "MOSS-Image Edit" };
   const editModels = () => { const ed = state.caps?.editor || {}; return [ed.qwen !== false && ["qwen", "Qwen Image Edit 2511"], ed.h3image && ["h3image", "MiniMax H3 Image"], ed.mossedit && ["mossedit", "MOSS-Image Edit"]].filter(Boolean); };
   // A Person with a picture goes into the render in its mannequin's place before the edit model sees it: only told to
@@ -3081,7 +3108,100 @@ const Scene3D = (() => {
     if (F) { q.pos = [q.pos[0] + F.d[0], q.pos[1], q.pos[2] + F.d[2]]; q.scale = (q.scale ?? 1) * F.k; }
     return q;
   }
-  function freeProjection(P) { if (!P || !s) return; s.gpu.free(P.depth); s.gpu.free(P.photo); s.gpu.free(P.cut); }
+  function freeProjection(P) { if (!P || !s) return; s.gpu.free(P.depth); s.gpu.free(P.photo); s.gpu.free(P.cut); s.gpu.free(P.bgOnly?.cut); for (const g of P.gaps || []) freeProjection(g.P); }
+  /* The photo as a background only, for the gap views: everything near an object in it (its stand-in's shape from the
+     photo's camera, and what SAM found, grown well round, more downwards for its shadow) is a hole, so the bits of a
+     person just outside a mannequin's shape don't lie on the ground as streaks (Qwen drew a second person from one). */
+  function bgOnly(P) {
+    if (P.bgOnly) return P.bgOnly;
+    const W = P.found?.W || 768, H = P.found?.H || Math.round(768 / s.bg.aspect), N = W * H;
+    const raw = s.gpu.capture(W, H, d => {
+      const o0 = { VP: P.VP0, eye: [0, 0, 0], key: [0, 1, 0] };
+      d(s.bgMesh, { ...o0, M: ID, solid: [0, 0, 0] });
+      for (const o of s.objs) if (o.mesh && o.pos && !o.hidden) d(o.mesh, { ...o0, M: matOf(o, fitPose(o, P.t0, P)), solid: [1, 1, 1] });
+    });
+    const a = new Uint8Array(N);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) a[y * W + x] = raw[((H - 1 - y) * W + x) * 4] > 127 || P.found?.a[y * W + x] ? 1 : 0;
+    const R = Math.round(W * 0.035) + 2, g = grow(a, W, H, R, R, 2 * R), cut = new ImageData(W, H);
+    for (let c = 0; c < N; c++) { cut.data[c * 4 + 1] = g[c] * 255; cut.data[c * 4 + 3] = 255; }
+    P.bgOnly = { ...P, cut: s.gpu.texture(cut), fits: null, gaps: null, bgOnly: null };
+    return P.bgOnly;
+  }
+
+  /* ---- Filling the gaps with Qwen. A camera move from a photo shows what the photo never saw (the far side of a
+     turn, the ground behind a person who moves). Where the move shows a lot of it, the view there is drawn from what
+     the scene has (the photo, and views already filled), background only; what nothing covers is painted magenta,
+     and Qwen Image Edit paints the place in there (as Replace does). That view is then painted onto the scene from
+     its camera, under the photo, so H3 follows real, consistent surroundings all round rather than inventing them as
+     it goes. Views grow out from the photo: each is the moment about half covered (so Qwen has the place to go on from,
+     never a blank), until every moment is mostly covered, up to MAX_GAPS (a full orbit takes about five). */
+  const MAX_GAPS = 6, GAP_ENOUGH = 0.85, GAP_EDGE = 0.5, GAP_LENS = 16;
+  // The filled views for a frame seen through `cam`: the furthest from it first, so the nearest is drawn last (on top).
+  const turnApart = (a, b) => { const d = Math.abs(((a.yaw - b.yaw) % 360 + 540) % 360 - 180); return d + Math.abs(a.pitch - b.pitch) + Math.abs(a.dist - b.dist) / s.bg.dmed * 30; };
+  // Only views within GAP_REACH of it: seen from much further round, a view painted onto the ground stretches into streaks.
+  const GAP_REACH = 75;
+  const gapLayers = (P, cam) => !P?.gaps?.length ? [] : P.gaps.filter(g => turnApart(g.cam, cam) < GAP_REACH)
+    .sort((a, b) => turnApart(b.cam, cam) - turnApart(a.cam, cam)).map(g => g.P);
+  // How much of the frame through `cam` at t the photo and the filled views cover (their background), 0 to 1.
+  function coverAt(P, t, cam, W = 192) {
+    const H = Math.round(W / s.bg.aspect), c = Object.assign(document.createElement("canvas"), { width: W, height: H }), g = c.getContext("2d", { willReadFrequently: true });
+    g.globalCompositeOperation = "lighter";
+    for (const L of [bgOnly(P), ...gapLayers(P, cam)]) { draw({ size: [W, H], t, cam, mask: "proj", proj: L, skip: s.objs }); g.drawImage(s.cv, 0, 0, W, H); }
+    const d = g.getImageData(0, 0, W, H).data; let n = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i] > 127) n++;
+    return n / (W * H);
+  }
+  // A background-only projection (a filled view): no objects fitted, and its depth is the background's alone.
+  async function prepareBgProjection(photoRef, t0, cam) {
+    const img = await createImageBitmap(await (await fetch(`/api/media/file?path=${encodeURIComponent(photoRef)}`)).blob());
+    const A = s.bg.aspect, near = s.bg.dmed * 0.01, far = s.bg.dmed * 50, e0 = eyeOf(cam);
+    const VP0 = mul4(perspective(2 * Math.atan(fovOf(cam).tv), A, near, far), lookAt(e0, cam.target, axesOf(cam).u));
+    const sphere = sphereMesh(e0, far * 0.8), W0 = Math.min(2048, img.width), H0 = Math.round(W0 / A);
+    const P = { VP0, near, far, t0, sphere };
+    P.depth = s.gpu.depthPass(W0, H0, d => { const o0 = { VP: VP0, eye: e0, key: [0, 1, 0] }; d(s.bgMesh, { ...o0, M: ID }); d(sphere, { ...o0, M: ID }); });
+    P.photo = s.gpu.texture(img);
+    return P;
+  }
+  const GAP_TEXT = look => "Replace every solid magenta area with the rest of this place, continuing the ground, the horizon, the sky and "
+    + "the surroundings from the rest of the picture, so it is one seamless photograph with the same light, colours, lens and style. "
+    + (look ? `The place: ${look.replace(/[.\s]+$/, "")}. ` : "")
+    + "Keep the ground near the camera flat and open; put anything tall (plants, rocks, buildings) only in the distance. "
+    + "Add no people, animals or large objects. No magenta remains. Keep everything that isn't magenta exactly the same.";
+  // Fill the gaps of a camera move from the photo P (adds P.gaps); `look`: how the place looks, in words.
+  async function fillGaps(P, look, say = () => {}) {
+    const models = editModels(); if (!models.length) return 0;
+    const model = (models.find(m => m[0] === "qwen") || models[0])[0];
+    P.gaps = P.gaps || [];
+    const n = frameCount(), step = Math.max(1, Math.round(FPS / 4)), ts = [];
+    for (let f = 0; f < n; f += step) ts.push(f / FPS);
+    const A = s.bg.aspect, W = Math.round((A >= 1 ? 1024 : 1024 * A) / 8) * 8, H = Math.round(W / A / 8) * 8;
+    for (let k = 0; k < MAX_GAPS; k++) {
+      say(`Finding what the photo can't see (view ${k + 1})…`);
+      // the moment nearest half covered among those not covered enough: the edge of what's known
+      let worst = null;
+      for (const t of ts) { const c = coverAt(P, t, camForRender(t)); if (c < GAP_ENOUGH && (!worst || Math.abs(c - GAP_EDGE) < Math.abs(worst.c - GAP_EDGE))) worst = { t, c }; }
+      if (!worst) break;
+      // the unshaken camera (a steady view to paint from), with a wide lens: each view then covers about 90° of a turn
+      const t = worst.t, c0 = camBase(t), cam = { ...c0, lens: Math.min(c0.lens || baseLens(), GAP_LENS) };
+      // the view as the scene has it, background only; magenta where nothing covers it
+      const view = Object.assign(document.createElement("canvas"), { width: W, height: H }), vg = view.getContext("2d", { willReadFrequently: true });
+      vg.fillStyle = "#ff00ff"; vg.fillRect(0, 0, W, H);
+      for (const L of [...gapLayers(P, cam), bgOnly(P)]) { draw({ size: [W, H], t, cam, proj: L, skip: s.objs }); vg.drawImage(s.cv, 0, 0, W, H); }
+      const px = vg.getImageData(0, 0, W, H), d = px.data;
+      for (let i = 0; i < d.length; i += 4) if (d[i + 3] < 250) { d[i] = 255; d[i + 1] = 0; d[i + 2] = 255; d[i + 3] = 255; }
+      vg.putImageData(px, 0, 0);
+      const blob = await new Promise(r => view.toBlob(r, "image/png")), fd = new FormData(); fd.append("file", blob, "scene_gap.png");
+      const up = await (await fetch("/api/upload", { method: "POST", body: fd })).json();
+      say(`Qwen is filling in what the photo can't see, ${Math.round((1 - worst.c) * 100)}% of the view at ${t.toFixed(1)} s (view ${k + 1}, about half a minute)…`);
+      const items = await submit({ kind: "image", engine: "imgedit", edit_op: "instruct", source: up.ref, prompt: GAP_TEXT(look), edit_model: model, seed: -1, batch: 1, project: s.sc.project });
+      if (!items?.length) throw new Error("Qwen didn't take the view to fill");
+      const it = await waitItem(items[0].id);
+      const path = (it.files || []).find(f => /^image\//.test(f.content_type || ""))?.path || it.files?.[0]?.path;
+      if (it.status !== "done" || !path) throw new Error("Qwen couldn't fill a view");
+      P.gaps.push({ t, cam, ref: path, P: await prepareBgProjection(path, t, cam) });
+    }
+    return P.gaps.length;
+  }
 
   // The edit model seldom puts a moving object exactly on its stand-in, so painting the photo on as it is makes the
   // stand-in walk off with the wrong pixels (H3 then draws the mannequin) and leaves the real thing behind, standing
@@ -3194,7 +3314,7 @@ const Scene3D = (() => {
     const grown = grow(found, W, H, R, R, 2 * R);
     const cut = new ImageData(W, H);
     for (let c = 0; c < N; c++) { cut.data[c * 4] = found[c] * 255; cut.data[c * 4 + 1] = grown[c] * 255; cut.data[c * 4 + 3] = 255; }
-    P.cut = s.gpu.texture(cut); P.fits = fits;
+    P.cut = s.gpu.texture(cut); P.fits = fits; P.found = { a: found, W, H };
   }
   // a 0/1 picture grown by rx across, up pixels up and down pixels down (a box)
   function grow(a, W, H, rx, up, down) {
@@ -3285,5 +3405,5 @@ const Scene3D = (() => {
   }
 
   return { renderForShot, photoForShot, fromTemplate, setTemplate, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
-    _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
+    _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _fill: (P, look, say) => fillGaps(P, look, say), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
 })();

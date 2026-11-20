@@ -5,6 +5,22 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.120.0] - 2026-11-20
+
+### Added
+- **Qwen fills in what the photo can't see** before a 3D scene renders a camera move from a photo. In a big move (a
+  360° orbit, a long pan), much of each frame is something the photo never showed, and H3 used to invent it as it
+  went, so the place changed as the camera came round. Now the scene finds the moment along the move that's about
+  half covered by what it knows and draws that view with a wide lens. The objects are left out, and the photo is cut
+  back from around them, so no streaks of a person lie on the ground. Qwen Image Edit paints the place into the
+  rest, keeping the ground near the camera open and tall things in the distance. That view is then painted onto the
+  scene like the photo. It repeats from the new edge until the whole move is mostly covered, up to 6 views (a full
+  orbit takes about 5). The render follows them under the photo, each only near its own angle, so H3 sees the same
+  surroundings all the way round.
+  - **Fill what the photo can't see with Qwen first**, in the Render window, shows when the video starts from a photo
+    and the camera moves. It's on by default and remembered, and Generate on the Shots step follows it. Each view
+    takes about half a minute, and the filled views show up in the gallery.
+
 ## [0.119.1] - 2026-11-20
 
 ### Fixed
