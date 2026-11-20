@@ -1232,7 +1232,7 @@ const V2 = (() => {
   const shotExtra = sceneId => {
     const s = st.board.shots.find(x => x.scene === sceneId); if (!s) return null;
     const voices = state.caps?.engines?.h3ref?.ready ? voicesFor(s) : [];
-    return { dialogue: dialogueOf(s), voiced: dialogueOf(s, voices), voices, sound: soundOf(s) };
+    return { dialogue: dialogueOf(s), voiced: dialogueOf(s, voices), voices, sound: soundOf(s), loras: lorasFor(s) };
   };
   return { init, decide, generate, onSubmit, shotWhat, shotSetting, shotExtra, _st: st };
 })();
