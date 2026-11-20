@@ -447,6 +447,8 @@ class ScenePatch(BaseModel):
     backdrop: dict[str, Any] | None = None
     # photos made from the scene (📷 Generate photo): [{id (the result), t, cam: {yaw, pitch, dist, target}}]
     photos: list[dict[str, Any]] | None = Field(None, max_length=200)
+    # depth of field: {fstop} (none: everything sharp); the focus distance is keyed with the camera
+    dof: dict[str, Any] | None = None
 
 
 @app.post("/api/scenes")
