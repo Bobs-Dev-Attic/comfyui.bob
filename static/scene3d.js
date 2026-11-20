@@ -111,10 +111,16 @@ const Scene3D = (() => {
   }
   function fromFirstKey(o) { const k = o.keys[0]; Object.assign(o, { pos: k.pos.slice(), yaw: k.yaw, pitch: k.pitch || 0, roll: k.roll || 0, scale: k.scale, ...(k.pose ? { pose: k.pose } : {}) }); }
   // A camera: an orbit (yaw, pitch, dist about target) and, keyed for a zoom, its lens (mm on a 36 mm wide frame).
-  const camOf = c => ({ yaw: c.yaw, pitch: c.pitch, dist: c.dist, target: c.target.slice(), ...(c.lens ? { lens: c.lens } : {}) });
+  const camOf = c => ({ yaw: c.yaw, pitch: c.pitch, dist: c.dist, target: c.target.slice(), ...(c.lens ? { lens: c.lens } : {}), ...(c.roll ? { roll: c.roll } : {}) });
+  // A camera's axes: forward, right and up, turned by its roll (degrees about forward; + leans the top to the right).
+  function axesOf(c) {
+    const f = norm(sub(c.target, eyeOf(c))), r0 = norm(cross(f, [0, 1, 0])), u0 = cross(r0, f), a = (c.roll || 0) * rad, co = Math.cos(a), si = Math.sin(a);
+    return { f, r: addv(mulv(r0, co), mulv(u0, -si)), u: addv(mulv(u0, co), mulv(r0, si)) };
+  }
   function camAt(t) {
     // keys without a lens have the scene's (so a zoom eases from it and back)
-    const K = s.camKeys.some(k => k.lens) ? s.camKeys.map(k => ({ ...k, lens: k.lens || baseLens() })) : s.camKeys;
+    const lens = s.camKeys.some(k => k.lens), roll = s.camKeys.some(k => k.roll);
+    const K = lens || roll ? s.camKeys.map(k => ({ ...k, ...(lens ? { lens: k.lens || baseLens() } : {}), ...(roll ? { roll: k.roll || 0 } : {}) })) : s.camKeys;
     const c = interp(K, t, ["yaw", "pitch", "dist", "target"]);
     return { ...camOf(c), dist: Math.max(s.bg.dmed * 0.02, c.dist) };
   }
@@ -763,13 +769,17 @@ const Scene3D = (() => {
     const L = Math.hypot(...sub(E, eye())) * 2 * tanY(s.cv.clientWidth, H) * 80 / H, Ry = RY(c.yaw * rad), K = S(1.35);
     const hs = [0, 1, 2].map(i => ({ kind: "move", i, axis: colOf(ALIGN[i], 1), A: ALIGN[i] }));
     hs.push({ kind: "rot", i: 1, axis: [0, 1, 0], A: K, f: "yaw" }, { kind: "rot", i: 0, axis: colOf(Ry, 0), A: mul4(mul4(Ry, ALIGN[0]), K), f: "pitch" });
-    return { c: E, L, P: { yaw: c.yaw, pitch: c.pitch, dist: c.dist, target: c.target.slice() }, hs };
+    // roll: a smaller ring about the way it looks (its local Y is forward)
+    const ax = axesOf({ ...c, roll: 0 }), Rf = [...ax.r, 0, ...ax.f, 0, ...ax.u, 0, 0, 0, 0, 1];
+    hs.push({ kind: "rot", i: 2, axis: ax.f, A: mul4(Rf, S(0.75)), f: "roll" });
+    return { c: E, L, P: camOf(c), hs };
   }
   const curGizmo = mode => s.camSel ? camGizmo() : gizmoOf(s.objs[s.sel], mode);
   // Set the shot camera at the playhead: its key there, or a new key.
   function editCam(c) {
     const q = { yaw: Math.round(c.yaw * 100) / 100, pitch: Math.max(-89, Math.min(89, Math.round(c.pitch * 100) / 100)), dist: c.dist, target: c.target.slice(),
-      ...(c.lens ? { lens: Math.round(c.lens * 10) / 10 } : {}) };
+      ...(c.lens ? { lens: Math.round(c.lens * 10) / 10 } : {}), ...(c.roll ? { roll: Math.round(c.roll * 100) / 100 } : {}) };
+    if (!q.roll) for (const k of s.camKeys) if (near(k.t, s.t)) delete k.roll;  // back to level
     const k = s.camKeys.find(x => near(x.t, s.t));
     if (k) Object.assign(k, q); else { s.camKeys.push({ t: s.t, ...q }); s.camKeys.sort((a, b) => a.t - b.t); }
     s.dirty = true;
@@ -795,7 +805,7 @@ const Scene3D = (() => {
   }
   // The camera drawn as lines: its frame (what it sees, a little way out), a body behind the eye and an up mark.
   function camFrame(c) {
-    const ce = eyeOf(c), f = norm(sub(c.target, ce)), r = norm(cross(f, [0, 1, 0])), u = cross(r, f), L = s.bg.dmed * 0.22;
+    const ce = eyeOf(c), { f, r, u } = axesOf(c), L = s.bg.dmed * 0.22;
     const at = (x, y, z) => addv(ce, addv(mulv(f, z * L), addv(mulv(r, x * L), mulv(u, y * L))));
     const fv = fovOf(c), corner = (x, y) => at(x * fv.t, y * fv.tv, 1);
     const cs = [corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)], out = [];
@@ -862,7 +872,8 @@ const Scene3D = (() => {
         if (d.a0 != null) { let da = ang - d.a0; while (da > Math.PI) da -= 2 * Math.PI; while (da < -Math.PI) da += 2 * Math.PI; d.turned += da; }
         d.a0 = ang;
         let deg = d.turned * d.toEye / rad; if (snap) deg = Math.round(deg / 5) * 5;
-        editCam(h.f === "yaw" ? turnCam(c0, c0.yaw + deg, c0.pitch) : turnCam(c0, c0.yaw, c0.pitch - deg));
+        editCam(h.f === "roll" ? { ...c0, roll: Math.max(-180, Math.min(180, (c0.roll || 0) + deg)) }
+          : h.f === "yaw" ? turnCam(c0, c0.yaw + deg, c0.pitch) : turnCam(c0, c0.yaw, c0.pitch - deg));
       }
       d.moved = true; s.dirty = true; return;
     }
@@ -1070,7 +1081,8 @@ const Scene3D = (() => {
           <div class="s3-float-xyz">${["X", "Y", "Z"].map((a, j) => `<label><span class="ax${j}">${a}</span><input type="number" class="s3f-in" data-ax="${j}" step="0.1"></label>`).join("")}</div>
           <div class="s3-float-cam" hidden><div class="s3-float-l">Turn <span class="opt">degrees</span></div>
             <div class="s3-float-xyz"><label><span title="Pan, about Y">Pan</span><input type="number" class="s3f-in" data-ax="yaw" step="1"></label>
-              <label><span title="Tilt: up is +, down is −">Tilt</span><input type="number" class="s3f-in" data-ax="pitch" step="1" min="-89" max="89"></label></div>
+              <label><span title="Tilt: up is +, down is −">Tilt</span><input type="number" class="s3f-in" data-ax="pitch" step="1" min="-89" max="89"></label>
+              <label><span title="Roll about the way it looks: + leans the top of the frame to the right">Roll</span><input type="number" class="s3f-in" data-ax="roll" step="1" min="-180" max="180"></label></div>
             <div class="s3-float-l">Lens <span class="opt">mm, keyed: key two for a zoom</span></div>
             <div class="s3-float-lens"><label><input type="number" class="s3f-in" data-ax="lens" min="10" max="300" step="1" list="s3-lenses" aria-label="Focal length in mm"> mm</label>
               <span class="hint s3-float-fov"></span></div>
@@ -1208,7 +1220,7 @@ const Scene3D = (() => {
   // The camera of the render at time t: its path, or (without keys) the picture's own camera.
   const camForRender = t => s.camKeys.length ? camAt(t) : shotCam();
   const camDiff = (a, b) => Math.abs(a.yaw - b.yaw) + Math.abs(a.pitch - b.pitch) + Math.abs(a.dist - b.dist) / s.bg.dmed
-    + Math.abs(Math.log((a.lens || baseLens()) / (b.lens || baseLens())))
+    + Math.abs(Math.log((a.lens || baseLens()) / (b.lens || baseLens()))) + Math.abs((a.roll || 0) - (b.roll || 0))
     + Math.hypot(...sub(a.target, b.target)) / s.bg.dmed;
   const cameraMoves = () => s.camKeys.length > 1 && s.camKeys.some(k => camDiff(k, s.camKeys[0]) > 1e-3);
   const startsAsPicture = () => camDiff(camForRender(0), shotCam()) < 0.02;
@@ -1415,7 +1427,7 @@ const Scene3D = (() => {
   function tanY(W, H, cam = s.cam) { const f = fovOf(cam); return Math.max(f.tv, f.t / (W / H)); }
   function viewProj(W, H, cam = s.cam) {
     const e = eyeOf(cam);
-    return { e, VP: mul4(perspective(2 * Math.atan(tanY(W, H, cam)), W / H, s.bg.dmed * 0.01, s.bg.dmed * 50), lookAt(e, cam.target, [0, 1, 0])) };
+    return { e, VP: mul4(perspective(2 * Math.atan(tanY(W, H, cam)), W / H, s.bg.dmed * 0.01, s.bg.dmed * 50), lookAt(e, cam.target, axesOf(cam).u)) };
   }
   const eyeOf = c => { const y = c.yaw * rad, p = c.pitch * rad; return [c.target[0] + c.dist * Math.cos(p) * Math.sin(y), c.target[1] + c.dist * Math.sin(p), c.target[2] + c.dist * Math.cos(p) * Math.cos(y)]; };
   // r (rendering a frame): { size: [W, H], t, cam, mask: "all" | "objects" } -- no paths or selection, black behind
@@ -1465,7 +1477,7 @@ const Scene3D = (() => {
     } else if (s.camKeys.length > 1 && s.camFree) {
       path(t => eyeOf(camAt(t)), [0.48, 0.64, 1, 0.9]);
       // the camera at the playhead: a small frustum
-      const c = camAt(s.t), ce = eyeOf(c), f = norm(sub(c.target, ce)), r = norm(cross(f, [0, 1, 0])), u = cross(r, f), L = s.bg.dmed * 0.12;
+      const c = camAt(s.t), ce = eyeOf(c), { f, r, u } = axesOf(c), L = s.bg.dmed * 0.12;
       const fv = fovOf(c), corner = (x, y) => addv(ce, mulv(addv(f, addv(mulv(r, x * fv.t), mulv(u, y * fv.tv))), L));
       const cs = [corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)], fr = [];
       for (let k = 0; k < 4; k++) fr.push(...ce, ...cs[k], ...cs[k], ...cs[(k + 1) % 4]);
@@ -1485,7 +1497,7 @@ const Scene3D = (() => {
 
   // The ray under a point of the canvas (CSS pixels): origin and direction.
   function rayAt(px, py) {
-    const W = s.cv.clientWidth, H = s.cv.clientHeight, e = eye(), f = norm(sub(s.cam.target, e)), r = norm(cross(f, [0, 1, 0])), u = cross(r, f);
+    const W = s.cv.clientWidth, H = s.cv.clientHeight, e = eye(), { f, r, u } = axesOf(s.cam);
     const ty = tanY(W, H), tx = ty * W / H, nx = 2 * px / W - 1, ny = 1 - 2 * py / H;
     return { o: e, d: norm(addv(f, addv(mulv(r, nx * tx), mulv(u, ny * ty)))) };
   }
@@ -1580,7 +1592,9 @@ const Scene3D = (() => {
       if (drag.o) return step(drag, e);
       if (!drag.went) {  // a click (or a right-click for the menu) until it moves a little
         if (Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 4) return;
-        drag.went = true; if (s.camKeys.length || s.camObj) { s.camFree = true; renderCam(); }
+        drag.went = true;
+        if (s.camObj && !s.camFree) { delete s.cam.roll; delete s.cam.lens; }  // outside: a level view, at the scene's lens
+        if (s.camKeys.length || s.camObj) { s.camFree = true; renderCam(); }
       }
       if (drag.mode === "orbit") {
         s.cam.yaw -= (e.clientX - drag.x) * 0.3; s.cam.pitch = Math.max(-89, Math.min(89, s.cam.pitch + (e.clientY - drag.y) * 0.3));
@@ -1601,7 +1615,7 @@ const Scene3D = (() => {
         if (hit >= 0) objMenu(hit, e.clientX, e.clientY, px, py); else spaceMenu(e.clientX, e.clientY, px, py);
       }
     });
-    cv.addEventListener("wheel", e => { e.preventDefault(); if (!s?.bg) return; if (s.camObj && !s.camFree) { s.camFree = true; renderCam(); } s.cam.dist = Math.max(s.bg.dmed * 0.05, Math.min(s.bg.dmed * 20, s.cam.dist * Math.exp(e.deltaY * 0.0012))); s.dirty = true; }, { passive: false });
+    cv.addEventListener("wheel", e => { e.preventDefault(); if (!s?.bg) return; if (s.camObj && !s.camFree) { delete s.cam.roll; delete s.cam.lens; s.camFree = true; renderCam(); } s.cam.dist = Math.max(s.bg.dmed * 0.05, Math.min(s.bg.dmed * 20, s.cam.dist * Math.exp(e.deltaY * 0.0012))); s.dirty = true; }, { passive: false });
     cv.addEventListener("keydown", e => {
       const o = s.objs[s.sel];
       if (s.modal) {
@@ -1845,7 +1859,7 @@ const Scene3D = (() => {
     s.root.querySelector(".s3-float-cam").hidden = !cam;
     const st = s.bg.empty ? 0.1 : +(s.bg.dmed * 0.02).toPrecision(2);
     box.querySelectorAll(".s3f-in").forEach(inp => {
-      const ax = inp.dataset.ax, v = ax === "yaw" ? c?.yaw : ax === "pitch" ? (c ? -c.pitch : null) : ax === "lens" ? (c ? Math.round((c.lens || baseLens()) * 10) / 10 : null) : pos[+ax];  // tilt: up is +
+      const ax = inp.dataset.ax, v = ax === "yaw" ? c?.yaw : ax === "pitch" ? (c ? -c.pitch : null) : ax === "lens" ? (c ? Math.round((c.lens || baseLens()) * 10) / 10 : null) : ax === "roll" ? (c ? c.roll || 0 : null) : pos[+ax];  // tilt: up is +
       if (ax === "lens") inp.title = `The camera's focal length at the playhead, keyed there: key another at another time to zoom. Unkeyed it's the scene's, ${Math.round(baseLens())} mm${s.bg.empty ? " (View › Lens)" : " (the picture's)"}.`;
       if (v == null) return;
       if (ax.length === 1) inp.step = String(st);
@@ -1895,6 +1909,7 @@ const Scene3D = (() => {
         const c = camForRender(s.t);
         if (ax === "yaw") editCam(turnCam(c, v, c.pitch));
         else if (ax === "pitch") editCam(turnCam(c, c.yaw, -v));
+        else if (ax === "roll") editCam({ ...c, roll: Math.max(-180, Math.min(180, v)) });
         else { const E = eyeOf(c), d = [0, 0, 0]; d[+ax] = v - E[+ax]; editCam({ ...c, target: addv(c.target, d) }); }
         save(); renderCam();
       } else {
@@ -2577,7 +2592,7 @@ const Scene3D = (() => {
   async function prepareProjection(photoRef, t0, cam, say = () => {}) {
     const img = await createImageBitmap(await (await fetch(`/api/media/file?path=${encodeURIComponent(photoRef)}`)).blob());
     const A = s.bg.aspect, near = s.bg.dmed * 0.01, far = s.bg.dmed * 50, e0 = eyeOf(cam);
-    const VP0 = mul4(perspective(2 * Math.atan(fovOf(cam).tv), A, near, far), lookAt(e0, cam.target, [0, 1, 0]));
+    const VP0 = mul4(perspective(2 * Math.atan(fovOf(cam).tv), A, near, far), lookAt(e0, cam.target, axesOf(cam).u));
     const sphere = sphereMesh(e0, far * 0.8);
     const W0 = Math.min(2048, img.width), H0 = Math.round(W0 / A);
     for (const o of s.objs) figureMesh(o, t0);  // a Person in its pose at t0

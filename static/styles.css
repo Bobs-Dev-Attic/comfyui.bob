@@ -893,7 +893,7 @@ details.post-proc > .hint { margin: 0 0 10px; }
 .s3-float-x:hover { color: var(--text); }
 .s3-float-l { color: var(--muted); margin: 2px 0 4px; }
 .s3-float-xyz { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
-.s3-float-cam .s3-float-xyz { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.s3-float-cam .s3-float-xyz { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .s3-float-xyz label { display: grid; gap: 2px; }
 .s3-float-xyz label > span { font-weight: 600; font-size: 11px; }
 .s3-float-xyz .ax0 { color: #f0455a; } .s3-float-xyz .ax1 { color: #73cc33; } .s3-float-xyz .ax2 { color: #458cfa; }
