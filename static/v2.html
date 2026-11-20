@@ -105,7 +105,9 @@
           <button type="button" role="tab" data-tlv="tl" class="on" aria-selected="true">Timeline</button>
           <button type="button" role="tab" data-tlv="log" aria-selected="false">Log <span class="v2-logn" id="v2-logn"></span></button></div>
         <span class="hint" id="v2-total"></span>
-        <span class="v2-tlzoom" role="group" aria-label="Zoom"><button type="button" data-z="-" title="Zoom out" aria-label="Zoom out">−</button><button type="button" data-z="fit" title="Fit the whole timeline">Fit</button><button type="button" data-z="+" title="Zoom in" aria-label="Zoom in">＋</button></span>
+        <span class="v2-tlzoom" role="group" aria-label="Zoom"><button type="button" data-z="-" title="Zoom out (or the mouse wheel over the timeline)" aria-label="Zoom out">−</button><button type="button" data-z="fit" title="Fit the whole timeline">Fit</button><button type="button" data-z="+" title="Zoom in (or the mouse wheel over the timeline)" aria-label="Zoom in">＋</button>
+          <button type="button" id="v2-tlunits" title="Show times in seconds or in frames (24 a second)">s</button>
+          <button type="button" id="v2-tlmark" title="Add a marker at the play line (M)">🚩</button></span>
         <span class="v2-grow"></span>
         <span class="hint" id="v2-exportst"></span>
         <button type="button" class="btn sm" id="v2-music-btn" title="One piece of music for the whole timeline (MiniMax Music 3)">🎵 Soundtrack</button>

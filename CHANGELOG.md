@@ -5,6 +5,21 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.131.0] - 2026-11-20
+
+### Added
+- **Objects ease between their keys,** as the camera does. Each key says how the object gets to the next one: steady,
+  ease in, ease out, or ease in and out. In V2, right-click an object's key on the timeline to set it. Eased keys show
+  in orange. The 3D view, the scene renders and the "face where it's going" turn all follow it.
+- **Markers on V2's timeline.** Add one with 🚩 (or M) at the play line, or by right-clicking the ruler. Each shows as
+  a flag with a dashed line down the layers. Drag one to move it, click it to go there, double-click to name it,
+  right-click to go to, name or delete it. They're kept with the project's shots.
+- **The play line scrubs.** Press and drag along the ruler to move the open shot's time; letting go over another shot
+  opens it there. While the scene plays, the line follows it frame by frame.
+- **The mouse wheel zooms the timeline** about the point under the cursor. Shift+wheel scrolls it sideways.
+- **Seconds or frames.** The s / f button switches the ruler, the shots' lengths, the total and the markers between
+  seconds and frames (24 a second).
+
 ## [0.130.0] - 2026-11-20
 
 ### Added
