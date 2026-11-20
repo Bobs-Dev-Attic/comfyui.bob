@@ -230,6 +230,29 @@ def update_scene(scene_id: str, **fields: Any) -> dict[str, Any] | None:
     return None
 
 
+def copy_scene(scene_id: str, *, name: str | None = None, project: str | None = None) -> dict[str, Any] | None:
+    """A new scene from another (a template): its background, objects, camera path, length, framing and effects, in
+    `project`. Its photos stay with the original (they're results of that scene) and it isn't a template itself."""
+    with _lock:
+        items = _read_scenes()
+        src = next((s for s in items if s["id"] == scene_id), None)
+        if not src or src.get("status") != "done":
+            return None
+        new_id, now = uuid.uuid4().hex[:12], time.time()
+        entry = json.loads(json.dumps(src))
+        entry.update(id=new_id, name=(name or src.get("name") or "3D scene").strip()[:120], project=project, photos=[],
+                     template=False, from_template=scene_id, created=now, updated=now)
+        if src.get("bg"):
+            old = config.ROOT / src["bg"]
+            if old.is_file():
+                target = OUT_DIR / f"scene_{new_id}.glb"
+                shutil.copyfile(old, target)
+                entry["bg"] = target.relative_to(config.ROOT).as_posix()
+        items.append(entry)
+        _write_scenes(items)
+    return _scene_public(entry)
+
+
 def delete_scene(scene_id: str) -> bool:
     with _lock:
         items = _read_scenes()

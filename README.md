@@ -342,6 +342,8 @@ Other features:
   - **Use in studio** sends the prompt back.
 - **Model check:** each engine checks its model files. Music 3 isn't installed here yet, so the app shows which files to get from https://huggingface.co/Comfy-Org/MiniMax-Music-3.
 
+- **3D scene templates**: ☆ Save as template keeps a scene (its set, objects, camera path, length and effects) to
+  start new scenes from, in any project (⭐ From a template…; `POST /api/scenes/{id}/copy`).
 - **MiniMax H3 Image, shot by shot**: its reference pictures on the Inputs step, and its pictures planned on the Shots
   step (one picture per shot: framing, angle, place, subject). A shot mapped to a 3D scene is a photo of what the
   scene's shot camera sees (`Scene3D.photoForShot` in `static/scene3d.js`), at the Settings step's aspect and quality.

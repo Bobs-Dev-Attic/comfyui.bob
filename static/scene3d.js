@@ -244,6 +244,35 @@ const Scene3D = (() => {
       return sc;
     } catch (e) { Media.toast(`3D scene: ${e.message}`); return null; }
   }
+  /* Templates: a scene saved as one is listed in every project (the 3D scenes panel's ⭐ From a template…, and All
+     scenes…), and a new scene from it is a copy (its background, objects, camera path, length and effects) in the open
+     project, to change as you like; the template stays as it is. */
+  const templates = async () => { try { return ((await api("/api/scenes")).scenes || []).filter(x => x.template && x.status === "done"); } catch { return []; } };
+  async function setTemplate(id, on) {
+    try {
+      const sc = await api(`/api/scenes/${id}`, { method: "PATCH", body: JSON.stringify({ template: on }) });
+      if (s?.id === id) { s.sc.template = sc.template; syncTplBtn(); }
+      refreshList();
+      Media.toast(on ? `“${sc.name}” is a template: ⭐ From a template… in the 3D scenes panel starts a new scene from it.` : `“${sc.name}” isn't a template any more.`);
+    } catch (e) { Media.toast(`Template: ${e.message}`); }
+  }
+  async function fromTemplate(x) {
+    try {
+      const sc = await api(`/api/scenes/${x.id}/copy`, { method: "POST", body: JSON.stringify({ name: x.name, project: state.project?.id ?? null }) });
+      refreshList(); open(sc.id);
+      Media.toast(`A new scene from the template “${x.name}”: change it as you like; the template stays as it is.`);
+      return sc;
+    } catch (e) { Media.toast(`Template: ${e.message}`); return null; }
+  }
+  async function templateMenu(px, py) {
+    const list = await templates();
+    if (!list.length) return Media.toast("No templates yet: open a scene and press ⭐ Save as template, or use ⋯ › ⭐ Save as a template on one.");
+    Media.menu(px, py, list.map(x => [`⭐ ${x.name}${x.seconds ? ` · ${(+x.seconds).toFixed(0)} s` : ""}`, () => fromTemplate(x)]));
+  }
+  const syncTplBtn = () => {
+    const b = s?.foot?.querySelector('[data-act="tpl"]');
+    if (b) { b.textContent = s.sc.template ? "⭐ Template" : "☆ Save as template"; b.title = s.sc.template ? "This scene is a template (click to stop): new scenes can start from it" : "Keep this scene as a template: new scenes in any project can start from a copy of it"; }
+  };
   // This project's finished scenes.
   async function projectScenes() {
     const proj = state.project?.id ?? null;
@@ -255,8 +284,10 @@ const Scene3D = (() => {
     if (list?.win?.el?.isConnected) return refreshList();
     const box = document.createElement("div");
     box.className = "m3-list";
-    box.innerHTML = `<div class="s3-listbar"><button type="button" class="btn sm primary" data-new="1" title="A floor and a sky to build a scene from 3D models, with no picture">＋ New empty scene</button></div><div class="m3-grid"></div>`;
+    box.innerHTML = `<div class="s3-listbar"><button type="button" class="btn sm primary" data-new="1" title="A floor and a sky to build a scene from 3D models, with no picture">＋ New empty scene</button>
+      <button type="button" class="btn sm" data-tpl="1" title="A new scene, a copy of one of your templates">⭐ From a template…</button></div><div class="m3-grid"></div>`;
     box.querySelector("[data-new]").onclick = () => createEmpty();
+    box.querySelector("[data-tpl]").onclick = e => { const r = e.currentTarget.getBoundingClientRect(); templateMenu(r.left, r.bottom + 4); };
     const win = WM.open({ id: "scenes3d", title: "🏞 3D scenes", content: box, width: 760, height: 520, minWidth: 420, minHeight: 300, onClose: () => { list = null; } });
     list = { win, grid: box.querySelector(".m3-grid"), items: [] };
     box.addEventListener("click", e => {
@@ -274,7 +305,7 @@ const Scene3D = (() => {
     list.grid.innerHTML = list.items.length ? list.items.map((x, i) => `
       <figure class="m3-card ${x.status}" data-i="${i}" tabindex="0">
         <div class="m3-thumb">${x.plate_url || x.picture_url ? `<img src="${esc(x.plate_url || x.picture_url)}" alt="">` : "🏞"}${x.status === "failed" ? `<span class="m3-fail">Failed</span>` : ""}</div>
-        <figcaption><b>${esc(x.name)}</b><span class="hint">${x.objects?.length || 0} object${x.objects?.length === 1 ? "" : "s"}${x.status === "failed" ? ` · ${esc((x.error || "").slice(0, 60))}` : ""}</span></figcaption>
+        <figcaption><b>${x.template ? "⭐ " : ""}${esc(x.name)}</b><span class="hint">${x.template ? "template · " : ""}${x.objects?.length || 0} object${x.objects?.length === 1 ? "" : "s"}${x.status === "failed" ? ` · ${esc((x.error || "").slice(0, 60))}` : ""}</span></figcaption>
         <button type="button" class="m3-more" data-more="${i}" aria-label="More for ${esc(x.name)}">⋯</button></figure>`).join("")
       : `<p class="hint m3-empty">No 3D scenes yet. Right-click a picture and choose 🏞 3D scene, or use 🏞 Open as a 3D scene in 🎬 Animate objects.</p>`;
   }
@@ -286,7 +317,9 @@ const Scene3D = (() => {
       ? state.shots.list.map((y, i) => [`🎞 For shot ${i + 1}${y.title ? `: ${y.title}` : ""}`, () => Shots.linkScene(i, x)]) : [];
     Media.menu(px, py, [
       x.status === "done" && ["🏞 Open", () => open(x.id)],
+      x.status === "done" && x.template && ["＋ New scene from this template", () => fromTemplate(x)],
       ...shotItems,
+      x.status === "done" && [x.template ? "☆ Not a template any more" : "⭐ Save as a template", () => setTemplate(x.id, !x.template)],
       sh && [`✕ Not for shot ${sh.i + 1} any more`, () => Shots.unlinkScene(x.id)],
       ["✎ Rename…", async () => { const n = prompt("Name", x.name); if (!n?.trim()) return; try { await api(`/api/scenes/${x.id}`, { method: "PATCH", body: JSON.stringify({ name: n.trim() }) }); refreshList(); } catch (e) { Media.toast(e.message); } }],
       ["🗑 Delete…", async () => { if (!confirm(`Delete the scene “${x.name}”? Its 3D models stay in 🧊 3D models.`)) return; try { await api(`/api/scenes/${x.id}`, { method: "DELETE" }); if (typeof Shots !== "undefined") Shots.unlinkScene(x.id); refreshList(); } catch (e) { Media.toast(e.message); } }],
@@ -325,7 +358,7 @@ const Scene3D = (() => {
     grid.innerHTML = mine.length ? mine.map((x, i) => `
       <figure class="m3-card ${x.status}" data-i="${i}" tabindex="0" title="${x.status === "done" ? "Open this scene" : x.status === "failed" ? esc(x.error || "Failed") : "Being made…"}">
         <div class="m3-thumb">${x.plate_url || x.picture_url || x.backdrop_url ? `<img src="${esc(x.plate_url || x.picture_url || x.backdrop_url)}" alt="">` : "🏞"}${x.status === "failed" ? `<span class="m3-fail">Failed</span>` : ""}</div>
-        <figcaption><b>${esc(x.name)}</b><span class="hint">${(() => { const sh = typeof Shots !== "undefined" && Shots.shotOfScene(x.id); return sh ? `<span class="s3p-shot" title="${esc(sh.label)}: its 🎬 Render goes there">→ Shot ${sh.i + 1}</span> · ` : ""; })()}${x.status === "done" ? `${x.objects?.length || 0} object${x.objects?.length === 1 ? "" : "s"}` : x.status === "failed" ? "failed" : "making the depth…"}</span></figcaption>
+        <figcaption><b>${x.template ? "⭐ " : ""}${esc(x.name)}</b><span class="hint">${(() => { const sh = typeof Shots !== "undefined" && Shots.shotOfScene(x.id); return sh ? `<span class="s3p-shot" title="${esc(sh.label)}: its 🎬 Render goes there">→ Shot ${sh.i + 1}</span> · ` : ""; })()}${x.status === "done" ? `${x.objects?.length || 0} object${x.objects?.length === 1 ? "" : "s"}` : x.status === "failed" ? "failed" : "making the depth…"}</span></figcaption>
         <button type="button" class="m3-more" data-more="${i}" aria-label="More for ${esc(x.name)}">⋯</button></figure>`).join("")
       : `<p class="hint m3-empty">No 3D scenes in this project yet${others ? ` (${others} in other projects: All scenes…)` : ""}.</p>`;
     clearTimeout(panelTimer);
@@ -344,6 +377,7 @@ const Scene3D = (() => {
       const act = e.target.closest("[data-s3p]")?.dataset.s3p;
       if (act === "new") return createEmpty();
       if (act === "all") return openList();
+      if (act === "tpl") { const r = e.target.closest("[data-s3p]").getBoundingClientRect(); return templateMenu(r.left, r.bottom + 4); }
       if (act === "picture") {
         const r = e.target.closest("[data-s3p]").getBoundingClientRect();
         return Media.menu(r.left, r.bottom + 4, inputPictures().map(p => [`🖼 ${p.label}: ${p.name}`, () => create(p)]));
@@ -1245,7 +1279,7 @@ const Scene3D = (() => {
       </aside>`;
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
-    foot.innerHTML = `<span class="hint s3-foot">Drag: orbit · Right-drag: pan · Wheel: zoom · Right-click: menu</span><button type="button" class="btn ghost" data-act="pic" title="Save the view as it is drawn here">💾 Save view</button>
+    foot.innerHTML = `<span class="hint s3-foot">Drag: orbit · Right-drag: pan · Wheel: zoom · Right-click: menu</span><button type="button" class="btn ghost" data-act="tpl">☆ Save as template</button><button type="button" class="btn ghost" data-act="pic" title="Save the view as it is drawn here">💾 Save view</button>
       <button type="button" class="btn ghost" data-act="depth" title="A depth map of what the camera frames (near is white, far is black), for a depth ControlNet">🌫 Save depth map…</button>
       <button type="button" class="btn" data-act="photo" title="A photograph of what the camera frames, made by the image editor's edit model">📷 Generate photo…</button>
       <button type="button" class="btn primary" data-act="render" title="Make the video with H3, following this scene">🎬 Render video…</button>`;
@@ -1257,7 +1291,8 @@ const Scene3D = (() => {
       cam: { yaw: 0, pitch: 0, dist: 1, target: [0, 0, -1] }, showBg: true, clay: false, bg: null, tool: "move", modal: null, mouse: null,
       t: 0, seconds: +sc.seconds || 5, camKeys: (sc.camera_keys || []).slice().sort((a, b) => a.t - b.t), camFree: false, camObj: false, camSel: false,
       floatOff: null, dofBlur: true, dofFb: null, dofProg: null, pip: (() => { try { return localStorage.getItem("bob.s3pip") !== "0"; } catch { return true; } })(),
-      photos: (sc.photos || []).slice() };
+      photos: (sc.photos || []).slice(), foot };
+    syncTplBtn();
     if (!gl) { hud.textContent = "This browser has no WebGL 2, so the scene can't be shown."; return; }
     s.ro = new ResizeObserver(() => { if (s) s.dirty = true; }); s.ro.observe(cv);
     wire(root, foot);
@@ -2042,6 +2077,7 @@ const Scene3D = (() => {
         ]);
       }
       if (a === "photo") return photoDialog();
+      if (a === "tpl") { flushSave().catch(() => {}); return setTemplate(s.id, !s.sc.template); }
       if (a === "bd-pick") return s.root.querySelector(".s3-bdfile").click();
       if (a === "pic-file") return s.root.querySelector(".s3-picfile").click();
       if (a === "pic-inputs" && o) {
@@ -3230,6 +3266,6 @@ const Scene3D = (() => {
     requestAnimationFrame(step); renderTime();
   }
 
-  return { renderForShot, photoForShot, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
+  return { renderForShot, photoForShot, fromTemplate, setTemplate, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
     _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
 })();
