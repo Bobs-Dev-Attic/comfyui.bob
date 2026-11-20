@@ -1513,6 +1513,8 @@ const Scene3D = (() => {
       return o ? `{${o.name}}` : "the subject";
     }).trim();
   }
+  // V2: the open shot's What happens (V2 is a const of its page, not on window)
+  const v2What = () => { try { return typeof V2 !== "undefined" && V2.shotWhat ? V2.shotWhat(s.sc.id) : ""; } catch { return ""; } };
   const autoTl = () => { try { return localStorage.getItem("bob.sceneAutoTl") !== "0"; } catch { return true; } };
   /* The render's levels, rough to final: each sets the options under it (which stay free to change).
      Sketch: the 3D objects as drawn, Draft, 4 steps: the motion, in a couple of minutes.
@@ -1551,7 +1553,7 @@ const Scene3D = (() => {
         ${cameraMoves() ? "the camera move and the objects" : "the objects; the camera holds still"}. ${frameCount()} frames, ${dur().toFixed(2)} s.</p>
       <div class="field"><label for="s3r-what">What happens <span class="opt">optional</span></label>
         ${tagChips()}
-        <textarea id="s3r-what" rows="3" placeholder="${esc(moving.length ? `${moving.map(n => `{${n}}`).join(" and ")} move${moving.length > 1 ? "" : "s"} across the scene.` : "The scene comes to life.")}">${esc(fromShot(forShot()?.action))}</textarea>
+        <textarea id="s3r-what" rows="3" placeholder="${esc(moving.length ? `${moving.map(n => `{${n}}`).join(" and ")} move${moving.length > 1 ? "" : "s"} across the scene.` : "The scene comes to life.")}">${esc(fromShot(forShot()?.action) || v2What())}</textarea>
         <p class="hint s3-said" aria-live="polite"></p></div>
       ${picObjs().length ? `<label class="check"><input type="checkbox" id="s3r-refs"${refsReady() ? " checked" : " disabled"}> Use the objects' pictures (H3 Reference)</label>
         <p class="hint s3r-refs-h">${refsReady() ? `The first frame is &lt;Picture 1&gt;; ${picObjs().map((o, i) => `${esc(o.name)} is &lt;Picture ${i + 2}&gt;`).join(", ")}. Runs on H3 Reference's model with the same motion.`
