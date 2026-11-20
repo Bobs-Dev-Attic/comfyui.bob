@@ -451,6 +451,8 @@ class ScenePatch(BaseModel):
     dof: dict[str, Any] | None = None
     # camera effects: {shake_style} (the shake amount is keyed with the camera)
     fx: dict[str, Any] | None = None
+    # a template: listed under "From a template" in every project, to start new scenes from (POST .../copy)
+    template: bool | None = None
 
 
 @app.post("/api/scenes")
@@ -503,6 +505,20 @@ async def scenes_patch(scene_id: str, req: ScenePatch):
     s = model3d.update_scene(scene_id, **fields)
     if not s:
         raise HTTPException(404, "No such 3D scene")
+    return s
+
+
+class SceneCopy(BaseModel):
+    name: str | None = Field(None, max_length=120)
+    project: str | None = Field(None, max_length=200)
+
+
+@app.post("/api/scenes/{scene_id}/copy")
+async def scenes_copy(scene_id: str, req: SceneCopy):
+    """A new scene from this one (a template), in `project`."""
+    s = model3d.copy_scene(scene_id, name=req.name, project=req.project)
+    if not s:
+        raise HTTPException(404, "No such finished 3D scene")
     return s
 
 

@@ -5,6 +5,16 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.119.0] - 2026-11-20
+
+### Added
+- **3D scene templates.** ☆ Save as template, at the foot of a scene's window, keeps the scene as a template.
+  ⋯ › ⭐ Save as a template does the same from a scene's card. ⭐ From a template…, in the Shots step's 3D scenes
+  panel and in All scenes…, starts a new scene as a copy of one in the open project. The copy has the template's
+  background, objects (with what each becomes), camera path and lens, length, framing, backdrop and effects. Change it
+  as you like; the template stays as it is. Templates show ⭐ on their cards and are offered in every project. Pressing
+  ⭐ Template again stops it being one.
+
 ## [0.118.1] - 2026-11-20
 
 ### Changed
