@@ -5,6 +5,15 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.134.5] - 2026-11-20
+
+### Added
+- **Render video in V2 sends the objects' LoRAs**, as Generate does.
+  - When the library objects in the shot have LoRAs, a new option, "Use the objects' LoRAs", is on.
+  - Each LoRA goes once, up to 8, at the strength set in the object library.
+  - The review lists them with their strengths.
+  - Untick it to render without them.
+
 ## [0.134.4] - 2026-11-20
 
 ### Added

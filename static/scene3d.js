@@ -1563,6 +1563,8 @@ const Scene3D = (() => {
       ${picObjs().length ? `<label class="check"><input type="checkbox" id="s3r-refs"${refsReady() ? " checked" : " disabled"}> Use the objects' pictures (H3 Reference)</label>
         <p class="hint s3r-refs-h">${refsReady() ? `The first frame is &lt;Picture 1&gt;; ${picObjs().map((o, i) => `${esc(o.name)} is &lt;Picture ${i + 2}&gt;`).join(", ")}. Runs on H3 Reference's model with the same motion.`
           : "Needs H3 Reference's model (ref2va) in ComfyUI: see the Model step."}${s.objs.filter(o => o.mesh && o.pos && !o.hidden && o.picture).length > 8 ? " Only the first 8 pictures are used." : ""}</p>` : ""}
+      ${v2x?.loras?.length ? `<label class="check"><input type="checkbox" id="s3r-loras" checked> Use the objects' LoRAs</label>
+        <p class="hint">${v2x.loras.length} LoRA${v2x.loras.length === 1 ? "" : "s"} from the library objects in this shot, as Generate sends them.</p>` : ""}
       ${v2x?.voices?.length ? `<label class="check"><input type="checkbox" id="s3r-voices" checked> Use the speakers' voices (H3 Reference)</label>
         <p class="hint">${v2x.voices.map((v, i) => `${esc(v.name)} speaks with &lt;Audio ${i + 1}&gt;`).join(", ")}: their library voices, so H3 says the lines in them. Runs on H3 Reference's model with the same motion.</p>` : ""}
       <div class="row2 s3r-row3"><div class="field"><label for="s3r-q">Quality</label><select id="s3r-q"><option value="draft">Draft</option><option value="standard" selected>Standard</option><option value="full">Full</option></select></div>
@@ -1596,7 +1598,8 @@ const Scene3D = (() => {
     const isPhoto = v => v === "newphoto" || v === "quickphoto" || v.startsWith("photo:");
     const fromPhoto = () => isPhoto(box.querySelector("#s3r-first").value);
     const useVoices = () => !!box.querySelector("#s3r-voices")?.checked;
-    const extraNow = () => v2x && { dialogue: useVoices() ? v2x.voiced : v2x.dialogue, sound: v2x.sound, voices: useVoices() ? v2x.voices : [] };
+    const useLoras = () => !!box.querySelector("#s3r-loras")?.checked;
+    const extraNow = () => v2x && { dialogue: useVoices() ? v2x.voiced : v2x.dialogue, sound: v2x.sound, voices: useVoices() ? v2x.voices : [], loras: useLoras() ? v2x.loras : [] };
     const withLines = t => [endOf(t), extraNow()?.dialogue].filter(Boolean).join(" ");
     box.querySelector("#s3r-voices")?.addEventListener("change", () => box.querySelector("#s3r-what").dispatchEvent(new Event("input")));
     wireTags(box, box.querySelector("#s3r-what"), () => videoText(withLines(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder), useRefs(), fromPhoto()));
@@ -1628,6 +1631,7 @@ const Scene3D = (() => {
         ["Sampling", !sp.turbo ? `${steps} steps, full sampling without the turbo LoRA (several times slower)`
           : sp.steps ? `${steps} steps with ${R ? "H3 Reference's" : "H3's"} turbo LoRA${steps < turboSteps ? " (fewer than it's made for: rougher, quicker)" : steps > turboSteps ? " (more than it's made for: a little finer, slower)" : ""}`
           : R ? "4 steps with H3 Reference's turbo LoRA (8 with an 8-step one)" : "8 steps with H3's turbo LoRA (4 with a 4-step one)"],
+        ...((extraNow()?.loras || []).length ? [["LoRAs", extraNow().loras.map(l => `${l.name.split(/[\\/]/).pop().replace(/\.safetensors$/i, "")} (${l.strength})`).join(", ")]] : []),
         ["Seed", "a new one each time"],
         ["Before it", v === "quickphoto" ? `a quick 0.4 MP photo of the first frame (${editModels().some(m => m[0] === "qwen") ? "Qwen" : "the edit model"})${fill ? ", then Qwen fills what the camera move reveals" : ""}`
           : v === "newphoto" ? `a photo of the first frame (the edit model)${fill ? ", then Qwen fills what the camera move reveals and redraws a sharp view where it comes close" : ""}` : fill ? "Qwen fills what the camera move reveals, and redraws a sharp view where it comes close" : "nothing: it starts at once"],
@@ -1752,6 +1756,7 @@ const Scene3D = (() => {
       const sp = SPEEDS[o.speed]; if (sp) { req.turbo = sp.turbo; if (sp.steps) req.steps = sp.steps; }
       if (o.refs) req.references = picObjs().map(x => x.picture);
       if (o.extra?.voices?.length) { req.ref_audios = o.extra.voices.map(v => v.ref); req.clean_audio = true; }
+      if (o.extra?.loras?.length) req.loras = o.extra.loras.map(l => ({ name: l.name, strength: l.strength }));  // the library objects' LoRAs
       if (photoPath) req.first_frame = photoPath;
       else if (start === "picture") req.first_frame = s.sc.picture;
       else if (noPic) req.first_frame = await uploadFrame([W, H], 0, camForRender(0), "scene_first.png");  // as drawn
