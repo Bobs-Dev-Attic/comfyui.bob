@@ -5,6 +5,20 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.129.0] - 2026-11-20
+
+### Added
+- **V2: edit the camera on the timeline.** The 🎥 Camera layer edits the open shot's camera keys:
+  - **Drag a key** (◆) to retime it. It snaps to frames, and the camera's path follows.
+  - **Click a key** to select the camera and go to that moment.
+  - **Double-click** the layer to add a key there. The camera's path doesn't change; the key is there to change it,
+    with its arrows and rings or its details.
+  - **Right-click a key** to go to it, set how the camera gets to the next key (steady, ease in, ease out, ease in and
+    out), or delete it. Right-click empty space to key the camera there or open its details.
+  - Each edit is saved, and ↶ Undo in the scene takes it back. Another shot's camera opens that shot first.
+- **A playhead** runs across the timeline's layers at the open shot's time, and a click on the ruler moves it there
+  (opening that shot).
+
 ## [0.128.0] - 2026-11-20
 
 ### Changed
