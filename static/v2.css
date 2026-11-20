@@ -122,6 +122,14 @@ body.v2 { height: 100vh; overflow: hidden; display: grid; grid-template-rows: au
 .v2-key.edit:hover, .v2-key.drag { color: #fff; text-shadow: 0 0 4px #4f8cff; }
 .v2-key.drag { cursor: grabbing; }
 .v2-ruler .v2-lane { cursor: pointer; }
+.v2-tobj { min-height: 22px; }
+.v2-tobj .v2-tlab { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.v2-tobj.sel .v2-tlab { color: var(--text); font-weight: 600; }
+.v2-objseg { position: absolute; top: 0; bottom: 0; border-radius: 5px; background: color-mix(in srgb, #e5b52e 10%, var(--panel-2)); border: 1px solid color-mix(in srgb, #e5b52e 30%, transparent); cursor: pointer; }
+.v2-tobj.sel .v2-objseg { border-color: #e5b52e; }
+.v2-objline { position: absolute; top: 50%; height: 2px; background: #e5b52e; transform: translateY(-50%); }
+.v2-okey { position: absolute; top: 50%; transform: translate(-50%, -50%); font-size: 12px; color: #ffd877; line-height: 1; cursor: ew-resize; padding: 2px; z-index: 2; }
+.v2-okey:hover, .v2-okey.drag { color: #fff; text-shadow: 0 0 4px #e5b52e; }
 .v2-tracks { position: relative; }
 .v2-playhead { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #f85149; pointer-events: none; z-index: 3; }
 .v2-playhead::before { content: ""; position: absolute; top: 0; left: -4px; border: 5px solid transparent; border-top-color: #f85149; }
