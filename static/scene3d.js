@@ -1205,6 +1205,7 @@ const Scene3D = (() => {
           <p class="hint s3-camhint"></p>
           <div class="mo-row"><button type="button" class="btn sm" data-act="key-cam" title="Keep this view at the playhead">◆ Key the camera</button>
             <button type="button" class="btn sm ghost" data-act="clear-cam">Clear its keys</button></div>
+          <div class="mo-row"><button type="button" class="btn sm" data-act="crane" title="Move the camera on a crane arm (a jib): it rises or falls and swings round a pivot, from the playhead on">🏗 Crane move…</button></div>
           <div class="mo-keys s3-camkeys"></div>
           <label class="check" title="See the shot camera from outside, as an object with its own gimbal (arrows move it, rings pan and tilt it)"><input type="checkbox" id="s3-camobj"> <span class="s3-camobj-l">The camera as an object</span></label>
           <div class="mo-row s3-camobj-row" hidden><button type="button" class="btn sm" data-act="cam-sel" title="Select the camera: its gimbal and position show">🎥 Select it</button>
@@ -1562,6 +1563,74 @@ const Scene3D = (() => {
     Shots.useScene(i, r.shot);
     return r;
   }
+  /* A crane (jib) move: the camera on an arm of a given length round a pivot behind it. From the playhead, over the
+     length of the move, the arm rises or falls (boom, degrees up from level) and swings round (degrees, + to the left),
+     while the camera keeps looking at the point it looks at now, or keeps facing along the arm. It's written as camera
+     keys every quarter second along the arc (eased in and out, or steady), replacing the keys in that time; lens,
+     roll, focus and shake carry on from the camera at the playhead. The rig is kept to draw it from outside. */
+  function craneDialog() {
+    if (!s?.bg) return;
+    const c0 = camBase(s.t), u = s.bg.empty ? "m" : "units", left = Math.max(0.5, dur() - s.t);
+    const box = document.createElement("div");
+    box.className = "m3-make";
+    box.innerHTML = `<p class="hint">From ${s.t.toFixed(2)} s, the camera rides a crane arm round a pivot behind it. Its keys in that time are replaced (↶ Undo takes it back).</p>
+      <div class="row2"><div class="field"><label for="cr-len">Arm length <span class="opt">${u}</span></label><input type="number" id="cr-len" min="0.2" step="0.1" value="${(s.bg.empty ? 3 : +(s.bg.dmed * 0.75).toPrecision(2))}"></div>
+        <div class="field"><label for="cr-sec">Length of the move <span class="opt">s</span></label><input type="number" id="cr-sec" min="0.5" step="0.5" max="${left.toFixed(2)}" value="${Math.min(left, 3).toFixed(1)}"></div></div>
+      <div class="row2"><div class="field"><label for="cr-b0">Boom from <span class="opt">° up</span></label><input type="number" id="cr-b0" min="-60" max="80" step="5" value="0"></div>
+        <div class="field"><label for="cr-b1">Boom to <span class="opt">° up</span></label><input type="number" id="cr-b1" min="-60" max="80" step="5" value="30"></div></div>
+      <div class="row2"><div class="field"><label for="cr-sw">Swing <span class="opt">°, + to the left</span></label><input type="number" id="cr-sw" min="-180" max="180" step="5" value="0"></div>
+        <div class="field"><label for="cr-aim">The camera</label><select id="cr-aim"><option value="point">Keeps looking at the same point</option><option value="arm">Keeps facing along the arm</option></select></div></div>
+      <div class="field"><label for="cr-ease">Speed</label><select id="cr-ease"><option value="inout">Eases in and out</option><option value="steady">Steady</option></select></div>
+      <p class="hint cr-say"></p>`;
+    const foot = document.createElement("div");
+    foot.className = "wm-foot-row";
+    foot.innerHTML = `<span class="grow"></span><button type="button" class="btn ghost" data-a="cancel">Cancel</button><button type="button" class="btn primary" data-a="go">🏗 Make the move</button>`;
+    const win = WM.open({ id: "scene3d-crane", title: `Crane move · ${s.sc.name}`, content: box, footer: foot, width: 480, height: 470, modal: true });
+    const val = id => +box.querySelector(id).value;
+    const say = () => {
+      const b0 = val("#cr-b0"), b1 = val("#cr-b1"), sw = val("#cr-sw");
+      box.querySelector(".cr-say").textContent = `It ${b1 > b0 ? "rises" : b1 < b0 ? "lowers" : "stays level"}${sw ? ` and swings ${Math.abs(sw)}° to the ${sw > 0 ? "left" : "right"}` : ""}, from ${s.t.toFixed(2)} s to ${(s.t + Math.min(val("#cr-sec"), left)).toFixed(2)} s.`;
+    };
+    box.addEventListener("input", say); say();
+    foot.querySelector('[data-a="cancel"]').onclick = () => win.close();
+    foot.querySelector('[data-a="go"]').onclick = () => {
+      const L = Math.max(0.05, val("#cr-len")), sec = Math.max(0.25, Math.min(val("#cr-sec"), left));
+      craneMove(c0, { L, sec, b0: val("#cr-b0"), b1: val("#cr-b1"), sw: val("#cr-sw"), aim: box.querySelector("#cr-aim").value, ease: box.querySelector("#cr-ease").value });
+      win.close();
+      Media.toast("Crane move made: scrub or ▶ play to see it; ↶ Undo takes it back.");
+    };
+  }
+  function craneMove(c0, o) {
+    const t0 = s.t, t1 = Math.min(dur(), t0 + o.sec), E0 = eyeOf(c0), Y = [0, 1, 0];
+    const h = az => [-Math.sin(az * rad), 0, -Math.cos(az * rad)];  // level, turned by az (the camera faces h(yaw))
+    const armAt = (b, az) => addv(mulv(h(az), Math.cos(b * rad) * o.L), mulv(Y, Math.sin(b * rad) * o.L));
+    const P = sub(E0, armAt(o.b0, c0.yaw)), A = c0.target.slice();  // the pivot behind and below; the point it looks at
+    const keep = { ...(c0.lens ? { lens: c0.lens } : {}), ...(c0.roll ? { roll: c0.roll } : {}), ...(typeof c0.shake === "number" ? { shake: c0.shake } : {}) };
+    const n = Math.max(2, Math.ceil((t1 - t0) * 4)), keys = [];
+    for (let j = 0; j <= n; j++) {
+      const u = j / n, e = o.ease === "inout" ? u * u * (3 - 2 * u) : u, t = t0 + (t1 - t0) * u;
+      const b = o.b0 + (o.b1 - o.b0) * e, az = c0.yaw + o.sw * e, E = addv(P, armAt(b, az));
+      let k;
+      if (o.aim === "point") {
+        const v = sub(E, A), d = Math.hypot(...v);
+        k = { yaw: Math.atan2(v[0], v[2]) / rad, pitch: Math.asin(Math.max(-1, Math.min(1, v[1] / d))) / rad, dist: d, target: A.slice() };
+        if (c0.focus) k.focus = d;  // stays on what it looks at
+      } else {
+        const yaw = c0.yaw + o.sw * e, d = c0.dist;
+        k = { yaw, pitch: c0.pitch, dist: d, target: sub(E, mulv(dirOf({ yaw, pitch: c0.pitch }), d)) };
+        if (c0.focus) k.focus = c0.focus;
+      }
+      const prev = keys.length ? keys.at(-1).yaw : c0.yaw;  // no jump round the circle between keys
+      k.yaw += Math.round((prev - k.yaw) / 360) * 360;
+      keys.push({ t: Math.round(t * 1000) / 1000, ...keep, ...k });
+    }
+    s.camKeys = [...s.camKeys.filter(k => k.t < t0 - 0.5 / FPS || k.t > t1 + 0.5 / FPS), ...keys].sort((a, b) => a.t - b.t);
+    // the move's own easing is in where its keys are; the key before it shouldn't ease into it twice
+    s.sc.fx = { ...(s.sc.fx || {}), crane: { pivot: P, L: o.L, t0, t1 } };
+    if (s.camObj && !s.camFree) { s.cam = outsideView(); s.camFree = true; }
+    save(); renderSide(); s.dirty = true;
+  }
+
   function toShot() { s.cam = shotCam(); s.dirty = true; }
   function eye() { const c = s.cam, y = c.yaw * rad, p = c.pitch * rad; return [c.target[0] + c.dist * Math.cos(p) * Math.sin(y), c.target[1] + c.dist * Math.sin(p), c.target[2] + c.dist * Math.cos(p) * Math.cos(y)]; }
   function frameSize() { const dpr = Math.min(2, window.devicePixelRatio || 1); return [Math.max(1, Math.round(s.cv.clientWidth * dpr)), Math.max(1, Math.round(s.cv.clientHeight * dpr))]; }
@@ -1617,6 +1686,11 @@ const Scene3D = (() => {
       if (pts.length) s.gpu.lines(pts, VP, color);
     };
     if (o?.mesh && o.keys?.length > 1) path(t => poseAt(o, t).pos, [1, 0.77, 0.24, 0.9]);
+    const cr = s.sc.fx?.crane;
+    if (camShown() && cr?.pivot && s.t >= cr.t0 - 1e-3 && s.t <= cr.t1 + 1e-3) {  // the crane: its post, arm and counterweight
+      const P = cr.pivot, E = eyeOf(camBase(s.t)), arm = norm(sub(E, P)), foot = [P[0], s.bg.empty ? s.bg.floor : P[1] - cr.L * 0.6, P[2]];
+      s.gpu.lines([...foot, ...P, ...P, ...E, ...P, ...addv(P, mulv(arm, -cr.L * 0.3))], VP, [0.95, 0.7, 0.3, 0.85]);
+    }
     if (camShown()) {  // the shot camera as an object
       if (s.camKeys.length > 1) {  // its dolly path: the line, a dot each second, and a faint camera at each key
         path(t => eyeOf(camAt(t)), [0.48, 0.64, 1, 0.9]);
@@ -1626,7 +1700,9 @@ const Scene3D = (() => {
           dots.push([q[0] - d, q[1], q[2]], [q[0] + d, q[1], q[2]], [q[0], q[1] - d, q[2]], [q[0], q[1] + d, q[2]], [q[0], q[1], q[2] - d], [q[0], q[1], q[2] + d]);
         }
         s.gpu.lines(dots.flat(), VP, [0.75, 0.85, 1, 1]);
-        for (const k of s.camKeys) if (!near(k.t, s.t)) s.gpu.lines(camFrame(camAt(k.t)).flat(), VP, [0.48, 0.64, 1, 0.35]);
+        // a faint camera at each key (many keys, as a crane move makes: just the first and the last)
+        const K = s.camKeys, ghosts = K.length > 6 ? [K[0], K.at(-1)] : K;
+        for (const k of ghosts) if (!near(k.t, s.t)) s.gpu.lines(camFrame(camAt(k.t)).flat(), VP, [0.48, 0.64, 1, 0.35]);
       }
       s.gpu.lines(camFrame(camForRender(s.t)).flat(), VP, s.camSel ? [1, 0.6, 0.2, 1] : [0.48, 0.64, 1, 1]);
       const dr = dofRange(camForRender(s.t));
@@ -1954,6 +2030,7 @@ const Scene3D = (() => {
         if (k) Object.assign(k, v); else { s.camKeys.push({ t: s.t, ...v }); s.camKeys.sort((p, q) => p.t - q.t); }
         s.camFree = false; save(); renderCam(); s.dirty = true; return;
       }
+      if (a === "crane") return craneDialog();
       if (a === "clear-cam") { s.camKeys = []; s.camFree = false; save(); renderCam(); s.dirty = true; return; }
       if (a === "cam-key") { setTime(s.camKeys[+b.dataset.k].t); renderSide(); s.dirty = true; return; }
       if (a === "del-cam-key") { s.camKeys.splice(+b.dataset.k, 1); save(); setTime(s.t); renderCam(); return; }

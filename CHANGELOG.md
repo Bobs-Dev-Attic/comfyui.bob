@@ -5,6 +5,19 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.116.0] - 2026-11-19
+
+### Added
+- **🏗 Crane move…** (Camera section): the shot camera rides a crane (jib) arm round a pivot behind it, starting at the
+  playhead.
+  - Settings: the arm's length; the length of the move; the boom from and to (degrees up from level, so the camera
+    rises or lowers); a swing round the pivot (+ to the left); whether the camera keeps looking at the same point or
+    keeps facing along the arm; and the speed (eases in and out, or steady).
+  - It writes camera keys every quarter second along the arc, replacing the keys in that time (↶ Undo takes it back).
+    Lens, roll, focus (kept on what it looks at) and shake carry on from the camera at the playhead.
+  - From outside, while the move plays, the rig is drawn: the post, the arm to the camera and its counterweight.
+  - A run of many keys now shows a faint camera at only its first and last key.
+
 ## [0.115.0] - 2026-11-19
 
 ### Added
