@@ -1171,7 +1171,8 @@ const Shots = (() => {
         return { ...base, engine: "motion", prompt: prompt(i), seconds: +s.scene.seconds || +s.seconds || 3, first_frame: r.first_frame, last_frame: null,
           references: r.references || [], ref_audios: [], motion_video: r.motion_video, motion_video_mask: r.motion_video_mask,
           motion_hold: r.motion_hold || "normal", motion_first: r.motion_first || "picture", quality: r.quality || base.quality,
-          motion_plate: null, motion_layers: [], loras: [], unet: null, sampler: null, scheduler: null, cfg: null };
+          motion_plate: null, motion_layers: [], loras: [], unet: null, sampler: null, scheduler: null, cfg: null,
+          ...(typeof r.turbo === "boolean" ? { turbo: r.turbo } : {}), ...(r.steps ? { steps: r.steps } : {}) };  // the render's speed
       }
       if (motionOn(i)) {  // objects in motion: the motion engine, from the plan's picture
         const p = s.motion, secs = +s.seconds || 3;

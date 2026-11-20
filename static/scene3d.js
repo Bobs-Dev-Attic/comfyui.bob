@@ -1099,25 +1099,10 @@ const Scene3D = (() => {
      does what its old button did (a click on a stand-in button, so there's one place that handles it). */
   /* Quick tests: a photo at 0.4 MP on the fastest edit model (Qwen, 4 steps), or a Draft video straight from the scene
      as drawn (no photo of the first frame, no gap fill), with whatever moves. Seconds instead of minutes, rough. */
-  async function quick(kind) {
+  // ⚡ Quick photo: the photo window, small and on Qwen. (⚡ Quick video is the Render window on Sketch.)
+  function quick(kind) {
     if (!s?.bg) return;
-    const size0 = [s.cv.width, s.cv.height];
-    try {
-      if (kind === "photo") return photoDialog({ quick: true });
-      else {
-        // from the scene's picture, or (the camera holding still) a photo of its first frame that matches: a quick photo
-        // at 0 s will do. A moving camera without the gap fill turns a photo into flat sky and floor within a second, so
-        // then it's the scene as drawn: a rough test of the motion.
-        const cam0 = camForRender(0), photo = cameraMoves() ? null : s.photos.map(p => ({ ...p, it: state.items.get(p.id) })).filter(p => p.it?.status === "done" && p.it.files?.length)
-          .reverse().find(p => Math.abs(p.t) < 0.5 / FPS && camDiff(p.cam, cam0) < 0.02);
-        const start = s.sc.picture && startsAsPicture() ? "picture" : photo ? `photo:${photo.id}` : "composite";
-        Media.toast(`Quick video: a rough Draft from ${start === "composite" ? "the scene as drawn" : start === "picture" ? "the scene's picture" : "the photo of its first frame"}…`);
-        const r = await buildRender({ start, look: "", fill: false, refs: false, hold: start === "composite" ? "normal" : "loose", quality: "draft", what: defaultWhat() }, () => {});
-        const items = await submit({ ...r.req, steps: 4 });  // half the turbo steps: rough, and quicker
-        if (items?.length) Media.toast("Quick video: queued. It shows in the gallery when it's done.");
-      }
-    } catch (err) { Media.toast(`Quick ${kind}: ${err.message}`); }
-    finally { if (s) { s.cv.width = size0[0]; s.cv.height = size0[1]; s.dirty = true; } }
+    return kind === "photo" ? photoDialog({ quick: true }) : renderDialog({ level: "sketch" });
   }
   function act(a, data = {}) {
     const b = document.createElement("button"); b.type = "button"; b.hidden = true; b.dataset.act = a;
@@ -1130,7 +1115,7 @@ const Scene3D = (() => {
       ["🎬 Render video…", () => act("render")],
       null,
       ["⚡ Quick photo: a rough, small one to test the idea", () => quick("photo"), !editModels().length],
-      ["⚡ Quick video: a rough draft to test the motion", () => quick("video"), state.caps?.editor?.motion === false],
+      ["⚡ Quick video: a rough draft to test the motion", () => renderDialog({ level: "sketch" }), state.caps?.editor?.motion === false],
       null,
       [s.sc.template ? "⭐ A template: stop being one" : "☆ Save as template", () => act("tpl")],
       null,
@@ -1529,7 +1514,19 @@ const Scene3D = (() => {
     }).trim();
   }
   const autoTl = () => { try { return localStorage.getItem("bob.sceneAutoTl") !== "0"; } catch { return true; } };
-  function renderDialog() {
+  /* The render's levels, rough to final: each sets the options under it (which stay free to change).
+     Sketch: the 3D objects as drawn, Draft, 4 steps: the motion, in a couple of minutes.
+     Rough: a small quick photo of the first frame (0.4 MP, Qwen), then a Draft video: the look, roughly.
+     Final: a full photo (or the picture), Qwen's fill, Standard and the turbo's full steps. */
+  const LEVELS = {
+    sketch: { icon: "🧊", name: "Sketch", says: "from the 3D objects as drawn: tests the motion, fastest", quality: "draft", speed: "4", fill: false, hold: "normal" },
+    rough: { icon: "🟫", name: "Rough", says: "from a small, quick photo of the first frame: tests the look", quality: "draft", speed: "auto", fill: false, hold: "loose" },
+    final: { icon: "🎬", name: "Final", says: "from a full photo, with Qwen's fill: the real thing", quality: "standard", speed: "auto", fill: true, hold: "loose" },
+  };
+  // Speed: the sampling steps H3 takes (the turbo LoRA's own count, fewer, more, or full sampling without it)
+  const SPEEDS = { "4": { steps: 4, turbo: true }, auto: { steps: null, turbo: true }, "12": { steps: 12, turbo: true }, full: { steps: null, turbo: false } };
+  const lastLevel = () => { try { return LEVELS[localStorage.getItem("bob.sceneLevel")] ? localStorage.getItem("bob.sceneLevel") : "final"; } catch { return "final"; } };
+  function renderDialog(o = {}) {
     if (!s?.bg) return;
     if (!s.objs.some(o => o.mesh && !o.hidden) && !cameraMoves()) return Media.toast("Nothing moves yet: key an object or the camera first.");
     if (!state.caps?.editor?.motion && state.caps?.editor) return Media.toast("Rendering a scene needs H3 and ComfyUI-vlo (vloTimeToMove), as Animate objects does.");
@@ -1542,10 +1539,15 @@ const Scene3D = (() => {
       .map(p => ({ ...p, match: Math.abs(p.t) < 0.5 / FPS && camDiff(p.cam, cam0) < 0.02 })).reverse();
     const best = photos.find(p => p.match);
     const startDefault = pic ? "picture" : best ? `photo:${best.id}` : editModels().length ? "newphoto" : "composite";
+    const startOf = lv => lv === "sketch" ? "composite" : lv === "rough" ? (editModels().length ? "quickphoto" : pic ? "picture" : "composite") : startDefault;
+    const level0 = LEVELS[o.level] ? o.level : lastLevel();
     const when = it => new Date((it.finished || it.created) * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     const box = document.createElement("div");
     box.className = "m3-make";
-    box.innerHTML = `${adopted.length ? `<p class="hint">From the shot: ${esc(adopted.join(", "))} (its picture, sent to H3 Reference).</p>` : ""}<p class="hint">H3 makes the video from the picture, following this scene's rough animation (Time-to-Move, as in Animate objects):
+    box.innerHTML = `<div class="field"><span class="s3p-lbl">Level <span class="opt">rough to final; each sets the options below</span></span>
+        <div class="seg s3r-lv" role="group" aria-label="Level">${Object.entries(LEVELS).map(([k, L]) => `<button type="button" data-lv="${k}" title="${esc(L.name)}: ${esc(L.says)}">${L.icon} ${esc(L.name)}</button>`).join("")}</div>
+        <p class="hint s3r-lvh" aria-live="polite"></p></div>
+      ${adopted.length ? `<p class="hint">From the shot: ${esc(adopted.join(", "))} (its picture, sent to H3 Reference).</p>` : ""}<p class="hint">H3 makes the video from the picture, following this scene's rough animation (Time-to-Move, as in Animate objects):
         ${cameraMoves() ? "the camera move and the objects" : "the objects; the camera holds still"}. ${frameCount()} frames, ${dur().toFixed(2)} s.</p>
       <div class="field"><label for="s3r-what">What happens <span class="opt">optional</span></label>
         ${tagChips()}
@@ -1554,11 +1556,14 @@ const Scene3D = (() => {
       ${picObjs().length ? `<label class="check"><input type="checkbox" id="s3r-refs"${refsReady() ? " checked" : " disabled"}> Use the objects' pictures (H3 Reference)</label>
         <p class="hint s3r-refs-h">${refsReady() ? `The first frame is &lt;Picture 1&gt;; ${picObjs().map((o, i) => `${esc(o.name)} is &lt;Picture ${i + 2}&gt;`).join(", ")}. Runs on H3 Reference's model with the same motion.`
           : "Needs H3 Reference's model (ref2va) in ComfyUI: see the Model step."}${s.objs.filter(o => o.mesh && o.pos && !o.hidden && o.picture).length > 8 ? " Only the first 8 pictures are used." : ""}</p>` : ""}
-      <div class="row2"><div class="field"><label for="s3r-q">Quality</label><select id="s3r-q"><option value="draft">Draft</option><option value="standard" selected>Standard</option><option value="full">Full</option></select></div>
+      <div class="row2 s3r-row3"><div class="field"><label for="s3r-q">Quality</label><select id="s3r-q"><option value="draft">Draft</option><option value="standard" selected>Standard</option><option value="full">Full</option></select></div>
+        <div class="field"><label for="s3r-sp">Speed</label><select id="s3r-sp" title="How many steps H3 takes: fewer is quicker and rougher">
+          <option value="4">Fastest (4 steps)</option><option value="auto" selected>Normal (the turbo's own)</option><option value="12">Finer (12 steps)</option><option value="full">Best (no turbo, 20 steps, slow)</option></select></div>
         <div class="field"><label for="s3r-hold">Follow the plan</label><select id="s3r-hold"><option value="loose">Loosely</option><option value="normal" selected>Normally</option><option value="tight">Tightly</option></select></div></div>
       <div class="field"><label for="s3r-first">Start from</label><select id="s3r-first">
         ${noPic ? "" : `<option value="picture">The picture${pic ? " (the scene starts as the picture)" : " (the camera starts elsewhere)"}</option>`}
-        ${editModels().length ? `<option value="newphoto">A new photo of the first frame (made first, about a minute, then the video)</option>` : ""}
+        ${editModels().length ? `<option value="newphoto">A new photo of the first frame (made first, about a minute, then the video)</option>
+          <option value="quickphoto">A quick, small photo of the first frame (0.4 MP, about 20 s, then the video)</option>` : ""}
         ${photos.map(p => `<option value="photo:${p.id}">The photo from ${when(p.it)}${p.match ? " (the first frame)" : " (another view: the video may jump)"}</option>`).join("")}
         <option value="composite">The scene's first frame as drawn (plain)</option></select></div>
       ${cameraMoves() ? `<label class="check s3r-fillf" title="Where the camera move shows what the photo never saw (the far side of a turn), Qwen paints the place in first, from up to ${MAX_GAPS} views along the move, so H3 follows the same surroundings all the way round"><input type="checkbox" id="s3r-fill"${lastFill() ? " checked" : ""}> Fill what the photo can't see with Qwen first <span class="opt">about half a minute per view</span></label>` : ""}
@@ -1579,14 +1584,15 @@ const Scene3D = (() => {
     foot.innerHTML = `<span class="hint s3r-st"></span><button type="button" class="btn ghost" data-a="cancel">Cancel</button><button type="button" class="btn primary" data-a="go">🎬 Render</button>`;
     const win = WM.open({ id: "scene3d-render", title: `Render · ${s.sc.name}`, content: box, footer: foot, width: 600, height: 760, modal: true });
     const useRefs = () => !!box.querySelector("#s3r-refs")?.checked;
-    const fromPhoto = () => { const v = box.querySelector("#s3r-first").value; return v === "newphoto" || v.startsWith("photo:"); };
+    const isPhoto = v => v === "newphoto" || v === "quickphoto" || v.startsWith("photo:");
+    const fromPhoto = () => isPhoto(box.querySelector("#s3r-first").value);
     wireTags(box, box.querySelector("#s3r-what"), () => videoText(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder, useRefs(), fromPhoto()));
     box.querySelector("#s3r-refs")?.addEventListener("change", () => box.querySelector("#s3r-what").dispatchEvent(new Event("input")));
     const st = foot.querySelector(".s3r-st"), firstSel = box.querySelector("#s3r-first"), holdSel = box.querySelector("#s3r-hold");
     // From a photo, H3 is held to the plain rough animation only loosely, so the photo's look carries through.
     const syncStart = () => {
-      const v = firstSel.value, photo = v === "newphoto" || v.startsWith("photo:");
-      box.querySelector(".s3r-lookf").hidden = v !== "newphoto";
+      const v = firstSel.value, photo = isPhoto(v);
+      box.querySelector(".s3r-lookf").hidden = v !== "newphoto" && v !== "quickphoto";
       const ff = box.querySelector(".s3r-fillf"); if (ff) ff.hidden = !photo;
       if (photo && !holdSel.dataset.touched) holdSel.value = "loose";
       if (!photo && !holdSel.dataset.touched) holdSel.value = "normal";
@@ -1596,7 +1602,8 @@ const Scene3D = (() => {
     let edited = false;
     const MP = { draft: 0.4, standard: 0.6, full: 0.98 }, HOLD = { loose: "loosely (its look carries through)", normal: "normally", tight: "tightly (close to the rough animation)" };
     const review = () => {
-      const refs = useRefs(), v = firstSel.value, q = box.querySelector("#s3r-q").value, mp = MP[q] || 0.6, A = s.bg.aspect;
+      const refs = useRefs(), v = firstSel.value, q = box.querySelector("#s3r-q").value, mp = MP[q] || 0.6, A = s.bg.aspect, sp = SPEEDS[spSel.value] || SPEEDS.auto;
+      const turboSteps = refs ? 4 : 8, steps = sp.turbo ? sp.steps || turboSteps : 20;
       const w = Math.max(32, Math.round(Math.sqrt(mp * 1048576 * A) / 32) * 32), h = Math.max(32, Math.round(w / A / 32) * 32);
       const fill = !!box.querySelector("#s3r-fill")?.checked && fromPhoto() && cameraMoves();
       box.querySelector(".s3r-dl").innerHTML = [
@@ -1604,11 +1611,14 @@ const Scene3D = (() => {
         ["Following", `the scene's rough animation (Time-to-Move), ${HOLD[holdSel.value] || holdSel.value}`],
         ["Quality", `${box.querySelector("#s3r-q").selectedOptions[0].textContent}: about ${w}×${h} px (${mp} MP)`],
         ["Length", `${frameCount()} frames, ${dur().toFixed(2)} s at ${FPS} fps`],
-        ["Sampling", refs ? "4 steps with H3 Reference's turbo LoRA (8 with an 8-step one)" : "8 steps with H3's turbo LoRA (4 with a 4-step one)"],
+        ["Sampling", !sp.turbo ? `${steps} steps, full sampling without the turbo LoRA (several times slower)`
+          : sp.steps ? `${steps} steps with ${refs ? "H3 Reference's" : "H3's"} turbo LoRA${steps < turboSteps ? " (fewer than it's made for: rougher, quicker)" : steps > turboSteps ? " (more than it's made for: a little finer, slower)" : ""}`
+          : refs ? "4 steps with H3 Reference's turbo LoRA (8 with an 8-step one)" : "8 steps with H3's turbo LoRA (4 with a 4-step one)"],
         ["Seed", "a new one each time"],
-        ["Before it", v === "newphoto" ? `a photo of the first frame (the edit model)${fill ? ", then Qwen fills what the camera move reveals and redraws a sharp view where it comes close" : ""}` : fill ? "Qwen fills what the camera move reveals, and redraws a sharp view where it comes close" : "nothing: it starts at once"],
+        ["Before it", v === "quickphoto" ? `a quick 0.4 MP photo of the first frame (${editModels().some(m => m[0] === "qwen") ? "Qwen" : "the edit model"})${fill ? ", then Qwen fills what the camera move reveals" : ""}`
+          : v === "newphoto" ? `a photo of the first frame (the edit model)${fill ? ", then Qwen fills what the camera move reveals and redraws a sharp view where it comes close" : ""}` : fill ? "Qwen fills what the camera move reveals, and redraws a sharp view where it comes close" : "nothing: it starts at once"],
       ].map(([k, x]) => `<dt>${esc(k)}</dt><dd>${esc(x)}</dd>`).join("");
-      const startName = v === "picture" ? "the scene's picture" : v === "newphoto" ? "the new photo of the first frame" : v.startsWith("photo:") ? "the chosen photo" : "the first frame as drawn";
+      const startName = v === "picture" ? "the scene's picture" : v === "newphoto" ? "the new photo of the first frame" : v === "quickphoto" ? "the quick photo of the first frame" : v.startsWith("photo:") ? "the chosen photo" : "the first frame as drawn";
       box.querySelector(".s3r-pics").innerHTML = `<span class="s3p-pic"><span class="s3p-pic0">🖼</span><b>${refs ? "&lt;Picture 1&gt;" : "First frame"}</b> ${esc(startName)}</span>`
         + `<span class="s3p-pic"><span class="s3p-pic0">🎞</span><b>Motion</b> the rough animation and its mask</span>`
         + (refs ? picObjs().map((x, i) => `<span class="s3p-pic"><img src="${esc(mediaUrl(x.picture))}" alt=""><b>&lt;Picture ${i + 2}&gt;</b> ${esc(x.name)}</span>`).join("") : "");
@@ -1620,8 +1630,25 @@ const Scene3D = (() => {
     box.querySelector('[data-a="rebuild"]').onclick = () => { edited = false; review(); };
     box.addEventListener("change", review);
     box.querySelector("#s3r-what").addEventListener("input", review);
-    firstSel.value = startDefault; syncStart();
+    const spSel = box.querySelector("#s3r-sp"), lvBox = box.querySelector(".s3r-lv");
+    let level = level0;
+    const showLevel = () => {
+      lvBox.querySelectorAll("button").forEach(b => b.classList.toggle("active", b.dataset.lv === level));
+      box.querySelector(".s3r-lvh").textContent = level ? `${LEVELS[level].name}: ${LEVELS[level].says}.` : "Your own mix of the options below.";
+    };
+    const setLevel = lv => {
+      const L = LEVELS[lv]; level = lv;
+      firstSel.value = startOf(lv); if (!firstSel.value) firstSel.value = "composite";
+      box.querySelector("#s3r-q").value = L.quality; spSel.value = L.speed;
+      const f = box.querySelector("#s3r-fill"); if (f) f.checked = L.fill;
+      holdSel.value = L.hold; delete holdSel.dataset.touched;
+      syncStart(); holdSel.value = L.hold; showLevel(); review();
+    };
+    lvBox.addEventListener("click", e => { const b = e.target.closest("[data-lv]"); if (b) setLevel(b.dataset.lv); });
+    // changing an option by hand makes it your own mix
+    for (const sel of ["#s3r-q", "#s3r-sp", "#s3r-first", "#s3r-fill", "#s3r-hold"]) box.querySelector(sel)?.addEventListener("change", () => { level = null; showLevel(); });
     firstSel.onchange = syncStart; holdSel.onchange = () => { holdSel.dataset.touched = "1"; };
+    setLevel(level0);
     const toSel = box.querySelector("#s3r-to"), goBtn = foot.querySelector('[data-a="go"]');
     const syncTo = () => {
       const shot = !!toSel && toSel.value !== "now";
@@ -1629,20 +1656,21 @@ const Scene3D = (() => {
       if (toSel) box.querySelector(".s3r-to-h").hidden = !shot;
       goBtn.textContent = shot ? "🏞 Put in the shot" : "🎬 Render";
     };
-    if (toSel) { toSel.onchange = syncTo; const fs = forShot(); if (fs) toSel.value = String(fs.i); }
+    if (toSel) { toSel.onchange = syncTo; const fs = forShot(); if (fs) toSel.value = String(fs.i); if (o.level === "sketch" && !fs) toSel.value = "now"; }
     syncTo();
     foot.querySelector('[data-a="cancel"]').onclick = () => win.close();
     foot.querySelector('[data-a="go"]').onclick = async e => {
       e.target.disabled = true;
       try {
         const start = firstSel.value, look = box.querySelector("#s3r-look").value.trim();
-        if (start === "newphoto") try { localStorage.setItem("bob.scenePhotoLook", look); } catch { /* not kept */ }
+        if (start === "newphoto" || start === "quickphoto") try { localStorage.setItem("bob.scenePhotoLook", look); } catch { /* not kept */ }
+        if (level) try { localStorage.setItem("bob.sceneLevel", level); } catch { /* not kept */ }
         const to = toSel?.value ?? "now";
         const toTl = to === "now" && box.querySelector("#s3r-tl").checked;
         if (to === "now") try { localStorage.setItem("bob.sceneAutoTl", toTl ? "1" : "0"); } catch { /* not kept */ }
         const fill = !!box.querySelector("#s3r-fill")?.checked;
-        if (box.querySelector("#s3r-fill")) try { localStorage.setItem("bob.sceneGapFill", fill ? "1" : "0"); } catch { /* not kept */ }
-        const r = await buildRender({ start, look, fill, refs: useRefs(), hold: holdSel.value, quality: box.querySelector("#s3r-q").value, prompt: edited ? box.querySelector("#s3r-prompt").value : null,
+        if (box.querySelector("#s3r-fill") && fromPhoto()) try { localStorage.setItem("bob.sceneGapFill", fill ? "1" : "0"); } catch { /* not kept */ }
+        const r = await buildRender({ start, look, fill, refs: useRefs(), hold: holdSel.value, quality: box.querySelector("#s3r-q").value, speed: spSel.value, prompt: edited ? box.querySelector("#s3r-prompt").value : null,
           what: box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder }, m => { st.textContent = m; });
         if (to !== "now") {  // into a shot: Generate on the Shots step sends it
           const k = Shots.useScene(to === "new" ? -1 : +to, r.shot);
@@ -1660,21 +1688,24 @@ const Scene3D = (() => {
   }
 
   /* Draw what H3 follows (the rough animation and its mask) and its first picture, and build the request.
-     o: { start: "picture" | "newphoto" | "photo:<id>" | "composite", look, refs, hold, quality, what }. Returns
+     o: { start: "picture" | "newphoto" | "quickphoto" | "photo:<id>" | "composite", look, refs, hold, quality, speed, what }. Returns
      { req, shot } (shot: what a shot on the Shots step keeps). */
   async function buildRender(o, say = () => {}) {
     // the picture's aspect, longest side 960 (the server fits it to the render's size)
     const n = frameCount(), W = Math.round((s.bg.aspect >= 1 ? 960 : 960 * s.bg.aspect) / 2) * 2, H = Math.round(W / s.bg.aspect / 2) * 2;
-    const keep = [s.cv.width, s.cv.height], start = o.start, noPic = !s.sc.picture, fromPhoto = start === "newphoto" || start.startsWith("photo:");
+    const keep = [s.cv.width, s.cv.height], start = o.start, noPic = !s.sc.picture, fromPhoto = start === "newphoto" || start === "quickphoto" || start.startsWith("photo:");
     let proj = null;
     try {
       // From a photo, the rough animation is the photo painted onto the scene from the camera it was taken from, so
       // H3 starts from something that looks like the photo (not the plain render).
       let photoPath = null;
-      if (start === "newphoto") {
-        say("Making the photo of the first frame (about a minute; keep the scene open)…");
-        const A = s.bg.aspect, PW = Math.round((A >= 1 ? 1280 : 1280 * A) / 8) * 8, PH = Math.round(PW / A / 8) * 8;
-        const photo = await makePhoto([PW, PH], 0, camForRender(0), o.look || "", editModels()[0][0], o.refs, false, true);
+      if (start === "newphoto" || start === "quickphoto") {
+        // the quick one: small (768 px, 0.4 MP) and on Qwen when it's there, a rough look in about 20 s
+        const qk = start === "quickphoto", Lg = qk ? 768 : 1280;
+        say(qk ? "Making a quick photo of the first frame (keep the scene open)…" : "Making the photo of the first frame (about a minute; keep the scene open)…");
+        const A = s.bg.aspect, PW = Math.round((A >= 1 ? Lg : Lg * A) / 8) * 8, PH = Math.round(PW / A / 8) * 8;
+        const model = qk && editModels().some(m => m[0] === "qwen") ? "qwen" : editModels()[0][0];
+        const photo = await makePhoto([PW, PH], 0, camForRender(0), o.look || "", model, o.refs, false, true, qk ? 0.4 : null);
         const it = await waitItem(photo.id);
         photoPath = (it.files || []).find(f => /^image\//.test(f.content_type || ""))?.path || it.files?.[0]?.path;
         if (it.status !== "done" || !photoPath) throw new Error("The photo didn't come out");
@@ -1703,6 +1734,7 @@ const Scene3D = (() => {
       const req = { kind: "video", engine: "motion", prompt, seconds: n / FPS, aspect: "16:9", quality: o.quality || "standard",
         seed: -1, batch: 1, turbo: true, first_frame: null, motion_video: ref, motion_video_mask: mask,
         motion_hold: o.hold || "normal", motion_first: "picture", project: s.sc.project };
+      const sp = SPEEDS[o.speed]; if (sp) { req.turbo = sp.turbo; if (sp.steps) req.steps = sp.steps; }
       if (o.refs) req.references = picObjs().map(x => x.picture);
       if (photoPath) req.first_frame = photoPath;
       else if (start === "picture") req.first_frame = s.sc.picture;
@@ -1715,7 +1747,7 @@ const Scene3D = (() => {
       const rev = await flushSave();
       const shot = { id: s.sc.id, name: s.sc.name, thumb, seconds: n / FPS, what, cam, rev,
         req: { motion_video: ref, motion_video_mask: mask, first_frame: req.first_frame, motion_first: req.motion_first,
-          motion_hold: req.motion_hold, quality: req.quality, references: req.references || [] } };
+          motion_hold: req.motion_hold, quality: req.quality, references: req.references || [], turbo: req.turbo, ...(req.steps ? { steps: req.steps } : {}) } };
       return { req, shot };
     } finally { freeProjection(proj); if (s) { s.cv.width = keep[0]; s.cv.height = keep[1]; s.dirty = true; } }
   }
@@ -1794,7 +1826,7 @@ const Scene3D = (() => {
     const best = photos.reverse().find(p => Math.abs(p.t) < 0.5 / FPS && camDiff(p.cam, cam0) < 0.02);
     const start = o.start || (s.sc.picture && startsAsPicture() ? "picture" : best ? `photo:${best.id}` : editModels().length ? "newphoto" : s.sc.picture ? "picture" : "composite");
     const refs = picObjs().length > 0 && refsReady();
-    const r = await buildRender({ start, look: o.look ?? lastLook(), fill: o.fill ?? lastFill(), refs, hold: start === "newphoto" || start.startsWith("photo:") ? "loose" : "normal",
+    const r = await buildRender({ start, look: o.look ?? lastLook(), fill: o.fill ?? lastFill(), refs, hold: start === "newphoto" || start === "quickphoto" || start.startsWith("photo:") ? "loose" : "normal",
       quality: ["draft", "standard", "full"].includes(o.quality) ? o.quality : "standard", what: fromShot(text) || defaultWhat() }, say);
     return { ...r, start, refs };
   }
