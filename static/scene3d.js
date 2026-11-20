@@ -121,8 +121,22 @@ const Scene3D = (() => {
     // keys without a lens have the scene's (so a zoom eases from it and back)
     const lens = s.camKeys.some(k => k.lens), roll = s.camKeys.some(k => k.roll);
     const K = lens || roll ? s.camKeys.map(k => ({ ...k, ...(lens ? { lens: k.lens || baseLens() } : {}), ...(roll ? { roll: k.roll || 0 } : {}) })) : s.camKeys;
-    const c = interp(K, t, ["yaw", "pitch", "dist", "target"]);
+    const c = interp(K, easeT(t), ["yaw", "pitch", "dist", "target"]);
     return { ...camOf(c), dist: Math.max(s.bg.dmed * 0.02, c.dist) };
+  }
+  /* Easing: each camera key says how the camera gets to the next key (its `ease`): steady (none), or slow at the start,
+     the end, or both. It bends time within that stretch only, so the camera still passes every key when it was keyed. */
+  const EASES = {
+    in: { label: "Ease in: starts slowly, then speeds up", short: "ease in", f: u => u * u * u },
+    out: { label: "Ease out: slows down into the next key", short: "ease out", f: u => 1 - (1 - u) ** 3 },
+    inout: { label: "Ease in and out: starts and stops gently", short: "ease in-out", f: u => u < 0.5 ? 4 * u * u * u : 1 - (-2 * u + 2) ** 3 / 2 },
+  };
+  function easeT(t) {
+    const K = s.camKeys;
+    if (K.length < 2 || t <= K[0].t || t >= K.at(-1).t) return t;
+    let i = 0; while (K[i + 1].t < t) i++;
+    const a = K[i], b = K[i + 1], e = EASES[a.ease]?.f; if (!e) return t;
+    return a.t + e((t - a.t) / Math.max(1e-6, b.t - a.t)) * (b.t - a.t);
   }
   // The scene's own lens, from its frame: an empty scene's (View › Lens), or the picture's (estimated from it).
   const baseLens = () => 18 / Math.max(s.bg.t, s.bg.tv);
@@ -1796,6 +1810,11 @@ const Scene3D = (() => {
       }
       if (po?.prim && id === "s3-color") return changed(po);
       if (id === "s3-camobj") return setCamObj(e.target.checked);
+      if (id === "s3-ease") {
+        const k = s.camKeys.find(q => near(q.t, s.t)); if (!k) return;
+        if (e.target.value) k.ease = e.target.value; else delete k.ease;
+        save(); renderCam(); s.dirty = true; return;
+      }
       if (id === "s3-pip") { s.pip = e.target.checked; try { localStorage.setItem("bob.s3pip", s.pip ? "1" : "0"); } catch { /* not kept */ } s.dirty = true; return; }
       const k = e.target.dataset.opt; if (!k) return;
       s[k] = e.target.checked; s.dirty = true;
@@ -2800,6 +2819,15 @@ const Scene3D = (() => {
     const sec = s.root.querySelector(".s3-sec"); if (document.activeElement !== sec) sec.value = String(s.seconds);
     s.root.querySelector('[data-act="play"]').textContent = s.playing ? "⏸" : "▶";
   }
+  // The camera's keys as chips (time, lens, easing), and the easing of the move from the key at the playhead.
+  function camKeysHtml(K) {
+    const chips = K.map((q, j) => `<button type="button" class="chip-btn${near(q.t, s.t) ? " on" : ""}" data-act="cam-key" data-k="${j}">${q.t.toFixed(2)} s${q.lens ? ` · ${Math.round(q.lens)} mm` : ""}${q.ease && j < K.length - 1 ? ` · ${EASES[q.ease].short}` : ""}</button><button type="button" class="set-x" data-act="del-cam-key" data-k="${j}" aria-label="Remove the camera key at ${q.t.toFixed(2)} s">×</button>`).join(" ");
+    const i = K.findIndex(q => near(q.t, s.t));
+    const row = i >= 0 && i < K.length - 1 ? `<div class="field s3-ease"><label for="s3-ease">From ${K[i].t.toFixed(2)} s to the next key (${K[i + 1].t.toFixed(2)} s)</label>
+      <select id="s3-ease" title="How the camera speeds up and slows down on its way to the next key (move, turn, zoom and roll)">${Object.entries({ "": { label: "Steady: the same speed all the way" }, ...EASES }).map(([v, e]) => `<option value="${v}"${(K[i].ease || "") === v ? " selected" : ""}>${e.label}</option>`).join("")}</select></div>`
+      : K.length > 1 ? `<p class="hint s3-ease-h">Move the playhead to a key (click its chip) to choose how the camera eases to the next one.</p>` : "";
+    return chips + row;
+  }
   function renderCam() {
     if (!s) return;
     const K = s.camKeys, cb = s.root.querySelector("#s3-camobj");
@@ -2814,13 +2842,13 @@ const Scene3D = (() => {
       s.root.querySelector(".s3-camhint").textContent = s.camFree
         ? `You're outside the shot camera (the frame${s.camSel ? ", orange: selected" : ", blue"}). Click it, then drag its arrows to move it or its rings to pan and tilt; or type its position. Changes key it at ${s.t.toFixed(2)} s.`
         : "You're looking through the shot camera. Orbit, pan or zoom to step outside it again.";
-      s.root.querySelector(".s3-camkeys").innerHTML = K.map((q, j) => `<button type="button" class="chip-btn${near(q.t, s.t) ? " on" : ""}" data-act="cam-key" data-k="${j}">${q.t.toFixed(2)} s${q.lens ? ` · ${Math.round(q.lens)} mm` : ""}</button><button type="button" class="set-x" data-act="del-cam-key" data-k="${j}" aria-label="Remove the camera key at ${q.t.toFixed(2)} s">×</button>`).join(" ");
+      s.root.querySelector(".s3-camkeys").innerHTML = camKeysHtml(K);
       return;
     }
     s.root.querySelector(".s3-camhint").textContent = !K.length ? "Look around, then ◆ key the view at the playhead; key another view later on for a camera move."
       : s.camFree ? `You've moved the view: ◆ key it at ${s.t.toFixed(2)} s, or move the playhead to go back on the camera's path (blue).`
       : K.length === 1 ? "One key: the camera holds this view. Key another view at another time to move it." : "The camera moves through its keys.";
-    s.root.querySelector(".s3-camkeys").innerHTML = K.map((q, j) => `<button type="button" class="chip-btn${near(q.t, s.t) ? " on" : ""}" data-act="cam-key" data-k="${j}">${q.t.toFixed(2)} s${q.lens ? ` · ${Math.round(q.lens)} mm` : ""}</button><button type="button" class="set-x" data-act="del-cam-key" data-k="${j}" aria-label="Remove the camera key at ${q.t.toFixed(2)} s">×</button>`).join(" ");
+    s.root.querySelector(".s3-camkeys").innerHTML = camKeysHtml(K);
   }
   function stop() { s.playing = false; renderTime(); renderSide(); }
   function play() {
