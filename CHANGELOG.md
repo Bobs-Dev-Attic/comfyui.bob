@@ -5,6 +5,29 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.113.0] - 2026-11-19
+
+### Fixed
+- **A shot mapped to a 3D scene now follows the scene's camera when you press Generate.** Before, Generate made the shot
+  from its text alone ("The camera holds a static shot") unless you had used the scene's 🎬 Render › Goes to the shot.
+  Now Generate first draws the scene into the shot when it isn't there yet, or when the scene has changed since. It
+  opens the scene, draws the camera move and what H3 follows, and makes the first picture (a photo of the first frame
+  when there's no matching one, about a minute). It uses the shot's What happens and quality, then sends the video
+  in order with the other shots.
+- A shot's `<Picture N>` reference pictures go into the scene. A Person in the scene without a picture takes the
+  shot's reference, so a render on H3 Reference keeps that person's look. The Render window says when it did that.
+
+### Added
+- **Focus distance and depth of field for the shot camera**, in the floating box:
+  - **Focus**: the distance in focus, keyed with the camera. Change it between keys for a rack focus; a key without one
+    keeps the focus before it. **⌖ On…** focuses on one of the objects the camera sees.
+  - **Aperture**: Off (everything sharp) or f/1.4 to f/16, for the scene's camera. The box shows what's sharp (from …
+    to …) and what's in focus.
+  - From outside, the plane in focus is drawn in yellow, with faint near and far limits. The preview's label shows the
+    aperture and focus distance.
+  - H3 and the photo of the first frame are told the depth of field: what's in sharp focus and that the rest is softly
+    blurred, or that the focus pulls from one thing to another.
+
 ## [0.112.0] - 2026-11-19
 
 ### Added

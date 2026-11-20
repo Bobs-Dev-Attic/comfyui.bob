@@ -111,7 +111,7 @@ const Scene3D = (() => {
   }
   function fromFirstKey(o) { const k = o.keys[0]; Object.assign(o, { pos: k.pos.slice(), yaw: k.yaw, pitch: k.pitch || 0, roll: k.roll || 0, scale: k.scale, ...(k.pose ? { pose: k.pose } : {}) }); }
   // A camera: an orbit (yaw, pitch, dist about target) and, keyed for a zoom, its lens (mm on a 36 mm wide frame).
-  const camOf = c => ({ yaw: c.yaw, pitch: c.pitch, dist: c.dist, target: c.target.slice(), ...(c.lens ? { lens: c.lens } : {}), ...(c.roll ? { roll: c.roll } : {}) });
+  const camOf = c => ({ yaw: c.yaw, pitch: c.pitch, dist: c.dist, target: c.target.slice(), ...(c.lens ? { lens: c.lens } : {}), ...(c.roll ? { roll: c.roll } : {}), ...(c.focus ? { focus: c.focus } : {}) });
   // A camera's axes: forward, right and up, turned by its roll (degrees about forward; + leans the top to the right).
   function axesOf(c) {
     const f = norm(sub(c.target, eyeOf(c))), r0 = norm(cross(f, [0, 1, 0])), u0 = cross(r0, f), a = (c.roll || 0) * rad, co = Math.cos(a), si = Math.sin(a);
@@ -119,8 +119,12 @@ const Scene3D = (() => {
   }
   function camAt(t) {
     // keys without a lens have the scene's (so a zoom eases from it and back)
-    const lens = s.camKeys.some(k => k.lens), roll = s.camKeys.some(k => k.roll);
-    const K = lens || roll ? s.camKeys.map(k => ({ ...k, ...(lens ? { lens: k.lens || baseLens() } : {}), ...(roll ? { roll: k.roll || 0 } : {}) })) : s.camKeys;
+    const lens = s.camKeys.some(k => k.lens), roll = s.camKeys.some(k => k.roll), focus = s.camKeys.some(k => k.focus);
+    // a key without a focus distance keeps the one before it (or, before any, the first keyed one): focus pulls only
+    // between keys that set it
+    let held = s.camKeys.find(k => k.focus)?.focus;
+    const K = lens || roll || focus ? s.camKeys.map(k => { if (k.focus) held = k.focus;
+      return { ...k, ...(lens ? { lens: k.lens || baseLens() } : {}), ...(roll ? { roll: k.roll || 0 } : {}), ...(focus ? { focus: k.focus || held } : {}) }; }) : s.camKeys;
     const c = interp(K, easeT(t), ["yaw", "pitch", "dist", "target"]);
     return { ...camOf(c), dist: Math.max(s.bg.dmed * 0.02, c.dist) };
   }
@@ -137,6 +141,36 @@ const Scene3D = (() => {
     let i = 0; while (K[i + 1].t < t) i++;
     const a = K[i], b = K[i + 1], e = EASES[a.ease]?.f; if (!e) return t;
     return a.t + e((t - a.t) / Math.max(1e-6, b.t - a.t)) * (b.t - a.t);
+  }
+  /* Depth of field: the scene's aperture (s.sc.dof.fstop; none = everything sharp) and the camera's focus distance (keyed:
+     a rack focus between keys; unkeyed, where it looks). Shown from outside as the plane in focus with the near and far
+     limits of what's sharp; H3 and the photo are told what's in focus and how soft the rest is. */
+  const FSTOPS = [1.4, 2, 2.8, 4, 5.6, 8, 11, 16];
+  const fstop = () => +s.sc.dof?.fstop || 0;
+  const focusOf = c => c.focus || c.dist;
+  // near and far limits of acceptable sharpness (scene units as metres; a 0.03 mm circle of confusion on a 36 mm frame)
+  function dofRange(c) {
+    const N = fstop(); if (!N) return null;
+    const f = c.lens || baseLens(), F = focusOf(c), Hf = f * f / (N * 0.03) / 1000;
+    return { near: F * Hf / (Hf + F), far: F < Hf ? F * Hf / (Hf - F) : Infinity, F };
+  }
+  // what's in focus at time t: the shown object nearest the focus distance, or the distance
+  function focusSubject(t, c = camForRender(t)) {
+    const F = focusOf(c), { f } = axesOf(c), E = eyeOf(c);
+    const list = cast(t, c, true, true).filter(x => !x.off).map(x => ({ x, z: dot3(sub(poseAt(x.o, t).pos, E), f) })).filter(q => q.z > 0);
+    const best = list.sort((a, b) => Math.abs(a.z - F) - Math.abs(b.z - F))[0];
+    return best && Math.abs(best.z - F) < Math.max(0.6, F * 0.3) ? `the ${best.x.becomes ? bare(best.x.becomes) : best.x.looks}` : `whatever is ${F.toFixed(1)} m from the camera`;
+  }
+  // the sentence for H3 (video: over the whole length, with a rack focus) or a photo (at time t)
+  function dofLine(video = true, t = 0) {
+    const N = fstop(); if (!N || !s.bg) return "";
+    const how = N <= 2 ? "a very shallow depth of field" : N <= 4 ? "a shallow depth of field" : N <= 8 ? "a moderate depth of field" : "";
+    if (!how) return "Deep focus: everything is sharp.";
+    // a rack focus only when the focus distance itself changes (not when things move through a steady focus)
+    const F0 = focusOf(camForRender(video ? 0 : t)), F1 = focusOf(camForRender(dur())), pull = video && Math.abs(F1 - F0) > 0.05 * F0;
+    const a = focusSubject(video ? 0 : t), b = pull ? focusSubject(dur()) : a;
+    return a === b ? `Shot with ${how}: ${a} is in sharp focus and what's nearer or farther is softly blurred.`
+      : `Shot with ${how}: the focus pulls from ${a} to ${b}; what's out of focus is softly blurred.`;
   }
   // The scene's own lens, from its frame: an empty scene's (View › Lens), or the picture's (estimated from it).
   const baseLens = () => 18 / Math.max(s.bg.t, s.bg.tv);
@@ -792,7 +826,7 @@ const Scene3D = (() => {
   // Set the shot camera at the playhead: its key there, or a new key.
   function editCam(c) {
     const q = { yaw: Math.round(c.yaw * 100) / 100, pitch: Math.max(-89, Math.min(89, Math.round(c.pitch * 100) / 100)), dist: c.dist, target: c.target.slice(),
-      ...(c.lens ? { lens: Math.round(c.lens * 10) / 10 } : {}), ...(c.roll ? { roll: Math.round(c.roll * 100) / 100 } : {}) };
+      ...(c.lens ? { lens: Math.round(c.lens * 10) / 10 } : {}), ...(c.roll ? { roll: Math.round(c.roll * 100) / 100 } : {}), ...(c.focus ? { focus: Math.round(c.focus * 1000) / 1000 } : {}) };
     if (!q.roll) for (const k of s.camKeys) if (near(k.t, s.t)) delete k.roll;  // back to level
     const k = s.camKeys.find(x => near(x.t, s.t));
     if (k) Object.assign(k, q); else { s.camKeys.push({ t: s.t, ...q }); s.camKeys.sort((a, b) => a.t - b.t); }
@@ -1002,7 +1036,7 @@ const Scene3D = (() => {
   /* ---------------------------------------------------------------- undo and redo: the whole scene, after each change */
   const sameArr = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
   function snapOf() {
-    return JSON.stringify({ objects: objectsOut(), cam: s.camKeys, seconds: +s.seconds || 5,
+    return JSON.stringify({ objects: objectsOut(), cam: s.camKeys, seconds: +s.seconds || 5, dof: s.sc.dof || {},
       ...(s.sc.kind === "empty" ? { aspect: s.sc.aspect, lens: s.sc.lens, backdrop: s.sc.backdrop } : {}) });
   }
   function record() {
@@ -1025,7 +1059,7 @@ const Scene3D = (() => {
       }
       return o;
     });
-    s.camKeys = d.cam; s.seconds = d.seconds;
+    s.camKeys = d.cam; s.seconds = d.seconds; s.sc.dof = d.dof || {};
     if (s.sc.kind === "empty" && (d.aspect !== s.sc.aspect || d.lens !== s.sc.lens || !sameArr(d.backdrop, s.sc.backdrop))) {
       Object.assign(s.sc, { aspect: d.aspect, lens: d.lens, backdrop: d.backdrop,
         backdrop_url: d.backdrop?.picture ? `/api/media/file?path=${encodeURIComponent(d.backdrop.picture)}` : null });
@@ -1050,14 +1084,16 @@ const Scene3D = (() => {
     stretch: o.stretch || null, scale: o.scale, auto_scale: o.auto_scale, hidden: !!o.hidden, face: !!o.face, keys: o.keys || [],
     ...(o.prim ? { prim: o.prim, color: o.color || PRIM_COLOR, dims: o.dims || PRIMS[o.prim].dims, tilt: o.tilt || [0, 0] } : {}),
     ...(o.prim === "figure" ? { pose: o.pose || "standing", gait: o.gait || null } : {}) }));
+  const saveBody = () => JSON.stringify({ objects: objectsOut(), seconds: +s.seconds || 5, camera_keys: s.camKeys, photos: s.photos, dof: s.sc.dof || {},
+    ...(s.sc.kind === "empty" ? { aspect: s.sc.aspect, lens: s.sc.lens, backdrop: s.sc.backdrop } : {}) });
   function save() {
     clearTimeout(s.saveT);
     record();
-    const id = s.id, objects = objectsOut();
-    const body = JSON.stringify({ objects, seconds: +s.seconds || 5, camera_keys: s.camKeys, photos: s.photos,
-      ...(s.sc.kind === "empty" ? { aspect: s.sc.aspect, lens: s.sc.lens, backdrop: s.sc.backdrop } : {}) });
+    const id = s.id, body = saveBody();
     s.saveT = setTimeout(() => api(`/api/scenes/${id}`, { method: "PATCH", body }).catch(e => Media.toast(`Couldn't save the scene: ${e.message}`)), 500);
   }
+  // Save now; the scene's revision (its saved time).
+  async function flushSave() { clearTimeout(s.saveT); const sc = await api(`/api/scenes/${s.id}`, { method: "PATCH", body: saveBody() }); return sc.updated || 0; }
 
   /* ---------------------------------------------------------------- the window */
   async function open(id) {
@@ -1101,6 +1137,12 @@ const Scene3D = (() => {
             <div class="s3-float-l">Lens <span class="opt">mm, keyed: key two for a zoom</span></div>
             <div class="s3-float-lens"><label><input type="number" class="s3f-in" data-ax="lens" min="10" max="300" step="1" list="s3-lenses" aria-label="Focal length in mm"> mm</label>
               <span class="hint s3-float-fov"></span></div>
+            <div class="s3-float-l">Focus <span class="opt">depth of field</span></div>
+            <div class="s3-float-lens"><label><input type="number" class="s3f-in" data-ax="focus" min="0.05" step="0.1" aria-label="Focus distance"> <span class="s3-float-fu">m</span></label>
+              <button type="button" class="btn sm ghost s3-focus-on" title="Focus on one of the objects it sees, at the playhead">⌖ On…</button>
+              <select class="s3-fstop" aria-label="Aperture" title="The aperture: smaller numbers blur more of what's nearer or farther than the focus; Off keeps everything sharp">
+                <option value="">Off</option>${FSTOPS.map(n => `<option value="${n}">f/${n}</option>`).join("")}</select></div>
+            <p class="hint s3-float-dof"></p>
             <datalist id="s3-lenses">${[18, 24, 28, 35, 50, 85, 135, 200].map(v => `<option value="${v}">`).join("")}</datalist></div>
           <p class="hint s3-float-t"></p>
         </div></div>
@@ -1305,6 +1347,7 @@ const Scene3D = (() => {
     if (!s.objs.some(o => o.mesh && !o.hidden) && !cameraMoves()) return Media.toast("Nothing moves yet: key an object or the camera first.");
     if (!state.caps?.editor?.motion && state.caps?.editor) return Media.toast("Rendering a scene needs H3 and ComfyUI-vlo (vloTimeToMove), as Animate objects does.");
     const moving = s.objs.filter(o => o.mesh && !o.hidden && o.keys?.length > 1).map(o => o.name);
+    const adopted = forShot() ? adoptShotPictures(forShot().action) : [];
     const noPic = !s.sc.picture, pic = !noPic && startsAsPicture();
     // the scene's photos that are done; one taken at 0 s from where the video's camera starts matches its first frame
     const cam0 = camForRender(0);
@@ -1315,7 +1358,7 @@ const Scene3D = (() => {
     const when = it => new Date((it.finished || it.created) * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     const box = document.createElement("div");
     box.className = "m3-make";
-    box.innerHTML = `<p class="hint">H3 makes the video from the picture, following this scene's rough animation (Time-to-Move, as in Animate objects):
+    box.innerHTML = `${adopted.length ? `<p class="hint">From the shot: ${esc(adopted.join(", "))} (its picture, sent to H3 Reference).</p>` : ""}<p class="hint">H3 makes the video from the picture, following this scene's rough animation (Time-to-Move, as in Animate objects):
         ${cameraMoves() ? "the camera move and the objects" : "the objects; the camera holds still"}. ${frameCount()} frames, ${dur().toFixed(2)} s.</p>
       <div class="field"><label for="s3r-what">What happens <span class="opt">optional</span></label>
         ${tagChips()}
@@ -1370,72 +1413,119 @@ const Scene3D = (() => {
     foot.querySelector('[data-a="cancel"]').onclick = () => win.close();
     foot.querySelector('[data-a="go"]').onclick = async e => {
       e.target.disabled = true;
-      // the picture's aspect, longest side 960 (the server fits it to the render's size)
-      const n = frameCount(), W = Math.round((s.bg.aspect >= 1 ? 960 : 960 * s.bg.aspect) / 2) * 2, H = Math.round(W / s.bg.aspect / 2) * 2;
-      const keep = [s.cv.width, s.cv.height];
-      let proj = null;
       try {
-        const start = firstSel.value;
-        // From a photo, the rough animation is the photo painted onto the scene from the camera it was taken from, so
-        // H3 starts from something that looks like the photo (not the plain render).
-        let photoPath = null;
-        if (start === "newphoto") {
-          const look = box.querySelector("#s3r-look").value.trim();
-          try { localStorage.setItem("bob.scenePhotoLook", look); } catch { /* not kept */ }
-          st.textContent = "Making the photo of the first frame (about a minute; keep this open)…";
-          const A = s.bg.aspect, PW = Math.round((A >= 1 ? 1280 : 1280 * A) / 8) * 8, PH = Math.round(PW / A / 8) * 8;
-          const photo = await makePhoto([PW, PH], 0, camForRender(0), look, editModels()[0][0], useRefs());
-          const it = await waitItem(photo.id);
-          photoPath = (it.files || []).find(f => /^image\//.test(f.content_type || ""))?.path || it.files?.[0]?.path;
-          if (it.status !== "done" || !photoPath) throw new Error("The photo didn't come out");
-          st.textContent = "Painting the photo onto the scene…";
-          proj = await prepareProjection(photoPath, 0, camForRender(0), m => { st.textContent = m; });
-        } else if (start.startsWith("photo:")) {
-          const p = s.photos.find(x => x.id === start.slice(6)), it = state.items.get(start.slice(6));
-          photoPath = it?.files?.[0]?.path;
-          if (!p || !photoPath) throw new Error("That photo isn't there anymore");
-          st.textContent = "Painting the photo onto the scene…";
-          proj = await prepareProjection(photoPath, p.t, p.cam, m => { st.textContent = m; });
-        }
-        st.textContent = "Drawing the rough animation…";
-        const ref = await renderVideo("ref", [W, H], n, (f, N) => { st.textContent = `Drawing the rough animation: frame ${f + 1} of ${N}`; }, proj);
-        const mask = await renderVideo("mask", [W, H], n, (f, N) => { st.textContent = `Drawing its mask: frame ${f + 1} of ${N}`; }, proj);
-        st.textContent = "Sending to H3…";
-        const what = videoText(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder, useRefs(), fromPhoto()).text;
-        const cam = cameraMoves() ? "The camera moves smoothly through the scene." : "The camera holds a static shot.";
-        const prompt = `integrated_multimodal_description: [Shot 1] ${what.replace(/\s+/g, " ")} ${cam}\n\noverall_soundscape: Natural sound of the scene.\n\nnon_diegetic_music: N/A`;
+        const start = firstSel.value, look = box.querySelector("#s3r-look").value.trim();
+        if (start === "newphoto") try { localStorage.setItem("bob.scenePhotoLook", look); } catch { /* not kept */ }
         const to = toSel?.value ?? "now";
         const toTl = to === "now" && box.querySelector("#s3r-tl").checked;
         if (to === "now") try { localStorage.setItem("bob.sceneAutoTl", toTl ? "1" : "0"); } catch { /* not kept */ }
-        const req = { kind: "video", engine: "motion", prompt, seconds: n / FPS, aspect: "16:9", quality: box.querySelector("#s3r-q").value,
-          seed: -1, batch: 1, turbo: true, first_frame: null, motion_video: ref, motion_video_mask: mask,
-          motion_hold: holdSel.value, motion_first: "picture", project: s.sc.project };
-        if (useRefs()) req.references = picObjs().map(o => o.picture);
-        if (photoPath) req.first_frame = photoPath;
-        else if (start === "picture") req.first_frame = s.sc.picture;
-        else if (noPic) req.first_frame = await uploadFrame([W, H], 0, camForRender(0), "scene_first.png");  // as drawn
-        else { req.first_frame = s.sc.picture; req.motion_first = "composite"; }
-        if (!req.first_frame) throw new Error("That photo isn't there anymore");
+        const r = await buildRender({ start, look, refs: useRefs(), hold: holdSel.value, quality: box.querySelector("#s3r-q").value,
+          what: box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder }, m => { st.textContent = m; });
         if (to !== "now") {  // into a shot: Generate on the Shots step sends it
-          const pic = s.photos.find(p => state.items.get(p.id)?.files?.[0]?.path === req.first_frame);
-          const thumb = (pic && state.items.get(pic.id)?.files?.[0]?.url) || `/${req.first_frame.replace(/^\/+/, "")}`;  // its first picture
-          const k = Shots.useScene(to === "new" ? -1 : +to, { id: s.sc.id, name: s.sc.name, thumb, seconds: n / FPS, what, cam,
-            req: { motion_video: ref, motion_video_mask: mask, first_frame: req.first_frame, motion_first: req.motion_first,
-              motion_hold: req.motion_hold, quality: req.quality, references: req.references || [] } });
+          const k = Shots.useScene(to === "new" ? -1 : +to, r.shot);
           win.close();
           Media.toast(`3D scene: it's shot ${k + 1} now. Generate on the Shots step makes it.`);
           return;
         }
-        const items = await submit(req);
+        const items = await submit(r.req);
         if (!items?.length) throw new Error("H3 didn't take it (the reason is on the Generate step)");
         if (toTl) Shots.placeWhenDone(items, s.sc.project);
         win.close();
         Media.toast(`3D scene: queued. ${toTl ? "It goes on the timeline when it's done." : "The video shows up in the gallery when it's done."}`);
       } catch (err) { st.textContent = ""; e.target.disabled = false; Media.toast(`Render: ${err.message}`); }
-      finally { freeProjection(proj); if (s) { s.cv.width = keep[0]; s.cv.height = keep[1]; s.dirty = true; } }
     };
   }
 
+  /* Draw what H3 follows (the rough animation and its mask) and its first picture, and build the request.
+     o: { start: "picture" | "newphoto" | "photo:<id>" | "composite", look, refs, hold, quality, what }. Returns
+     { req, shot } (shot: what a shot on the Shots step keeps). */
+  async function buildRender(o, say = () => {}) {
+    // the picture's aspect, longest side 960 (the server fits it to the render's size)
+    const n = frameCount(), W = Math.round((s.bg.aspect >= 1 ? 960 : 960 * s.bg.aspect) / 2) * 2, H = Math.round(W / s.bg.aspect / 2) * 2;
+    const keep = [s.cv.width, s.cv.height], start = o.start, noPic = !s.sc.picture, fromPhoto = start === "newphoto" || start.startsWith("photo:");
+    let proj = null;
+    try {
+      // From a photo, the rough animation is the photo painted onto the scene from the camera it was taken from, so
+      // H3 starts from something that looks like the photo (not the plain render).
+      let photoPath = null;
+      if (start === "newphoto") {
+        say("Making the photo of the first frame (about a minute; keep the scene open)…");
+        const A = s.bg.aspect, PW = Math.round((A >= 1 ? 1280 : 1280 * A) / 8) * 8, PH = Math.round(PW / A / 8) * 8;
+        const photo = await makePhoto([PW, PH], 0, camForRender(0), o.look || "", editModels()[0][0], o.refs, false, true);
+        const it = await waitItem(photo.id);
+        photoPath = (it.files || []).find(f => /^image\//.test(f.content_type || ""))?.path || it.files?.[0]?.path;
+        if (it.status !== "done" || !photoPath) throw new Error("The photo didn't come out");
+        say("Painting the photo onto the scene…");
+        proj = await prepareProjection(photoPath, 0, camForRender(0), say);
+      } else if (start.startsWith("photo:")) {
+        const p = s.photos.find(x => x.id === start.slice(6)), it = state.items.get(start.slice(6));
+        photoPath = it?.files?.[0]?.path;
+        if (!p || !photoPath) throw new Error("That photo isn't there anymore");
+        say("Painting the photo onto the scene…");
+        proj = await prepareProjection(photoPath, p.t, p.cam, say);
+      }
+      say("Drawing the rough animation…");
+      const ref = await renderVideo("ref", [W, H], n, (f, N) => say(`Drawing the rough animation: frame ${f + 1} of ${N}`), proj);
+      const mask = await renderVideo("mask", [W, H], n, (f, N) => say(`Drawing its mask: frame ${f + 1} of ${N}`), proj);
+      say("Sending to H3…");
+      const what = videoText(o.what || defaultWhat(), o.refs, fromPhoto).text;
+      const cam = cameraMoves() ? "The camera moves smoothly through the scene." : "The camera holds a static shot.";
+      const prompt = `integrated_multimodal_description: [Shot 1] ${what.replace(/\s+/g, " ")} ${cam}\n\noverall_soundscape: Natural sound of the scene.\n\nnon_diegetic_music: N/A`;
+      const req = { kind: "video", engine: "motion", prompt, seconds: n / FPS, aspect: "16:9", quality: o.quality || "standard",
+        seed: -1, batch: 1, turbo: true, first_frame: null, motion_video: ref, motion_video_mask: mask,
+        motion_hold: o.hold || "normal", motion_first: "picture", project: s.sc.project };
+      if (o.refs) req.references = picObjs().map(x => x.picture);
+      if (photoPath) req.first_frame = photoPath;
+      else if (start === "picture") req.first_frame = s.sc.picture;
+      else if (noPic) req.first_frame = await uploadFrame([W, H], 0, camForRender(0), "scene_first.png");  // as drawn
+      else { req.first_frame = s.sc.picture; req.motion_first = "composite"; }
+      if (!req.first_frame) throw new Error("That photo isn't there anymore");
+      const pic = s.photos.find(p => state.items.get(p.id)?.files?.[0]?.path === req.first_frame);
+      const thumb = (pic && state.items.get(pic.id)?.files?.[0]?.url) || `/${req.first_frame.replace(/^\/+/, "")}`;  // its first picture
+      // the scene as saved now: a later change makes Generate draw it again
+      const rev = await flushSave();
+      const shot = { id: s.sc.id, name: s.sc.name, thumb, seconds: n / FPS, what, cam, rev,
+        req: { motion_video: ref, motion_video_mask: mask, first_frame: req.first_frame, motion_first: req.motion_first,
+          motion_hold: req.motion_hold, quality: req.quality, references: req.references || [] } };
+      return { req, shot };
+    } finally { freeProjection(proj); if (s) { s.cv.width = keep[0]; s.cv.height = keep[1]; s.dirty = true; } }
+  }
+  // What happens, when nothing is written: whatever moves.
+  function defaultWhat() {
+    const moving = s.objs.filter(o => o.mesh && !o.hidden && o.keys?.length > 1).map(o => o.name);
+    return moving.length ? `${moving.map(n => `{${n}}`).join(" and ")} move${moving.length > 1 ? "" : "s"} across the scene.` : "The scene comes to life.";
+  }
+  // A shot's <Picture N> (the Inputs step's reference N) that no object has yet goes to a Person without a picture, in
+  // order, so the render on H3 Reference sends it and the person keeps that look. Returns what it gave.
+  function adoptShotPictures(text) {
+    const given = [];
+    for (const m of String(text || "").matchAll(/<Picture (\d+)>/g)) {
+      const r = state.refs?.[+m[1] - 1]; if (!r?.ref || s.objs.some(o => o.picture === r.ref)) continue;
+      const o = s.objs.find(x => x.prim === "figure" && !x.picture && x.mesh && x.pos && !x.hidden); if (!o) continue;
+      o.picture = r.ref; given.push(`<Picture ${m[1]}> → ${o.name}`);
+    }
+    if (given.length) { save(); renderSide(); }
+    return given;
+  }
+  /* Generate on the Shots step, for a shot mapped to this scene whose render isn't in it (or is older than the scene):
+     open the scene, draw it with the usual choices (what the Render window would pick), and put it in the shot. */
+  async function renderForShot(id, i, opts = {}, say = () => {}) {
+    if (!s || s.id !== id || s.closed) { say("Opening the 3D scene…"); open(id); }
+    for (let k = 0; k < 900 && !(s && s.id === id && s.bg && s.hist); k++) await new Promise(r => setTimeout(r, 100));
+    if (!(s && s.id === id && s.bg)) throw new Error("the scene couldn't be opened");
+    for (let k = 0; k < 300 && s.objs.some(o => o.model && !o.mesh && !["failed", "missing"].includes(o.state)); k++) await new Promise(r => setTimeout(r, 100));
+    const sh = Shots.shotOfScene(id), text = sh?.action || "";
+    const given = adoptShotPictures(text);
+    if (given.length) Media.toast(`3D scene: ${given.join(", ")} (from the shot), so H3 Reference keeps that look.`);
+    const cam0 = camForRender(0), photos = s.photos.map(p => ({ ...p, it: state.items.get(p.id) })).filter(p => p.it?.status === "done" && p.it.files?.length);
+    const best = photos.reverse().find(p => Math.abs(p.t) < 0.5 / FPS && camDiff(p.cam, cam0) < 0.02);
+    const start = s.sc.picture && startsAsPicture() ? "picture" : best ? `photo:${best.id}` : editModels().length ? "newphoto" : s.sc.picture ? "picture" : "composite";
+    const refs = picObjs().length > 0 && refsReady();
+    const r = await buildRender({ start, look: lastLook(), refs, hold: start === "newphoto" || start.startsWith("photo:") ? "loose" : "normal",
+      quality: ["draft", "standard", "full"].includes(opts.quality) ? opts.quality : "standard", what: fromShot(text) }, say);
+    Shots.useScene(i, r.shot);
+    return r;
+  }
   function toShot() { s.cam = shotCam(); s.dirty = true; }
   function eye() { const c = s.cam, y = c.yaw * rad, p = c.pitch * rad; return [c.target[0] + c.dist * Math.cos(p) * Math.sin(y), c.target[1] + c.dist * Math.sin(p), c.target[2] + c.dist * Math.cos(p) * Math.cos(y)]; }
   function frameSize() { const dpr = Math.min(2, window.devicePixelRatio || 1); return [Math.max(1, Math.round(s.cv.clientWidth * dpr)), Math.max(1, Math.round(s.cv.clientHeight * dpr))]; }
@@ -1499,6 +1589,15 @@ const Scene3D = (() => {
         for (const k of s.camKeys) if (!near(k.t, s.t)) s.gpu.lines(camFrame(camAt(k.t)).flat(), VP, [0.48, 0.64, 1, 0.35]);
       }
       s.gpu.lines(camFrame(camForRender(s.t)).flat(), VP, s.camSel ? [1, 0.6, 0.2, 1] : [0.48, 0.64, 1, 1]);
+      const dr = dofRange(camForRender(s.t));
+      if (dr) {  // the plane in focus (yellow) and the near and far limits of what's sharp (faint)
+        const c = camForRender(s.t), E = eyeOf(c), { f, r: rr, u } = axesOf(c), fv = fovOf(c);
+        const rect = z => { const q = (x, y) => addv(E, addv(mulv(f, z), addv(mulv(rr, x * fv.t * z), mulv(u, y * fv.tv * z)))), cs = [q(-1, -1), q(1, -1), q(1, 1), q(-1, 1)], out = [];
+          for (let k = 0; k < 4; k++) out.push(...cs[k], ...cs[(k + 1) % 4]); return out; };
+        s.gpu.lines(rect(dr.F), VP, [1, 0.85, 0.2, 0.9]);
+        const lim = [rect(dr.near), ...(Number.isFinite(dr.far) && dr.far < s.bg.dmed * 30 ? [rect(dr.far)] : [])].flat();
+        s.gpu.lines(lim, VP, [1, 0.85, 0.2, 0.3]);
+      }
     } else if (s.camKeys.length > 1 && s.camFree) {
       path(t => eyeOf(camAt(t)), [0.48, 0.64, 1, 0.9]);
       // the camera at the playhead: a small frustum
@@ -1537,7 +1636,7 @@ const Scene3D = (() => {
     for (const o of s.objs) if (o.mesh && o.pos && !o.hidden) s.gpu.draw(o.mesh, { VP, M: matOf(o, poseAt(o, s.t)), eye: e, key, look: s.clay ? 1 : 0 });
     gl.disable(gl.SCISSOR_TEST); gl.viewport(0, 0, W, H);
     Object.assign(el.style, { left: `${m - 1}px`, bottom: `${m - 1}px`, width: `${w / dpr + 2}px`, height: `${h / dpr + 2}px` });
-    const lab = `🎥 ${s.t.toFixed(2)} s · ${Math.round(c.lens || baseLens())} mm${c.roll ? ` · roll ${Math.round(c.roll)}°` : ""}`;
+    const lab = `🎥 ${s.t.toFixed(2)} s · ${Math.round(c.lens || baseLens())} mm${c.roll ? ` · roll ${Math.round(c.roll)}°` : ""}${fstop() ? ` · f/${fstop()} @ ${focusOf(c).toFixed(1)} m` : ""}`;
     const l = el.querySelector(".s3-pip-l"); if (l.textContent !== lab) l.textContent = lab;
   }
   function loop() { if (!s || s.closed) return; if (s.dirty) { s.dirty = false; draw(); } s.raf = requestAnimationFrame(loop); }
@@ -1910,9 +2009,15 @@ const Scene3D = (() => {
     s.root.querySelector(".s3-float-n").textContent = cam ? "🎥 Shot camera" : o.name;
     s.root.querySelector(".s3-float-u").textContent = s.bg.empty ? "metres" : "scene units";
     s.root.querySelector(".s3-float-cam").hidden = !cam;
+    if (cam) {
+      const fs = s.root.querySelector(".s3-fstop"); if (document.activeElement !== fs) fs.value = fstop() ? String(fstop()) : "";
+      s.root.querySelector(".s3-float-fu").textContent = s.bg.empty ? "m" : "units";
+      const dr = dofRange(c);
+      s.root.querySelector(".s3-float-dof").textContent = dr ? `Sharp from ${dr.near.toFixed(1)} to ${Number.isFinite(dr.far) ? dr.far.toFixed(1) : "∞"}: ${focusSubject(s.t, c)} in focus` : "Aperture off: everything is sharp.";
+    }
     const st = s.bg.empty ? 0.1 : +(s.bg.dmed * 0.02).toPrecision(2);
     box.querySelectorAll(".s3f-in").forEach(inp => {
-      const ax = inp.dataset.ax, v = ax === "yaw" ? c?.yaw : ax === "pitch" ? (c ? -c.pitch : null) : ax === "lens" ? (c ? Math.round((c.lens || baseLens()) * 10) / 10 : null) : ax === "roll" ? (c ? c.roll || 0 : null) : pos[+ax];  // tilt: up is +
+      const ax = inp.dataset.ax, v = ax === "yaw" ? c?.yaw : ax === "pitch" ? (c ? -c.pitch : null) : ax === "lens" ? (c ? Math.round((c.lens || baseLens()) * 10) / 10 : null) : ax === "roll" ? (c ? c.roll || 0 : null) : ax === "focus" ? (c ? Math.round(focusOf(c) * 100) / 100 : null) : pos[+ax];  // tilt: up is +
       if (ax === "lens") inp.title = `The camera's focal length at the playhead, keyed there: key another at another time to zoom. Unkeyed it's the scene's, ${Math.round(baseLens())} mm${s.bg.empty ? " (View › Lens)" : " (the picture's)"}.`;
       if (v == null) return;
       if (ax.length === 1) inp.step = String(st);
@@ -1947,11 +2052,22 @@ const Scene3D = (() => {
       head.addEventListener("pointermove", mv); head.addEventListener("pointerup", up);
     });
     box.querySelector(".s3-float-x").onclick = () => { s.floatOff = floatKey(); box.hidden = true; };
+    box.querySelector(".s3-focus-on").onclick = e => {  // focus on an object: its distance along the camera's view
+      if (!s?.bg || !s.camSel) return;
+      const c = camForRender(s.t), E = eyeOf(c), { f } = axesOf(c), rc = e.target.getBoundingClientRect();
+      const list = cast(s.t, c).filter(x => !x.off).map(x => ({ x, z: dot3(sub(poseAt(x.o, s.t).pos, E), f) })).filter(q => q.z > 0.05);
+      if (!list.length) return Media.toast("The camera sees no objects here.");
+      Media.menu(rc.left, rc.bottom + 4, list.map(q => [`⌖ ${q.x.o.name} (${q.z.toFixed(1)} ${s.bg.empty ? "m" : "units"})`, () => {
+        if (!fstop()) { s.sc.dof = { fstop: 2.8 }; Media.toast("Aperture set to f/2.8 so the focus shows; Off keeps everything sharp."); }
+        editCam({ ...camForRender(s.t), focus: q.z }); save(); renderCam(); s.dirty = true;
+      }]));
+    };
     ["pointerdown", "wheel", "contextmenu"].forEach(t => box.addEventListener(t, e => e.stopPropagation()));
     box.addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { e.target.blur(); s.cv.focus(); } });
     box.addEventListener("input", e => e.stopPropagation());
     box.addEventListener("change", async e => {
       e.stopPropagation();
+      if (e.target.classList.contains("s3-fstop")) { s.sc.dof = e.target.value ? { fstop: +e.target.value } : {}; save(); renderCam(); s.dirty = true; return; }
       const inp = e.target.closest(".s3f-in"); if (!inp || !s?.bg) return;
       const ax = inp.dataset.ax, v = parseFloat(inp.value);
       if (!Number.isFinite(v)) return syncFloat();
@@ -1963,6 +2079,7 @@ const Scene3D = (() => {
         if (ax === "yaw") editCam(turnCam(c, v, c.pitch));
         else if (ax === "pitch") editCam(turnCam(c, c.yaw, -v));
         else if (ax === "roll") editCam({ ...c, roll: Math.max(-180, Math.min(180, v)) });
+        else if (ax === "focus") editCam({ ...c, focus: Math.max(0.05, v) });
         else { const E = eyeOf(c), d = [0, 0, 0]; d[+ax] = v - E[+ax]; editCam({ ...c, target: addv(c.target, d) }); }
         save(); renderCam();
       } else {
@@ -2209,7 +2326,7 @@ const Scene3D = (() => {
     let text = r.text.trim();
     if (text) text = cap(text);
     if (text && !/[.!?]$/.test(text)) text += ".";
-    return { text: tidy([text, extra].filter(Boolean).join(" ")), unknown: r.unknown };
+    return { text: tidy([text, extra, dofLine(true)].filter(Boolean).join(" ")), unknown: r.unknown };
   }
   // The {Name} chips over a text box, and the preview of what the model reads under it.
   function tagChips() {
@@ -2530,7 +2647,8 @@ const Scene3D = (() => {
     return out;
   }
   // A photo of the scene at time t through `cam` (queued with the edit model); it's remembered on the scene.
-  async function makePhoto(size, t, cam, look, model, usePics = false, useDepth = false) {
+  async function makePhoto(size, t, cam, look, model, usePics = false, useDepth = false, dof = false) {
+    if (dof && fstop()) look = [look, dofLine(false, t)].filter(Boolean).join(" ");
     // the depth map, drawn through the same camera at the same size, so it lines up with the render
     let depthRef = null;
     if (useDepth && depthOk(model)) {
@@ -2603,7 +2721,7 @@ const Scene3D = (() => {
       try {
         st.textContent = "Drawing the view and sending it to the edit model…";
         try { localStorage.setItem("bob.scenePhotoDepth", box.querySelector("#s3p-depth")?.checked ? "1" : "0"); } catch { /* not kept */ }
-        await makePhoto([W, H], s.t, s.cam, look, model(), usePics(), useDepth());
+        await makePhoto([W, H], s.t, s.cam, look, model(), usePics(), useDepth(), !(s.camObj && s.camFree));
         win.close();
         Media.toast("3D scene: the photo is being made. It shows up in the gallery.");
       } catch (err) { st.textContent = ""; e.target.disabled = false; Media.toast(`Photo: ${err.message}`); }
@@ -2821,7 +2939,7 @@ const Scene3D = (() => {
   }
   // The camera's keys as chips (time, lens, easing), and the easing of the move from the key at the playhead.
   function camKeysHtml(K) {
-    const chips = K.map((q, j) => `<button type="button" class="chip-btn${near(q.t, s.t) ? " on" : ""}" data-act="cam-key" data-k="${j}">${q.t.toFixed(2)} s${q.lens ? ` · ${Math.round(q.lens)} mm` : ""}${q.ease && j < K.length - 1 ? ` · ${EASES[q.ease].short}` : ""}</button><button type="button" class="set-x" data-act="del-cam-key" data-k="${j}" aria-label="Remove the camera key at ${q.t.toFixed(2)} s">×</button>`).join(" ");
+    const chips = K.map((q, j) => `<button type="button" class="chip-btn${near(q.t, s.t) ? " on" : ""}" data-act="cam-key" data-k="${j}">${q.t.toFixed(2)} s${q.lens ? ` · ${Math.round(q.lens)} mm` : ""}${q.focus && fstop() ? ` · ⌖ ${q.focus.toFixed(1)}` : ""}${q.ease && j < K.length - 1 ? ` · ${EASES[q.ease].short}` : ""}</button><button type="button" class="set-x" data-act="del-cam-key" data-k="${j}" aria-label="Remove the camera key at ${q.t.toFixed(2)} s">×</button>`).join(" ");
     const i = K.findIndex(q => near(q.t, s.t));
     const row = i >= 0 && i < K.length - 1 ? `<div class="field s3-ease"><label for="s3-ease">From ${K[i].t.toFixed(2)} s to the next key (${K[i + 1].t.toFixed(2)} s)</label>
       <select id="s3-ease" title="How the camera speeds up and slows down on its way to the next key (move, turn, zoom and roll)">${Object.entries({ "": { label: "Steady: the same speed all the way" }, ...EASES }).map(([v, e]) => `<option value="${v}"${(K[i].ease || "") === v ? " selected" : ""}>${e.label}</option>`).join("")}</select></div>`
@@ -2864,6 +2982,6 @@ const Scene3D = (() => {
     requestAnimationFrame(step); renderTime();
   }
 
-  return { create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
+  return { renderForShot, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
     _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
 })();

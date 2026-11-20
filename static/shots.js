@@ -428,7 +428,7 @@ const Shots = (() => {
       const thumb = thumbOf(s, i), text = summary(s);
       const meta = s.scene ? ["3D scene", s.scene.cam?.includes("moves") ? "camera moves" : "static camera"] : s.rawOn && s.raw.trim() ? ["own prompt"] : [s.framing, s.angle, s.camera].filter(Boolean);
       const badges = [s.scene ? `<span class="sb-badge" title="Renders the 3D scene ${esc(s.scene.name)}">🏞</span>`
-        : s.sceneLink && sceneFits() ? `<span class="sb-badge sb-dim" title="Mapped to the 3D scene ${esc(s.sceneLink.name)}: not rendered into this shot yet (open the scene, then 🎬 Render)">🏞</span>` : "", motionOn(i) ? `<span class="sb-badge" title="Objects in motion: ${esc(s.motion.layers.map(l => l.name).join(", "))}, from ${esc(s.motion.picture.name || "a picture")}">🎬</span>` : "",
+        : s.sceneLink && sceneFits() ? `<span class="sb-badge sb-dim" title="Mapped to the 3D scene ${esc(s.sceneLink.name)}: Generate draws it into this shot first">🏞</span>` : "", motionOn(i) ? `<span class="sb-badge" title="Objects in motion: ${esc(s.motion.layers.map(l => l.name).join(", "))}, from ${esc(s.motion.picture.name || "a picture")}">🎬</span>` : "",
         joins(i) ? `<span class="sb-badge" title="Continues shot ${i} without a cut">↪</span>` : "", s.dialogue.trim() && !s.rawOn ? `<span class="sb-badge" title="${esc(speakerOf(s) ? `${s.speaker} says` : "Spoken line")}: ${esc(s.dialogue)}">🗣</span>` : "",
         s.notes.trim() ? `<span class="sb-badge" title="${esc(s.notes)}">📝</span>` : ""].join("");
       return `<div class="shot-block${hasContent(s) ? "" : " sb-blank"}" data-i="${i}" ${n > 1 ? 'draggable="true"' : ""} role="listitem" aria-label="Shot ${i + 1}${s.title ? `: ${esc(s.title)}` : ""}">
@@ -448,7 +448,7 @@ const Shots = (() => {
     if (sh.mode === "multi" && n > 6) warn.push("More than 6 shots in one video crowds it; H3 does best with 1–5.");
     if (sh.mode === "multi" && sh.list.some(s => s.scene)) warn.push("A 3D scene renders only in “One video per shot”: in one multi-shot video its shot has no text.");
     const unrendered = sceneFits() && sh.mode === "each" ? sh.list.map((s, i) => s.sceneLink && !s.scene ? i + 1 : 0).filter(Boolean) : [];
-    if (unrendered.length) warn.push(`Shot${unrendered.length > 1 ? "s" : ""} ${unrendered.join(", ")} ${unrendered.length > 1 ? "have 3D scenes" : "has a 3D scene"} not rendered in yet, so ${unrendered.length > 1 ? "they render" : "it renders"} from text (open the scene and 🎬 Render it into the shot).`);
+    if (unrendered.length) warn.push(`Shot${unrendered.length > 1 ? "s" : ""} ${unrendered.join(", ")}: Generate first draws ${unrendered.length > 1 ? "their 3D scenes" : "its 3D scene"} (the camera move, and a photo of the first frame when needed, about a minute), then makes the video from it.`);
     const empty = sh.list.map((s, i) => hasContent(s) ? 0 : i + 1).filter(Boolean);
     if (empty.length) warn.push(`Shot${empty.length > 1 ? "s" : ""} ${empty.join(", ")} ${empty.length > 1 ? "are" : "is"} empty.`);
     document.getElementById("shots-hint").innerHTML = `${sh.mode === "multi"
@@ -760,7 +760,7 @@ const Shots = (() => {
                 <div><b>${esc(s.sceneLink.name)}</b> · not rendered in yet
                   <div class="sm-mo-acts"><button type="button" class="btn sm" data-sm="link-open" title="Build the shot in 3D, then 🎬 Render: it goes to this shot">🏞 Open the scene</button>
                   <button type="button" class="btn sm ghost" data-sm="link-off" title="This shot no longer uses the scene (the scene stays)">Unlink</button></div></div></div>
-              <p class="hint">The scene's 🎬 Render goes to this shot, with this shot's What happens (its &lt;Picture N&gt; tags become the objects that have those pictures). Until it's rendered in, this shot renders from the fields below.</p>`
+              <p class="hint">Generate draws this scene into the shot first (its camera move, and a photo of its first frame when needed), with this shot's What happens; its &lt;Picture N&gt; tags become the objects that have those pictures (a Person without one takes it). The scene's 🎬 Render does the same with your choices.</p>`
             : `<div class="sm-mo-acts"><button type="button" class="btn sm" data-sm="link-new" title="A 3D scene made from this shot's inputs: its picture, length and text">＋ New scene from this shot…</button>
                 <button type="button" class="btn sm ghost" data-sm="link-pick" title="One of this project's 3D scenes">Use a scene…</button></div>
               <p class="hint">Stage this shot in 3D. The scene starts from ${shotPictures(i).length ? `this shot's ${esc(shotPictures(i).map(p => p.label.toLowerCase()).join(", "))} (or another Inputs picture, or none)` : "an Inputs picture, or none"}, with this shot's length; its 🎬 Render then goes to this shot.</p>`}
@@ -1100,6 +1100,18 @@ const Shots = (() => {
       const first = framesOf(0).first_frame, last = framesOf(sh.list.length - 1).last_frame;
       return submitOne({ ...base, prompt: prompt(), seconds: Math.min(300, total()), ref_audios: arefsFor(sh.list),
         first_frame: !isR ? first?.ref ?? null : null, last_frame: !isR ? last?.ref ?? null : null });
+    }
+    // A shot mapped to a 3D scene follows that scene's camera: draw it into the shot first when it isn't in yet or the
+    // scene changed since (Scene3D opens it, draws the rough animation and its first picture, and puts it in).
+    if (sceneFits()) for (let i = 0; i < sh.list.length; i++) {
+      const s = sh.list[i]; if (!s.sceneLink) continue;
+      let stale = !s.scene || s.scene.id !== s.sceneLink.id || !s.scene.rev;
+      if (!stale) { try { stale = ((await api(`/api/scenes/${s.sceneLink.id}`)).updated || 0) > s.scene.rev + 1e-3; } catch { continue; } }
+      if (!stale) continue;
+      Media.toast(`Shot ${i + 1}: drawing its 3D scene's camera move first…`);
+      try { await Scene3D.renderForShot(s.sceneLink.id, i, { quality: base.quality }, m => { err.textContent = `Shot ${i + 1}, 3D scene: ${m}`; }); }
+      catch (e) { err.textContent = `Shot ${i + 1}'s 3D scene couldn't be drawn: ${e.message}`; Media.toast(err.textContent); return; }
+      err.textContent = "";
     }
     const reqFor = i => {
       const s = sh.list[i], f = framesOf(i);
