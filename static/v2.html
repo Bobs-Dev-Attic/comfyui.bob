@@ -20,6 +20,7 @@
     <label class="v2-proj">Project <select id="v2-project" aria-label="Project"></select></label>
     <span class="v2-grow"></span>
     <span class="v2-status" id="v2-status" aria-live="polite"></span>
+    <button type="button" class="btn sm" id="v2-paneltoggle" aria-expanded="false" aria-controls="v2-panel" title="The shot: its words, sound, settings and Generate">📝 Shot</button>
     <a class="btn sm ghost" href="/" title="The classic Bob Studio, with everything it has">Classic ↗</a>
   </header>
 
@@ -27,9 +28,9 @@
     <!-- the shots: each one is a 3D scene with its own words, sound and settings -->
     <aside class="v2-shots" aria-label="Shots and objects">
       <div class="v2-tabs" role="tablist" aria-label="Library">
-        <button type="button" role="tab" class="on" aria-selected="true" data-tab="shots">🎞 Shots</button>
-        <button type="button" role="tab" aria-selected="false" data-tab="objects">🧱 Objects</button>
-        <button type="button" role="tab" aria-selected="false" data-tab="cameras">🎥 Cameras</button></div>
+        <button type="button" role="tab" class="on" aria-selected="true" data-tab="shots" title="Shots"><span class="v2-ti" aria-hidden="true">🎞</span><span class="v2-tt">Shots</span></button>
+        <button type="button" role="tab" aria-selected="false" data-tab="objects" title="Objects"><span class="v2-ti" aria-hidden="true">🧱</span><span class="v2-tt">Objects</span></button>
+        <button type="button" role="tab" aria-selected="false" data-tab="cameras" title="Cameras"><span class="v2-ti" aria-hidden="true">🎥</span><span class="v2-tt">Cameras</span></button></div>
       <div class="v2-pane" data-pane="shots" role="tabpanel">
         <div class="v2-h"><h2>Shots</h2>
           <button type="button" class="btn sm primary" id="v2-new" aria-haspopup="menu" title="A new shot: an empty set, or one of your scene templates">＋ New shot</button></div>

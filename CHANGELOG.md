@@ -5,6 +5,17 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.125.2] - 2026-11-20
+
+### Fixed
+- **V2 fits narrower windows.**
+  - **Below 1400 px:** the side columns are slimmer, and so is the scene builder's own panel inside the viewport.
+  - **Below 1180 px:** the library becomes a rail of icons (🎞 🧱 🎥), each opening its tab as a drawer over the
+    viewport. The shot panel is a drawer opened from 📝 Shot in the top bar. A click in the viewport, Esc or picking
+    a shot closes them, so the 3D viewport keeps nearly the whole width.
+  - **Below 720 px:** the scene's properties go under the viewport.
+  - The library tabs no longer wrap their labels.
+
 ## [0.125.1] - 2026-11-20
 
 ### Fixed
