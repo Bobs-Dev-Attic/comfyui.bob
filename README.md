@@ -342,6 +342,12 @@ Other features:
   - **Use in studio** sends the prompt back.
 - **Model check:** each engine checks its model files. Music 3 isn't installed here yet, so the app shows which files to get from https://huggingface.co/Comfy-Org/MiniMax-Music-3.
 
+- **🔎 Score** (a result's details): five checks of a finished picture or video, each 0 to 100 with reasons:
+  prompt adherence (a vision model answers yes/no checks drawn from the prompt), reference identity (ArcFace face
+  match), camera (against a 3D scene's camera move, or what the prompt says), visual quality (ratings and the defects
+  it can point to) and settings (size, length, frame rate, sound). Measured in ComfyUI's Python (`app/score_worker.py`),
+  judged with the Prompt writer's vision model (`app/score.py`).
+
 ## Layout
 
 - `app/workflows.py`: API-format graphs, flattened from the official ComfyUI templates

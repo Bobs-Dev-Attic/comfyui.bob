@@ -5,6 +5,29 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.117.0] - 2026-11-19
+
+### Added
+- **🔎 Score** for a finished picture or video, in the Result window's details: five checks, each 0 to 100 with its
+  reasons, and an overall score. Weights: prompt 35 %, identity 20 %, camera 20 %, quality 15 %, settings 10 %; a check
+  that doesn't apply is left out.
+  - **Prompt**: the vision model breaks the prompt it was made with into 6 to 12 yes/no checks (who, how they look,
+    what they do, the place, light, framing, camera, style). It then answers each from 4 frames, with a reason. Sound and
+    speech are left out, since frames can't show them.
+  - **Reference identity**: each reference picture's face against the faces in 12 frames (InsightFace ArcFace):
+    average and worst frame. It notes when the faces are too small to compare well.
+  - **Camera**: a 3D scene render is compared with the camera move it was given: how much of its outline the video
+    keeps, and whether the video moves the same way (direction and size). Any other video is tracked for its camera
+    move (static, left, right, up, down, in, out, roll) and checked against what the prompt says the camera does.
+  - **Visual quality**: the vision model rates composition, lighting, sharpness and realism, and lists only defects it
+    can point to (where, and in which frame). Each kind of defect costs points once.
+  - **Settings**: size, aspect, length, frame rate and sound against the request.
+  - The score shows as a chip in the Result window's bar (green, amber, red) and as a scorecard with every check, kept
+    with the result. 🔎 Score again redoes it.
+  - It uses the Prompt writer's vision model (Settings; for example qwen3-vl). Frames, faces and motion are measured in
+    ComfyUI's own Python (OpenCV, PyAV, InsightFace with buffalo_l), so nothing new is installed. It takes about half a
+    minute.
+
 ## [0.116.2] - 2026-11-19
 
 ### Fixed

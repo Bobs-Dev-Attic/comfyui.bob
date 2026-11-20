@@ -1064,6 +1064,7 @@ function renderViewer() {
   const bar = $("#mon-bar");
   bar.innerHTML = `${rated ? `<span class="b-stars">${[1, 2, 3, 4, 5].map(i => `<button type="button" class="b-star${i <= bm.rating ? " on" : ""}" data-r="${i}" title="${i} star${i > 1 ? "s" : ""} (key ${i})">★</button>`).join("")}</span>` : ""}
     <span class="mb-facts" title="${esc(facts.join(" · "))}">${esc(facts.join(" · "))}</span>
+    ${it.score?.overall != null ? `<button type="button" class="mb-score ${scoreTone(it.score.overall)}" data-a="scorecard" title="Score: ${it.score.overall} of 100 (see the scorecard)">🔎 ${it.score.overall}</button>` : ""}
     ${isBusy(it) ? `<button type="button" class="btn sm danger" data-a="cancel">Cancel</button>` : ""}
     ${rated ? `<button type="button" class="btn sm primary-soft" data-a="timeline" title="Add to the end of the timeline (Enter)">＋ Timeline</button>` : ""}`;
   $$("[data-a]", bar).forEach(b => b.onclick = () => action(b.dataset.a, it));
@@ -1075,6 +1076,7 @@ function renderViewer() {
     ${rateRow}
     <div class="facts">${facts.map(x => `<span>${esc(x)}</span>`).join("")}</div>
     <div class="prompt-text">${esc(it.params.prompt)}${it.params.lyrics && it.engine === "music3" ? "\n\n" + esc(it.params.lyrics) : ""}</div>
+    ${it.score ? scoreCard(it.score) : ""}
     <div class="actions">
       ${isBusy(it) ? `<button class="btn danger" data-a="cancel">Cancel</button>` : ""}
       ${it.status === "done" && f ? `<button class="btn primary-soft" data-a="timeline" title="Add to the end of the timeline (Enter)">＋ Timeline</button>` : ""}
@@ -1087,11 +1089,52 @@ function renderViewer() {
       ${it.status === "done" && f && it.kind === "image" ? `<button class="btn" data-a="scene3d" title="This picture in depth, to stand 3D models in, keyframe and render with H3">🏞 3D scene…</button>` : ""}
       ${canFrame ? `<button class="btn" data-a="first">→ First frame</button><button class="btn" data-a="last">→ Last frame</button><button class="btn" data-a="ref">→ Reference</button>` : ""}
       ${f ? `<a class="btn" href="${esc(f.url)}" download="${esc(f.name)}">Download</a>` : ""}
+      ${it.status === "done" && f && (it.kind === "video" || it.kind === "image") ? `<button class="btn" data-a="score" ${Score.busy.has(it.id) ? "disabled" : ""} title="How well it follows the prompt, the reference pictures, the camera, how good it looks, and whether it has the size and length asked: five checks, 0 to 100, with the reasons">${Score.busy.has(it.id) ? "🔎 Scoring…" : it.score ? "🔎 Score again" : "🔎 Score"}</button>` : ""}
       ${it.engine !== "timeline" && it.status !== "submitting" ? `<button class="btn" data-a="workflow" title="The exact ComfyUI workflow this was made with: compare it with yours, or load it in ComfyUI">{ } Workflow</button>` : ""}
       <button class="btn ghost danger" data-a="delete">Delete</button>
     </div>`;
   Info.sync();
   $$("[data-a]", meta).forEach(b => b.onclick = () => action(b.dataset.a, it));
+}
+
+/* Score (app/score.py): five checks of a finished result, each 0-100 with its reasons, kept on the item. */
+const Score = {
+  busy: new Set(),
+  async run(it) {
+    if (this.busy.has(it.id)) return;
+    this.busy.add(it.id); renderViewer();
+    Media.toast("Scoring: measuring the frames, faces and camera, then the vision model checks the prompt and quality (about a minute)…");
+    try {
+      const r = await api(`/api/items/${it.id}/score`, { method: "POST", body: JSON.stringify({
+        backend: $("#llm-backend")?.value || null, url: $("#llm-url")?.value.trim() || null, model: $("#llm-model")?.value || null }) });
+      it.score = r;
+      Media.toast(`Score: ${r.overall ?? "–"} of 100.`);
+    } catch (e) { Media.toast(`Score: ${e.message}`); }
+    finally { this.busy.delete(it.id); if (state.selected === it.id) { renderViewer(); Info.set(true); } }
+  },
+};
+const scoreTone = v => v == null ? "" : v >= 80 ? "s-good" : v >= 60 ? "s-ok" : "s-bad";
+const SCORE_NAMES = { prompt: "Prompt", identity: "Reference identity", camera: "Camera", quality: "Visual quality", settings: "Settings" };
+function scoreCard(sc) {
+  const c = sc.checks || {}, row = (k, body) => {
+    const v = c[k]; if (!v) return "";
+    const n = v.score;
+    return `<details class="sc-row"><summary><span class="sc-name">${SCORE_NAMES[k]}</span>
+      <span class="sc-bar"><i class="${scoreTone(n)}" style="width:${n ?? 0}%"></i></span><b class="sc-n ${scoreTone(n)}">${n ?? "–"}</b></summary>
+      <div class="sc-body">${v.error ? `<p class="warn">${esc(v.error)}</p>` : body(v)}</div></details>`;
+  };
+  const yes = b => b ? `<span class="sc-y">✓</span>` : `<span class="sc-x">✗</span>`;
+  const when = new Date((sc.at || 0) * 1000).toLocaleString([], { dateStyle: "short", timeStyle: "short" });
+  return `<section class="scorecard"><div class="sc-head"><b class="sc-overall ${scoreTone(sc.overall)}">${sc.overall ?? "–"}</b>
+      <div><b>Score</b> <span class="hint">of 100 · ${esc(when)} · ${sc.seconds ?? "?"} s</span></div></div>
+    ${row("prompt", v => `<ul>${v.checks.map(r => `<li>${yes(r.yes)} ${esc(r.q)} <span class="hint">${esc(r.why)}</span></li>`).join("")}</ul><p class="hint">Checked by ${esc(v.model || "")} on ${sc.frames?.length || 1} frame${sc.frames?.length === 1 ? "" : "s"}.</p>`)}
+    ${row("identity", v => `<ul>${v.refs.map(r => `<li>${esc(r.ref)}: ${r.score != null ? `<b>${r.score}</b> (face match ${r.mean}, worst frame ${r.min}; ${esc(r.seen || "")})${r.note ? ` <span class="warn">${esc(r.note)}</span>` : ""}` : esc(r.note || "")}</li>`).join("")}</ul><p class="hint">Face match (ArcFace): about 0.2 for different people, 0.6 and up for the same person.</p>`)}
+    ${row("camera", v => `<p>${v.note ? `${esc(v.note)}. ` : ""}${v.edges != null ? `Outlines on the given move: <b>${v.edges}%</b>${v.path != null ? ` · same move: <b>${v.path}%</b>` : ""}. Given: ${esc((v.given || []).join(", "))}; seen: ${esc((v.seen || []).join(", "))}.`
+      : `${v.expected ? `Asked: ${esc(v.expected.join(", "))}; ` : ""}seen: ${esc((v.seen || []).join(", "))}.`}</p>`)}
+    ${row("quality", v => `<p>${Object.entries(v.ratings || {}).map(([k, n]) => `${esc(k)} <b>${n}</b>/10`).join(" · ")}</p>${v.artifacts?.length ? `<ul>${v.artifacts.map(a => `<li><span class="sc-x">!</span> ${esc(a)}</li>`).join("")}</ul>` : `<p class="hint">No artifacts spotted.</p>`}`)}
+    ${row("settings", v => `<ul>${v.checks.map(r => `<li>${yes(r.ok)} ${esc(r.name)}: ${esc(r.detail)}</li>`).join("")}</ul>`)}
+    ${sc.frames?.length ? `<div class="sc-frames">${sc.frames.map(u => `<img src="${esc(u)}" alt="" loading="lazy">`).join("")}</div>` : ""}
+  </section>`;
 }
 
 function updateLive(id) {
@@ -1128,6 +1171,8 @@ async function action(a, it) {
   if (a === "enhance") return Enhance.dialog(it);
   if (a === "edit") return Editor.open(it);
   if (a === "workflow") return workflowDialog(it);
+  if (a === "score") return Score.run(it);
+  if (a === "scorecard") { Info.set(true); requestAnimationFrame(() => $("#meta .scorecard")?.scrollIntoView({ block: "nearest" })); return; }
   if (a === "angles") { const f = it.files[0]; return Angles.dialog({ ref: f.path, url: f.url, name: f.name }); }
   if (a === "make3d") { const f = it.files[0]; return Model3D.start({ ref: f.path, url: f.url, name: (promptLabel(it.params?.prompt) || f.name).slice(0, 60) }); }
   if (a === "scene3d") { const f = it.files[0]; return Scene3D.create({ ref: f.path, url: f.url, name: (promptLabel(it.params?.prompt) || f.name).slice(0, 60) }); }
