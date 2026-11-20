@@ -864,6 +864,13 @@ details.post-proc > .hint { margin: 0 0 10px; }
 
 /* 3D scenes (scene3d.js) */
 .s3 { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 12px; height: 100%; min-height: 0; }
+/* the scene builder's menu bar (Scene, Edit, Add) */
+.s3-menubar { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+.s3-mb { border: 0; background: none; color: var(--text); font: inherit; font-size: 13px; padding: 5px 10px; border-radius: 6px; cursor: pointer; }
+.s3-mb:hover, .s3-mb:focus-visible { background: var(--panel-2); }
+.s3-mbhint { margin-left: 10px; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+.ex-menu button[disabled] { opacity: .45; cursor: default; }
+.ex-menu .menu-sep { height: 1px; background: var(--line); margin: 4px 6px; }
 .s3-stage { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 8px; min-height: 0; }
 /* the scene's tool bar: Add (shapes, models) · Drag to (the tool) · the selected object */
 .s3-tools { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; min-width: 0; }
