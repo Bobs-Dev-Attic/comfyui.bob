@@ -5,6 +5,14 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.134.10] - 2026-11-20
+
+### Changed
+- **The Shots step says each line once, too**, as V2 does since 0.134.9. A shot's line is now "says once", followed
+  by: only the words inside the dialogue tag are spoken, once; before and after them the speaker stays silent with
+  their lips closed. This applies to H3 and H3 Reference, one video or one per shot. The Prompt step's own builder is
+  unchanged.
+
 ## [0.134.9] - 2026-11-20
 
 ### Changed

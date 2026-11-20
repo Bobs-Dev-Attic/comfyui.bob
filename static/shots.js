@@ -186,7 +186,9 @@ const Shots = (() => {
       const sid = ids.get(speakerKey(s, k)), v = voiceFor(s);
       const who = speakerOf(s) ? subj(s.speaker) : "The speaker";
       const voice = v ? (isRef() ? `, using the voice timbre referenced from ${v}` : `, in the voice of ${v}`) : "";
-      parts.push(`${who}${sid ? ` (S${sid})` : ""} says${voice}: <d>[English] ${line}</d>`);
+      // once, and nothing more: H3 fills a shot's spare time with words of its own (more so with a voice reference)
+      parts.push(`${who}${sid ? ` (S${sid})` : ""} says once${voice}: <d>[English] ${line}</d>`,
+        "Only the words inside the dialogue tag are spoken, once; before and after them the speaker stays silent with their lips closed.");
     }
     const pos = H.positionText(s.position);
     parts.push(`The camera ${pos ? `is ${pos} and ` : ""}${H.cameraText(s.camera || "holds a static shot")}.`);
