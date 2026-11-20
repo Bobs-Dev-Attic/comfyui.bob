@@ -2774,9 +2774,11 @@ const Scene3D = (() => {
     const tag = PIC_TAG[model] || PIC_TAG.qwen;
     const one = x => {
       const k = pics.indexOf(x.o);
-      // pasted in from its picture: there's no mannequin in the render any more, only that person, roughly cut out
-      if (k >= 0 && pasted.includes(x.o)) return `the person ${x.where} is the one from ${tag(k + first)}, pasted in roughly: keep them exactly there, at that size, `
-        + `${x.pose ? `pose them ${x.pose}` : "keep their pose"}, and blend them into the photo with matching light, colour and shadows`;
+      // pasted in from its picture: there's no mannequin in the render any more, only that person, roughly cut out. Their
+      // picture isn't sent as well: given it, the edit model drew the person a second time, as the picture shows them.
+      if (pasted.includes(x.o)) return `the person ${x.where} is a real person pasted in roughly from a photo: keep them exactly there, at that size, `
+        + `${x.pose ? `pose them ${x.pose}` : "keep their pose"}, keep their face, hair and clothes, and blend them into the photo with matching light, colour and shadows; `
+        + "they appear only there, once";
       // with a picture, Qwen tends to add what's in it beside the stand-in and keep the stand-in: say it takes its place
       if (k >= 0) return `${x.seen} becomes ${x.becomes ? `the ${bare(x.becomes)} from ${tag(k + first)}` : x.o.prim === "figure" ? `the person in ${tag(k + first)}` : `what is in ${tag(k + first)}`}`
         + `, exactly where it stands and at its size; the ${x.o.prim ? SHAPE[x.o.prim] : "stand-in"} itself is gone`;
@@ -2788,8 +2790,14 @@ const Scene3D = (() => {
   // Generate photo's pictures: the objects in view that have one, as many as the edit model takes besides the render.
   const PHOTO_PICS = { qwen: 2, h3image: 8, mossedit: 3 };  // workflows.EDIT_EXTRA_REFS
   const PIC_TAG = { qwen: k => `Picture ${k}`, h3image: k => `<Picture ${k}>`, mossedit: k => `picture ${k}` };  // how each model names its pictures
-  // `taken`: pictures already used besides the render (the depth map)
-  const photoPics = (t, cam, model, taken = 0) => cast(t, cam).filter(x => !x.off && x.o.picture).map(x => x.o).slice(0, Math.max(0, (PHOTO_PICS[model] ?? 2) - taken));
+  /* Which pictures a photo uses: every Person in view with one is pasted into the render (pastePeople) and needs no
+     picture slot; the other objects' pictures go along as the edit model's extra pictures, as many as it takes.
+     `pasted`: the people actually pasted (a picture with no whole person in it isn't); by default every pictured Person. */
+  function photoPlan(t, cam, model, taken = 0, pasted = null) {
+    const inView = cast(t, cam).filter(x => !x.off && x.o.picture).map(x => x.o);
+    const paste = pasted ?? inView.filter(o => o.prim === "figure");
+    return { paste, sent: inView.filter(o => !paste.includes(o)).slice(0, Math.max(0, (PHOTO_PICS[model] ?? 2) - taken)), all: inView.length };
+  }
   // With Qwen, the depth map can go along (Picture 2): it holds the layout in a big restyle, where the render's grey
   // clay look could otherwise stay or the layout wander. Qwen Image Edit reads depth maps as a picture of their own.
   const depthLine = (tag, model) => ` ${tag(2)} is a depth map of ${tag(1)} (near is white, far is black): keep the depth, layout and proportions it shows.`;
@@ -3039,7 +3047,7 @@ const Scene3D = (() => {
     const said = expandTags(look, cast(t, cam)).text.trim();
     const free = !!said || pics.length > 0 || seen.some(x => x.becomes);
     const person = seen.some(x => x.o.prim === "figure" && !x.becomes && !pics.includes(x.o));
-    pasted ??= pics.filter(o => o.prim === "figure");
+    pasted ??= [];
     return photoPrompt(said, pics.length || d ? tag(1) : "", free, person) + (d ? depthLine(tag, model) : "") + photoObjects(t, cam, pics, model, 2 + d, free, pasted);
   }
   const lastLook = () => { try { return localStorage.getItem("bob.scenePhotoLook") || ""; } catch { return ""; } };
@@ -3138,8 +3146,9 @@ const Scene3D = (() => {
       if (r) depthRef = await uploadBlob(new Blob([await grayPNG(depthGray(z, r), size[0], size[1])], { type: "image/png" }), "scene_depth.png");
     }
     const off = depthRef ? 1 : 0;
-    const pics = usePics ? photoPics(t, cam, model, off) : [];
-    const paste = await pastePeople(size, t, cam, pics.filter(o => o.prim === "figure"));
+    const plan = usePics ? photoPlan(t, cam, model, off) : { paste: [], sent: [] };
+    const paste = await pastePeople(size, t, cam, plan.paste);
+    const pics = usePics ? photoPlan(t, cam, model, off, paste.map(p => p.o)).sent : [];
     const ref = await uploadFrame(size, t, cam, "scene_view.png", paste);
     const prompt = photoText(t, cam, look, model, pics, off, paste.map(p => p.o));
     const refs = [depthRef, ...pics.map(o => o.picture)].filter(Boolean);
@@ -3180,10 +3189,11 @@ const Scene3D = (() => {
     const useDepth = () => depthOk(model()) && !!box.querySelector("#s3p-depth")?.checked;
     // What the edit model is told, and which picture is which (it follows the model: Qwen takes 2 more pictures, H3 Image 8).
     const told = () => {
-      const m = model(), d = useDepth() ? 1 : 0, pics = usePics() ? photoPics(s.t, pc, m, d) : [], tag = PIC_TAG[m];
+      const m = model(), d = useDepth() ? 1 : 0, plan = usePics() ? photoPlan(s.t, pc, m, d) : { paste: [], sent: [], all: 0 }, pics = plan.sent, tag = PIC_TAG[m];
       box.querySelector(".s3p-depthf").hidden = !depthOk(m);
-      const all = cast(s.t, pc).filter(x => !x.off && x.o.picture).length;
-      box.querySelector(".s3-said").innerHTML = `It's told: “${esc(photoText(s.t, pc, box.querySelector("#s3p-look").value, m, pics, d))}”`
+      const all = plan.all - plan.paste.length;
+      box.querySelector(".s3-said").innerHTML = `It's told: “${esc(photoText(s.t, pc, box.querySelector("#s3p-look").value, m, pics, d, plan.paste))}”`
+        + (plan.paste.length ? ` ${esc(plan.paste.map(o => o.name).join(" and "))} ${plan.paste.length === 1 ? "is" : "are"} pasted in from ${plan.paste.length === 1 ? "a picture" : "their pictures"}, so no picture of them is sent as well.` : "")
         + (pics.length ? ` ${pics.map((o, i) => `${esc(o.name)} is ${esc(tag(i + 2 + d))}`).join(", ")}.` : "")
         + (usePics() && all > pics.length ? ` <span class="warn">${EDIT_NAMES[m]} takes ${PHOTO_PICS[m]} picture${PHOTO_PICS[m] === 1 ? "" : "s"} besides the render${d ? ", one of them the depth map" : ""}: ${all - pics.length} object picture${all - pics.length === 1 ? "" : "s"} left out.</span>` : "")
 ;
