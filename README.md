@@ -123,6 +123,10 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   (its keyframe or a reference picture its text names, or none; its length; the project's shape), or maps an existing
   one. That scene's Render then goes to its shot with the shot's What happens, `<Picture N>` becoming the object with
   that picture (📥 Inputs… on an object's Picture picks one from the Inputs step).
+  A shot's scene shows **the shot camera as an object** (Camera › The camera as an object, for any scene): seen from
+  outside, with its own gimbal (arrows move it, rings pan and tilt it, each change keyed at the playhead), 👁 Look
+  through it and ↩ Outside. A **floating position box** shows the selected object's or camera's X, Y, Z (and pan and
+  tilt) to read or type; drag it anywhere over the view.
   **Empty scenes** (☰ › New empty 3D scene) start from nothing: a floor with a 1 m grid, a sky colour and an optional
   backdrop picture, with the shot's shape and lens chosen in the View section; add 3D models and frame the shot.
   **📷 Generate photo…** (any scene) draws what the camera frames and has Qwen Image Edit 2511 (or MiniMax H3 Image)

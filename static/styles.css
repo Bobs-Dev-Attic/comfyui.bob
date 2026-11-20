@@ -882,6 +882,23 @@ details.post-proc > .hint { margin: 0 0 10px; }
 .s3-len { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
 .s3-sec { width: 56px; }
 .s3-box { overflow: hidden; }
+/* the floating position box over the 3D view (scene3d.js syncFloat) */
+.s3-float { position: absolute; top: 10px; right: 10px; z-index: 4; width: 210px; padding: 0 10px 8px; border-radius: 10px;
+  border: 1px solid var(--line); background: color-mix(in srgb, var(--panel) 92%, transparent); backdrop-filter: blur(8px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .4); font-size: 12px; }
+.s3-float-h { display: flex; align-items: center; gap: 6px; margin: 0 -10px 6px; padding: 6px 8px 6px 10px; cursor: move;
+  border-bottom: 1px solid var(--line); user-select: none; touch-action: none; }
+.s3-float-h b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.s3-float-x { background: none; border: 0; color: var(--muted); font-size: 16px; line-height: 1; cursor: pointer; padding: 0 2px; }
+.s3-float-x:hover { color: var(--text); }
+.s3-float-l { color: var(--muted); margin: 2px 0 4px; }
+.s3-float-xyz { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.s3-float-cam .s3-float-xyz { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.s3-float-xyz label { display: grid; gap: 2px; }
+.s3-float-xyz label > span { font-weight: 600; font-size: 11px; }
+.s3-float-xyz .ax0 { color: #f0455a; } .s3-float-xyz .ax1 { color: #73cc33; } .s3-float-xyz .ax2 { color: #458cfa; }
+.s3-float-xyz input { width: 100%; min-width: 0; padding: 3px 4px; font-variant-numeric: tabular-nums; }
+.s3-float .hint { margin: 6px 0 0; font-size: 11px; }
 /* what the camera frames; outside it is shaded */
 .s3-frame { position: absolute; pointer-events: none; border: 1px solid rgba(255, 255, 255, .7); box-shadow: 0 0 0 9999px rgba(0, 0, 0, .38); }
 .s3-listbar { display: flex; justify-content: flex-end; padding: 2px 4px 8px; }
