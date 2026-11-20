@@ -871,7 +871,19 @@ details.post-proc > .hint { margin: 0 0 10px; }
 .s3-mbhint { margin-left: 10px; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
 .ex-menu button[disabled] { opacity: .45; cursor: default; }
 .ex-menu .menu-sep { height: 1px; background: var(--line); margin: 4px 6px; }
+/* the photo window: the model's settings and the whole prompt */
+.s3p-set { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--panel-2); }
+.s3p-set h4 { margin: 0 0 6px; font-size: 12.5px; }
+.s3p-dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 12px; margin: 0; font-size: 12.5px; }
+.s3p-dl dt { color: var(--muted); }
+.s3p-dl dd { margin: 0; }
+.s3p-pics { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.s3p-pic { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px 2px 2px; background: var(--panel); }
+.s3p-pic img, .s3p-pic0 { width: 28px; height: 28px; border-radius: 4px; object-fit: cover; display: grid; place-items: center; background: var(--panel-2); }
+.s3p-ph { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+#s3p-prompt { font: 12px/1.45 ui-monospace, Consolas, monospace; width: 100%; resize: vertical; }
 /* the play row */
+.s3-loop.on { background: color-mix(in srgb, var(--accent) 25%, transparent); border-color: var(--accent); }
 .s3-transport { display: inline-flex; gap: 2px; }
 .s3-transport .btn { min-width: 30px; padding: 3px 6px; }
 .s3-frame-in { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); white-space: nowrap; }
