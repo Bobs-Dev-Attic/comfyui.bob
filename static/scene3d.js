@@ -2413,13 +2413,24 @@ const Scene3D = (() => {
   const ORD = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth"];
   const bare = t => String(t || "").trim().replace(/^(a|an|the|some)\s+/i, "");
   // Where an object is in the frame of `cam` at time t: u, v (0..1 across and down), its distance, or off: out of view.
+  /* Where an object is in the frame at time t through cam, by the part of it that's in the picture: its box's corners
+     projected, the outline clipped to the frame. u, v: the middle of what shows (0..1 across and down); part: how much
+     of its outline shows; off: (almost) nothing shows. So an object mostly above the frame is "at the top", not "in
+     the middle" by its centre. */
   function seenAt(o, t, cam) {
-    const p = poseAt(o, t)?.pos; if (!p) return null;
-    const W = 1000, H = Math.round(W / (s.bg.aspect || 16 / 9)), { VP, e } = viewProj(W, H, cam), x = xf(VP, p, 1);
-    const w = VP[3] * p[0] + VP[7] * p[1] + VP[11] * p[2] + VP[15];
-    if (w <= 1e-6) return { off: true, u: 0.5, d: Infinity };
-    const u = (x[0] / w + 1) / 2, v = (1 - x[1] / w) / 2;
-    return { u, v, d: Math.hypot(p[0] - e[0], p[1] - e[1], p[2] - e[2]), off: u < -0.05 || u > 1.05 || v < -0.15 || v > 1.15 };
+    const P = poseAt(o, t), p = P?.pos; if (!p) return null;
+    const W = 1000, H = Math.round(W / (s.bg.aspect || 16 / 9)), { VP, e } = viewProj(W, H, cam);
+    const d = Math.hypot(p[0] - e[0], p[1] - e[1], p[2] - e[2]);
+    const pts = (o.mesh ? boxCorners(o, matOf(o, P)) : [p]).map(q => {
+      const x = xf(VP, q, 1), w = VP[3] * q[0] + VP[7] * q[1] + VP[11] * q[2] + VP[15];
+      return w > 1e-6 ? [(x[0] / w + 1) / 2, (1 - x[1] / w) / 2] : null;
+    }).filter(Boolean);
+    if (!pts.length) return { off: true, u: 0.5, v: 0.5, d: Infinity, part: 0 };
+    const x0 = Math.min(...pts.map(q => q[0])), x1 = Math.max(...pts.map(q => q[0])), y0 = Math.min(...pts.map(q => q[1])), y1 = Math.max(...pts.map(q => q[1]));
+    const cx0 = Math.max(0, x0), cx1 = Math.min(1, x1), cy0 = Math.max(0, y0), cy1 = Math.min(1, y1);
+    const shown = Math.max(0, cx1 - cx0) * Math.max(0, cy1 - cy0), whole = Math.max(1e-9, (x1 - x0) * (y1 - y0));
+    const off = shown < 0.002 || pts.length < (o.mesh ? 8 : 1) && shown < 0.01;
+    return { u: off ? 0.5 : (cx0 + cx1) / 2, v: off ? 0.5 : (cy0 + cy1) / 2, d, off, part: Math.min(1, shown / whole) };
   }
   // Every shown object as the models see it at time t through cam: { o, looks, where, seen, becomes, off }.
   // photo: the video starts from a photo, where the stand-ins are what they become (a Person a real person), so they're
@@ -2431,7 +2442,9 @@ const Scene3D = (() => {
       const a = x.at;
       x.off = a.off;
       x.looks = x.o.prim ? `${colorName(x.o.color || PRIM_COLOR)} ${SHAPE[x.o.prim]}` : bare(x.o.name).replace(/\s+\d+$/, "").toLowerCase();
-      x.where = a.off ? "out of view" : a.u < 0.36 ? "on the left" : a.u > 0.64 ? "on the right" : "in the middle";
+      const hz = a.u < 0.36 ? "left" : a.u > 0.64 ? "right" : "", vt = a.v < 0.3 ? "top" : a.v > 0.72 ? "bottom" : "";
+      x.where = a.off ? "out of view" : vt ? `at the ${vt}${hz ? ` ${hz}` : ""}` : hz ? `on the ${hz}` : "in the middle";
+      if (!a.off && a.part < 0.6) x.where += ", partly out of frame";
       if (!a.off && ds.length > 1 && a.d < med * 0.7) x.where += ", in front";
       else if (!a.off && ds.length > 1 && a.d > med * 1.4) x.where += ", at the back";
       x.becomes = (x.o.becomes || "").trim();
@@ -2683,7 +2696,7 @@ const Scene3D = (() => {
     const save = (href, name) => { const x = document.createElement("a"); x.href = href; x.download = name; x.click(); };
     try {
       if (!clip) {
-        const cam = s.camKeys.length ? camForRender(s.t) : s.cam, z = depthDistances(size, s.t, cam), range = depthRange(z);
+        const cam = s.camObj || s.camKeys.length ? camForRender(s.t) : s.cam, z = depthDistances(size, s.t, cam), range = depthRange(z);
         if (!range) return Media.toast("Nothing in view to measure.");
         const u = URL.createObjectURL(new Blob([await grayPNG(depthGray(z, range), size[0], size[1])], { type: "image/png" }));
         save(u, `${base}_depth.png`); setTimeout(() => URL.revokeObjectURL(u), 4000);
@@ -2858,14 +2871,17 @@ const Scene3D = (() => {
     save();
     return items[0];
   }
+  // The camera a photo or depth map is taken through: the shot camera when it's an object in the scene (even while you
+  // look at it from outside), else the view as you see it.
+  const shotView = () => s.camObj ? camForRender(s.t) : s.cam;
   function photoDialog() {
     if (!s?.bg) return;
     const models = editModels();
     if (!models.length) return Media.toast("Generate photo needs an edit model: Qwen Image Edit 2511 or MiniMax H3 Image.");
-    const keep = lastLook(), inView = cast(s.t, s.cam).filter(x => !x.off);
+    const pc = shotView(), keep = lastLook(), inView = cast(s.t, pc).filter(x => !x.off);
     const box = document.createElement("div");
     box.className = "m3-make";
-    box.innerHTML = `<p class="hint">Draws what the camera frames${s.camKeys.length ? ` (at ${s.t.toFixed(2)} s)` : ""} and has the edit model turn it into a photograph,
+    box.innerHTML = `<p class="hint">Draws what ${s.camObj ? "the shot camera sees" : "the camera frames"}${s.camKeys.length ? ` (at ${s.t.toFixed(2)} s)` : ""} and has the edit model turn it into a photograph,
         keeping where everything is. The photo shows up in the gallery.</p>
       <div class="field"><label for="s3p-look">How it should look <span class="opt">optional</span></label>
         <textarea id="s3p-look" rows="3" placeholder="${s.bg.empty ? "On a sunny beach at golden hour, shot on 35 mm film." : "Soft daylight, shot on 35 mm film."}">${esc(keep)}</textarea></div>
@@ -2874,7 +2890,7 @@ const Scene3D = (() => {
           <input type="text" maxlength="200" data-oid="${esc(x.o.id)}" value="${esc(x.o.becomes || "")}" placeholder="${x.o.prim === "figure" ? "a real person (say who: a woman in a red coat…)" : x.o.prim ? `keeps its look (a ${SHAPE[x.o.prim]}); say what it is: a pile of trash…` : "keeps its look; say what it is…"}"></label>`).join("")}</div></div>` : ""}
       <div class="field"><label for="s3p-model">Model</label><select id="s3p-model">${models.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></div>
       <label class="check s3p-depthf" title="Sends a depth map of the view along (Qwen only): it holds the layout and shapes when the look changes a lot, e.g. a whole new setting or style"><input type="checkbox" id="s3p-depth"${lastDepth() ? " checked" : ""}> Use the depth map <span class="opt">keeps the layout in a big restyle</span></label>
-      ${cast(s.t, s.cam).some(x => !x.off && x.o.picture) ? `<label class="check"><input type="checkbox" id="s3p-pics" checked> Use the objects' pictures</label>` : ""}
+      ${cast(s.t, pc).some(x => !x.off && x.o.picture) ? `<label class="check"><input type="checkbox" id="s3p-pics" checked> Use the objects' pictures</label>` : ""}
       <p class="hint s3-said"></p>`;
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
@@ -2884,10 +2900,10 @@ const Scene3D = (() => {
     const useDepth = () => depthOk(model()) && !!box.querySelector("#s3p-depth")?.checked;
     // What the edit model is told, and which picture is which (it follows the model: Qwen takes 2 more pictures, H3 Image 8).
     const told = () => {
-      const m = model(), d = useDepth() ? 1 : 0, pics = usePics() ? photoPics(s.t, s.cam, m, d) : [], tag = PIC_TAG[m];
+      const m = model(), d = useDepth() ? 1 : 0, pics = usePics() ? photoPics(s.t, pc, m, d) : [], tag = PIC_TAG[m];
       box.querySelector(".s3p-depthf").hidden = !depthOk(m);
-      const all = cast(s.t, s.cam).filter(x => !x.off && x.o.picture).length;
-      box.querySelector(".s3-said").innerHTML = `It's told: “${esc(photoText(s.t, s.cam, box.querySelector("#s3p-look").value, m, pics, d))}”`
+      const all = cast(s.t, pc).filter(x => !x.off && x.o.picture).length;
+      box.querySelector(".s3-said").innerHTML = `It's told: “${esc(photoText(s.t, pc, box.querySelector("#s3p-look").value, m, pics, d))}”`
         + (pics.length ? ` ${pics.map((o, i) => `${esc(o.name)} is ${esc(tag(i + 2 + d))}`).join(", ")}.` : "")
         + (usePics() && all > pics.length ? ` <span class="warn">${EDIT_NAMES[m]} takes ${PHOTO_PICS[m]} picture${PHOTO_PICS[m] === 1 ? "" : "s"} besides the render${d ? ", one of them the depth map" : ""}: ${all - pics.length} object picture${all - pics.length === 1 ? "" : "s"} left out.</span>` : "")
 ;
@@ -2910,7 +2926,7 @@ const Scene3D = (() => {
       try {
         st.textContent = "Drawing the view and sending it to the edit model…";
         try { localStorage.setItem("bob.scenePhotoDepth", box.querySelector("#s3p-depth")?.checked ? "1" : "0"); } catch { /* not kept */ }
-        await makePhoto([W, H], s.t, s.cam, look, model(), usePics(), useDepth(), !(s.camObj && s.camFree));
+        await makePhoto([W, H], s.t, pc, look, model(), usePics(), useDepth(), s.camObj || !s.camFree);
         win.close();
         Media.toast("3D scene: the photo is being made. It shows up in the gallery.");
       } catch (err) { st.textContent = ""; e.target.disabled = false; Media.toast(`Photo: ${err.message}`); }

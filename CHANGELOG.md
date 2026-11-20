@@ -5,6 +5,18 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.116.1] - 2026-11-19
+
+### Fixed
+- **📷 Generate photo goes through the shot camera** whenever the camera is an object in the scene, even while you look
+  at it from outside. Before, from outside, it photographed your outside view, and its object list and text described
+  that view. 🌫 Save depth map does the same.
+- **Where an object is, as the photo and video models are told, follows what shows in the frame.** It was judged by the
+  object's centre, so an object whose centre was just above the frame (only its lower part, or nothing, showing) was
+  told as "in the middle", and the edit model added one there. Now it's the visible part of the object's outline:
+  left, middle or right, and at the top or bottom, with "partly out of frame" when most of it is cut off. An object
+  that doesn't show isn't listed.
+
 ## [0.116.0] - 2026-11-19
 
 ### Added
