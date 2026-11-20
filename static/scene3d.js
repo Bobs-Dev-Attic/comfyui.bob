@@ -1515,6 +1515,8 @@ const Scene3D = (() => {
   }
   // V2: the open shot's What happens (V2 is a const of its page, not on window)
   const v2What = () => { try { return typeof V2 !== "undefined" && V2.shotWhat ? V2.shotWhat(s.sc.id) : ""; } catch { return ""; } };
+  // ...and its setting: how the photo looks starts from it (as V2's Generate does), else the last look written
+  const startLook = () => { try { return (typeof V2 !== "undefined" && V2.shotSetting ? V2.shotSetting(s.sc.id) : "") || lastLook(); } catch { return lastLook(); } };
   const autoTl = () => { try { return localStorage.getItem("bob.sceneAutoTl") !== "0"; } catch { return true; } };
   /* The render's levels, rough to final: each sets the options under it (which stay free to change).
      Sketch: the 3D objects as drawn, Draft, 4 steps: the motion, in a couple of minutes.
@@ -1570,7 +1572,7 @@ const Scene3D = (() => {
         <option value="composite">The scene's first frame as drawn (plain)</option></select></div>
       ${cameraMoves() ? `<label class="check s3r-fillf" title="Where the camera move shows what the photo never saw (the far side of a turn), Qwen paints the place in first, from up to ${MAX_GAPS} views along the move, so H3 follows the same surroundings all the way round"><input type="checkbox" id="s3r-fill"${lastFill() ? " checked" : ""}> Fill what the photo can't see with Qwen first <span class="opt">about half a minute per view</span></label>` : ""}
       <div class="field s3r-lookf"><label for="s3r-look">How the photo should look <span class="opt">optional</span></label>
-        <textarea id="s3r-look" rows="2" placeholder="Soft daylight, shot on 35 mm film.">${esc(lastLook())}</textarea></div>
+        <textarea id="s3r-look" rows="2" placeholder="Soft daylight, shot on 35 mm film.">${esc(startLook())}</textarea></div>
       ${toShots().length ? `<div class="field"><label for="s3r-to">Goes to</label><select id="s3r-to">
         <option value="now">Render it now (the gallery)</option>
         <optgroup label="A shot on the Shots step">${toShots().map(t => `<option value="${t.i}">${esc(t.label)}</option>`).join("")}
@@ -3319,7 +3321,7 @@ const Scene3D = (() => {
     const quick = !!o.quick;
     const models = editModels();
     if (!models.length) return Media.toast("Generate photo needs an edit model: Qwen Image Edit 2511 or MiniMax H3 Image.");
-    const pc = shotView(), keep = lastLook(), inView = cast(s.t, pc).filter(x => !x.off);
+    const pc = shotView(), keep = startLook(), inView = cast(s.t, pc).filter(x => !x.off);
     const box = document.createElement("div");
     box.className = "m3-make";
     box.innerHTML = `<p class="hint">Draws what ${s.camObj ? "the shot camera sees" : "the camera frames"}${s.camKeys.length ? ` (at ${s.t.toFixed(2)} s)` : ""} and has the edit model turn it into a photograph,
