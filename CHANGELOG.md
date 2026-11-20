@@ -5,6 +5,29 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.121.0] - 2026-11-20
+
+### Added
+- **Bob Studio V2 (phase 1)** at `/v2`, a shot-focused studio where the 3D scene is the main tool. The classic page stays
+  at `/`, with a V2 ↗ link in its top bar (and Classic ↗ back).
+  - **Shots** on the left: each one is a 3D scene. ＋ New shot starts one as an empty set (a floor and a sky) or as a
+    copy of one of your scene templates.
+  - **The 3D viewport** in the middle is the scene builder, drawn in the page: place objects and models, move them,
+    key the camera (lens, focus, shake, crane), with its outliner and properties beside it.
+  - **The shot panel** on the right holds the setting and environment, what happens (click an object's name to put
+    it in), a line of dialogue and who says it, background sound, music and quality.
+  - **The model is chosen for you**, with the reasons shown:
+    - nothing in the set and a still camera → MiniMax H3 from the words;
+    - objects or a camera move → the scene's render (H3 with Time-to-Move), starting from a photo of the first frame
+      made with the setting, with the Qwen gap fill for what the camera move reveals;
+    - objects with pictures → H3 Reference.
+    Dialogue, background sound and music go into H3's own sound fields.
+  - **The timeline** along the bottom has the shots in order, sized by length. Drag one to reorder it.
+    🎬 Generate all makes every shot in order.
+  - A project's V2 shots are kept apart from its classic settings (`data/v2/<project>.json`, `/api/v2/board`).
+  - The scene builder can draw in a page element (`Scene3D.mount`). It also renders with its usual choices for a
+    shot (`Scene3D.autoRender`), which the classic Shots step now uses too.
+
 ## [0.120.0] - 2026-11-20
 
 ### Added

@@ -1161,6 +1161,15 @@ const Scene3D = (() => {
   async function flushSave() { clearTimeout(s.saveT); const sc = await api(`/api/scenes/${s.id}`, { method: "PATCH", body: saveBody() }); return sc.updated || 0; }
 
   /* ---------------------------------------------------------------- the window */
+  /* V2 (static/v2.js): the builder draws in a page element instead of a window. */
+  let host = null;
+  function mount(el) { host = el; }
+  function embed(el, root, foot, onClose) {
+    el.replaceChildren(root, foot);
+    foot.classList.add("s3-hostfoot");
+    const win = { el, body: el, setTitle() {}, focus() {}, close() { if (win.closed) return; win.closed = true; el.replaceChildren(); onClose(); } };
+    return win;
+  }
   async function open(id) {
     if (s?.win) s.win.close();
     let sc;
@@ -1283,8 +1292,9 @@ const Scene3D = (() => {
       <button type="button" class="btn ghost" data-act="depth" title="A depth map of what the camera frames (near is white, far is black), for a depth ControlNet">🌫 Save depth map…</button>
       <button type="button" class="btn" data-act="photo" title="A photograph of what the camera frames, made by the image editor's edit model">📷 Generate photo…</button>
       <button type="button" class="btn primary" data-act="render" title="Make the video with H3, following this scene">🎬 Render video…</button>`;
-    const win = WM.open({ id: "scene3d", title: `🏞 ${sc.name}`, content: root, footer: foot, width: 1100, height: 720, minWidth: 720, minHeight: 480,
-      onClose: () => { if (s) { cancelAnimationFrame(s.raf); clearTimeout(s.poll); clearTimeout(s.saveT); s.ro?.disconnect(); s.closed = true; } s = null; meshCache.clear(); } });
+    const onClose = () => { if (s) { cancelAnimationFrame(s.raf); clearTimeout(s.poll); clearTimeout(s.saveT); s.ro?.disconnect(); s.closed = true; } s = null; meshCache.clear(); };
+    const win = host ? embed(host, root, foot, onClose)
+      : WM.open({ id: "scene3d", title: `🏞 ${sc.name}`, content: root, footer: foot, width: 1100, height: 720, minWidth: 720, minHeight: 480, onClose });
     const cv = root.querySelector(".s3-canvas"), hud = root.querySelector(".s3-hud");
     const gl = cv.getContext("webgl2", { antialias: true, preserveDrawingBuffer: true });
     s = { id: sc.id, sc, win, root, cv, hud, gl, gpu: gl ? G().gpu(gl) : null, objs: (sc.objects || []).map(o => ({ ...o, keys: normKeys(o.keys) })), sel: -1, dirty: true, hist: null, hover: null,
@@ -1667,19 +1677,31 @@ const Scene3D = (() => {
     } finally { if (s) { s.cv.width = size0[0]; s.cv.height = size0[1]; s.dirty = true; } }
   }
   async function renderForShot(id, i, opts = {}, say = () => {}) {
+    const sh = Shots.shotOfScene(id);
+    const r = await autoRender(id, { text: sh?.action || "", quality: opts.quality }, say);
+    Shots.useScene(i, r.shot);
+    return r;
+  }
+  /* Draw a scene's render with the choices its Render window would pick: start from the picture when the scene starts
+     as it, else a photo of its first frame that matches (or a new one), else as drawn; the objects' pictures on H3
+     Reference when there are any; the Qwen gap fill as last set. o: {text (what happens; <Picture N> and {Object}
+     tags), look (how the photo looks), quality, fill}. Returns {req, shot, start, refs}. */
+  async function autoRender(id, o = {}, say = () => {}) {
     await openReady(id, say);
-    const sh = Shots.shotOfScene(id), text = sh?.action || "";
+    const text = o.text || "";
     const given = adoptShotPictures(text);
     if (given.length) Media.toast(`3D scene: ${given.join(", ")} (from the shot), so H3 Reference keeps that look.`);
     const cam0 = camForRender(0), photos = s.photos.map(p => ({ ...p, it: state.items.get(p.id) })).filter(p => p.it?.status === "done" && p.it.files?.length);
     const best = photos.reverse().find(p => Math.abs(p.t) < 0.5 / FPS && camDiff(p.cam, cam0) < 0.02);
-    const start = s.sc.picture && startsAsPicture() ? "picture" : best ? `photo:${best.id}` : editModels().length ? "newphoto" : s.sc.picture ? "picture" : "composite";
+    const start = o.start || (s.sc.picture && startsAsPicture() ? "picture" : best ? `photo:${best.id}` : editModels().length ? "newphoto" : s.sc.picture ? "picture" : "composite");
     const refs = picObjs().length > 0 && refsReady();
-    const r = await buildRender({ start, look: lastLook(), fill: lastFill(), refs, hold: start === "newphoto" || start.startsWith("photo:") ? "loose" : "normal",
-      quality: ["draft", "standard", "full"].includes(opts.quality) ? opts.quality : "standard", what: fromShot(text) }, say);
-    Shots.useScene(i, r.shot);
-    return r;
+    const r = await buildRender({ start, look: o.look ?? lastLook(), fill: o.fill ?? lastFill(), refs, hold: start === "newphoto" || start.startsWith("photo:") ? "loose" : "normal",
+      quality: ["draft", "standard", "full"].includes(o.quality) ? o.quality : "standard", what: fromShot(text) || defaultWhat() }, say);
+    return { ...r, start, refs };
   }
+  // The open scene (V2's viewport), for its panels: its objects, camera and length as the builder has them now.
+  const current = () => s && s.bg ? { id: s.id, sc: s.sc, objs: s.objs, camKeys: s.camKeys, seconds: s.seconds, t: s.t,
+    moves: cameraMoves(), pictures: picObjs().length, refsReady: refsReady(), edit: editModels().map(m => m[0]) } : null;
   /* A crane (jib) move: the camera on an arm of a given length round a pivot behind it. From the playhead, over the
      length of the move, the arm rises or falls (boom, degrees up from level) and swings round (degrees, + to the left),
      while the camera keeps looking at the point it looks at now, or keeps facing along the arm. It's written as camera
@@ -3404,6 +3426,6 @@ const Scene3D = (() => {
     requestAnimationFrame(step); renderTime();
   }
 
-  return { renderForShot, photoForShot, fromTemplate, setTemplate, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
+  return { mount, autoRender, current, renderForShot, photoForShot, fromTemplate, setTemplate, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
     _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _fill: (P, look, say) => fillGaps(P, look, say), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
 })();

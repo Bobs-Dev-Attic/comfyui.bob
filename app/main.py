@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import random
+import re
 import subprocess
 import uuid
 from contextlib import asynccontextmanager
@@ -66,7 +67,7 @@ app = FastAPI(title="ComfyUI.Bob Studio", version=__version__, lifespan=lifespan
 @app.middleware("http")
 async def no_cache_ui(request: Request, call_next):
     response = await call_next(request)
-    if request.url.path in ("/", "/writer") or request.url.path.startswith("/static/"):
+    if request.url.path in ("/", "/writer", "/v2") or request.url.path.startswith("/static/"):
         response.headers["Cache-Control"] = "no-cache"  # revalidate so UI edits show up on reload
     return response
 
@@ -506,6 +507,39 @@ async def scenes_patch(scene_id: str, req: ScenePatch):
     if not s:
         raise HTTPException(404, "No such 3D scene")
     return s
+
+
+# ------------------------------------------------------------------ V2: a project's board of shots
+# Each project's V2 shots (each a 3D scene with its own text, sound and settings) live in data/v2/<project>.json, apart
+# from the project's settings, which the classic page rewrites whole.
+V2_DIR = config.DATA_DIR / "v2"
+
+
+class V2Board(BaseModel):
+    shots: list[dict[str, Any]] = Field(default_factory=list, max_length=200)
+    settings: dict[str, Any] = Field(default_factory=dict)
+
+
+def _v2_file(project: str | None) -> Path:
+    return V2_DIR / f"{re.sub(r'[^A-Za-z0-9_-]', '_', project or 'experiment')[:80] or 'experiment'}.json"
+
+
+@app.get("/api/v2/board")
+async def v2_board_get(project: str | None = None):
+    try:
+        return json.loads(_v2_file(project).read_text("utf-8"))
+    except (OSError, ValueError):
+        return {"shots": [], "settings": {}}
+
+
+@app.put("/api/v2/board")
+async def v2_board_put(req: V2Board, project: str | None = None):
+    f = _v2_file(project)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text(json.dumps(req.model_dump(), ensure_ascii=False, indent=1), "utf-8")
+    tmp.replace(f)
+    return {"ok": True}
 
 
 class SceneCopy(BaseModel):
@@ -1625,6 +1659,12 @@ app.mount("/static", StaticFiles(directory=config.STATIC_DIR), name="static")
 @app.get("/")
 async def index():
     return FileResponse(config.STATIC_DIR / "index.html")
+
+
+@app.get("/v2")
+async def v2_page():
+    """Bob Studio V2: shot-focused, the 3D scene as the main tool (static/v2.html). The classic page stays at /."""
+    return FileResponse(config.STATIC_DIR / "v2.html")
 
 
 @app.get("/writer")
