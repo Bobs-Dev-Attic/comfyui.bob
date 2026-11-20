@@ -11,6 +11,10 @@
    with what it becomes, reference pictures and LoRAs. Drag one onto the viewport and it stands where you drop it
    (Scene3D.addFromLibrary); its first picture goes to H3 Reference, and the LoRAs of the objects in a shot go with it.
 
+   The camera library (the Cameras tab): ready-made moves (push in, orbit, crane, dolly zoom, follow…) worked out round
+   the shot's subject at a framing and speed (Scene3D.applyCameraMove), and your own, saved from a shot relative to
+   its subject (/api/v2/cameras) so they fit another shot's subject the same way.
+
    The page uses the studio's API as the classic page does (projects, scenes, items), and gives the scene builder the
    few globals it expects from that page (state, api, esc, mediaUrl, submit, and Shots, which V2 replaces). A project's
    V2 shots are kept by the studio in data/v2/<project>.json (/api/v2/board). */
@@ -45,7 +49,7 @@ const V2 = (() => {
   const $ = id => document.getElementById(id);
   const uid = () => Math.random().toString(16).slice(2, 10);
   const PKEY = "bob.v2.project";
-  const st = { board: { shots: [], settings: {} }, sel: null, scenes: new Map(), busy: new Set(), saveT: 0, say: new Map(), objs: [] };
+  const st = { board: { shots: [], settings: {} }, sel: null, scenes: new Map(), busy: new Set(), saveT: 0, say: new Map(), objs: [], cams: [] };
   const shotOf = id => st.board.shots.find(x => x.id === id);
   const cur = () => shotOf(st.sel);
   const status = t => { $("v2-status").textContent = t || ""; };
@@ -327,6 +331,40 @@ const V2 = (() => {
     setTimeout(() => box.querySelector("#ve-name")?.focus(), 50);
   }
 
+  /* ---- the camera library */
+  async function loadCameras() {
+    try { st.cams = (await api("/api/v2/cameras")).cameras || []; } catch { st.cams = []; }
+    renderCameras();
+  }
+  function renderCameras() {
+    const moves = Scene3D.CAM_MOVES || [];
+    $("v2-camlist").innerHTML = moves.map(m => `<div class="v2-cam" role="listitem" tabindex="0" draggable="true" data-move="${esc(m.id)}" title="${esc(m.says)}">
+        <span class="v2-camic">${m.icon}</span><span><b>${esc(m.name)}</b><span class="hint">${esc(m.says)}</span></span></div>`).join("")
+      + (st.cams.length ? `<h3 class="v2-camh">Your cameras</h3>` + st.cams.slice().sort((a, b) => a.name.localeCompare(b.name)).map(c => `<div class="v2-cam" role="listitem" tabindex="0" draggable="true" data-saved="${esc(c.id)}" title="${esc(c.notes || c.name)}">
+        <span class="v2-camic">💾</span><span><b>${esc(c.name)}</b><span class="hint">${c.keys.length} key${c.keys.length === 1 ? "" : "s"}${c.fx ? ` · ${esc(c.fx)}` : ""}${c.dof ? ` · f/${c.dof}` : ""}</span></span>
+        <button type="button" class="v2-x" data-rmcam="${esc(c.id)}" aria-label="Delete ${esc(c.name)}" title="Delete this camera">✕</button></div>`).join("") : "");
+  }
+  function applyCam(el) {
+    if (!Scene3D.current()) return Media.toast("Open a shot first: its camera is what changes.");
+    const opts = { framing: $("v2-camframe").value, speed: $("v2-camspeed").value };
+    let ok = false, name = "";
+    if (el.dataset.move) { ok = Scene3D.applyCameraMove(el.dataset.move, opts); name = (Scene3D.CAM_MOVES.find(m => m.id === el.dataset.move) || {}).name; }
+    else if (el.dataset.saved) { const c = st.cams.find(x => x.id === el.dataset.saved); ok = Scene3D.applySavedCamera(c); name = c?.name; }
+    if (ok) { Media.toast(`Camera: ${name}. ↶ Undo in the scene takes it back.`); renderPanel(true); }
+  }
+  async function saveCamera() {
+    const c = Scene3D.cameraOut();
+    if (!c) return Media.toast("This shot's camera has no keys yet: key the camera in the scene, or use one of the moves.");
+    const name = prompt("Name this camera", cur()?.name ? `${cur().name} camera` : "My camera");
+    if (!name?.trim()) return;
+    const id = uid();
+    try {
+      await api(`/api/v2/cameras/${id}`, { method: "PUT", body: JSON.stringify({ id, name: name.trim().slice(0, 80), keys: c.keys, fx: c.fx, dof: c.dof, h: c.h }) });
+      await loadCameras();
+      Media.toast(`Saved “${name.trim()}”: it's under Your cameras.`);
+    } catch (e) { Media.toast(`Save camera: ${e.message}`); }
+  }
+
   /* ---- drawing */
   const latest = s => (s.results || []).map(id => state.items.get(id)).find(Boolean);
   const fileOf = it => it?.status === "done" ? (it.files || []).find(f => /^video\//.test(f.content_type || "")) || it.files?.[0] : null;
@@ -392,6 +430,16 @@ const V2 = (() => {
       document.querySelectorAll(".v2-tabs [data-tab]").forEach(x => { const on = x === b; x.classList.toggle("on", on); x.setAttribute("aria-selected", String(on)); });
       document.querySelectorAll(".v2-pane").forEach(p => { p.hidden = p.dataset.pane !== b.dataset.tab; });
     });
+    // the camera library: click or drag onto the viewport to apply; save this shot's; delete a saved one
+    $("v2-camsave").onclick = saveCamera;
+    const cl = $("v2-camlist");
+    cl.addEventListener("click", async e => {
+      const rm = e.target.closest("[data-rmcam]");
+      if (rm) { const c = st.cams.find(x => x.id === rm.dataset.rmcam); if (c && confirm(`Delete the camera “${c.name}”?`)) { try { await api(`/api/v2/cameras/${c.id}`, { method: "DELETE" }); await loadCameras(); } catch (err) { Media.toast(err.message); } } return; }
+      const el = e.target.closest(".v2-cam"); if (el) applyCam(el);
+    });
+    cl.addEventListener("keydown", e => { const el = e.target.closest(".v2-cam"); if (el && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); applyCam(el); } });
+    cl.addEventListener("dragstart", e => { const el = e.target.closest(".v2-cam"); if (!el) return; e.dataTransfer.setData("text/x-bob-cam", el.dataset.move ? `move:${el.dataset.move}` : `saved:${el.dataset.saved}`); e.dataTransfer.effectAllowed = "copy"; });
     // the object library: new, find, edit, add, drag onto the viewport
     $("v2-objnew").onclick = () => objectEditor();
     $("v2-objq").addEventListener("input", renderObjects);
@@ -401,9 +449,11 @@ const V2 = (() => {
     grid.addEventListener("keydown", e => { const c = e.target.closest(".v2-obj"); if (c && e.key === "Enter") objectEditor(st.objs.find(x => x.id === c.dataset.oid)); });
     grid.addEventListener("dragstart", e => { const c = e.target.closest(".v2-obj"); if (!c) return; e.dataTransfer.setData("text/x-bob-obj", c.dataset.oid); e.dataTransfer.effectAllowed = "copy"; });
     const view = $("v2-view").parentElement;
-    view.addEventListener("dragover", e => { if ([...e.dataTransfer.types].includes("text/x-bob-obj")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; view.classList.add("v2-drop"); } });
+    view.addEventListener("dragover", e => { if ([...e.dataTransfer.types].some(t => t === "text/x-bob-obj" || t === "text/x-bob-cam")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; view.classList.add("v2-drop"); } });
     view.addEventListener("dragleave", e => { if (!view.contains(e.relatedTarget)) view.classList.remove("v2-drop"); });
     view.addEventListener("drop", e => {
+      const cam = e.dataTransfer.getData("text/x-bob-cam");
+      if (cam) { e.preventDefault(); view.classList.remove("v2-drop"); const [k, v] = cam.split(":"); return applyCam({ dataset: k === "move" ? { move: v } : { saved: v } }); }
       const id = e.dataTransfer.getData("text/x-bob-obj"); view.classList.remove("v2-drop");
       if (!id) return;
       e.preventDefault();
@@ -464,6 +514,7 @@ const V2 = (() => {
     try { for (const it of (await api("/api/items")).items || []) state.items.set(it.id, it); } catch {}
     events();
     await loadObjects();
+    await loadCameras();
     await loadProjects();
     await loadBoard();
   }

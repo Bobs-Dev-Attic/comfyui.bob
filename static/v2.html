@@ -28,7 +28,8 @@
     <aside class="v2-shots" aria-label="Shots and objects">
       <div class="v2-tabs" role="tablist" aria-label="Library">
         <button type="button" role="tab" class="on" aria-selected="true" data-tab="shots">🎞 Shots</button>
-        <button type="button" role="tab" aria-selected="false" data-tab="objects">🧱 Objects</button></div>
+        <button type="button" role="tab" aria-selected="false" data-tab="objects">🧱 Objects</button>
+        <button type="button" role="tab" aria-selected="false" data-tab="cameras">🎥 Cameras</button></div>
       <div class="v2-pane" data-pane="shots" role="tabpanel">
         <div class="v2-h"><h2>Shots</h2>
           <button type="button" class="btn sm primary" id="v2-new" aria-haspopup="menu" title="A new shot: an empty set, or one of your scene templates">＋ New shot</button></div>
@@ -42,6 +43,15 @@
         <div class="v2-objgrid" id="v2-objgrid" role="list" aria-label="Object library"></div>
         <p class="hint v2-empty" id="v2-noobjs" hidden>No objects yet. ＋ New object adds one: a person, a prop or a 3D model, with pictures of what it should look like.</p>
         <p class="hint v2-empty">Drag an object onto the scene to place it there, or press ＋ on it. Double-click to edit.</p>
+      </div>
+      <div class="v2-pane" data-pane="cameras" role="tabpanel" hidden>
+        <div class="v2-h"><h2>Cameras</h2>
+          <button type="button" class="btn sm" id="v2-camsave" title="Keep this shot's camera (its keys, lens, focus and shake) to use on other shots">💾 Save</button></div>
+        <div class="v2-camopts">
+          <label>Framing <select id="v2-camframe"><option value="close">Close-up</option><option value="medium" selected>Medium</option><option value="wide">Wide</option><option value="extreme">Extreme wide</option></select></label>
+          <label>Speed <select id="v2-camspeed"><option value="smooth" selected>Smooth</option><option value="steady">Steady</option></select></label></div>
+        <div class="v2-camlist" id="v2-camlist" role="list" aria-label="Camera moves"></div>
+        <p class="hint v2-empty">Click a camera, or drag it onto the scene: its move is worked out round the subject (the selected object, or the first person) over the shot's length. ↶ Undo in the scene takes it back.</p>
       </div>
     </aside>
 

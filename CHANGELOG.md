@@ -5,6 +5,24 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.123.0] - 2026-11-20
+
+### Added
+- **V2: the camera library (phase 3).** A 🎥 Cameras tab next to 🎞 Shots and 🧱 Objects.
+  - **21 ready-made moves:** locked off, push in, pull back, orbit 360°, half orbit, arc left and right, track left and
+    right, crane up and down, pan left and right, tilt up, low angle, top down, handheld, follow, zoom in, dolly zoom,
+    and push in with a rack focus.
+  - Each move is worked out round the shot's subject (the selected object, else the first person, else the first
+    object) and over the shot's length. It starts from the side the camera is on now, at a **framing** (close-up,
+    medium, wide, extreme wide) and **speed** (smooth, eased in and out, or steady).
+  - Moves set what they need besides the path: the lens for a zoom or dolly zoom, focus keys and an aperture for the
+    rack focus, the shake and its style for handheld and follow. Follow walks after a subject that has a path.
+  - **Click a camera or drag it onto the viewport.** It replaces the shot's camera keys, and ↶ Undo in the scene
+    takes it back.
+  - **💾 Save** keeps a shot's own camera (its keys, lens, focus, shake and aperture) under Your cameras, relative to
+    its subject. On another shot it fits that shot's subject and length the same way: a taller subject puts it further
+    off. Saved cameras are shared by every project (`/api/v2/cameras`).
+
 ## [0.122.0] - 2026-11-20
 
 ### Added
