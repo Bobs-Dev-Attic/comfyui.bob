@@ -5,6 +5,13 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.134.1] - 2026-11-20
+
+### Fixed
+- **Render video (and Quick video) in V2 now starts from the shot's What happens.** The window's What happens field
+  is filled in from the open shot's, so the prompt matches the shot instead of a generic line. It's still yours to
+  edit before rendering.
+
 ## [0.134.0] - 2026-11-20
 
 ### Added

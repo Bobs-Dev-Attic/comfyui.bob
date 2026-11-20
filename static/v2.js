@@ -1222,5 +1222,7 @@ const V2 = (() => {
     await loadProjects();
     await loadBoard();
   }
-  return { init, decide, generate, onSubmit, _st: st };
+  // What happens in the shot that has this scene (the builder's Render window starts from it)
+  const shotWhat = sceneId => String(st.board.shots.find(x => x.scene === sceneId)?.action || "").trim();
+  return { init, decide, generate, onSubmit, shotWhat, _st: st };
 })();
