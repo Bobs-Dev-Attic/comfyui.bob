@@ -5,6 +5,16 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.134.3] - 2026-11-20
+
+### Fixed
+- **Render video in V2 now includes the shot's dialogue and sound.**
+  - The shot's lines go into the prompt after What happens, as V2's Generate sends them.
+  - Its background sound and music fill the soundscape and music fields. The music field stays N/A when the project's
+    soundtrack is on.
+  - The window's "H3 reads" line, the review and the request all show them.
+  - The voice references (H3 Reference's audio) still go only with Generate.
+
 ## [0.134.2] - 2026-11-20
 
 ### Fixed

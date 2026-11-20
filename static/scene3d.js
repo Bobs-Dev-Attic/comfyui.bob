@@ -1517,6 +1517,8 @@ const Scene3D = (() => {
   const v2What = () => { try { return typeof V2 !== "undefined" && V2.shotWhat ? V2.shotWhat(s.sc.id) : ""; } catch { return ""; } };
   // ...and its setting: how the photo looks starts from it (as V2's Generate does), else the last look written
   const startLook = () => { try { return (typeof V2 !== "undefined" && V2.shotSetting ? V2.shotSetting(s.sc.id) : "") || lastLook(); } catch { return lastLook(); } };
+  // ...and its dialogue (said lines) and sound fields, which the Render window's prompt carries as Generate's does
+  const v2Extra = () => { try { return (typeof V2 !== "undefined" && V2.shotExtra ? V2.shotExtra(s.sc.id) : null) || null; } catch { return null; } };
   const autoTl = () => { try { return localStorage.getItem("bob.sceneAutoTl") !== "0"; } catch { return true; } };
   /* The render's levels, rough to final: each sets the options under it (which stay free to change).
      Sketch: the 3D objects as drawn, Draft, 4 steps: the motion, in a couple of minutes.
@@ -1590,7 +1592,8 @@ const Scene3D = (() => {
     const useRefs = () => !!box.querySelector("#s3r-refs")?.checked;
     const isPhoto = v => v === "newphoto" || v === "quickphoto" || v.startsWith("photo:");
     const fromPhoto = () => isPhoto(box.querySelector("#s3r-first").value);
-    wireTags(box, box.querySelector("#s3r-what"), () => videoText(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder, useRefs(), fromPhoto()));
+    const extra = v2Extra(), withLines = t => [endOf(t), extra?.dialogue].filter(Boolean).join(" ");
+    wireTags(box, box.querySelector("#s3r-what"), () => videoText(withLines(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder), useRefs(), fromPhoto()));
     box.querySelector("#s3r-refs")?.addEventListener("change", () => box.querySelector("#s3r-what").dispatchEvent(new Event("input")));
     const st = foot.querySelector(".s3r-st"), firstSel = box.querySelector("#s3r-first"), holdSel = box.querySelector("#s3r-hold");
     // From a photo, H3 is held to the plain rough animation only loosely, so the photo's look carries through.
@@ -1626,7 +1629,7 @@ const Scene3D = (() => {
       box.querySelector(".s3r-pics").innerHTML = `<span class="s3p-pic"><span class="s3p-pic0">🖼</span><b>${refs ? "&lt;Picture 1&gt;" : "First frame"}</b> ${esc(startName)}</span>`
         + `<span class="s3p-pic"><span class="s3p-pic0">🎞</span><b>Motion</b> the rough animation and its mask</span>`
         + (refs ? picObjs().map((x, i) => `<span class="s3p-pic"><img src="${esc(mediaUrl(x.picture))}" alt=""><b>&lt;Picture ${i + 2}&gt;</b> ${esc(x.name)}</span>`).join("") : "");
-      if (!edited) box.querySelector("#s3r-prompt").value = renderPrompt(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder, refs, fromPhoto()).prompt;
+      if (!edited) box.querySelector("#s3r-prompt").value = renderPrompt(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder, refs, fromPhoto(), extra).prompt;
       box.querySelector(".s3r-pnote").innerHTML = (edited ? `<span class="warn">Edited: Render sends it as it is. ↻ Rebuild puts the built one back.</span> ` : "")
         + (refs ? "H3 Reference also puts a line before it that ties &lt;Picture 1&gt; to the first frame." : "");
     };
@@ -1674,7 +1677,7 @@ const Scene3D = (() => {
         if (to === "now") try { localStorage.setItem("bob.sceneAutoTl", toTl ? "1" : "0"); } catch { /* not kept */ }
         const fill = !!box.querySelector("#s3r-fill")?.checked;
         if (box.querySelector("#s3r-fill") && fromPhoto()) try { localStorage.setItem("bob.sceneGapFill", fill ? "1" : "0"); } catch { /* not kept */ }
-        const r = await buildRender({ start, look, fill, refs: useRefs(), hold: holdSel.value, quality: box.querySelector("#s3r-q").value, speed: spSel.value, prompt: edited ? box.querySelector("#s3r-prompt").value : null,
+        const r = await buildRender({ start, look, fill, refs: useRefs(), hold: holdSel.value, quality: box.querySelector("#s3r-q").value, speed: spSel.value, extra, prompt: edited ? box.querySelector("#s3r-prompt").value : null,
           what: box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder }, m => { st.textContent = m; });
         if (to !== "now") {  // into a shot: Generate on the Shots step sends it
           const k = Shots.useScene(to === "new" ? -1 : +to, r.shot);
@@ -1733,7 +1736,7 @@ const Scene3D = (() => {
       const ref = await renderVideo("ref", [W, H], n, (f, N) => say(`Drawing the rough animation: frame ${f + 1} of ${N}`), proj);
       const mask = await renderVideo("mask", [W, H], n, (f, N) => say(`Drawing its mask: frame ${f + 1} of ${N}`), proj);
       say("Sending to H3…");
-      const built = renderPrompt(o.what, o.refs, fromPhoto), what = built.what;
+      const built = renderPrompt(o.what, o.refs, fromPhoto, o.extra), what = built.what;
       const cam = built.cam, prompt = String(o.prompt || "").trim() || built.prompt;
       const req = { kind: "video", engine: "motion", prompt, seconds: n / FPS, aspect: "16:9", quality: o.quality || "standard",
         seed: -1, batch: 1, turbo: true, first_frame: null, motion_video: ref, motion_video_mask: mask,
@@ -1756,12 +1759,14 @@ const Scene3D = (() => {
     } finally { freeProjection(proj); if (s) { s.cv.width = keep[0]; s.cv.height = keep[1]; s.dirty = true; } }
   }
   // The render's prompt: what happens (tags filled in), the camera, and the sound fields.
-  function renderPrompt(whatText, refs, fromPhoto) {
-    const what = videoText(whatText || defaultWhat(), refs, fromPhoto).text;
+  // extra (V2's shot): { dialogue: its said lines, after what happens; sound: its soundscape and music fields }
+  const endOf = t => { t = String(t || "").trim(); return !t || /[.!?"”]$/.test(t) ? t : `${t}.`; };  // a full stop before what's said
+  function renderPrompt(whatText, refs, fromPhoto, extra = null) {
+    const what = videoText([extra?.dialogue ? endOf(whatText || defaultWhat()) : whatText || defaultWhat(), extra?.dialogue].filter(Boolean).join(" "), refs, fromPhoto).text;
     const glides = s.camKeys.length > 1 && s.camKeys.some(k => camDiff(k, s.camKeys[0]) > 1e-3);
     const cam = [glides ? (shakes() ? "The camera moves through the scene." : "The camera moves smoothly through the scene.") : shakes() ? "" : "The camera holds a static shot.",
       shakes() ? SHAKES[shakeStyle()].says : ""].filter(Boolean).join(" ");
-    return { what, cam, prompt: `integrated_multimodal_description: [Shot 1] ${what.replace(/\s+/g, " ")} ${cam}\n\noverall_soundscape: Natural sound of the scene.\n\nnon_diegetic_music: N/A` };
+    return { what, cam, prompt: `integrated_multimodal_description: [Shot 1] ${what.replace(/\s+/g, " ")} ${cam}\n\n${extra?.sound || "overall_soundscape: Natural sound of the scene.\n\nnon_diegetic_music: N/A"}` };
   }
   // What happens, when nothing is written: whatever moves.
   function defaultWhat() {
@@ -2960,7 +2965,7 @@ const Scene3D = (() => {
     const extra = rest.map(x => picOf(x) ? `${cap(x.seen)} looks like <Picture ${picOf(x)}>${x.becomes ? `: ${x.becomes}` : ""}.` : `${cap(x.seen)} is ${x.becomes}.`).join(" ");
     let text = r.text.trim();
     if (text) text = cap(text);
-    if (text && !/[.!?]$/.test(text)) text += ".";
+    if (text && !/([.!?]|<\/d>)$/.test(text)) text += ".";  // a said line (<d>…</d>) ends itself
     return { text: tidy([text, extra, dofLine(true)].filter(Boolean).join(" ")), unknown: r.unknown };
   }
   // The {Name} chips over a text box, and the preview of what the model reads under it.
