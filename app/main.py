@@ -609,6 +609,61 @@ async def v2_objects_delete(obj_id: str):
     return {"ok": True}
 
 
+# V2's camera library: cameras saved from shots, relative to their subject (Scene3D.cameraOut), shared by every
+# project (data/v2/cameras.json). The ready-made moves live in the page (Scene3D.CAM_MOVES).
+V2_CAMERAS = V2_DIR / "cameras.json"
+
+
+class V2Camera(BaseModel):
+    id: str = Field(..., min_length=1, max_length=40, pattern=r"^[A-Za-z0-9_-]+$")
+    name: str = Field(..., min_length=1, max_length=80)
+    keys: list[dict[str, Any]] = Field(..., min_length=1, max_length=500)
+    fx: str | None = Field(None, max_length=20)  # the shake style
+    dof: float | None = Field(None, ge=0, le=32)  # the aperture (f-stop), none: everything sharp
+    h: float | None = Field(None, gt=0)  # the subject's height it was saved with
+    notes: str = Field("", max_length=2000)
+
+
+def _v2_cameras() -> list[dict[str, Any]]:
+    try:
+        return json.loads(V2_CAMERAS.read_text("utf-8")).get("cameras", [])
+    except (OSError, ValueError):
+        return []
+
+
+def _v2_cameras_write(items: list[dict[str, Any]]) -> None:
+    V2_CAMERAS.parent.mkdir(parents=True, exist_ok=True)
+    tmp = V2_CAMERAS.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"cameras": items}, ensure_ascii=False, indent=1), "utf-8")
+    tmp.replace(V2_CAMERAS)
+
+
+@app.get("/api/v2/cameras")
+async def v2_cameras_list():
+    return {"cameras": _v2_cameras()}
+
+
+@app.put("/api/v2/cameras/{cam_id}")
+async def v2_cameras_put(cam_id: str, req: V2Camera):
+    if req.id != cam_id:
+        raise HTTPException(400, "The id doesn't match")
+    items = _v2_cameras()
+    old = next((c for c in items if c.get("id") == cam_id), None)
+    item = {**req.model_dump(), "updated": time.time(), "created": (old or {}).get("created", time.time())}
+    _v2_cameras_write([c for c in items if c.get("id") != cam_id] + [item])
+    return item
+
+
+@app.delete("/api/v2/cameras/{cam_id}")
+async def v2_cameras_delete(cam_id: str):
+    items = _v2_cameras()
+    keep = [c for c in items if c.get("id") != cam_id]
+    if len(keep) == len(items):
+        raise HTTPException(404, "No such camera")
+    _v2_cameras_write(keep)
+    return {"ok": True}
+
+
 class SceneCopy(BaseModel):
     name: str | None = Field(None, max_length=120)
     project: str | None = Field(None, max_length=200)

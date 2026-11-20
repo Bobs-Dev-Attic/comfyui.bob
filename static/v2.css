@@ -55,6 +55,22 @@ body.v2 { height: 100vh; overflow: hidden; display: grid; grid-template-rows: au
 .v2-objadd { position: absolute; top: 6px; right: 6px; width: 22px; height: 22px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-ink); cursor: pointer; opacity: 0; font-weight: 700; }
 .v2-obj:hover .v2-objadd, .v2-obj:focus-within .v2-objadd { opacity: 1; }
 .v2-view.v2-drop { outline: 2px dashed var(--accent); outline-offset: -6px; }
+/* the camera library */
+.v2-camopts { display: flex; gap: 8px; padding: 0 8px 6px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+.v2-camopts label { display: grid; gap: 2px; flex: 1; min-width: 90px; }
+.v2-camlist { overflow: auto; padding: 0 8px 8px; display: grid; gap: 4px; align-content: start; }
+.v2-cam { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 6px; align-items: center; padding: 5px 6px; border-radius: 7px;
+  border: 1px solid transparent; cursor: pointer; font-size: 12.5px; }
+.v2-cam:hover, .v2-cam:focus-visible { background: var(--panel-2); border-color: var(--line); }
+.v2-cam > span:nth-child(2) { display: grid; min-width: 0; }
+.v2-cam b { font-weight: 600; }
+.v2-cam .hint { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.v2-camic { font-size: 17px; text-align: center; }
+.v2-cam .v2-x { visibility: hidden; }
+.v2-cam:hover .v2-x { visibility: visible; }
+.v2-camh { font-size: 12px; margin: 8px 2px 2px; color: var(--muted); }
+.v2-tabs button { font-size: 12.5px; padding: 6px 4px; }
+
 /* the object editor */
 .v2-ed { display: grid; gap: 10px; padding: 4px 2px; }
 .v2-ed .field { display: grid; gap: 4px; margin: 0; }

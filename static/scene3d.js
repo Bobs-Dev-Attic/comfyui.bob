@@ -2323,6 +2323,127 @@ const Scene3D = (() => {
     save(); renderSide(); s.dirty = true;
     return o;
   }
+  /* ---------------------------------------------------------------- camera moves (V2's camera library)
+     Ready-made camera moves, worked out around the shot's subject (the selected object, else the first person, else
+     the first object, else what the camera looks at) and over the scene's length. Each writes the camera keys (lens,
+     focus and shake included where the move has them), replacing the ones there; ↶ Undo takes it back.
+     o: {framing: "close" | "medium" | "wide" | "extreme", speed: "smooth" | "steady"}. A camera saved from a shot
+     (cameraOut) is kept relative to its subject, so it fits another scene's subject the same way (applySavedCamera). */
+  const FRAMING = { close: { m: 0.62, at: 0.86 }, medium: { m: 1.35, at: 0.7 }, wide: { m: 3.2, at: 0.5 }, extreme: { m: 7, at: 0.45 } };
+  function camSubject() {
+    const shown = s.objs.filter(o => o.mesh && o.pos && !o.hidden);
+    const sel = s.objs[s.sel], o = sel && shown.includes(sel) ? sel : shown.find(x => x.prim === "figure") || shown[0] || null;
+    if (!o) { const c = camBase(0); return { o: null, base: [c.target[0], c.target[1] - 1, c.target[2]], h: 1.7, yaw: 0 }; }
+    const p = poseAt(o, 0), h = Math.max(0.05, (o.mesh.hi[1] - o.mesh.lo[1]) * (o.stretch?.[1] || 1) * (p.scale ?? 1));
+    return { o, base: p.pos.slice(), h, yaw: o.yaw || 0 };
+  }
+  // A camera at `eye` looking at `target`, as the orbit the keys hold.
+  function camFrom(eye, target, extra = {}) {
+    const d = sub(eye, target), dist = Math.max(1e-3, Math.hypot(...d));
+    return { yaw: Math.atan2(d[0], d[2]) / rad, pitch: Math.asin(Math.max(-1, Math.min(1, d[1] / dist))) / rad, dist, target: target.slice(), ...extra };
+  }
+  const rotY = (v, deg) => { const a = deg * rad, c = Math.cos(a), si = Math.sin(a); return [v[0] * c + v[2] * si, v[1], -v[0] * si + v[2] * c]; };
+  // Keys every `step` seconds from f(u) (u from 0 to 1 over the length), the last at the end.
+  const keysOf = (f, T, n) => Array.from({ length: n + 1 }, (_, i) => ({ t: +(T * i / n).toFixed(3), ...f(i / n) }));
+  const CAM_MOVES = [
+    { id: "static", icon: "📷", name: "Locked off", says: "Holds still on the subject." },
+    { id: "push", icon: "⤵", name: "Push in", says: "Moves slowly towards the subject." },
+    { id: "pull", icon: "⤴", name: "Pull back", says: "Moves slowly away, showing more of the place." },
+    { id: "orbit", icon: "🔄", name: "Orbit 360°", says: "Circles all the way round the subject." },
+    { id: "half", icon: "◐", name: "Half orbit", says: "Goes halfway round the subject." },
+    { id: "arcl", icon: "↺", name: "Arc left", says: "Curves a little round the subject, to the left." },
+    { id: "arcr", icon: "↻", name: "Arc right", says: "Curves a little round the subject, to the right." },
+    { id: "truckl", icon: "⇠", name: "Track left", says: "Slides sideways to the left, keeping its direction." },
+    { id: "truckr", icon: "⇢", name: "Track right", says: "Slides sideways to the right, keeping its direction." },
+    { id: "craneup", icon: "🏗", name: "Crane up", says: "Rises up and looks down on the subject." },
+    { id: "cranedown", icon: "⬇", name: "Crane down", says: "Comes down from above to eye level." },
+    { id: "panl", icon: "◀", name: "Pan left", says: "Stays put and turns to the left." },
+    { id: "panr", icon: "▶", name: "Pan right", says: "Stays put and turns to the right." },
+    { id: "tiltup", icon: "▲", name: "Tilt up", says: "Stays put and tilts up from the feet to the face." },
+    { id: "low", icon: "🦸", name: "Low angle", says: "Looks up at the subject from near the ground: a hero shot." },
+    { id: "top", icon: "⬇️", name: "Top down", says: "Looks straight down from above." },
+    { id: "handheld", icon: "🤳", name: "Handheld", says: "Held by hand, with a natural slight shake." },
+    { id: "follow", icon: "🚶", name: "Follow", says: "Walks after the subject along its path, handheld." },
+    { id: "zoom", icon: "🔍", name: "Zoom in", says: "Stays put and zooms in (a longer lens)." },
+    { id: "vertigo", icon: "🌀", name: "Dolly zoom", says: "Pulls back while zooming in: the subject stays, the place stretches." },
+    { id: "rack", icon: "🎯", name: "Push in, rack focus", says: "Pushes in while the focus pulls from the background to the subject." },
+  ];
+  function cameraMove(id, o = {}) {
+    if (!s?.bg) return null;
+    const F = FRAMING[o.framing] || FRAMING.medium, T = dur(), sub0 = camSubject();
+    const tv = fovOf({ lens: baseLens() }).tv, d0 = Math.max(s.bg.dmed * 0.05, sub0.h * F.m / (2 * tv));
+    const look = [sub0.base[0], sub0.base[1] + sub0.h * F.at, sub0.base[2]];
+    const yaw0 = camBase(0).yaw, pitch0 = 4, ease = o.speed === "steady" ? null : "inout";
+    const at = (yaw, pitch, dist, target = look, extra = {}) => ({ yaw, pitch, dist, target: target.slice(), ...extra });
+    let keys, fx = null, dof = null;
+    switch (id) {
+      case "static": keys = [{ t: 0, ...at(yaw0, pitch0, d0) }]; break;
+      case "push": keys = [{ t: 0, ...at(yaw0, pitch0, d0 * 1.5) }, { t: T, ...at(yaw0, pitch0, d0 * 0.75) }]; break;
+      case "pull": keys = [{ t: 0, ...at(yaw0, pitch0, d0 * 0.75) }, { t: T, ...at(yaw0, pitch0 + 6, d0 * 2.2) }]; break;
+      case "orbit": keys = keysOf(u => at(yaw0 + 360 * u, pitch0 + 2, d0), T, 8); break;
+      case "half": keys = keysOf(u => at(yaw0 + 180 * u, pitch0 + 2, d0), T, 4); break;
+      case "arcl": keys = keysOf(u => at(yaw0 - 50 * u, pitch0, d0), T, 2); break;
+      case "arcr": keys = keysOf(u => at(yaw0 + 50 * u, pitch0, d0), T, 2); break;
+      case "truckl": case "truckr": {
+        const c = at(yaw0, pitch0, d0), r = axesOf(c).r, w = d0 * 0.9 * (id === "truckl" ? -1 : 1);
+        const tg = u => addv(look, mulv(r, w * (u - 0.5)));
+        keys = keysOf(u => at(yaw0, pitch0, d0, tg(u)), T, 2); break;
+      }
+      case "craneup": keys = [{ t: 0, ...at(yaw0, 2, d0) }, { t: T, ...at(yaw0, 40, d0 * 1.35) }]; break;
+      case "cranedown": keys = [{ t: 0, ...at(yaw0, 40, d0 * 1.35) }, { t: T, ...at(yaw0, 2, d0) }]; break;
+      case "panl": case "panr": {
+        const e = eyeOf(at(yaw0, pitch0, d0)), f = sub(look, e), sgn = id === "panl" ? 1 : -1;
+        keys = keysOf(u => camFrom(e, addv(e, rotY(f, sgn * (-25 + 50 * u)))), T, 2); break;
+      }
+      case "tiltup": {
+        const e = eyeOf(at(yaw0, 0, d0)), lo = [look[0], sub0.base[1] + sub0.h * 0.1, look[2]], hi = [look[0], sub0.base[1] + sub0.h * 0.9, look[2]];
+        keys = [{ t: 0, ...camFrom(e, lo) }, { t: T, ...camFrom(e, hi) }]; break;
+      }
+      case "low": { const e = [0, 0, 0], c = at(yaw0, 0, d0 * 0.9), e0 = eyeOf(c); e[0] = e0[0]; e[2] = e0[2]; e[1] = sub0.base[1] + sub0.h * 0.12;
+        keys = [{ t: 0, ...camFrom(e, [look[0], sub0.base[1] + sub0.h * 0.75, look[2]]) }]; break; }
+      case "top": keys = [{ t: 0, ...at(yaw0, 82, d0 * 1.4, [look[0], sub0.base[1], look[2]]) }]; break;
+      case "handheld": keys = [{ t: 0, ...at(yaw0, pitch0, d0, look, { shake: 35 }) }]; fx = "handheld"; break;
+      case "follow": {
+        if (!sub0.o?.keys?.length || sub0.o.keys.length < 2) { Media.toast("Follow needs a subject that moves: give it a path first (key it at two times)."); return null; }
+        const off = sub(eyeOf(at(yaw0, pitch0 + 4, d0)), look);
+        keys = keysOf(u => { const p = poseAt(sub0.o, u * T).pos, tg = [p[0], p[1] + sub0.h * F.at, p[2]]; return { ...camFrom(addv(tg, off), tg), shake: 25 }; }, T, Math.max(2, Math.round(T * 2)));
+        fx = "walking"; break;
+      }
+      case "zoom": { const L = baseLens(); keys = [{ t: 0, ...at(yaw0, pitch0, d0 * 1.6, look, { lens: L }) }, { t: T, ...at(yaw0, pitch0, d0 * 1.6, look, { lens: L * 2.2 }) }]; break; }
+      case "vertigo": { const L = baseLens(); keys = [{ t: 0, ...at(yaw0, pitch0, d0, look, { lens: L }) }, { t: T, ...at(yaw0, pitch0, d0 * 2.2, look, { lens: L * 2.2 }) }]; break; }
+      case "rack": keys = [{ t: 0, ...at(yaw0, pitch0, d0 * 1.4, look, { focus: d0 * 6 }) }, { t: T * 0.45, ...at(yaw0, pitch0, d0 * 1.1, look, { focus: d0 * 6 }) }, { t: T, ...at(yaw0, pitch0, d0 * 0.85, look, { focus: d0 * 0.85 }) }];
+        dof = 2.8; break;
+      default: return null;
+    }
+    return { keys: keys.map((k, i) => ({ ...camOf(k), t: k.t, ...(ease && i < keys.length - 1 && keys.length > 1 ? { ease } : {}) })), fx, dof };
+  }
+  // Put camera keys on the scene (from a move or a saved camera): one ↶ Undo step.
+  function setCameraKeys(r) {
+    if (!r?.keys?.length) return false;
+    s.camKeys = r.keys.map(k => ({ ...k })).sort((a, b) => a.t - b.t);
+    const fx = { ...(s.sc.fx || {}) }; delete fx.crane;
+    if (r.fx && SHAKES[r.fx]) fx.shake_style = r.fx;
+    s.sc.fx = fx;
+    if (r.dof) s.sc.dof = { ...(s.sc.dof || {}), fstop: r.dof };
+    s.camFree = false;
+    save(); setTime(Math.min(s.t, dur())); renderSide(); s.dirty = true;
+    return true;
+  }
+  const applyCameraMove = (id, o = {}) => setCameraKeys(cameraMove(id, o));
+  // The shot's camera, relative to its subject: times as fractions of the length, yaw from the subject's facing,
+  // targets as offsets from its feet turned with it; lens, focus, shake, easing, shake style and aperture kept.
+  function cameraOut() {
+    if (!s?.bg || !s.camKeys.length) return null;
+    const S = camSubject(), T = dur() || 1;
+    return { keys: s.camKeys.map(k => ({ ...camOf(k), t: +(k.t / T).toFixed(4), yaw: k.yaw - S.yaw, target: rotY(sub(k.target, S.base), -S.yaw), ...(k.ease ? { ease: k.ease } : {}) })),
+      fx: s.sc.fx?.shake_style || null, dof: +s.sc.dof?.fstop || null, h: S.h };
+  }
+  function applySavedCamera(c) {
+    if (!s?.bg || !c?.keys?.length) return false;
+    const S = camSubject(), T = dur(), k = c.h ? S.h / c.h : 1;  // a bigger subject: the camera stands further off
+    return setCameraKeys({ fx: c.fx, dof: c.dof, keys: c.keys.map(x => ({ ...x, t: +(x.t * T).toFixed(3), yaw: x.yaw + S.yaw, dist: x.dist * k,
+      target: addv(S.base, rotY(x.target.map(v => v * k), S.yaw)), ...(x.focus ? { focus: x.focus * k } : {}) })) });
+  }
   async function make3d(i) {
     const o = s.objs[i]; if (!o?.mask) return;
     try {
@@ -3443,6 +3564,6 @@ const Scene3D = (() => {
     requestAnimationFrame(step); renderTime();
   }
 
-  return { mount, autoRender, current, addFromLibrary, renderForShot, photoForShot, fromTemplate, setTemplate, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
+  return { mount, autoRender, current, addFromLibrary, CAM_MOVES, applyCameraMove, cameraOut, applySavedCamera, renderForShot, photoForShot, fromTemplate, setTemplate, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
     _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _fill: (P, look, say) => fillGaps(P, look, say), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
 })();
