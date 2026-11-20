@@ -75,7 +75,7 @@ const Scene3D = (() => {
   const normKeys = K => (K || []).map(k => ({ pitch: 0, roll: 0, ...k }));
   // An object's pose at time t.
   function poseAt(o, t) {
-    const P = o.keys?.length ? { ...interp(o.keys, t, ["pos"]) } : baseOf(o);  // a copy: before the first key interp gives the key itself
+    const P = o.keys?.length ? { ...interp(o.keys, easeT(t, o.keys), ["pos"]) } : baseOf(o);  // a copy: before the first key interp gives the key itself
     if (o.face) P.heading = headingAt(o, t);
     return P;
   }
@@ -84,7 +84,7 @@ const Scene3D = (() => {
      rendered only: keys keep the object's own rotation. Yaw 0 faces +Z, so the heading of a step (dx, dz) is atan2. */
   function headingAt(o, t) {
     const K = o.keys; if (!K || K.length < 2) return 0;
-    const at = tt => interp(K, Math.max(K[0].t, Math.min(K.at(-1).t, tt)), ["pos"]).pos, h = 1 / 48;
+    const at = tt => interp(K, easeT(Math.max(K[0].t, Math.min(K.at(-1).t, tt)), K), ["pos"]).pos, h = 1 / 48;
     const dirAt = tt => { const a = at(tt - h), b = at(tt + h); return [b[0] - a[0], b[2] - a[2]]; };
     const H = o.mesh ? (o.mesh.hi[1] - o.mesh.lo[1]) * (o.stretch?.[1] || 1) * (interp(K, t, ["pos"]).scale || 1) : 1;
     const moving = d => Math.hypot(d[0], d[1]) > 0.004 * Math.max(0.05, H);  // over about a tenth of its height a second
@@ -136,8 +136,8 @@ const Scene3D = (() => {
     out: { label: "Ease out: slows down into the next key", short: "ease out", f: u => 1 - (1 - u) ** 3 },
     inout: { label: "Ease in and out: starts and stops gently", short: "ease in-out", f: u => u < 0.5 ? 4 * u * u * u : 1 - (-2 * u + 2) ** 3 / 2 },
   };
-  function easeT(t) {
-    const K = s.camKeys;
+  // K: the camera's keys, or an object's (each key's ease is how it gets to the next)
+  function easeT(t, K = s.camKeys) {
     if (K.length < 2 || t <= K[0].t || t >= K.at(-1).t) return t;
     let i = 0; while (K[i + 1].t < t) i++;
     const a = K[i], b = K[i + 1], e = EASES[a.ease]?.f; if (!e) return t;
@@ -3686,6 +3686,11 @@ const Scene3D = (() => {
       t = Math.max(0, Math.min(dur(), Math.round(t * FPS) / FPS));
       if (o.keys.some((x, j) => j !== k && near(x.t, t))) { Media.toast(`${o.name} has a key at that frame already.`); return false; }
       q.t = t; o.keys.sort((a, b) => a.t - b.t); fromFirstKey(o);
+      save(); setTime(s.t); renderSide(); s.dirty = true; return true;
+    },
+    ease(i, k, e) {
+      const q = s?.bg && s.objs[i]?.keys?.[k]; if (!q) return false;
+      if (EASES[e]) q.ease = e; else delete q.ease;
       save(); setTime(s.t); renderSide(); s.dirty = true; return true;
     },
     remove(i, k) {

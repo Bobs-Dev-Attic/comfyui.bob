@@ -33,7 +33,9 @@
    (the shots, sized by the part used, transitions as overlaps), 🗣 sound (each shot's lines and background sound) and
    🎵 music (the soundtrack). The camera layer edits the open shot's camera: drag a key to retime it, click one to go
    to it, double-click to add one, right-click for delete, easing and more; a playhead runs across, and a click on the
-   ruler moves it. It folds away and its height drags; zoom fits or magnifies. While something is being made
+   ruler moves it (drag along the ruler to scrub). Objects' keys have easing like the camera's. Markers (🚩, or M)
+   label moments of the whole timeline: drag one to move it, double-click to name it, right-click for more. The
+   mouse wheel over the timeline zooms about the cursor (Shift+wheel scrolls), and times show in seconds or frames. It folds away and its height drags; zoom fits or magnifies. While something is being made
    it shows the Log instead: every step and the studio's own log lines for each job, with progress, until it's done.
    A shot's words are kept with its scene too (v2shot), so a scene template carries them to any project.
 
@@ -563,7 +565,10 @@ const V2 = (() => {
 
   /* ---- the timeline's size: folded or not, its height, its zoom (kept in this browser) */
   const TLK = "bob.v2.tl";
-  const tlUI = (() => { try { return { h: 210, fold: false, z: 0, ...JSON.parse(localStorage.getItem(TLK) || "{}") }; } catch { return { h: 210, fold: false, z: 0 }; } })();
+  const tlUI = (() => { try { return { h: 210, fold: false, z: 0, units: "s", ...JSON.parse(localStorage.getItem(TLK) || "{}") }; } catch { return { h: 210, fold: false, z: 0, units: "s" }; } })();
+  // a time as the timeline shows it: seconds, or frames (24 a second)
+  const fmtT = (t, dp = 1) => tlUI.units === "f" ? `${Math.round(t * 24)} f` : `${(+t).toFixed(dp)} s`;
+  const markers = () => (st.board.settings.markers ||= []);
   const saveTlUI = () => { try { localStorage.setItem(TLK, JSON.stringify(tlUI)); } catch {} };
   function applyTlUI() {
     const tl = $("v2-tl"), h = Math.max(110, Math.min(Math.round(innerHeight * 0.7), tlUI.h));
@@ -746,13 +751,19 @@ const V2 = (() => {
   const LABEL = 96;
   function renderTimeline() {
     const box = $("v2-tracks"), shots = st.board.shots, L = layout(), T = Math.max(1, totalSeconds());
-    $("v2-total").textContent = shots.length ? `${shots.length} shot${shots.length === 1 ? "" : "s"} · ${totalSeconds().toFixed(1)} s` : "";
+    $("v2-total").textContent = shots.length ? `${shots.length} shot${shots.length === 1 ? "" : "s"} · ${fmtT(totalSeconds())}` : "";
+    $("v2-tlunits").textContent = tlUI.units === "f" ? "f" : "s";
     if (st.tlv === "log" || tlUI.fold) return;
     const fitW = Math.max(200, ($("v2-tlbody").clientWidth || 800) - LABEL - 16), pps = fitW / T * 2 ** tlUI.z, W = Math.ceil(T * pps);
     st.pps = pps; st.layout = L;
     const x = t => `${(t * pps).toFixed(1)}px`, w = d => `${Math.max(2, d * pps).toFixed(1)}px`;
-    const step = [0.5, 1, 2, 5, 10, 15, 30, 60].find(v => v * pps >= 46) || 60;
-    const ticks = []; for (let t = 0; t <= T + 1e-6; t += step) ticks.push(`<span class="v2-tick" style="left:${x(t)}">${t % 1 ? t.toFixed(1) : t}s</span>`);
+    const steps = tlUI.units === "f" ? [1, 2, 6, 12, 24, 48, 120, 240, 480, 1440].map(f => f / 24) : [0.5, 1, 2, 5, 10, 15, 30, 60];
+    const step = steps.find(v => v * pps >= 46) || steps.at(-1);
+    const ticks = [];
+    for (let i = 0, t = 0; t <= T + 1e-6; t = ++i * step) ticks.push(`<span class="v2-tick" style="left:${x(t)}">${tlUI.units === "f" ? Math.round(t * 24) : t % 1 ? t.toFixed(1) : t}${tlUI.units === "f" ? "" : "s"}</span>`);
+    // markers: a flag on the ruler, a line down the layers
+    const marks = markers().map(m => `<span class="v2-mark" data-m="${esc(m.id)}" style="left:${x(m.t)}" title="${esc(m.label || "Marker")} · ${fmtT(m.t, 2)}\nDrag to move · double-click to name · right-click for more">🚩${m.label ? ` ${esc(m.label)}` : ""}</span>`).join("");
+    const markLines = markers().map(m => `<div class="v2-markline" style="left:calc(${LABEL}px + ${x(m.t)})"></div>`).join("");
     const tname = s => document.querySelector(`#v2-trans option[value="${s.transition}"]`)?.textContent || s.transition;
     // 🎥 camera: each shot's keys inside the part of its video used; a line between keys where it moves
     const cam = L.map(({ s, start, p }) => {
@@ -768,7 +779,7 @@ const V2 = (() => {
     const vid = L.map(({ s, i, start, p }) => {
       const it = latest(s), j = i < L.length - 1 ? joinOf(s, i, shots) : 0, th = thumbOf(s);
       return `<div class="v2-clip${s.id === st.sel ? " sel" : ""}${it?.status === "done" ? " done" : ""}" draggable="true" data-id="${esc(s.id)}" style="left:${x(start)};width:${w(p.d)}" title="${esc(s.name)} · ${p.d.toFixed(1)} s${p.a ? ` (from ${p.a.toFixed(1)} s in)` : ""}">
-          ${th ? `<img src="${esc(th)}" alt="" loading="lazy">` : ""}<span class="v2-cliptx"><b>${i + 1}</b> ${esc(s.name)}</span><span class="v2-clipd">${p.d.toFixed(1)} s ${badge(it)}</span></div>`
+          ${th ? `<img src="${esc(th)}" alt="" loading="lazy">` : ""}<span class="v2-cliptx"><b>${i + 1}</b> ${esc(s.name)}</span><span class="v2-clipd">${fmtT(p.d)} ${badge(it)}</span></div>`
         + (j ? `<div class="v2-trans" style="left:${x(start + p.d - j)};width:${w(j)}" title="${esc(tname(s))}, ${j.toFixed(1)} s">⧖</div>` : "");
     }).join("");
     // 🗣 sound: each shot's lines and background sound
@@ -785,12 +796,13 @@ const V2 = (() => {
       : `<button type="button" class="v2-tlmb v2-musadd" data-a="music" style="left:0">🎵 Add a soundtrack…</button>`;
     box.style.setProperty("--tlw", `${W}px`);
     box.innerHTML = !shots.length ? `<p class="hint v2-tlnone">Shots line up here in order, with their camera, sound and music.</p>` : `
-      <div class="v2-trow v2-ruler"><span class="v2-tlab"></span><div class="v2-lane">${ticks.join("")}</div></div>
+      <div class="v2-trow v2-ruler"><span class="v2-tlab" title="Click or drag along the ruler to move the play line; right-click to add a marker">${tlUI.units === "f" ? "frames" : "seconds"}</span><div class="v2-lane">${ticks.join("")}${marks}</div></div>
       <div class="v2-trow v2-tcam"><span class="v2-tlab" title="Each shot's camera keys">🎥 Camera</span><div class="v2-lane">${cam}</div></div>
       ${objRows(L, x, w)}
       <div class="v2-trow v2-tvid"><span class="v2-tlab" title="The shots, in order; drag one to move it">🎞 Video</span><div class="v2-lane">${vid}</div></div>
       <div class="v2-trow v2-tsnd"><span class="v2-tlab" title="Each shot's dialogue and background sound">🗣 Sound</span><div class="v2-lane">${snd}</div></div>
       <div class="v2-trow v2-tmus"><span class="v2-tlab" title="One piece of music under every shot">🎵 Music</span><div class="v2-lane">${mus}</div></div>
+      ${markLines}
       <div class="v2-playhead" id="v2-playhead" hidden></div>`;
     placePlayhead();
   }
@@ -805,11 +817,13 @@ const V2 = (() => {
       return `<div class="v2-trow v2-tobj${i === c.sel ? " sel" : ""}"><span class="v2-tlab" title="${esc(o.name)}: ${K.length ? `${K.length} keys` : "where it stands (no keys)"}">↳ ${esc(o.name)}</span><div class="v2-lane">
           <div class="v2-objseg" data-obj="${i}" data-shot="${esc(s.id)}" style="left:${x(start)};width:${w(p.d)}" title="${esc(o.name)}: double-click to key it here; right-click for more">
             ${moves && inside.length > 1 ? `<i class="v2-objline" style="left:${x(inside[0].t - p.a)};width:${w(inside.at(-1).t - inside[0].t)}"></i>` : ""}
-            ${inside.map(k => `<b class="v2-okey" data-o="${i}" data-k="${K.indexOf(k)}" style="left:${x(k.t - p.a)}" title="${k.t.toFixed(2)} s · frame ${Math.round(k.t * 24)}\nDrag to retime · right-click for more">◆</b>`).join("")}
+            ${inside.map(k => `<b class="v2-okey${k.ease ? " ease" : ""}" data-o="${i}" data-k="${K.indexOf(k)}" style="left:${x(k.t - p.a)}" title="${k.t.toFixed(2)} s · frame ${Math.round(k.t * 24)}${k.ease ? ` · ${esc(Scene3D.camEdit.EASES[k.ease] || "eased")}` : ""}\nDrag to retime · right-click for more">◆</b>`).join("")}
             ${!K.length ? `<span class="v2-camtxt">no keys: it stays where it is</span>` : ""}</div></div></div>`;
     }).join("");
   }
   // The playhead: the open shot's time, where that shot sits on the timeline.
+  // the play line follows playback smoothly (started by init: the scene builder loads after this file)
+  function follow() { if (st.tlv === "tl" && !tlUI.fold) placePlayhead(); requestAnimationFrame(follow); }
   function placePlayhead() {
     const ph = $("v2-playhead"), c = Scene3D.current(); if (!ph) return;
     const L = st.layout?.find(q => q.s.scene === c?.id);
@@ -823,6 +837,25 @@ const V2 = (() => {
     const T = (clientX - lane.getBoundingClientRect().left) / st.pps;
     const L = st.layout.slice().reverse().find(q => T >= q.start - 1e-6) || st.layout[0];
     return L ? { L, t: Math.max(L.p.a, Math.min(L.p.b, L.p.a + T - L.start)) } : null;
+  }
+  // The play line on the whole timeline (the open shot's time where that shot sits), or null.
+  function playGlobal() {
+    const c = Scene3D.current(), L = st.layout?.find(q => q.s.scene === c?.id);
+    return c && L ? L.start + Math.max(L.p.a, Math.min(L.p.b, c.t)) - L.p.a : null;
+  }
+  const globalAt = clientX => { const lane = document.querySelector("#v2-tracks .v2-lane"); return lane ? Math.max(0, (clientX - lane.getBoundingClientRect().left) / st.pps) : 0; };
+  async function goGlobal(T) {
+    const L = st.layout?.slice().reverse().find(q => T >= q.start - 1e-6) || st.layout?.[0]; if (!L) return;
+    await openAt(L); Scene3D.camEdit.seek(Math.max(L.p.a, Math.min(L.p.b, L.p.a + T - L.start))); placePlayhead();
+  }
+  function addMarker(T) {
+    const n = markers().length + 1;
+    markers().push({ id: uid(), t: Math.round(T * 24) / 24, label: `Marker ${n}` }); markers().sort((a, b) => a.t - b.t);
+    save(); renderTimeline();
+  }
+  function nameMarker(m) {
+    const v = prompt("Name this marker", m.label || ""); if (v == null) return;
+    m.label = v.trim().slice(0, 60); save(); renderTimeline();
   }
   async function openAt(L) { if (!openOf(L.s)) { await openShot(L.s.id); for (let k = 0; k < 40 && !openOf(L.s); k++) await new Promise(r => setTimeout(r, 100)); } }
   // The camera layer: drag a key to retime it, click it to go there, double-click to add one, right-click for more.
@@ -859,9 +892,14 @@ const V2 = (() => {
       const at = timeAt(e.clientX); if (!at || !openOf(at.L.s)) return;
       const i = +seg.dataset.obj, ok = e.target.closest(".v2-okey"), o = Scene3D.current().objs[i];
       if (ok) {
-        const k = +ok.dataset.k, q = o.keys[k];
+        const k = +ok.dataset.k, q = o.keys[k], last = k === o.keys.length - 1, E = Scene3D.camEdit.EASES;
         return Media.menu(e.clientX, e.clientY, [
           [`◆ Go to this key (${q.t.toFixed(2)} s)`, () => { Scene3D.select(i); Scene3D.camEdit.seek(q.t); }],
+          null,
+          ...(last ? [] : [
+            [`${!q.ease ? "● " : ""}Steady to the next key`, () => { Scene3D.objEdit.ease(i, k, null); renderTimeline(); }],
+            ...Object.entries(E).map(([v, label]) => [`${q.ease === v ? "● " : ""}${label}`, () => { Scene3D.objEdit.ease(i, k, v); renderTimeline(); }]),
+            null]),
           [`🗑 Delete this key${o.keys.length <= 2 ? ` (${o.name} then stays still)` : ""}`, () => { Scene3D.objEdit.remove(i, k); renderTimeline(); }],
         ]);
       }
@@ -925,11 +963,58 @@ const V2 = (() => {
         ["🎥 The camera's details", async () => { await openAt(at.L); Scene3D.selectCam(); Scene3D.camEdit.seek(at.t); }],
       ]);
     });
-    // the ruler: a click moves the playhead (opening that shot when it isn't open)
-    tr.addEventListener("click", async e => {
-      if (!e.target.closest(".v2-ruler")) return;
-      const at = timeAt(e.clientX); if (!at) return;
-      await openAt(at.L); Scene3D.camEdit.seek(at.t); placePlayhead();
+    // the ruler: press or drag along it to move the play line (scrubbing the open shot; another shot opens on release)
+    tr.addEventListener("pointerdown", async e => {
+      const ruler = e.target.closest(".v2-ruler"); if (!ruler || e.button !== 0 || e.target.closest(".v2-mark")) return;
+      e.preventDefault();
+      const lane = ruler.querySelector(".v2-lane"); lane.setPointerCapture(e.pointerId);
+      let last = timeAt(e.clientX);
+      if (last) { await openAt(last.L); Scene3D.camEdit.seek(last.t); placePlayhead(); }
+      const mv = ev => { const at = timeAt(ev.clientX); if (!at) return; last = at; if (openOf(at.L.s)) { Scene3D.camEdit.seek(at.t); placePlayhead(); } };
+      const up = async () => { lane.removeEventListener("pointermove", mv); lane.removeEventListener("pointerup", up); if (last && !openOf(last.L.s)) { await openAt(last.L); Scene3D.camEdit.seek(last.t); } };
+      lane.addEventListener("pointermove", mv); lane.addEventListener("pointerup", up);
+    });
+    tr.addEventListener("contextmenu", e => {
+      const ruler = e.target.closest(".v2-ruler"); if (!ruler) return;
+      e.preventDefault();
+      const mk = e.target.closest(".v2-mark"), T = globalAt(e.clientX);
+      if (mk) {
+        const m = markers().find(q => q.id === mk.dataset.m); if (!m) return;
+        return Media.menu(e.clientX, e.clientY, [
+          [`▶ Go to this marker (${fmtT(m.t, 2)})`, () => goGlobal(m.t)],
+          ["✎ Name it…", () => nameMarker(m)],
+          ["🗑 Delete this marker", () => { st.board.settings.markers = markers().filter(q => q !== m); save(); renderTimeline(); }],
+        ]);
+      }
+      Media.menu(e.clientX, e.clientY, [
+        [`🚩 Add a marker here (${fmtT(T, 2)})`, () => addMarker(T)],
+        [`▶ Move the play line here`, () => goGlobal(T)],
+      ]);
+    });
+    tr.addEventListener("dblclick", e => { const mk = e.target.closest(".v2-mark"); if (mk) { const m = markers().find(q => q.id === mk.dataset.m); if (m) nameMarker(m); } });
+    tr.addEventListener("pointerdown", e => {  // drag a marker along the ruler
+      const mk = e.target.closest(".v2-mark"); if (!mk || e.button !== 0) return;
+      const m = markers().find(q => q.id === mk.dataset.m); if (!m) return;
+      e.preventDefault(); e.stopPropagation(); mk.setPointerCapture(e.pointerId);
+      const x0 = e.clientX, t0 = m.t; let moved = false;
+      const mv = ev => { const dx = ev.clientX - x0; if (Math.abs(dx) > 3) moved = true; m.t = Math.max(0, Math.min(totalSeconds(), Math.round((t0 + dx / st.pps) * 24) / 24)); mk.style.left = `${(m.t * st.pps).toFixed(1)}px`; };
+      const up = () => { mk.removeEventListener("pointermove", mv); mk.removeEventListener("pointerup", up); if (moved) save(); else goGlobal(m.t); renderTimeline(); };
+      mk.addEventListener("pointermove", mv); mk.addEventListener("pointerup", up);
+    });
+    // the mouse wheel over the timeline zooms about the cursor (Shift+wheel scrolls it sideways)
+    $("v2-tlbody").addEventListener("wheel", e => {
+      if (e.shiftKey || e.ctrlKey || !st.layout?.length) return;
+      e.preventDefault();
+      const body = $("v2-tlbody"), cx = e.clientX - body.getBoundingClientRect().left, T = (body.scrollLeft + cx - LABEL) / st.pps;
+      const z = Math.max(0, Math.min(6, tlUI.z + (e.deltaY < 0 ? 0.25 : -0.25))); if (z === tlUI.z) return;
+      tlUI.z = z; saveTlUI(); renderTimeline();
+      body.scrollLeft = Math.max(0, LABEL + T * st.pps - cx);
+    }, { passive: false });
+    // M adds a marker at the play line (not while typing)
+    document.addEventListener("keydown", e => {
+      if (e.key.toLowerCase() !== "m" || e.ctrlKey || e.metaKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "") || document.activeElement?.isContentEditable) return;
+      if (!document.querySelector(".v2-tl")?.matches(":hover") && !document.querySelector("#v2-view")?.contains(document.activeElement)) return;
+      e.preventDefault(); addMarker(playGlobal() ?? 0);
     });
   }
   function renderPanel(keepFocus = false) {
@@ -1073,6 +1158,8 @@ const V2 = (() => {
     // layer), drag a clip to reorder
     applyTlUI();
     $("v2-tlfold").onclick = () => { tlUI.fold = !tlUI.fold; saveTlUI(); applyTlUI(); renderTimeline(); };
+    $("v2-tlunits").onclick = () => { tlUI.units = tlUI.units === "f" ? "s" : "f"; saveTlUI(); renderTimeline(); };
+    $("v2-tlmark").onclick = () => addMarker(playGlobal() ?? 0);
     document.querySelectorAll(".v2-tlview [data-tlv]").forEach(b => b.onclick = () => { st.logAuto = false; if (tlUI.fold) { tlUI.fold = false; saveTlUI(); applyTlUI(); } showTlView(b.dataset.tlv); });
     document.querySelector(".v2-tlzoom").addEventListener("click", e => {
       const z = e.target.closest("[data-z]")?.dataset.z; if (!z) return;
@@ -1125,6 +1212,7 @@ const V2 = (() => {
   async function init() {
     wire();
     Scene3D.mount($("v2-view"));
+    follow();
     try { const v = await api("/api/status"); $("v2-version").textContent = `v${v.version}`; } catch {}
     try { state.caps = await api("/api/capabilities"); } catch (e) { status(`Capabilities: ${e.message}`); }
     try { for (const it of (await api("/api/items")).items || []) state.items.set(it.id, it); } catch {}
