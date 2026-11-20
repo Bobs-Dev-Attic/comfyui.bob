@@ -1075,6 +1075,7 @@ const Scene3D = (() => {
         </div>
         <div class="s3-box"><canvas class="m3-canvas s3-canvas" tabindex="0" aria-label="The 3D scene: drag an object to move it, drag elsewhere to orbit, wheel to zoom"></canvas>
         <div class="m3-hud hint s3-hud">Making the background…</div><div class="s3-frame" aria-hidden="true"></div>
+        <div class="s3-pip" hidden aria-hidden="true"><span class="s3-pip-l"></span></div>
         <div class="s3-float" role="dialog" aria-label="Position" hidden>
           <div class="s3-float-h" title="Drag to move this box"><b class="s3-float-n"></b><button type="button" class="s3-float-x" aria-label="Close">×</button></div>
           <div class="s3-float-l">Position <span class="opt s3-float-u"></span></div>
@@ -1119,7 +1120,8 @@ const Scene3D = (() => {
           <label class="check" title="See the shot camera from outside, as an object with its own gimbal (arrows move it, rings pan and tilt it)"><input type="checkbox" id="s3-camobj"> <span class="s3-camobj-l">The camera as an object</span></label>
           <div class="mo-row s3-camobj-row" hidden><button type="button" class="btn sm" data-act="cam-sel" title="Select the camera: its gimbal and position show">🎥 Select it</button>
             <button type="button" class="btn sm ghost" data-act="cam-through" title="See what it sees (orbiting then takes you back outside)">👁 Look through it</button>
-            <button type="button" class="btn sm ghost" data-act="cam-outside" title="Back outside, behind and above it">↩ Outside</button></div></section>
+            <button type="button" class="btn sm ghost" data-act="cam-outside" title="Back outside, behind and above it">↩ Outside</button></div>
+          <label class="check s3-pipf" hidden title="From outside, a small picture in the corner shows what the camera sees at the playhead: scrub or ▶ play to preview its dolly move"><input type="checkbox" id="s3-pip"> 📺 Preview what it sees</label></section>
         <section><h3>Objects</h3><ul class="mo-layers s3-objs"></ul>
           <div class="mo-find"><select class="s3-add" aria-label="A 3D model to add"></select><button type="button" class="btn sm" data-act="add">Add</button></div></section>
         <section class="s3-sel" hidden><h3 class="s3-sel-h"></h3>
@@ -1162,7 +1164,7 @@ const Scene3D = (() => {
     s = { id: sc.id, sc, win, root, cv, hud, gl, gpu: gl ? G().gpu(gl) : null, objs: (sc.objects || []).map(o => ({ ...o, keys: normKeys(o.keys) })), sel: -1, dirty: true, hist: null, hover: null,
       cam: { yaw: 0, pitch: 0, dist: 1, target: [0, 0, -1] }, showBg: true, clay: false, bg: null, tool: "move", modal: null, mouse: null,
       t: 0, seconds: +sc.seconds || 5, camKeys: (sc.camera_keys || []).slice().sort((a, b) => a.t - b.t), camFree: false, camObj: false, camSel: false,
-      floatOff: null,
+      floatOff: null, pip: (() => { try { return localStorage.getItem("bob.s3pip") !== "0"; } catch { return true; } })(),
       photos: (sc.photos || []).slice() };
     if (!gl) { hud.textContent = "This browser has no WebGL 2, so the scene can't be shown."; return; }
     s.ro = new ResizeObserver(() => { if (s) s.dirty = true; }); s.ro.observe(cv);
@@ -1472,7 +1474,16 @@ const Scene3D = (() => {
     };
     if (o?.mesh && o.keys?.length > 1) path(t => poseAt(o, t).pos, [1, 0.77, 0.24, 0.9]);
     if (camShown()) {  // the shot camera as an object
-      if (s.camKeys.length > 1) path(t => eyeOf(camAt(t)), [0.48, 0.64, 1, 0.9]);
+      if (s.camKeys.length > 1) {  // its dolly path: the line, a dot each second, and a faint camera at each key
+        path(t => eyeOf(camAt(t)), [0.48, 0.64, 1, 0.9]);
+        const dots = [], d = s.bg.dmed * 0.025;
+        for (let k = 0; k <= Math.floor(dur() + 1e-6); k++) {
+          const q = eyeOf(camAt(k));
+          dots.push([q[0] - d, q[1], q[2]], [q[0] + d, q[1], q[2]], [q[0], q[1] - d, q[2]], [q[0], q[1] + d, q[2]], [q[0], q[1], q[2] - d], [q[0], q[1], q[2] + d]);
+        }
+        s.gpu.lines(dots.flat(), VP, [0.75, 0.85, 1, 1]);
+        for (const k of s.camKeys) if (!near(k.t, s.t)) s.gpu.lines(camFrame(camAt(k.t)).flat(), VP, [0.48, 0.64, 1, 0.35]);
+      }
       s.gpu.lines(camFrame(camForRender(s.t)).flat(), VP, s.camSel ? [1, 0.6, 0.2, 1] : [0.48, 0.64, 1, 1]);
     } else if (s.camKeys.length > 1 && s.camFree) {
       path(t => eyeOf(camAt(t)), [0.48, 0.64, 1, 0.9]);
@@ -1491,7 +1502,29 @@ const Scene3D = (() => {
       s.gl.disable(s.gl.DEPTH_TEST); s.gpu.lines(pts, VP, [1, 0.48, 0.27, 0.9]); s.gl.enable(s.gl.DEPTH_TEST);
     }
     drawGizmo(VP, e, key);
+    drawPip(W, H);
     syncFloat();
+  }
+  /* The dolly preview: while you look at the shot camera from outside, a small picture in the corner shows what it
+     sees at the playhead (its move, zoom and roll as you scrub or play), at the shot's shape. */
+  function drawPip(W, H) {
+    const el = s.root.querySelector(".s3-pip"), on = s.pip && camShown();
+    if (el && el.hidden === on) el.hidden = !on;
+    if (!on) return;
+    const gl = s.gl, dpr = W / Math.max(1, s.cv.clientWidth), A = s.bg.aspect;
+    let pw = Math.min(s.cv.clientWidth * 0.3, 300), ph = pw / A;
+    if (ph > s.cv.clientHeight * 0.38) { ph = s.cv.clientHeight * 0.38; pw = ph * A; }
+    const m = 10, x = Math.round(m * dpr), y = Math.round(m * dpr), w = Math.round(pw * dpr), h = Math.round(ph * dpr);
+    const c = camForRender(s.t), { e, VP } = viewProj(w, h, c), ky = (c.yaw - 40) * rad, key = [Math.sin(ky) * 0.6, 0.85, Math.cos(ky) * 0.6 + 0.3];
+    const sky = s.bg.empty ? hexRgb(s.sc.backdrop?.sky || "#c9d3de") : [0.06, 0.06, 0.07];
+    gl.enable(gl.SCISSOR_TEST); gl.scissor(x, y, w, h); gl.viewport(x, y, w, h);
+    gl.clearColor(sky[0], sky[1], sky[2], 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); gl.enable(gl.DEPTH_TEST);
+    s.gpu.draw(s.bgMesh, { VP, M: ID, eye: e, key, unlit: true });
+    for (const o of s.objs) if (o.mesh && o.pos && !o.hidden) s.gpu.draw(o.mesh, { VP, M: matOf(o, poseAt(o, s.t)), eye: e, key, look: s.clay ? 1 : 0 });
+    gl.disable(gl.SCISSOR_TEST); gl.viewport(0, 0, W, H);
+    Object.assign(el.style, { left: `${m - 1}px`, bottom: `${m - 1}px`, width: `${w / dpr + 2}px`, height: `${h / dpr + 2}px` });
+    const lab = `🎥 ${s.t.toFixed(2)} s · ${Math.round(c.lens || baseLens())} mm${c.roll ? ` · roll ${Math.round(c.roll)}°` : ""}`;
+    const l = el.querySelector(".s3-pip-l"); if (l.textContent !== lab) l.textContent = lab;
   }
   function loop() { if (!s || s.closed) return; if (s.dirty) { s.dirty = false; draw(); } s.raf = requestAnimationFrame(loop); }
 
@@ -1763,6 +1796,7 @@ const Scene3D = (() => {
       }
       if (po?.prim && id === "s3-color") return changed(po);
       if (id === "s3-camobj") return setCamObj(e.target.checked);
+      if (id === "s3-pip") { s.pip = e.target.checked; try { localStorage.setItem("bob.s3pip", s.pip ? "1" : "0"); } catch { /* not kept */ } s.dirty = true; return; }
       const k = e.target.dataset.opt; if (!k) return;
       s[k] = e.target.checked; s.dirty = true;
     });
@@ -2771,6 +2805,7 @@ const Scene3D = (() => {
     const K = s.camKeys, cb = s.root.querySelector("#s3-camobj");
     if (cb) {
       cb.checked = !!s.camObj; s.root.querySelector(".s3-camobj-row").hidden = !s.camObj;
+      s.root.querySelector(".s3-pipf").hidden = !s.camObj; s.root.querySelector("#s3-pip").checked = !!s.pip;
       const sh = shotLinked();
       s.root.querySelector(".s3-camobj-l").textContent = sh ? `The camera as an object (shot ${sh.i + 1}'s)` : "The camera as an object";
       s.root.querySelector('[data-act="cam-sel"]').classList.toggle("on", !!s.camSel);

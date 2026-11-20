@@ -5,6 +5,16 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.111.0] - 2026-11-19
+
+### Added
+- **Dolly path preview for the shot camera.** Seen from outside, a moving camera's path shows a dot at each whole
+  second (so you can see where it speeds up or slows down) and a faint camera at each key, besides the camera at the
+  playhead.
+- **📺 Preview what it sees** (Camera, on by default with the camera as an object): a small picture in the corner of
+  the view shows what the shot camera sees at the playhead, in the shot's shape. It follows the dolly move, zoom and
+  roll as you scrub or ▶ play, and its label gives the time, lens and roll. Your own view stays outside.
+
 ## [0.110.0] - 2026-11-19
 
 ### Added
