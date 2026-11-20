@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bob Studio V2</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23ff7a45'/><path d='M11 9l12 7-12 7z' fill='white'/></svg>">
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/shell.css">
+  <link rel="stylesheet" href="/static/themes.css">
+  <link rel="stylesheet" href="/static/v2.css">
+  <script>
+    try { const a = JSON.parse(localStorage.getItem("bob.look") || "null"); if (a) { const r = document.documentElement;
+      r.dataset.theme = a.theme || "system"; r.dataset.accent = a.accent || "orange"; r.dataset.text = a.font_size || "normal"; r.dataset.motion = a.reduce_motion ? "reduce" : ""; } } catch {}
+  </script>
+</head>
+<body class="v2">
+  <header class="v2-top">
+    <div class="v2-brand"><span class="logo"></span>Bob Studio <b>V2</b> <small id="v2-version"></small></div>
+    <label class="v2-proj">Project <select id="v2-project" aria-label="Project"></select></label>
+    <span class="v2-grow"></span>
+    <span class="v2-status" id="v2-status" aria-live="polite"></span>
+    <a class="btn sm ghost" href="/" title="The classic Bob Studio, with everything it has">Classic ↗</a>
+  </header>
+
+  <main class="v2-main">
+    <!-- the shots: each one is a 3D scene with its own words, sound and settings -->
+    <aside class="v2-shots" aria-label="Shots">
+      <div class="v2-h"><h2>Shots</h2>
+        <button type="button" class="btn sm primary" id="v2-new" aria-haspopup="menu" title="A new shot: an empty set, or one of your scene templates">＋ New shot</button></div>
+      <div class="v2-shotlist" id="v2-shotlist" role="listbox" aria-label="Shots"></div>
+      <p class="hint v2-empty" id="v2-noshots" hidden>No shots yet. ＋ New shot starts one: a floor and a sky to place objects and the camera on, or one of your scene templates.</p>
+    </aside>
+
+    <!-- the 3D viewport: the scene builder, drawn here -->
+    <section class="v2-view" aria-label="3D viewport">
+      <div class="v2-viewhost" id="v2-view"></div>
+      <div class="v2-viewempty" id="v2-viewempty">Pick a shot, or make one with ＋ New shot.</div>
+    </section>
+
+    <!-- the shot: words, sound, settings, the model, Generate -->
+    <aside class="v2-panel" id="v2-panel" aria-label="Shot">
+      <div class="v2-h"><h2 id="v2-shot-title">Shot</h2></div>
+      <div class="v2-form" id="v2-form" hidden>
+        <div class="field"><label for="v2-name">Name</label><input id="v2-name" maxlength="80" placeholder="Beach orbit"></div>
+        <div class="field"><label for="v2-setting">Setting and environment <span class="opt">place, light, weather, style</span></label>
+          <textarea id="v2-setting" rows="3" placeholder="A sunny sandy beach by the sea, gentle waves, golden afternoon light, shot on 35 mm film"></textarea></div>
+        <div class="field"><div class="v2-lbl"><label for="v2-action">What happens</label><span class="v2-tags" id="v2-tags"></span></div>
+          <textarea id="v2-action" rows="3" placeholder="{Woman} walks towards the sea and looks back, smiling"></textarea>
+          <p class="hint">Click an object's name to put it in: <code>{Name}</code> becomes that object as the scene describes it.</p></div>
+        <div class="row2"><div class="field"><label for="v2-speaker">Who speaks</label><select id="v2-speaker"></select></div>
+          <div class="field"><label for="v2-line">Dialogue <span class="opt">optional</span></label><input id="v2-line" maxlength="300" placeholder="Come on in, the water's warm!"></div></div>
+        <div class="field"><label for="v2-sound">Background sound</label><input id="v2-sound" maxlength="300" placeholder="Waves rolling in, a light breeze, distant gulls"></div>
+        <div class="field"><label for="v2-music">Music <span class="opt">optional</span></label><input id="v2-music" maxlength="300" placeholder="Soft acoustic guitar, warm and relaxed"></div>
+        <div class="row2"><div class="field"><label for="v2-quality">Quality</label><select id="v2-quality"><option value="draft">Draft</option><option value="standard" selected>Standard</option><option value="full">Full</option></select></div>
+          <div class="field"><label>Length</label><div class="v2-len" id="v2-len">–</div></div></div>
+        <section class="v2-model" id="v2-model" aria-live="polite"></section>
+        <div class="v2-go"><button type="button" class="btn primary" id="v2-gen">🎬 Generate shot</button><span class="hint" id="v2-say"></span></div>
+        <div class="v2-result" id="v2-result"></div>
+      </div>
+    </aside>
+
+    <!-- the shots in order: a video timeline -->
+    <section class="v2-tl" aria-label="Shot timeline">
+      <div class="v2-tlbar"><b>Timeline</b><span class="hint" id="v2-total"></span><span class="v2-grow"></span>
+        <button type="button" class="btn sm" id="v2-genall" title="Generate every shot, in order">🎬 Generate all</button></div>
+      <div class="v2-tltrack" id="v2-tltrack"></div>
+    </section>
+  </main>
+
+  <script src="/static/v2.js"></script>
+  <script src="/static/winman.js"></script>
+  <script src="/static/media.js"></script>
+  <script src="/static/model3d.js"></script>
+  <script src="/static/scene3d.js"></script>
+  <script>V2.init();</script>
+</body>
+</html>
