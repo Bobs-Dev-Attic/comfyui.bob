@@ -110,8 +110,18 @@ const Scene3D = (() => {
     fromFirstKey(o);
   }
   function fromFirstKey(o) { const k = o.keys[0]; Object.assign(o, { pos: k.pos.slice(), yaw: k.yaw, pitch: k.pitch || 0, roll: k.roll || 0, scale: k.scale, ...(k.pose ? { pose: k.pose } : {}) }); }
-  const camOf = c => ({ yaw: c.yaw, pitch: c.pitch, dist: c.dist, target: c.target.slice() });
-  function camAt(t) { const c = interp(s.camKeys, t, ["yaw", "pitch", "dist", "target"]); return { ...camOf(c), dist: Math.max(s.bg.dmed * 0.02, c.dist) }; }
+  // A camera: an orbit (yaw, pitch, dist about target) and, keyed for a zoom, its lens (mm on a 36 mm wide frame).
+  const camOf = c => ({ yaw: c.yaw, pitch: c.pitch, dist: c.dist, target: c.target.slice(), ...(c.lens ? { lens: c.lens } : {}) });
+  function camAt(t) {
+    // keys without a lens have the scene's (so a zoom eases from it and back)
+    const K = s.camKeys.some(k => k.lens) ? s.camKeys.map(k => ({ ...k, lens: k.lens || baseLens() })) : s.camKeys;
+    const c = interp(K, t, ["yaw", "pitch", "dist", "target"]);
+    return { ...camOf(c), dist: Math.max(s.bg.dmed * 0.02, c.dist) };
+  }
+  // The scene's own lens, from its frame: an empty scene's (View › Lens), or the picture's (estimated from it).
+  const baseLens = () => 18 / Math.max(s.bg.t, s.bg.tv);
+  // What a camera sees: the half-angle tangents across and up, narrowed or widened by its keyed lens.
+  function fovOf(c) { const k = c?.lens ? baseLens() / c.lens : 1; return { t: s.bg.t * k, tv: s.bg.tv * k }; }
   // The playhead moved: the camera goes back on its path.
   function setTime(t) {
     s.t = Math.max(0, Math.min(dur(), t));
@@ -758,7 +768,8 @@ const Scene3D = (() => {
   const curGizmo = mode => s.camSel ? camGizmo() : gizmoOf(s.objs[s.sel], mode);
   // Set the shot camera at the playhead: its key there, or a new key.
   function editCam(c) {
-    const q = { yaw: Math.round(c.yaw * 100) / 100, pitch: Math.max(-89, Math.min(89, Math.round(c.pitch * 100) / 100)), dist: c.dist, target: c.target.slice() };
+    const q = { yaw: Math.round(c.yaw * 100) / 100, pitch: Math.max(-89, Math.min(89, Math.round(c.pitch * 100) / 100)), dist: c.dist, target: c.target.slice(),
+      ...(c.lens ? { lens: Math.round(c.lens * 10) / 10 } : {}) };
     const k = s.camKeys.find(x => near(x.t, s.t));
     if (k) Object.assign(k, q); else { s.camKeys.push({ t: s.t, ...q }); s.camKeys.sort((a, b) => a.t - b.t); }
     s.dirty = true;
@@ -786,7 +797,7 @@ const Scene3D = (() => {
   function camFrame(c) {
     const ce = eyeOf(c), f = norm(sub(c.target, ce)), r = norm(cross(f, [0, 1, 0])), u = cross(r, f), L = s.bg.dmed * 0.22;
     const at = (x, y, z) => addv(ce, addv(mulv(f, z * L), addv(mulv(r, x * L), mulv(u, y * L))));
-    const corner = (x, y) => at(x * s.bg.t, y * s.bg.tv, 1);
+    const fv = fovOf(c), corner = (x, y) => at(x * fv.t, y * fv.tv, 1);
     const cs = [corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)], out = [];
     for (let k = 0; k < 4; k++) out.push(ce, cs[k], cs[k], cs[(k + 1) % 4]);
     out.push(corner(-0.35, 1.08), corner(0, 1.4), corner(0, 1.4), corner(0.35, 1.08), corner(0.35, 1.08), corner(-0.35, 1.08));  // up
@@ -1060,7 +1071,7 @@ const Scene3D = (() => {
           <div class="s3-float-cam" hidden><div class="s3-float-l">Turn <span class="opt">degrees</span></div>
             <div class="s3-float-xyz"><label><span title="Pan, about Y">Pan</span><input type="number" class="s3f-in" data-ax="yaw" step="1"></label>
               <label><span title="Tilt: up is +, down is −">Tilt</span><input type="number" class="s3f-in" data-ax="pitch" step="1" min="-89" max="89"></label></div>
-            <div class="s3-float-l">Lens <span class="opt">focal length, 36 mm frame</span></div>
+            <div class="s3-float-l">Lens <span class="opt">mm, keyed: key two for a zoom</span></div>
             <div class="s3-float-lens"><label><input type="number" class="s3f-in" data-ax="lens" min="10" max="300" step="1" list="s3-lenses" aria-label="Focal length in mm"> mm</label>
               <span class="hint s3-float-fov"></span></div>
             <datalist id="s3-lenses">${[18, 24, 28, 35, 50, 85, 135, 200].map(v => `<option value="${v}">`).join("")}</datalist></div>
@@ -1197,6 +1208,7 @@ const Scene3D = (() => {
   // The camera of the render at time t: its path, or (without keys) the picture's own camera.
   const camForRender = t => s.camKeys.length ? camAt(t) : shotCam();
   const camDiff = (a, b) => Math.abs(a.yaw - b.yaw) + Math.abs(a.pitch - b.pitch) + Math.abs(a.dist - b.dist) / s.bg.dmed
+    + Math.abs(Math.log((a.lens || baseLens()) / (b.lens || baseLens())))
     + Math.hypot(...sub(a.target, b.target)) / s.bg.dmed;
   const cameraMoves = () => s.camKeys.length > 1 && s.camKeys.some(k => camDiff(k, s.camKeys[0]) > 1e-3);
   const startsAsPicture = () => camDiff(camForRender(0), shotCam()) < 0.02;
@@ -1400,10 +1412,10 @@ const Scene3D = (() => {
   function eye() { const c = s.cam, y = c.yaw * rad, p = c.pitch * rad; return [c.target[0] + c.dist * Math.cos(p) * Math.sin(y), c.target[1] + c.dist * Math.sin(p), c.target[2] + c.dist * Math.cos(p) * Math.cos(y)]; }
   function frameSize() { const dpr = Math.min(2, window.devicePixelRatio || 1); return [Math.max(1, Math.round(s.cv.clientWidth * dpr)), Math.max(1, Math.round(s.cv.clientHeight * dpr))]; }
   // vertical half-angle: the picture's, widened so its whole width fits a narrower window
-  function tanY(W, H) { return Math.max(s.bg.tv, s.bg.t / (W / H)); }
+  function tanY(W, H, cam = s.cam) { const f = fovOf(cam); return Math.max(f.tv, f.t / (W / H)); }
   function viewProj(W, H, cam = s.cam) {
     const e = eyeOf(cam);
-    return { e, VP: mul4(perspective(2 * Math.atan(tanY(W, H)), W / H, s.bg.dmed * 0.01, s.bg.dmed * 50), lookAt(e, cam.target, [0, 1, 0])) };
+    return { e, VP: mul4(perspective(2 * Math.atan(tanY(W, H, cam)), W / H, s.bg.dmed * 0.01, s.bg.dmed * 50), lookAt(e, cam.target, [0, 1, 0])) };
   }
   const eyeOf = c => { const y = c.yaw * rad, p = c.pitch * rad; return [c.target[0] + c.dist * Math.cos(p) * Math.sin(y), c.target[1] + c.dist * Math.sin(p), c.target[2] + c.dist * Math.cos(p) * Math.cos(y)]; };
   // r (rendering a frame): { size: [W, H], t, cam, mask: "all" | "objects" } -- no paths or selection, black behind
@@ -1454,7 +1466,7 @@ const Scene3D = (() => {
       path(t => eyeOf(camAt(t)), [0.48, 0.64, 1, 0.9]);
       // the camera at the playhead: a small frustum
       const c = camAt(s.t), ce = eyeOf(c), f = norm(sub(c.target, ce)), r = norm(cross(f, [0, 1, 0])), u = cross(r, f), L = s.bg.dmed * 0.12;
-      const corner = (x, y) => addv(ce, mulv(addv(f, addv(mulv(r, x * s.bg.t), mulv(u, y * s.bg.tv))), L));
+      const fv = fovOf(c), corner = (x, y) => addv(ce, mulv(addv(f, addv(mulv(r, x * fv.t), mulv(u, y * fv.tv))), L));
       const cs = [corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)], fr = [];
       for (let k = 0; k < 4; k++) fr.push(...ce, ...cs[k], ...cs[k], ...cs[(k + 1) % 4]);
       s.gpu.lines(fr, VP, [0.48, 0.64, 1, 1]);
@@ -1819,7 +1831,6 @@ const Scene3D = (() => {
      While an object (or the shot camera) is selected: its X, Y, Z at the playhead (and the camera's pan and tilt),
      to read and type. Drag it by its top; × hides it until something else is selected. */
   // The camera's focal length in mm on a 36 mm wide frame: an empty scene's lens, or the picture's (estimated).
-  const lensMM = () => s.bg.empty ? Math.round(+s.sc.lens || 35) : Math.round(18 / (s.bg.t || 1));
   const floatKey = () => s.camSel ? "cam" : s.objs[s.sel]?.id || null;
   function syncFloat() {
     const box = s.root.querySelector(".s3-float"); if (!box) return;
@@ -1834,13 +1845,17 @@ const Scene3D = (() => {
     s.root.querySelector(".s3-float-cam").hidden = !cam;
     const st = s.bg.empty ? 0.1 : +(s.bg.dmed * 0.02).toPrecision(2);
     box.querySelectorAll(".s3f-in").forEach(inp => {
-      const ax = inp.dataset.ax, v = ax === "yaw" ? c?.yaw : ax === "pitch" ? (c ? -c.pitch : null) : ax === "lens" ? (c ? lensMM() : null) : pos[+ax];  // tilt: up is +
-      if (ax === "lens") { inp.disabled = !s.bg.empty; inp.title = s.bg.empty ? "The camera's focal length: smaller is wider (the scene's Lens, in View)" : "The picture's own lens (estimated from it): a picture scene keeps it"; }
+      const ax = inp.dataset.ax, v = ax === "yaw" ? c?.yaw : ax === "pitch" ? (c ? -c.pitch : null) : ax === "lens" ? (c ? Math.round((c.lens || baseLens()) * 10) / 10 : null) : pos[+ax];  // tilt: up is +
+      if (ax === "lens") inp.title = `The camera's focal length at the playhead, keyed there: key another at another time to zoom. Unkeyed it's the scene's, ${Math.round(baseLens())} mm${s.bg.empty ? " (View › Lens)" : " (the picture's)"}.`;
       if (v == null) return;
       if (ax.length === 1) inp.step = String(st);
       if (document.activeElement !== inp) { const t = (Math.round(v * 1000) / 1000).toString(); if (inp.value !== t) inp.value = t; }
     });
-    if (cam) s.root.querySelector(".s3-float-fov").textContent = `${Math.round(2 * Math.atan(s.bg.t) / rad)}° wide${s.bg.empty ? "" : " · the picture's"}`;
+    if (cam) {
+      const fv = fovOf(c), wide = !s.bg.empty && (c.lens || baseLens()) < baseLens() * 0.98, el = s.root.querySelector(".s3-float-fov");
+      el.textContent = `${Math.round(2 * Math.atan(fv.t) / rad)}° wide${wide ? " · wider than the picture: its edges are empty" : ""}`;
+      el.classList.toggle("warn", wide);
+    }
     const keyed = cam ? s.camKeys.some(k => near(k.t, s.t)) : o.keys?.some(k => near(k.t, s.t));
     s.root.querySelector(".s3-float-t").textContent = `At ${s.t.toFixed(2)} s${keyed ? " (a key)" : (cam ? s.camKeys.length : o.keys?.length) ? ": typing keys it here" : ""}`;
   }
@@ -1873,9 +1888,8 @@ const Scene3D = (() => {
       const inp = e.target.closest(".s3f-in"); if (!inp || !s?.bg) return;
       const ax = inp.dataset.ax, v = parseFloat(inp.value);
       if (!Number.isFinite(v)) return syncFloat();
-      if (s.camSel && ax === "lens") {  // the scene's lens (an empty scene's; a picture keeps its own)
-        if (!s.bg.empty) return syncFloat();
-        s.sc.lens = Math.max(10, Math.min(300, Math.round(v))); await emptyChanged(); return;
+      if (s.camSel && ax === "lens") {  // keyed at the playhead: a zoom between keys
+        editCam({ ...camForRender(s.t), lens: Math.max(10, Math.min(300, v)) }); save(); renderCam(); s.dirty = true; return;
       }
       if (s.camSel) {
         const c = camForRender(s.t);
@@ -2563,7 +2577,7 @@ const Scene3D = (() => {
   async function prepareProjection(photoRef, t0, cam, say = () => {}) {
     const img = await createImageBitmap(await (await fetch(`/api/media/file?path=${encodeURIComponent(photoRef)}`)).blob());
     const A = s.bg.aspect, near = s.bg.dmed * 0.01, far = s.bg.dmed * 50, e0 = eyeOf(cam);
-    const VP0 = mul4(perspective(2 * Math.atan(s.bg.tv), A, near, far), lookAt(e0, cam.target, [0, 1, 0]));
+    const VP0 = mul4(perspective(2 * Math.atan(fovOf(cam).tv), A, near, far), lookAt(e0, cam.target, [0, 1, 0]));
     const sphere = sphereMesh(e0, far * 0.8);
     const W0 = Math.min(2048, img.width), H0 = Math.round(W0 / A);
     for (const o of s.objs) figureMesh(o, t0);  // a Person in its pose at t0
@@ -2750,13 +2764,13 @@ const Scene3D = (() => {
       s.root.querySelector(".s3-camhint").textContent = s.camFree
         ? `You're outside the shot camera (the frame${s.camSel ? ", orange: selected" : ", blue"}). Click it, then drag its arrows to move it or its rings to pan and tilt; or type its position. Changes key it at ${s.t.toFixed(2)} s.`
         : "You're looking through the shot camera. Orbit, pan or zoom to step outside it again.";
-      s.root.querySelector(".s3-camkeys").innerHTML = K.map((q, j) => `<button type="button" class="chip-btn${near(q.t, s.t) ? " on" : ""}" data-act="cam-key" data-k="${j}">${q.t.toFixed(2)} s</button><button type="button" class="set-x" data-act="del-cam-key" data-k="${j}" aria-label="Remove the camera key at ${q.t.toFixed(2)} s">×</button>`).join(" ");
+      s.root.querySelector(".s3-camkeys").innerHTML = K.map((q, j) => `<button type="button" class="chip-btn${near(q.t, s.t) ? " on" : ""}" data-act="cam-key" data-k="${j}">${q.t.toFixed(2)} s${q.lens ? ` · ${Math.round(q.lens)} mm` : ""}</button><button type="button" class="set-x" data-act="del-cam-key" data-k="${j}" aria-label="Remove the camera key at ${q.t.toFixed(2)} s">×</button>`).join(" ");
       return;
     }
     s.root.querySelector(".s3-camhint").textContent = !K.length ? "Look around, then ◆ key the view at the playhead; key another view later on for a camera move."
       : s.camFree ? `You've moved the view: ◆ key it at ${s.t.toFixed(2)} s, or move the playhead to go back on the camera's path (blue).`
       : K.length === 1 ? "One key: the camera holds this view. Key another view at another time to move it." : "The camera moves through its keys.";
-    s.root.querySelector(".s3-camkeys").innerHTML = K.map((q, j) => `<button type="button" class="chip-btn${near(q.t, s.t) ? " on" : ""}" data-act="cam-key" data-k="${j}">${q.t.toFixed(2)} s</button><button type="button" class="set-x" data-act="del-cam-key" data-k="${j}" aria-label="Remove the camera key at ${q.t.toFixed(2)} s">×</button>`).join(" ");
+    s.root.querySelector(".s3-camkeys").innerHTML = K.map((q, j) => `<button type="button" class="chip-btn${near(q.t, s.t) ? " on" : ""}" data-act="cam-key" data-k="${j}">${q.t.toFixed(2)} s${q.lens ? ` · ${Math.round(q.lens)} mm` : ""}</button><button type="button" class="set-x" data-act="del-cam-key" data-k="${j}" aria-label="Remove the camera key at ${q.t.toFixed(2)} s">×</button>`).join(" ");
   }
   function stop() { s.playing = false; renderTime(); renderSide(); }
   function play() {

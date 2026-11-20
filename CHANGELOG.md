@@ -5,6 +5,20 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.109.0] - 2026-11-19
+
+### Added
+- **Zooms: the lens is keyed with the camera.** The floating box's Lens now sets the shot camera's focal length at the
+  playhead and keys it there. Key a different lens at another time and the camera zooms between them, in the view, the
+  drawn camera frame, the 🎬 Render and 📷 Generate photo. Keys without a lens use the scene's: View › Lens in an empty
+  scene, the picture's own in a picture scene. A zoom from a key without a lens eases out of the scene's lens and back.
+  - Camera keys show their lens (0.00 s · 35 mm). A zoom alone counts as a camera move for the render.
+  - Picture scenes can zoom too: a longer lens than the picture's pushes in on it. A wider one is allowed, but the box
+    warns that the picture's edges are empty there.
+
+### Changed
+- The floating box's Lens no longer changes the scene's lens (View › Lens does that); it keys the camera's.
+
 ## [0.108.0] - 2026-11-19
 
 ### Added

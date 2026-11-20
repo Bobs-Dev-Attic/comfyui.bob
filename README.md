@@ -126,8 +126,8 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   A shot's scene shows **the shot camera as an object** (Camera › The camera as an object, for any scene): seen from
   outside, with its own gimbal (arrows move it, rings pan and tilt it, each change keyed at the playhead), 👁 Look
   through it and ↩ Outside. A **floating position box** shows the selected object's or camera's X, Y, Z (and pan and
-  tilt, and the camera's lens in mm: an empty scene's to change, a picture's to read) to read or type; drag it
-  anywhere over the view.
+  tilt, and the camera's lens in mm) to read or type; drag it anywhere over the view. The lens is keyed with the
+  camera: two keys with different lenses make a zoom.
   **Empty scenes** (☰ › New empty 3D scene) start from nothing: a floor with a 1 m grid, a sky colour and an optional
   backdrop picture, with the shot's shape and lens chosen in the View section; add 3D models and frame the shot.
   **📷 Generate photo…** (any scene) draws what the camera frames and has Qwen Image Edit 2511 (or MiniMax H3 Image)
