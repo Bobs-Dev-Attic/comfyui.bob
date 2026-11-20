@@ -1227,6 +1227,12 @@ const V2 = (() => {
   // ...and its setting (the photo's look starts from it, as Generate uses it)
   const shotSetting = sceneId => String(st.board.shots.find(x => x.scene === sceneId)?.setting || "").trim();
   // ...and its dialogue and sound, as Generate puts them in the prompt (the Render window adds them to its own)
-  const shotExtra = sceneId => { const s = st.board.shots.find(x => x.scene === sceneId); return s ? { dialogue: dialogueOf(s), sound: soundOf(s) } : null; };
+  // voices: the speakers' library voices (H3 Reference's <Audio N>), when H3 Reference is there; voiced: the lines
+  // saying which voice each speaks with
+  const shotExtra = sceneId => {
+    const s = st.board.shots.find(x => x.scene === sceneId); if (!s) return null;
+    const voices = state.caps?.engines?.h3ref?.ready ? voicesFor(s) : [];
+    return { dialogue: dialogueOf(s), voiced: dialogueOf(s, voices), voices, sound: soundOf(s) };
+  };
   return { init, decide, generate, onSubmit, shotWhat, shotSetting, shotExtra, _st: st };
 })();

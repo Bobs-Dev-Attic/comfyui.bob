@@ -1547,6 +1547,7 @@ const Scene3D = (() => {
     const startDefault = pic ? "picture" : best ? `photo:${best.id}` : editModels().length ? "newphoto" : "composite";
     const startOf = lv => lv === "sketch" ? "composite" : lv === "rough" ? (editModels().length ? "quickphoto" : pic ? "picture" : "composite") : startDefault;
     const level0 = LEVELS[o.level] ? o.level : lastLevel();
+    const v2x = v2Extra();  // V2's shot: its lines, sound and the speakers' voices
     const when = it => new Date((it.finished || it.created) * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     const box = document.createElement("div");
     box.className = "m3-make";
@@ -1562,6 +1563,8 @@ const Scene3D = (() => {
       ${picObjs().length ? `<label class="check"><input type="checkbox" id="s3r-refs"${refsReady() ? " checked" : " disabled"}> Use the objects' pictures (H3 Reference)</label>
         <p class="hint s3r-refs-h">${refsReady() ? `The first frame is &lt;Picture 1&gt;; ${picObjs().map((o, i) => `${esc(o.name)} is &lt;Picture ${i + 2}&gt;`).join(", ")}. Runs on H3 Reference's model with the same motion.`
           : "Needs H3 Reference's model (ref2va) in ComfyUI: see the Model step."}${s.objs.filter(o => o.mesh && o.pos && !o.hidden && o.picture).length > 8 ? " Only the first 8 pictures are used." : ""}</p>` : ""}
+      ${v2x?.voices?.length ? `<label class="check"><input type="checkbox" id="s3r-voices" checked> Use the speakers' voices (H3 Reference)</label>
+        <p class="hint">${v2x.voices.map((v, i) => `${esc(v.name)} speaks with &lt;Audio ${i + 1}&gt;`).join(", ")}: their library voices, so H3 says the lines in them. Runs on H3 Reference's model with the same motion.</p>` : ""}
       <div class="row2 s3r-row3"><div class="field"><label for="s3r-q">Quality</label><select id="s3r-q"><option value="draft">Draft</option><option value="standard" selected>Standard</option><option value="full">Full</option></select></div>
         <div class="field"><label for="s3r-sp">Speed</label><select id="s3r-sp" title="How many steps H3 takes: fewer is quicker and rougher">
           <option value="4">Fastest (4 steps)</option><option value="auto" selected>Normal (the turbo's own)</option><option value="12">Finer (12 steps)</option><option value="full">Best (no turbo, 20 steps, slow)</option></select></div>
@@ -1592,7 +1595,10 @@ const Scene3D = (() => {
     const useRefs = () => !!box.querySelector("#s3r-refs")?.checked;
     const isPhoto = v => v === "newphoto" || v === "quickphoto" || v.startsWith("photo:");
     const fromPhoto = () => isPhoto(box.querySelector("#s3r-first").value);
-    const extra = v2Extra(), withLines = t => [endOf(t), extra?.dialogue].filter(Boolean).join(" ");
+    const useVoices = () => !!box.querySelector("#s3r-voices")?.checked;
+    const extraNow = () => v2x && { dialogue: useVoices() ? v2x.voiced : v2x.dialogue, sound: v2x.sound, voices: useVoices() ? v2x.voices : [] };
+    const withLines = t => [endOf(t), extraNow()?.dialogue].filter(Boolean).join(" ");
+    box.querySelector("#s3r-voices")?.addEventListener("change", () => box.querySelector("#s3r-what").dispatchEvent(new Event("input")));
     wireTags(box, box.querySelector("#s3r-what"), () => videoText(withLines(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder), useRefs(), fromPhoto()));
     box.querySelector("#s3r-refs")?.addEventListener("change", () => box.querySelector("#s3r-what").dispatchEvent(new Event("input")));
     const st = foot.querySelector(".s3r-st"), firstSel = box.querySelector("#s3r-first"), holdSel = box.querySelector("#s3r-hold");
@@ -1610,17 +1616,18 @@ const Scene3D = (() => {
     const MP = { draft: 0.4, standard: 0.6, full: 0.98 }, HOLD = { loose: "loosely (its look carries through)", normal: "normally", tight: "tightly (close to the rough animation)" };
     const review = () => {
       const refs = useRefs(), v = firstSel.value, q = box.querySelector("#s3r-q").value, mp = MP[q] || 0.6, A = s.bg.aspect, sp = SPEEDS[spSel.value] || SPEEDS.auto;
-      const turboSteps = refs ? 4 : 8, steps = sp.turbo ? sp.steps || turboSteps : 20;
+      const voices = extraNow()?.voices || [], R = refs || voices.length > 0;  // H3 Reference: pictures or voices
+      const turboSteps = R ? 4 : 8, steps = sp.turbo ? sp.steps || turboSteps : 20;
       const w = Math.max(32, Math.round(Math.sqrt(mp * 1048576 * A) / 32) * 32), h = Math.max(32, Math.round(w / A / 32) * 32);
       const fill = !!box.querySelector("#s3r-fill")?.checked && fromPhoto() && cameraMoves();
       box.querySelector(".s3r-dl").innerHTML = [
-        ["Model", refs ? "MiniMax H3 Reference, image to video with the objects' pictures" : "MiniMax H3, image to video"],
+        ["Model", R ? `MiniMax H3 Reference, image to video with ${[refs && "the objects' pictures", voices.length && "the speakers' voices"].filter(Boolean).join(" and ")}` : "MiniMax H3, image to video"],
         ["Following", `the scene's rough animation (Time-to-Move), ${HOLD[holdSel.value] || holdSel.value}`],
         ["Quality", `${box.querySelector("#s3r-q").selectedOptions[0].textContent}: about ${w}×${h} px (${mp} MP)`],
         ["Length", `${frameCount()} frames, ${dur().toFixed(2)} s at ${FPS} fps`],
         ["Sampling", !sp.turbo ? `${steps} steps, full sampling without the turbo LoRA (several times slower)`
-          : sp.steps ? `${steps} steps with ${refs ? "H3 Reference's" : "H3's"} turbo LoRA${steps < turboSteps ? " (fewer than it's made for: rougher, quicker)" : steps > turboSteps ? " (more than it's made for: a little finer, slower)" : ""}`
-          : refs ? "4 steps with H3 Reference's turbo LoRA (8 with an 8-step one)" : "8 steps with H3's turbo LoRA (4 with a 4-step one)"],
+          : sp.steps ? `${steps} steps with ${R ? "H3 Reference's" : "H3's"} turbo LoRA${steps < turboSteps ? " (fewer than it's made for: rougher, quicker)" : steps > turboSteps ? " (more than it's made for: a little finer, slower)" : ""}`
+          : R ? "4 steps with H3 Reference's turbo LoRA (8 with an 8-step one)" : "8 steps with H3's turbo LoRA (4 with a 4-step one)"],
         ["Seed", "a new one each time"],
         ["Before it", v === "quickphoto" ? `a quick 0.4 MP photo of the first frame (${editModels().some(m => m[0] === "qwen") ? "Qwen" : "the edit model"})${fill ? ", then Qwen fills what the camera move reveals" : ""}`
           : v === "newphoto" ? `a photo of the first frame (the edit model)${fill ? ", then Qwen fills what the camera move reveals and redraws a sharp view where it comes close" : ""}` : fill ? "Qwen fills what the camera move reveals, and redraws a sharp view where it comes close" : "nothing: it starts at once"],
@@ -1628,8 +1635,9 @@ const Scene3D = (() => {
       const startName = v === "picture" ? "the scene's picture" : v === "newphoto" ? "the new photo of the first frame" : v === "quickphoto" ? "the quick photo of the first frame" : v.startsWith("photo:") ? "the chosen photo" : "the first frame as drawn";
       box.querySelector(".s3r-pics").innerHTML = `<span class="s3p-pic"><span class="s3p-pic0">🖼</span><b>${refs ? "&lt;Picture 1&gt;" : "First frame"}</b> ${esc(startName)}</span>`
         + `<span class="s3p-pic"><span class="s3p-pic0">🎞</span><b>Motion</b> the rough animation and its mask</span>`
-        + (refs ? picObjs().map((x, i) => `<span class="s3p-pic"><img src="${esc(mediaUrl(x.picture))}" alt=""><b>&lt;Picture ${i + 2}&gt;</b> ${esc(x.name)}</span>`).join("") : "");
-      if (!edited) box.querySelector("#s3r-prompt").value = renderPrompt(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder, refs, fromPhoto(), extra).prompt;
+        + (refs ? picObjs().map((x, i) => `<span class="s3p-pic"><img src="${esc(mediaUrl(x.picture))}" alt=""><b>&lt;Picture ${i + 2}&gt;</b> ${esc(x.name)}</span>`).join("") : "")
+        + voices.map((v, i) => `<span class="s3p-pic"><span class="s3p-pic0">🎙</span><b>&lt;Audio ${i + 1}&gt;</b> ${esc(v.name)}'s voice</span>`).join("");
+      if (!edited) box.querySelector("#s3r-prompt").value = renderPrompt(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder, refs, fromPhoto(), extraNow()).prompt;
       box.querySelector(".s3r-pnote").innerHTML = (edited ? `<span class="warn">Edited: Render sends it as it is. ↻ Rebuild puts the built one back.</span> ` : "")
         + (refs ? "H3 Reference also puts a line before it that ties &lt;Picture 1&gt; to the first frame." : "");
     };
@@ -1677,7 +1685,7 @@ const Scene3D = (() => {
         if (to === "now") try { localStorage.setItem("bob.sceneAutoTl", toTl ? "1" : "0"); } catch { /* not kept */ }
         const fill = !!box.querySelector("#s3r-fill")?.checked;
         if (box.querySelector("#s3r-fill") && fromPhoto()) try { localStorage.setItem("bob.sceneGapFill", fill ? "1" : "0"); } catch { /* not kept */ }
-        const r = await buildRender({ start, look, fill, refs: useRefs(), hold: holdSel.value, quality: box.querySelector("#s3r-q").value, speed: spSel.value, extra, prompt: edited ? box.querySelector("#s3r-prompt").value : null,
+        const r = await buildRender({ start, look, fill, refs: useRefs(), hold: holdSel.value, quality: box.querySelector("#s3r-q").value, speed: spSel.value, extra: extraNow(), prompt: edited ? box.querySelector("#s3r-prompt").value : null,
           what: box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder }, m => { st.textContent = m; });
         if (to !== "now") {  // into a shot: Generate on the Shots step sends it
           const k = Shots.useScene(to === "new" ? -1 : +to, r.shot);
@@ -1743,6 +1751,7 @@ const Scene3D = (() => {
         motion_hold: o.hold || "normal", motion_first: "picture", project: s.sc.project };
       const sp = SPEEDS[o.speed]; if (sp) { req.turbo = sp.turbo; if (sp.steps) req.steps = sp.steps; }
       if (o.refs) req.references = picObjs().map(x => x.picture);
+      if (o.extra?.voices?.length) { req.ref_audios = o.extra.voices.map(v => v.ref); req.clean_audio = true; }
       if (photoPath) req.first_frame = photoPath;
       else if (start === "picture") req.first_frame = s.sc.picture;
       else if (noPic) req.first_frame = await uploadFrame([W, H], 0, camForRender(0), "scene_first.png");  // as drawn
