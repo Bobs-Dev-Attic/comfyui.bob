@@ -385,10 +385,9 @@ const V2 = (() => {
       } else {
         if (Scene3D._state()?.id !== s.scene) { await openShot(id); }
         const voices = d.ref ? voicesFor(s) : [];
-        const what = [sentence(s.action), dialogueOf(s, voices)].filter(Boolean).join(" ");
-        const r = await Scene3D.autoRender(s.scene, { text: what, look: String(s.setting || "").trim(), quality: s.quality, fill: true }, say);
+        const extra = { ...shotExtra(s.scene), voices };  // the voices H3 Reference gets (none on plain H3)
+        const r = await Scene3D.autoRender(s.scene, { text: sentence(s.action), extra, look: String(s.setting || "").trim(), quality: s.quality, fill: true }, say);
         req = { ...r.req, project: state.project?.id ?? null, loras: lorasFor(s), ...(voices.length ? { ref_audios: voices.map(v => v.ref), clean_audio: true } : {}) };
-        req.prompt = req.prompt.replace(/overall_soundscape:[\s\S]*$/, soundOf(s));
       }
       say("Sending to H3…");
       const items = await submit(req);
@@ -1232,7 +1231,8 @@ const V2 = (() => {
   const shotExtra = sceneId => {
     const s = st.board.shots.find(x => x.scene === sceneId); if (!s) return null;
     const voices = state.caps?.engines?.h3ref?.ready ? voicesFor(s) : [];
-    return { dialogue: dialogueOf(s), voiced: dialogueOf(s, voices), voices, sound: soundOf(s), loras: lorasFor(s) };
+    return { lines: linesOf(s).filter(l => String(l.text || "").trim()).map(l => ({ speaker: l.speaker || "", text: String(l.text).trim() })),
+      voices, sound: soundOf(s), loras: lorasFor(s) };
   };
   return { init, decide, generate, onSubmit, shotWhat, shotSetting, shotExtra, _st: st };
 })();
