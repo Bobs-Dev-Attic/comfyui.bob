@@ -1950,6 +1950,11 @@ const Scene3D = (() => {
       }
       for (const o of s.objs) {
         if (!o.mesh || !o.pos || o.hidden || r.skip?.includes(o)) continue;
+        const C = P.cards?.[o.id];
+        if (C) {  // on its card: the photo of it as it is (where the card stands now is where it took it from at t0)
+          s.gpu.draw(C.mesh, { VP, M: mul4(matOf(o, fitPose(o, t, P)), C.inv0), M0: ID, eye: e, key, proj: P, fit: [1, 1, 0, 0] });
+          continue;
+        }
         s.gpu.draw(o.mesh, { VP, M: matOf(o, fitPose(o, t, P)), M0: matOf(o, fitPose(o, P.t0, P)), eye: e, key, proj: P, fit: P.fits?.[o.id] });
       }
       return;
@@ -3467,6 +3472,7 @@ const Scene3D = (() => {
     for (const o of s.objs) figureMesh(o, t0);  // a Person in its pose at t0
     const P = { VP0, near, far, t0, sphere, cam: camOf(cam) };
     try { await fitToPhoto(P, photoRef, e0, say); } catch (err) { console.warn("Fitting the photo:", err); }
+    try { cardsFor(P, e0); } catch (err) { console.warn("Photo cards:", err); }
     P.depth = s.gpu.depthPass(W0, H0, d => {
       const o0 = { VP: VP0, eye: e0, key: [0, 1, 0] };
       d(s.bgMesh, { ...o0, M: ID }); d(sphere, { ...o0, M: ID });
@@ -3474,6 +3480,69 @@ const Scene3D = (() => {
     });
     P.photo = s.gpu.texture(img);
     return P;
+  }
+  /* An object found in the photo that the camera only comes closer to (a push in, a dolly, a zoom), seen from about the
+     way the photo saw it all through, is painted on a flat card instead of its stand-in: a card standing at its front,
+     facing the photo's camera, carrying exactly what the photo has of it. Painted onto the stand-in, the photo takes
+     the stand-in's shape, and close up that shows (a dress torn open where a mannequin is broader, a face slid off).
+     The card goes where the object goes. When the view of it turns (an orbit), the stand-in stays: a card would show
+     its edge. P.cards[id] = { mesh, inv0 (the object's pose at t0, inverted) }. */
+  const CARD_TURN = 18;  // degrees: how far the view of it may turn
+  function cardsFor(P, e0) {
+    if (!P.fits) return;
+    const n = frameCount(), cos = Math.cos(CARD_TURN * rad), inv = inv4(P.VP0), cards = {};
+    const unproject = (x, y, z) => { const w = inv[3] * x + inv[7] * y + inv[11] * z + inv[15]; return xf(inv, [x, y, z], 1).map(c => c / w); };
+    for (const o of s.objs) {
+      const fit = P.fits[o.id], f = P.found; if (!fit || !o.mesh || !o.pos || o.hidden) continue;
+      const M0 = matOf(o, fitPose(o, P.t0, P)), cs0 = boxCorners(o, M0), c0 = cs0.reduce((a, c) => a.map((v, j) => v + c[j] / 8), [0, 0, 0]);
+      const q0 = fitPose(o, P.t0, P);
+      const dir0 = norm(sub(e0, c0));
+      let ok = true;
+      for (let k = 0; k <= n && ok; k++) {
+        const t = k / FPS, q = fitPose(o, t, P), M = matOf(o, q), c = boxCorners(o, M).reduce((a, x) => a.map((v, j) => v + x[j] / 8), [0, 0, 0]);
+        const d = norm(sub(eyeOf(camForRender(t)), c));
+        // the view of it, in its own turn (it may turn about itself as it goes)
+        const turn = ((q.yaw || 0) - (q0.yaw || 0)) * rad, cy = Math.cos(turn), sy = Math.sin(turn);
+        const d0 = [dir0[0] * cy + dir0[2] * sy, dir0[1], -dir0[0] * sy + dir0[2] * cy];
+        if (d[0] * d0[0] + d[1] * d0[1] + d[2] * d0[2] < cos) ok = false;
+        if (Math.abs((q.pitch || 0) - (q0.pitch || 0)) > CARD_TURN || Math.abs((q.roll || 0) - (q0.roll || 0)) > CARD_TURN) ok = false;
+      }
+      if (!ok) continue;
+      // the card: square to the photo camera's line to it, at its front; as big as what was found (a little more)
+      const v = norm(sub(c0, e0)), front = Math.min(...cs0.map(c => dot3(sub(c, e0), v)));
+      let x0 = 1, x1 = -1, y0 = 1, y1 = -1;
+      for (let i = 0; i < f.a.length; i++) if (f.a[i]) {
+        const x = (i % f.W) / f.W * 2 - 1, y = 1 - Math.floor(i / f.W) / f.H * 2;
+        x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+      }
+      if (x1 <= x0 || y1 <= y0) continue;
+      const mx = (x1 - x0) * 0.1, my = (y1 - y0) * 0.1;
+      // keep to its own part of the photo: another found object's pixels in the box are left out by the cut, as
+      // only this one's are near it (its box from what was found around its stand-in)
+      const at = (x, y) => { const a = unproject(x, y, -1), b = unproject(x, y, 1), d = sub(b, a), u = (front - dot3(sub(a, e0), v)) / dot3(d, v); return a.map((p, j) => p + d[j] * u); };
+      const box = boxOfFound(P, o, M0) || [x0 - mx, y0 - my, x1 + mx, y1 + my];
+      const pts = [at(box[0], box[1]), at(box[2], box[1]), at(box[2], box[3]), at(box[0], box[3])];
+      if (pts.some(p => p.some(c => !isFinite(c)))) continue;
+      const mesh = s.gpu.upload([{ pos: new Float32Array(pts.flat()), nrm: null, uv: null, col: null, idx: new Uint32Array([0, 1, 2, 0, 2, 3]), base: [1, 1, 1, 1], tex: null, ao: null }]);
+      cards[o.id] = { mesh, inv0: inv4(M0) };
+    }
+    if (Object.keys(cards).length) P.cards = cards;
+  }
+  // The box (in the photo camera's -1..1) of what was found of this object: its stand-in's box at t0, grown, holding
+  // the found pixels nearest it. null when there's nothing.
+  function boxOfFound(P, o, M0) {
+    const f = P.found, cs = boxCorners(o, M0).map(c => { const v = xf(P.VP0, c, 1), w = P.VP0[3] * c[0] + P.VP0[7] * c[1] + P.VP0[11] * c[2] + P.VP0[15]; return [v[0] / w, v[1] / w]; });
+    const bx0 = Math.min(...cs.map(c => c[0])), bx1 = Math.max(...cs.map(c => c[0])), by0 = Math.min(...cs.map(c => c[1])), by1 = Math.max(...cs.map(c => c[1]));
+    const gx = (bx1 - bx0) * 0.6, gy = (by1 - by0) * 0.3, X0 = bx0 - gx, X1 = bx1 + gx, Y0 = by0 - gy, Y1 = by1 + gy;
+    let x0 = 1, x1 = -1, y0 = 1, y1 = -1;
+    for (let i = 0; i < f.a.length; i++) if (f.a[i]) {
+      const x = (i % f.W + 0.5) / f.W * 2 - 1, y = 1 - (Math.floor(i / f.W) + 0.5) / f.H * 2;
+      if (x < X0 || x > X1 || y < Y0 || y > Y1) continue;
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+    }
+    if (x1 <= x0 || y1 <= y0) return null;
+    const mx = (x1 - x0) * 0.08 + 4 / f.W, my = (y1 - y0) * 0.08 + 4 / f.H;
+    return [x0 - mx, y0 - my, x1 + mx, y1 + my];
   }
   // An object's pose in a video painted from a photo: moved and sized onto where the photo has it (P.moves).
   function fitPose(o, t, P) {

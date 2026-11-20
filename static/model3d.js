@@ -436,10 +436,17 @@ const Model3D = (() => {
           // a moving object found in the photo: every side of it takes the photo of it there (its back the colours of
           // its front: the camera saw no more of it), so as it turns while it moves it stays itself, not a hole
           q = n0.xy * uFit.xy + uFit.zw;
-          if (abs(q.x) > 1.0 || abs(q.y) > 1.0 || textureLod(uCut, vec2(q.x * 0.5 + 0.5, 0.5 - q.y * 0.5), 0.0).r < 0.5) { o = hole; return; }
+          // not it: nothing here at all (what's behind shows through), as its stand-in or card isn't its real shape
+          if (abs(q.x) > 1.0 || abs(q.y) > 1.0 || textureLod(uCut, vec2(q.x * 0.5 + 0.5, 0.5 - q.y * 0.5), 0.0).r < 0.5) discard;
         } else {
           if (abs(n0.x) > 1.0 || abs(n0.y) > 1.0) { o = hole; return; }
-          float seen = lin(texture(uDepth0, n0.xy * 0.5 + 0.5).r), here = lin(n0.z * 0.5 + 0.5);
+          // what that camera saw there: the farthest of the texel and its neighbours, so ground seen almost edge on
+          // (one texel spans metres of it, far out towards the horizon) isn't torn into thin unseen stripes
+          vec2 uv0 = n0.xy * 0.5 + 0.5, tx = 1.0 / vec2(textureSize(uDepth0, 0));
+          float seen = max(lin(texture(uDepth0, uv0).r), max(
+            max(lin(texture(uDepth0, uv0 + vec2(tx.x, 0.0)).r), lin(texture(uDepth0, uv0 - vec2(tx.x, 0.0)).r)),
+            max(lin(texture(uDepth0, uv0 + vec2(0.0, tx.y)).r), lin(texture(uDepth0, uv0 - vec2(0.0, tx.y)).r))));
+          float here = lin(n0.z * 0.5 + 0.5);
           if (here > seen * 1.01 + 0.02) { o = hole; return; }
           if (uHasCut == 1 && textureLod(uCut, vec2(q.x * 0.5 + 0.5, 0.5 - q.y * 0.5), 0.0).g > 0.5) { o = hole; return; }
         }
