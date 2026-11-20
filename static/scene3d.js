@@ -281,8 +281,8 @@ const Scene3D = (() => {
   function itemMenu(x, px, py, shots = false) {
     if (!x) return;
     // on the Shots step: which shot it's for
-    const sh = shots && typeof Shots !== "undefined" && Shots.on() && state.shots.mode === "each" ? Shots.shotOfScene(x.id) : null;
-    const shotItems = shots && sh === null && typeof Shots !== "undefined" && Shots.on() && state.shots.mode === "each" && x.status === "done"
+    const sh = shots && typeof Shots !== "undefined" && Shots.each() ? Shots.shotOfScene(x.id) : null;
+    const shotItems = shots && sh === null && typeof Shots !== "undefined" && Shots.each() && x.status === "done"
       ? state.shots.list.map((y, i) => [`🎞 For shot ${i + 1}${y.title ? `: ${y.title}` : ""}`, () => Shots.linkScene(i, x)]) : [];
     Media.menu(px, py, [
       x.status === "done" && ["🏞 Open", () => open(x.id)],
@@ -297,7 +297,7 @@ const Scene3D = (() => {
      For the models a scene renders with (H3, H3 Reference): this project's scenes, a new empty one, or one from an
      Inputs picture. Opening one shows the builder in its own window, as from the ☰ menu. */
   let panelTimer = 0, panelWired = false, panelFetched = 0;
-  const panelFits = () => state.kind === "video" && ["h3", "h3ref"].includes(state.engine.video);
+  const panelFits = () => (state.kind === "video" && ["h3", "h3ref"].includes(state.engine.video)) || (state.kind === "image" && state.engine.image === "h3image");
   async function refreshPanel(force = true) {
     const box = document.getElementById("shots-scenes");
     if (!box) return;
@@ -310,8 +310,10 @@ const Scene3D = (() => {
     pb.title = cap.scene3d === false ? "Needs ComfyUI's Depth Anything 3 nodes and depth_anything_3_base"
       : pics.length ? "One of the Inputs step's pictures (a keyframe or a reference) in depth, to stand 3D models in" : "Add a keyframe or reference picture in the Inputs step first";
     const sb = box.querySelector('[data-s3p="shot"]');
-    if (sb) sb.disabled = !(typeof Shots !== "undefined" && Shots.on() && state.shots.mode === "each");
-    if (sb) sb.title = sb.disabled ? "In “One video per shot”: a scene for one of the shots" : "A scene for one of the shots, from its inputs (its picture, length and text); its 🎬 Render goes to that shot";
+    if (sb) sb.disabled = !(typeof Shots !== "undefined" && Shots.each());
+    if (sb) sb.title = sb.disabled ? "In “One video per shot”: a scene for one of the shots"
+      : Shots.isImage() ? "A scene for one of the shots, from its inputs (its picture and text); Generate makes that shot's picture from its shot camera"
+      : "A scene for one of the shots, from its inputs (its picture, length and text); its 🎬 Render goes to that shot";
     if (!force && Date.now() - panelFetched < 5000) return;  // Shots.render runs on every edit
     panelFetched = Date.now();
     let all;
@@ -1376,7 +1378,7 @@ const Scene3D = (() => {
   // The shots the render can go to: this scene's project's shot list, while it's the one open.
   const toShots = () => typeof Shots !== "undefined" && (state.project?.id ?? null) === (s.sc.project ?? null) ? Shots.targets() : [];
   // The shot this scene is for (made from it or picked for it on the Shots step), while its project is open.
-  const forShot = () => toShots().length && state.shots.mode === "each" ? Shots.shotOfScene(s.sc.id) : null;
+  const forShot = () => toShots().length && Shots.each() ? Shots.shotOfScene(s.sc.id) : null;
   // A shot's text in the scene's words: <Picture N> (the Inputs step's reference N) becomes {the object} that has
   // that picture, or "the subject".
   function fromShot(text) {
@@ -1556,11 +1558,32 @@ const Scene3D = (() => {
   }
   /* Generate on the Shots step, for a shot mapped to this scene whose render isn't in it (or is older than the scene):
      open the scene, draw it with the usual choices (what the Render window would pick), and put it in the shot. */
-  async function renderForShot(id, i, opts = {}, say = () => {}) {
+  async function openReady(id, say) {
     if (!s || s.id !== id || s.closed) { say("Opening the 3D scene…"); open(id); }
     for (let k = 0; k < 900 && !(s && s.id === id && s.bg && s.hist); k++) await new Promise(r => setTimeout(r, 100));
     if (!(s && s.id === id && s.bg)) throw new Error("the scene couldn't be opened");
     for (let k = 0; k < 300 && s.objs.some(o => o.model && !o.mesh && !["failed", "missing"].includes(o.state)); k++) await new Promise(r => setTimeout(r, 100));
+  }
+  /* Generate on the Shots step for MiniMax H3 Image: a shot mapped to this scene is a photo of what the shot camera
+     sees at 0 s, as 📷 Generate photo makes it (the edit model, H3 Image when it's there, keeps where everything is),
+     with the shot's text as how it looks. The shot's <Picture N> become the objects that have those pictures (a Person
+     without one takes it), and those pictures go along. shot: {text, setting, style}. Returns the queued item. */
+  async function photoForShot(id, shot = {}, say = () => {}) {
+    await openReady(id, say);
+    const models = editModels();
+    if (!models.length) throw new Error("a photo of a 3D scene needs an edit model: MiniMax H3 Image, Qwen Image Edit 2511 or MOSS-Image Edit");
+    const model = (models.find(m => m[0] === "h3image") || models[0])[0];
+    const given = adoptShotPictures(shot.text);
+    if (given.length) Media.toast(`3D scene: ${given.join(", ")} (from the shot), so the photo keeps that look.`);
+    const look = [fromShot(shot.text), shot.setting, shot.style].map(x => String(x || "").trim().replace(/\s+/g, " ").replace(/[.\s]+$/, "")).filter(Boolean).join(". ");
+    const A = s.bg.aspect, W = Math.round((A >= 1 ? 1280 : 1280 * A) / 8) * 8, H = Math.round(W / A / 8) * 8, size0 = [s.cv.width, s.cv.height];
+    try {
+      say("Drawing the shot camera's view and sending it to the edit model…");
+      return await makePhoto([W, H], 0, camForRender(0), look, model, true, false, true);
+    } finally { if (s) { s.cv.width = size0[0]; s.cv.height = size0[1]; s.dirty = true; } }
+  }
+  async function renderForShot(id, i, opts = {}, say = () => {}) {
+    await openReady(id, say);
     const sh = Shots.shotOfScene(id), text = sh?.action || "";
     const given = adoptShotPictures(text);
     if (given.length) Media.toast(`3D scene: ${given.join(", ")} (from the shot), so H3 Reference keeps that look.`);
@@ -3201,6 +3224,6 @@ const Scene3D = (() => {
     requestAnimationFrame(step); renderTime();
   }
 
-  return { renderForShot, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
+  return { renderForShot, photoForShot, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
     _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
 })();

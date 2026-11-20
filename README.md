@@ -342,6 +342,9 @@ Other features:
   - **Use in studio** sends the prompt back.
 - **Model check:** each engine checks its model files. Music 3 isn't installed here yet, so the app shows which files to get from https://huggingface.co/Comfy-Org/MiniMax-Music-3.
 
+- **MiniMax H3 Image, shot by shot**: its reference pictures on the Inputs step, and its pictures planned on the Shots
+  step (one picture per shot: framing, angle, place, subject). A shot mapped to a 3D scene is a photo of what the
+  scene's shot camera sees (`Scene3D.photoForShot` in `static/scene3d.js`).
 - **🔎 Score** (a result's details): five checks of a finished picture or video, each 0 to 100 with reasons:
   prompt adherence (a vision model answers yes/no checks drawn from the prompt), reference identity (ArcFace face
   match), camera (against a 3D scene's camera move, or what the prompt says), visual quality (ratings and the defects

@@ -145,15 +145,18 @@ const STEPS = {
 };
 const ORDER = Object.keys(STEPS);
 
-// Video (H3, H3 Reference) is described shot by shot on the Shots step; pictures and sound use the Prompt step.
-function stepApplies(id) { return id === "prompt" ? state.kind !== "video" : !["inputs", "shots"].includes(id) || state.kind === "video"; }
+// Video (H3, H3 Reference) and MiniMax H3 Image are described shot by shot on the Shots step; other pictures and sound
+// use the Prompt step. The Inputs step is for the models that take pictures (keyframes or reference pictures).
+const shotsKind = () => state.kind === "video" || (state.kind === "image" && state.engine.image === "h3image");
+const inputsKind = () => shotsKind() || (state.kind === "image" && state.engine.image === "mossedit");
+function stepApplies(id) { return id === "prompt" ? !shotsKind() : id === "shots" ? shotsKind() : id === "inputs" ? inputsKind() : true; }
 function visibleSteps() { return ORDER.filter(stepApplies); }
 function stepDone(id) {
   const eng = state.engine[state.kind];
   switch (id) {
     case "project": return state.projectChosen;
     case "model": return !!state.caps?.engines?.[eng]?.ready;
-    case "inputs": return eng === "h3ref" ? state.refs.length > 0 : !!(state.frames.first_frame || state.frames.last_frame);
+    case "inputs": return ["h3ref", "h3image", "mossedit"].includes(eng) ? state.refs.length > 0 : !!(state.frames.first_frame || state.frames.last_frame);
     case "prompt": return !!$("#prompt").value.trim();
     case "shots": return typeof Shots !== "undefined" && Shots.ready();
     case "loras": return state.loras.length > 0;
@@ -184,7 +187,13 @@ function renderSteps() {
   const model = MODEL_CARDS.find(m => m.kind === state.kind && m.engine === eng)?.name || eng;
   $("#nav-info").textContent = `${state.project ? state.project.name : "Experiment"} · ${model}`;
   if (state.step === "inputs") renderInputsHead();
-  if (state.step === "shots") Shots.render();
+  if (state.step === "shots") {
+    STEPS.shots.sub = state.kind === "image"
+      ? "Plan the pictures shot by shot: Generate makes one picture per shot. ⋯ or double-click a shot to edit its framing, angle, place and subject; a shot mapped to a 3D scene is a photo of what its camera sees."
+      : "Plan the video shot by shot. Drag to reorder; ⋯ or double-click a shot to edit its framing, camera, action, inputs and settings.";
+    $("#step-sub").textContent = STEPS.shots.sub;
+    Shots.render();
+  }
   if (state.step === "loras") Loras.render();
   if (state.step === "generate") renderSummary();
 }
@@ -193,13 +202,15 @@ function renderInputsHead() {
   const eng = state.engine[state.kind];
   STEPS.inputs.sub = eng === "h3ref"
     ? "Add 1–9 pictures of the people, objects, places or style to use. Refer to them as <Picture 1>, <Picture 2>… in the prompt."
+    : eng === "h3image" ? "Optional: 1–9 pictures of the people, objects, places or style to use. Refer to them as <Picture 1>, <Picture 2>… in the shots."
+    : eng === "mossedit" ? "Picture 1 is the photo to edit; up to 3 more are references (a garment, a face, a prop)."
     : "Optional: a first frame, a last frame, or both, to animate between.";
   $("#step-sub").textContent = STEPS.inputs.sub;
-  $("#no-inputs").hidden = state.kind === "video";
+  $("#no-inputs").hidden = inputsKind();
 }
 
 function showStep(id) {
-  if (!STEPS[id] || !stepApplies(id)) id = id === "prompt" && state.kind === "video" ? "shots" : "project";
+  if (!STEPS[id] || !stepApplies(id)) id = id === "prompt" && shotsKind() ? "shots" : id === "shots" || id === "inputs" ? "prompt" : "project";
   if (state.step === "settings" && id !== "settings") state.settingsVisited = true;
   state.step = id;
   $$(".step").forEach(s => { s.hidden = s.dataset.step !== id; });
@@ -224,8 +235,9 @@ function renderSummary() {
   const card = MODEL_CARDS.find(m => m.kind === kind && m.engine === eng);
   const ms = modelState(eng);
   const prompt = $("#prompt").value.trim();
-  const inputs = kind !== "video" ? null
-    : eng === "h3ref" ? (state.refs.length ? `${state.refs.length} reference picture${state.refs.length > 1 ? "s" : ""}` : "")
+  const inputs = !inputsKind() ? null
+    : eng === "h3image" ? (state.refs.length ? `${state.refs.length} reference picture${state.refs.length > 1 ? "s" : ""}` : "none (text to picture)")
+    : eng === "h3ref" || eng === "mossedit" ? (state.refs.length ? `${state.refs.length} ${eng === "mossedit" ? "picture" : "reference picture"}${state.refs.length > 1 ? "s" : ""}` : "")
     : [state.frames.first_frame && "first frame", state.frames.last_frame && "last frame"].filter(Boolean).join(" + ") || "none (text to video)";
   const dims = $("#dims").hidden ? "" : $("#dims").textContent;
   const length = kind === "image" ? "" : $("#seconds-val").textContent;
@@ -243,7 +255,7 @@ function renderSummary() {
     row("Project", esc(state.project ? state.project.name : "Experiment (not saved)"), "project"),
     row("Model", `${esc(card?.name || eng)} · ${ms.label}${state.unet[eng] && unetFor(eng) === state.unet[eng] ? ` · ${esc(state.unet[eng].split(/[\\/]/).pop())}` : ""}${state.sampling[eng] ? ` · ${esc([state.sampling[eng].sampler, state.sampling[eng].scheduler].filter(Boolean).join(" / "))}` : ""}`, "model", ms.cls !== "ok"),
     inputs !== null ? row("Inputs", esc(inputs || "add at least one picture"), "inputs", !inputs) : "",
-    kind === "video" ? (() => {
+    shotsKind() ? (() => {
       const d = Shots.describe();
       // The prompt exactly as Generate sends it (subjects still to be defined are written in when you press Generate).
       return row("Shots", `${esc(d.text)}${d.empty ? ` · ⚠ ${d.empty} empty` : ""}`
