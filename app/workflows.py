@@ -1384,6 +1384,7 @@ def build_imgedit(
     edit_model: str = "qwen",
     prefix: str = "bob/edit",
     references: int = 0,
+    megapixels: float | None = None,
 ) -> Built:
     """One AI edit of a picture. image_inputs: source; edit_mask for the selection ops; and
     edit_rect (the selection's bounding rectangle, made by jobs) for replace.
@@ -1429,8 +1430,9 @@ def build_imgedit(
     assert files, "the AI edits need model files"
     if op == "instruct":
         size = g.add("GetImageSize", image=o(src))
+        # `megapixels`: work at that size and return it (the source's shape); else the model's size, returned at the source's
         ref = g.add("ImageScaleToTotalPixels", image=o(src), upscale_method="lanczos",
-                    megapixels=EDIT_MEGAPIXELS.get(edit_model, 1.0), resolution_steps=32)
+                    megapixels=float(megapixels or EDIT_MEGAPIXELS.get(edit_model, 1.0)), resolution_steps=32)
         extra = []
         for i in range(references):
             load = g.add("LoadImage", image="")
@@ -1439,8 +1441,10 @@ def build_imgedit(
         decoded, model_info = _edit_model(g, edit_model, files, ref, prompt.strip(), seed=seed, steps=steps, extra=extra)
         if references:
             model_info["references"] = references
-        out = g.add("ImageScale", image=decoded, upscale_method="lanczos", width=o(size, 0), height=o(size, 1), crop="disabled")
-        save = g.add("SaveImage", images=o(out), filename_prefix=prefix)
+        if megapixels:
+            model_info["megapixels"] = megapixels
+        out = decoded if megapixels else o(g.add("ImageScale", image=decoded, upscale_method="lanczos", width=o(size, 0), height=o(size, 1), crop="disabled"))
+        save = g.add("SaveImage", images=out, filename_prefix=prefix)
         return Built(graph=g.nodes, outputs=[save], image_inputs=inputs, info={"op": op, **model_info, "final_prompt": prompt.strip()})
 
     mask_pic = g.add("LoadImage", image="")

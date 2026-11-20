@@ -5,6 +5,15 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.118.1] - 2026-11-20
+
+### Changed
+- **The photo of a 3D scene for an H3 Image shot follows the Settings step's Aspect and Quality.** It used to take
+  the scene's own shape at 1280 px on the long side. Now it has the picture shape you chose and H3 Image's size for
+  the quality: Draft 1 MP, Standard 2, High 4, XL 8, Max 16. The shot camera keeps everything it frames, and in a
+  different shape it sees a little wider or taller to fill the picture. With another edit model (Qwen Image Edit,
+  MOSS Edit) the photo keeps that model's own size.
+
 ## [0.118.0] - 2026-11-20
 
 ### Added

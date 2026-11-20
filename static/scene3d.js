@@ -1567,8 +1567,10 @@ const Scene3D = (() => {
   /* Generate on the Shots step for MiniMax H3 Image: a shot mapped to this scene is a photo of what the shot camera
      sees at 0 s, as 📷 Generate photo makes it (the edit model, H3 Image when it's there, keeps where everything is),
      with the shot's text as how it looks. The shot's <Picture N> become the objects that have those pictures (a Person
-     without one takes it), and those pictures go along. shot: {text, setting, style}. Returns the queued item. */
-  async function photoForShot(id, shot = {}, say = () => {}) {
+     without one takes it), and those pictures go along. shot: {text, setting, style}; size: {aspect: "16:9"…, quality} (the Settings step: the photo has
+     that shape, at H3 Image's size for that quality; the shot camera sees the wider or taller view it needs). Returns
+     the queued item. */
+  async function photoForShot(id, shot = {}, say = () => {}, size = {}) {
     await openReady(id, say);
     const models = editModels();
     if (!models.length) throw new Error("a photo of a 3D scene needs an edit model: MiniMax H3 Image, Qwen Image Edit 2511 or MOSS-Image Edit");
@@ -1576,10 +1578,13 @@ const Scene3D = (() => {
     const given = adoptShotPictures(shot.text);
     if (given.length) Media.toast(`3D scene: ${given.join(", ")} (from the shot), so the photo keeps that look.`);
     const look = [fromShot(shot.text), shot.setting, shot.style].map(x => String(x || "").trim().replace(/\s+/g, " ").replace(/[.\s]+$/, "")).filter(Boolean).join(". ");
-    const A = s.bg.aspect, W = Math.round((A >= 1 ? 1280 : 1280 * A) / 8) * 8, H = Math.round(W / A / 8) * 8, size0 = [s.cv.width, s.cv.height];
+    const m = /^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/.exec(size.aspect || ""), A = m && +m[1] > 0 && +m[2] > 0 ? +m[1] / +m[2] : s.bg.aspect;
+    // drawn at about 2 MP (the people pasted in, the holes filled); the edit model then makes it at the quality's size
+    const L = 1600, W = Math.round((A >= 1 ? L : L * A) / 8) * 8, H = Math.round(W / A / 8) * 8, size0 = [s.cv.width, s.cv.height];
+    const mp = model === "h3image" ? state.caps?.h3image_quality?.[size.quality] ?? null : null;
     try {
       say("Drawing the shot camera's view and sending it to the edit model…");
-      return await makePhoto([W, H], 0, camForRender(0), look, model, true, false, true);
+      return await makePhoto([W, H], 0, camForRender(0), look, model, true, false, true, mp);
     } finally { if (s) { s.cv.width = size0[0]; s.cv.height = size0[1]; s.dirty = true; } }
   }
   async function renderForShot(id, i, opts = {}, say = () => {}) {
@@ -2882,7 +2887,8 @@ const Scene3D = (() => {
     return out;
   }
   // A photo of the scene at time t through `cam` (queued with the edit model); it's remembered on the scene.
-  async function makePhoto(size, t, cam, look, model, usePics = false, useDepth = false, dof = false) {
+  // `megapixels`: the size the edit model makes it at (the render's shape); else its own, at the render's size.
+  async function makePhoto(size, t, cam, look, model, usePics = false, useDepth = false, dof = false, megapixels = null) {
     if (dof && fstop()) look = [look, dofLine(false, t)].filter(Boolean).join(" ");
     // the depth map, drawn through the same camera at the same size, so it lines up with the render
     let depthRef = null;
@@ -2897,7 +2903,7 @@ const Scene3D = (() => {
     const prompt = photoText(t, cam, look, model, pics, off, paste.map(p => p.o));
     const refs = [depthRef, ...pics.map(o => o.picture)].filter(Boolean);
     const items = await submit({ kind: "image", engine: "imgedit", edit_op: "instruct", source: ref, prompt, edit_model: model,
-      ...(refs.length ? { references: refs } : {}),
+      ...(refs.length ? { references: refs } : {}), ...(megapixels ? { edit_megapixels: megapixels } : {}),
       seed: -1, batch: 1, project: s.sc.project });
     if (!items?.length) throw new Error("The edit model didn't take it (the reason is on the Generate step)");
     s.photos.push({ id: items[0].id, t, cam: camOf(cam) });
