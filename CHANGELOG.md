@@ -5,6 +5,23 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.107.0] - 2026-11-19
+
+### Added
+- **The shot camera as an object in the scene builder.** When a scene is mapped to a shot, it opens looking at the
+  shot camera from outside, behind and above it. The camera is drawn as a frame (what it sees), a body and an up mark,
+  with its path when it moves. Camera › **The camera as an object** turns it on for any scene.
+  - Click the camera (or 🎥 Select it) for its own gimbal. The X, Y and Z arrows move it; the rings **pan** it (about Y)
+    and **tilt** it (about its own sideways axis), turning it about its eye. Ctrl snaps the position, and the angles to
+    5°. Each change keys the camera at the playhead (the first change makes its first key). ◆ Key the camera keys it
+    as it is there.
+  - **👁 Look through it** shows what it sees; orbiting, panning or zooming steps back outside, and **↩ Outside**
+    goes back behind it. From outside, moving the playhead keeps your view while the camera moves along its path.
+- **A floating position box** over the 3D view while an object or the camera is selected. It shows X, Y and Z at the
+  playhead (metres in an empty scene), plus Pan and Tilt for the camera, and you can type values (Enter to apply). A
+  typed value keys the object or camera there as a drag would. Drag the box by its top: it remembers where you put it.
+  × hides it until you select something else.
+
 ## [0.106.0] - 2026-11-19
 
 ### Added
