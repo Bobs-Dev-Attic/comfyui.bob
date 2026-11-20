@@ -15,6 +15,11 @@
    the shot's subject at a framing and speed (Scene3D.applyCameraMove), and your own, saved from a shot relative to
    its subject (/api/v2/cameras) so they fit another shot's subject the same way.
 
+   Sound: each shot has its background sound, music, and dialogue lines (who says what, in order). An object with a
+   voice in the library speaks its lines with it (H3 Reference, <Audio N>). The timeline can have a soundtrack, one
+   piece of music for all of it (MiniMax Music 3, as long as the shots together); while it's on, the shots are made
+   without their own music.
+
    The page uses the studio's API as the classic page does (projects, scenes, items), and gives the scene builder the
    few globals it expects from that page (state, api, esc, mediaUrl, submit, and Shots, which V2 replaces). A project's
    V2 shots are kept by the studio in data/v2/<project>.json (/api/v2/board). */
@@ -161,10 +166,27 @@ const V2 = (() => {
       camMoves: K.length > 1 && K.some(k => Math.abs(k.yaw - K[0].yaw) + Math.abs(k.pitch - K[0].pitch) + Math.abs(k.dist - K[0].dist) > 1e-3),
       objMoves: objs.some(o => o.keys?.length > 1), picture: !!sc.picture, seconds: +sc.seconds || 5, edit: null, live: false };
   }
+  // The objects in a shot's scene (as the builder has them when it's open).
+  const objsOf = s => { const c = Scene3D.current(); return (c && c.id === s.scene ? c.objs : st.scenes.get(s.scene)?.objects || []).filter(o => !o.hidden); };
+  const libOf = (s, name) => { const o = objsOf(s).find(x => x.name === name); return o?.lib ? st.objs.find(x => x.id === o.lib) : null; };
+  // A shot's dialogue: [{speaker, text}] (an older shot's one line becomes the first).
+  function linesOf(s) {
+    if (!Array.isArray(s.lines)) { s.lines = s.line ? [{ speaker: s.speaker || "", text: s.line }] : []; delete s.line; delete s.speaker; }
+    return s.lines;
+  }
+  // The voices a shot speaks with: each speaker's library voice, in order of first line, up to 3 (H3 takes 3).
+  function voicesFor(s) {
+    const out = [];
+    for (const l of linesOf(s)) {
+      if (!String(l.text || "").trim() || !l.speaker) continue;
+      const v = libOf(s, l.speaker)?.voice;
+      if (v && !out.some(x => x.ref === v) && out.length < 3) out.push({ ref: v, name: l.speaker });
+    }
+    return out;
+  }
   // The LoRAs a shot takes: those of the library objects in its scene, each once, up to 8.
   function lorasFor(s) {
-    const c = Scene3D.current();
-    const objs = (c && c.id === s.scene ? c.objs : st.scenes.get(s.scene)?.objects || []).filter(o => !o.hidden && o.lib);
+    const objs = objsOf(s).filter(o => o.lib);
     const out = new Map();
     for (const o of objs) for (const l of st.objs.find(x => x.id === o.lib)?.loras || []) if (l?.name && !out.has(l.name)) out.set(l.name, { name: l.name, strength: +l.strength || 1 });
     return [...out.values()].slice(0, 8);
@@ -176,7 +198,8 @@ const V2 = (() => {
       why.push("The set is empty and the camera holds still, so the words alone make the shot.");
       return { engine: "h3", ref: false, label: "MiniMax H3 · text to video", why, info: i };
     }
-    const ref = i.pictures > 0 && !!caps.engines?.h3ref?.ready;
+    const voices = caps.engines?.h3ref?.ready ? voicesFor(s) : [];
+    const ref = (i.pictures > 0 || voices.length > 0) && !!caps.engines?.h3ref?.ready;
     if (i.camMoves) why.push("The camera moves: H3 follows the scene's camera path (Time-to-Move).");
     if (i.objMoves) why.push("Objects move along their paths.");
     if (i.objects && !i.objMoves && !i.camMoves) why.push("The objects are where you put them; nothing moves, so they hold their places.");
@@ -184,6 +207,8 @@ const V2 = (() => {
     if (i.camMoves && !i.picture) why.push("What the camera move shows that the photo can't is painted in by Qwen first.");
     if (ref) why.push(`${i.pictures} object${i.pictures === 1 ? " has a picture" : "s have pictures"}: H3 Reference keeps ${i.pictures === 1 ? "its" : "their"} look.`);
     else if (i.pictures) why.push("Objects have pictures, but H3 Reference isn't installed: they go by their descriptions.");
+    if (voices.length) why.push(`${voices.map(v => v.name).join(" and ")} speak${voices.length === 1 ? "s" : ""} with ${voices.length === 1 ? "a voice" : "voices"} from the library (H3 Reference).`);
+    else if (!caps.engines?.h3ref?.ready && voicesFor(s).length) why.push("Some speakers have voices, but H3 Reference isn't installed: H3 picks the voices.");
     const L = lorasFor(s);
     if (L.length) why.push(`${L.length} LoRA${L.length === 1 ? "" : "s"} from the objects go${L.length === 1 ? "es" : ""} along.`);
     return { engine: "scene", ref, label: ref ? "MiniMax H3 Reference · 3D scene render" : "MiniMax H3 · 3D scene render", why, info: i };
@@ -191,17 +216,32 @@ const V2 = (() => {
 
   /* ---- the words for H3 */
   const sentence = t => { t = String(t || "").trim().replace(/\s+/g, " "); if (!t) return ""; t = t[0].toUpperCase() + t.slice(1); return /[.!?]$/.test(t) ? t : t + "."; };
-  const lineOf = s => {
-    const line = String(s.line || "").trim().replace(/^["“]|["”]$/g, "");
-    if (!line) return "";
-    // named once already in What happens: "The woman says" (the full description again reads as someone else)
-    const named = s.speaker && String(s.action || "").includes(`{${s.speaker}}`);
-    return `${!s.speaker ? "Someone" : named ? `The ${s.speaker.toLowerCase()}` : `{${s.speaker}}`} says: <d>[English] ${line}</d>`;
-  };
-  const soundOf = s => `overall_soundscape: ${sentence(s.sound) || "Natural ambient sound of the scene."}\n\nnon_diegetic_music: ${String(s.music || "").trim() || "N/A"}`;
+  /* The lines, in order: "{Woman} says, using the voice timbre referenced from <Audio 1>: <d>[English] …</d>". A speaker
+     named already (in What happens, or a line before) is "The woman": the full description again reads as someone else.
+     plain: names without {braces} (text to video). voices: from voicesFor. */
+  // Someone named before, said again in a few words: "the young woman" from "a young woman in a red wool coat" (what
+  // the object becomes), or "the woman" for an object called Woman; a name with no description stays as it is.
+  function again(s, name) {
+    const o = objsOf(s).find(x => x.name === name), what = String(o?.becomes || libOf(s, name)?.becomes || "").trim().toLowerCase();
+    const short = what.split(/,|\b(?:in|with|wearing|who|holding|from|on|at|carrying)\b/)[0].replace(/^(a|an|the)\s+/, "").trim().split(/\s+/).slice(0, 4).join(" ");
+    if (short) return `The ${short}`;
+    return /^[a-z]/.test(name) || /^(man|woman|girl|boy|child|person|lady|dog|cat|robot)( \d+)?$/i.test(name) ? `The ${name.toLowerCase()}` : name;
+  }
+  function dialogueOf(s, voices = [], plain = false) {
+    const seen = new Set(String(s.action || "").match(/\{[^{}]+\}/g) || []);
+    return linesOf(s).map(l => {
+      const text = String(l.text || "").trim().replace(/^["“]|["”]$/g, ""); if (!text) return "";
+      const tag = l.speaker ? `{${l.speaker}}` : "", named = tag && seen.has(tag); if (tag) seen.add(tag);
+      const who = !l.speaker ? "Someone" : plain ? l.speaker : named ? again(s, l.speaker) : tag;
+      const k = voices.findIndex(v => v.name === l.speaker);
+      return `${who} says${k >= 0 ? `, using the voice timbre referenced from <Audio ${k + 1}>` : ""}: <d>[English] ${text}</d>`;
+    }).filter(Boolean).join(" ");
+  }
+  const soundtrackOn = () => !!(st.board.settings.soundtrack?.on && st.board.settings.soundtrack?.style);
+  const soundOf = s => `overall_soundscape: ${sentence(s.sound) || "Natural ambient sound of the scene."}\n\nnon_diegetic_music: ${soundtrackOn() ? "N/A" : String(s.music || "").trim() || "N/A"}`;
   // text to video: the whole shot in words (objects named by their names)
   function textPrompt(s) {
-    const body = [sentence(s.setting), sentence(String(s.action || "").replace(/\{([^{}]+)\}/g, "$1")), lineOf(s).replace(/\{([^{}]+)\}/g, "$1"), "The camera holds a static shot."].filter(Boolean).join(" ");
+    const body = [sentence(s.setting), sentence(String(s.action || "").replace(/\{([^{}]+)\}/g, "$1")), dialogueOf(s, [], true), "The camera holds a static shot."].filter(Boolean).join(" ");
     return `integrated_multimodal_description: [Shot 1] ${body}\n\n${soundOf(s)}`;
   }
 
@@ -218,9 +258,10 @@ const V2 = (() => {
           turbo: true, seed: -1, batch: 1, project: state.project?.id ?? null };
       } else {
         if (Scene3D._state()?.id !== s.scene) { await openShot(id); }
-        const what = [sentence(s.action), lineOf(s)].filter(Boolean).join(" ");
+        const voices = d.ref ? voicesFor(s) : [];
+        const what = [sentence(s.action), dialogueOf(s, voices)].filter(Boolean).join(" ");
         const r = await Scene3D.autoRender(s.scene, { text: what, look: String(s.setting || "").trim(), quality: s.quality, fill: true }, say);
-        req = { ...r.req, project: state.project?.id ?? null, loras: lorasFor(s) };
+        req = { ...r.req, project: state.project?.id ?? null, loras: lorasFor(s), ...(voices.length ? { ref_audios: voices.map(v => v.ref), clean_audio: true } : {}) };
         req.prompt = req.prompt.replace(/overall_soundscape:[\s\S]*$/, soundOf(s));
       }
       say("Sending to H3…");
@@ -236,6 +277,60 @@ const V2 = (() => {
     for (const s of st.board.shots.slice()) await generate(s.id);
   }
 
+  /* ---- the soundtrack: one piece of music for the whole timeline (MiniMax Music 3) */
+  const totalSeconds = () => st.board.shots.reduce((a, s) => a + decide(s).info.seconds, 0);
+  function soundtrackDialog() {
+    const t = { on: true, style: "", lyrics: "", ...(st.board.settings.soundtrack || {}) }, T = totalSeconds();
+    const it = t.result && state.items.get(t.result), f = it?.status === "done" ? it.files?.[0] : null;
+    const box = document.createElement("div");
+    box.className = "v2-ed";
+    box.innerHTML = `<p class="hint">One piece of music under every shot, ${T.toFixed(1)} s long (the shots together), made by MiniMax Music 3. While it's on, the shots are made without their own music.</p>
+      <label class="check"><input type="checkbox" id="vs-on"${t.on ? " checked" : ""}> Use the soundtrack</label>
+      <div class="field"><label for="vs-style">The music <span class="opt">genre, tempo, instruments, mood</span></label>
+        <textarea id="vs-style" rows="3" maxlength="1000" placeholder="Warm acoustic folk, 90 BPM, fingerpicked guitar and soft strings; calm at first, building gently to a hopeful end.">${esc(t.style)}</textarea></div>
+      <div class="field"><label for="vs-lyrics">Lyrics <span class="opt">optional; none: instrumental</span></label>
+        <textarea id="vs-lyrics" rows="4" maxlength="5000" placeholder="[Verse]&#10;…">${esc(t.lyrics)}</textarea></div>
+      <div class="v2-say-row"><span class="hint" id="vs-say">${it ? `${f ? "Made" : esc(it.status)}${t.seconds ? ` · ${(+t.seconds).toFixed(1)} s` : ""}${t.seconds && Math.abs(t.seconds - T) > 0.6 ? ` · ⚠ the timeline is ${T.toFixed(1)} s now: make it again to fit` : ""}` : "Not made yet."}</span></div>
+      ${f ? `<audio controls src="${esc(f.url)}" style="width:100%"></audio>` : ""}`;
+    const foot = document.createElement("div");
+    foot.className = "wm-foot-row";
+    foot.innerHTML = `<span class="grow"></span><button type="button" class="btn ghost" data-a="close">Close</button>
+      <button type="button" class="btn primary" data-a="make"${T < 1 ? " disabled" : ""}>🎵 ${f ? "Make it again" : "Make the soundtrack"}</button>`;
+    const win = WM.open({ id: "v2-soundtrack", title: "Soundtrack", content: box, footer: foot, width: 520, height: 520, modal: true });
+    const keep = () => {
+      st.board.settings.soundtrack = { ...t, on: box.querySelector("#vs-on").checked, style: box.querySelector("#vs-style").value.trim(), lyrics: box.querySelector("#vs-lyrics").value.trim() };
+      save(); renderAll();
+    };
+    box.addEventListener("change", keep);
+    foot.querySelector('[data-a="close"]').onclick = () => { keep(); win.close(); };
+    foot.querySelector('[data-a="make"]').onclick = async e => {
+      keep();
+      const cur0 = st.board.settings.soundtrack;
+      if (!cur0.style) { box.querySelector("#vs-style").focus(); return Media.toast("Describe the music first."); }
+      e.target.disabled = true;
+      const secs = Math.max(5, Math.min(300, Math.round(totalSeconds() * 10) / 10));
+      const items = await submit({ kind: "audio", engine: "music3", prompt: cur0.style, lyrics: cur0.lyrics || "", seconds: secs, seed: -1, batch: 1, project: state.project?.id ?? null });
+      if (!items?.length) { e.target.disabled = false; return; }
+      st.board.settings.soundtrack = { ...cur0, result: items[0].id, seconds: secs };
+      save(); renderAll(); win.close();
+      Media.toast(`Soundtrack: Music 3 is making ${secs} s of music. It shows under the timeline when it's done.`);
+    };
+  }
+  function renderSoundtrack() {
+    const t = st.board.settings.soundtrack, lane = $("v2-tlmusic");
+    $("v2-musichint").hidden = !soundtrackOn();
+    $("v2-music").disabled = soundtrackOn();
+    lane.hidden = !t?.style;
+    if (lane.hidden) return;
+    const it = t.result && state.items.get(t.result), f = it?.status === "done" ? it.files?.[0] : null;
+    const want = `${t.on}:${t.style}:${it?.id}:${it?.status}`;
+    if (lane.dataset.k === want) return;
+    lane.dataset.k = want;
+    lane.classList.toggle("off", !t.on);
+    lane.innerHTML = `<button type="button" class="v2-tlmb" data-a="music" title="Edit the soundtrack">🎵 ${esc(t.style.slice(0, 80))}${t.on ? "" : " (off)"}</button>
+      ${f ? `<audio controls src="${esc(f.url)}"></audio>` : `<span class="hint">${it ? `${esc(it.status)}…` : "not made yet"}</span>`}`;
+  }
+
   /* ---- the object library */
   const SHAPES = [["figure", "🧍 Person"], ["cube", "▢ Cube"], ["sphere", "◯ Sphere"], ["cylinder", "⌭ Cylinder"], ["cone", "△ Cone"], ["plane", "▱ Plane"], ["torus", "◎ Ring"]];
   const shapeIcon = e => e.kind === "model" ? "🧊" : (SHAPES.find(x => x[0] === e.prim)?.[1] || "🧍").split(" ")[0];
@@ -249,7 +344,7 @@ const V2 = (() => {
     $("v2-noobjs").hidden = st.objs.length > 0;
     $("v2-objgrid").innerHTML = list.map(e => `<div class="v2-obj" role="listitem" draggable="true" tabindex="0" data-oid="${esc(e.id)}" title="${esc(e.becomes || e.name)}: drag onto the scene, or ＋; double-click to edit">
         <div class="v2-objth">${e.pictures?.[0] ? `<img src="${esc(mediaUrl(e.pictures[0]))}" alt="" loading="lazy">` : `<span>${shapeIcon(e)}</span>`}</div>
-        <b>${esc(e.name)}</b><span class="hint">${e.pictures?.length ? `${e.pictures.length} 🖼` : ""}${e.loras?.length ? ` ${e.loras.length} 🧩` : ""}</span>
+        <b>${esc(e.name)}</b><span class="hint">${e.pictures?.length ? `${e.pictures.length} 🖼` : ""}${e.loras?.length ? ` ${e.loras.length} 🧩` : ""}${e.voice ? " 🗣" : ""}</span>
         <button type="button" class="v2-objadd" data-add="${esc(e.id)}" title="Put ${esc(e.name)} in the scene, in front of the camera" aria-label="Add ${esc(e.name)} to the scene">＋</button></div>`).join("");
   }
   async function place(id, cx = null, cy = null) {
@@ -259,7 +354,7 @@ const V2 = (() => {
     if (o) Media.toast(`${o.name} is in the scene${e.pictures?.length ? " (its picture keeps its look on H3 Reference)" : ""}.`);
   }
   async function objectEditor(e0 = null) {
-    const e = e0 ? structuredClone(e0) : { id: uid(), name: "", kind: "prim", prim: "figure", model: null, becomes: "", pictures: [], loras: [], notes: "" };
+    const e = e0 ? { voice: null, ...structuredClone(e0) } : { id: uid(), name: "", kind: "prim", prim: "figure", model: null, becomes: "", pictures: [], loras: [], voice: null, notes: "" };
     let models = [], loras = [];
     try { models = ((await api("/api/models3d")).models || []).filter(m => m.status === "done"); } catch { /* none */ }
     try { loras = ((await api("/api/loras")).loras || []).filter(l => l.family === "h3" && !l.turbo && !l.missing_file); } catch { /* none */ }
@@ -281,6 +376,11 @@ const V2 = (() => {
           ${e.loras.map((l, k) => `<div class="v2-lora"><select data-lname="${k}">${loras.some(x => x.name === l.name) ? "" : `<option value="${esc(l.name)}">${esc(l.name)} (not found)</option>`}${loras.map(x => `<option value="${esc(x.name)}"${x.name === l.name ? " selected" : ""}>${esc(x.title || x.name)}</option>`).join("")}</select>
             <input type="number" data-lstr="${k}" min="0" max="2" step="0.05" value="${+l.strength || 1}" aria-label="Strength"><button type="button" class="btn sm ghost" data-rmlora="${k}" aria-label="Remove this LoRA">✕</button></div>`).join("")}
           ${loras.length ? `<button type="button" class="btn sm" data-act="addlora"${e.loras.length >= 4 ? " disabled" : ""}>＋ LoRA</button>` : `<p class="hint">No MiniMax H3 LoRAs found in ComfyUI.</p>`}</div>
+        <div class="field"><span class="v2-lbl">Voice <span class="opt">a recording of how it speaks: its lines use it (H3 Reference)</span></span>
+          ${e.voice ? `<div class="v2-voice"><audio controls src="${esc(mediaUrl(e.voice))}"></audio><button type="button" class="btn sm ghost" data-act="rmvoice">✕ Remove</button></div>` : ""}
+          <button type="button" class="btn sm" data-act="addvoice">${e.voice ? "Replace…" : "＋ Voice recording…"}</button>
+          <input type="file" id="ve-voice" accept="audio/*,video/mp4,video/webm,video/quicktime" hidden>
+          <p class="hint">A clear 6–10 s of the voice; it's cleaned up and the best part kept. Only use voices you have permission to use.</p></div>
         <div class="field"><label for="ve-notes">Notes <span class="opt">not sent to the model</span></label><textarea id="ve-notes" rows="2" maxlength="2000">${esc(e.notes)}</textarea></div>`;
       box.querySelector("#ve-shape").value = shapeVal();
     };
@@ -296,11 +396,21 @@ const V2 = (() => {
       const t = ev.target.closest("button"); if (!t) return;
       read();
       if (t.dataset.act === "addpic") return box.querySelector("#ve-files").click();
+      if (t.dataset.act === "addvoice") return box.querySelector("#ve-voice").click();
+      if (t.dataset.act === "rmvoice") { e.voice = null; return draw(); }
       if (t.dataset.rmpic != null) { e.pictures.splice(+t.dataset.rmpic, 1); return draw(); }
       if (t.dataset.act === "addlora" && loras.length) { e.loras.push({ name: loras[0].name, strength: 1 }); return draw(); }
       if (t.dataset.rmlora != null) { e.loras.splice(+t.dataset.rmlora, 1); return draw(); }
     });
     box.addEventListener("change", async ev => {
+      if (ev.target.id === "ve-voice") {
+        read();
+        const f = ev.target.files[0]; if (!f) return;
+        const fd = new FormData(); fd.append("file", f, f.name);
+        try { const r = await fetch("/api/upload", { method: "POST", body: fd }); if (!r.ok) throw new Error(r.statusText); e.voice = (await r.json()).ref; }
+        catch (err) { Media.toast(`Upload: ${err.message}`); }
+        return draw();
+      }
       if (ev.target.id !== "ve-files") return;
       read();
       for (const f of [...ev.target.files].slice(0, 9 - e.pictures.length)) {
@@ -324,7 +434,7 @@ const V2 = (() => {
       read();
       if (!e.name) { box.querySelector("#ve-name").focus(); return Media.toast("Give it a name."); }
       try {
-        await api(`/api/v2/objects/${e.id}`, { method: "PUT", body: JSON.stringify({ id: e.id, name: e.name, kind: e.kind, prim: e.prim, model: e.model, becomes: e.becomes, pictures: e.pictures, loras: e.loras, notes: e.notes }) });
+        await api(`/api/v2/objects/${e.id}`, { method: "PUT", body: JSON.stringify({ id: e.id, name: e.name, kind: e.kind, prim: e.prim, model: e.model, becomes: e.becomes, pictures: e.pictures, loras: e.loras, voice: e.voice || null, notes: e.notes }) });
         win.close(); await loadObjects(); renderPanel(true);
       } catch (err) { Media.toast(`Save: ${err.message}`); }
     };
@@ -399,13 +509,12 @@ const V2 = (() => {
     $("v2-shot-title").textContent = s ? s.name : "Shot";
     if (!s) return;
     const d = decide(s);
-    for (const [id, k] of [["v2-name", "name"], ["v2-setting", "setting"], ["v2-action", "action"], ["v2-line", "line"], ["v2-sound", "sound"], ["v2-music", "music"], ["v2-quality", "quality"]]) {
+    for (const [id, k] of [["v2-name", "name"], ["v2-setting", "setting"], ["v2-action", "action"], ["v2-sound", "sound"], ["v2-music", "music"], ["v2-quality", "quality"]]) {
       const el = $(id); if (!(keepFocus && document.activeElement === el)) el.value = s[k] ?? (k === "quality" ? "standard" : "");
     }
     const names = d.info.names;
     $("v2-tags").innerHTML = names.map(n => `<button type="button" class="chip-btn" data-tag="${esc(n)}" title="Put {${esc(n)}} in">${esc(n)}</button>`).join("");
-    const sp = $("v2-speaker");
-    if (document.activeElement !== sp) sp.innerHTML = `<option value="">Someone</option>` + names.map(n => `<option value="${esc(n)}"${n === s.speaker ? " selected" : ""}>${esc(n)}</option>`).join("");
+    renderLines(s, names);
     $("v2-len").textContent = `${d.info.seconds.toFixed(1)} s${d.info.live ? " (the scene's length: set it under the scene's timeline)" : ""}`;
     $("v2-model").innerHTML = `<div class="v2-mh"><span>Model</span><b>${esc(d.label)}</b><span class="v2-auto">auto</span></div><ul>${d.why.map(w => `<li>${esc(w)}</li>`).join("")}</ul>`;
     const busy = st.busy.has(s.id);
@@ -420,7 +529,19 @@ const V2 = (() => {
         : `<p class="hint">${it.status === "failed" ? `⚠ Failed: ${esc(it.error || "")}` : `${esc(it.status)}…`}</p>`;
     }
   }
-  function renderAll() { renderShots(); renderTimeline(); renderPanel(true); }
+  // The dialogue lines (kept as they are while one is being typed in).
+  function renderLines(s, names) {
+    const box = $("v2-lines");
+    if (box.contains(document.activeElement) && box.dataset.shot === s.id) return;
+    box.dataset.shot = s.id;
+    box.innerHTML = linesOf(s).map((l, k) => {
+      const v = l.speaker && libOf(s, l.speaker)?.voice;
+      return `<div class="v2-line"><select data-lsp="${k}" aria-label="Who says line ${k + 1}"><option value="">Someone</option>${[...new Set([...names, l.speaker].filter(Boolean))].map(n => `<option value="${esc(n)}"${n === l.speaker ? " selected" : ""}>${esc(n)}${n === l.speaker && v ? " 🗣" : ""}</option>`).join("")}</select>
+        <input data-ltx="${k}" maxlength="300" value="${esc(l.text || "")}" placeholder="Come on in, the water's warm!" aria-label="Line ${k + 1}">
+        <button type="button" class="v2-x" data-lrm="${k}" aria-label="Remove line ${k + 1}" title="Remove this line">✕</button></div>`;
+    }).join("");
+  }
+  function renderAll() { renderShots(); renderTimeline(); renderPanel(true); renderSoundtrack(); }
 
   /* ---- wiring */
   function wire() {
@@ -466,8 +587,16 @@ const V2 = (() => {
       const b = e.target.closest(".v2-shot"); if (b) openShot(b.dataset.id);
     });
     $("v2-shotlist").addEventListener("keydown", e => { const b = e.target.closest(".v2-shot"); if (b && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openShot(b.dataset.id); } });
-    const fields = [["v2-name", "name"], ["v2-setting", "setting"], ["v2-action", "action"], ["v2-line", "line"], ["v2-sound", "sound"], ["v2-music", "music"], ["v2-quality", "quality"], ["v2-speaker", "speaker"]];
-    for (const [id, k] of fields) $(id).addEventListener(id === "v2-quality" || id === "v2-speaker" ? "change" : "input", e => {
+    const fields = [["v2-name", "name"], ["v2-setting", "setting"], ["v2-action", "action"], ["v2-sound", "sound"], ["v2-music", "music"], ["v2-quality", "quality"]];
+    // the dialogue lines
+    $("v2-addline").onclick = () => { const s = cur(); if (!s) return; linesOf(s).push({ speaker: "", text: "" }); save(); $("v2-lines").dataset.shot = ""; renderPanel(true); $("v2-lines").querySelector(`[data-ltx="${s.lines.length - 1}"]`)?.focus(); };
+    $("v2-lines").addEventListener("input", e => { const s = cur(), k = e.target.dataset.ltx; if (s && k != null) { linesOf(s)[+k].text = e.target.value; save(); renderPanel(true); } });
+    $("v2-lines").addEventListener("change", e => { const s = cur(), k = e.target.dataset.lsp; if (s && k != null) { linesOf(s)[+k].speaker = e.target.value; save(); $("v2-lines").dataset.shot = ""; renderPanel(true); } });
+    $("v2-lines").addEventListener("click", e => { const s = cur(), k = e.target.closest("[data-lrm]")?.dataset.lrm; if (s && k != null) { linesOf(s).splice(+k, 1); save(); $("v2-lines").dataset.shot = ""; renderPanel(true); } });
+    // the soundtrack
+    $("v2-music-btn").onclick = soundtrackDialog;
+    $("v2-tlmusic").addEventListener("click", e => { if (e.target.closest('[data-a="music"]')) soundtrackDialog(); });
+    for (const [id, k] of fields) $(id).addEventListener(id === "v2-quality" ? "change" : "input", e => {
       const s = cur(); if (!s) return;
       s[k] = e.target.value; save();
       if (k === "name") { renderShots(); renderTimeline(); $("v2-shot-title").textContent = s.name; }
@@ -502,7 +631,7 @@ const V2 = (() => {
       const prev = state.items.get(ev.item.id);
       state.items.set(ev.item.id, ev.item);
       Scene3D.onItem?.(ev.item);
-      if (st.board.shots.some(s => s.results?.includes(ev.item.id)) && prev?.status !== ev.item.status) renderAll();
+      if ((st.board.shots.some(s => s.results?.includes(ev.item.id)) || st.board.settings.soundtrack?.result === ev.item.id) && prev?.status !== ev.item.status) renderAll();
     };
   }
 

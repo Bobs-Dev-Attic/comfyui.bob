@@ -5,6 +5,22 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.124.0] - 2026-11-20
+
+### Added
+- **V2: sound (phase 4).**
+  - **Dialogue lines:** a shot has any number of lines, in order, each said by one of its objects or by "Someone".
+    A speaker named once is then called by what it is ("The young woman says"), not described all over again.
+  - **Voices:** an object in the library can have a voice recording, 6 to 10 s of clear speech, cleaned up and its
+    best part kept. When it has a line, the shot is spoken with it on H3 Reference (`<Audio N>`, up to 3 voices), and
+    the Model box says so.
+  - **Soundtrack:** 🎵 Soundtrack on the timeline makes one piece of music for the whole timeline with MiniMax Music 3,
+    as long as the shots together, from a description and optional lyrics. It plays in a lane under the shots. While
+    it's on, the shots are made without their own music and each shot's Music field is set aside.
+  - Each shot's background sound and music go into H3's own sound fields, as before.
+- **A 3D scene render can speak with reference voices.** The scene render (H3 with Time-to-Move) takes up to 3 voice
+  recordings and then runs on H3 Reference, even with no object pictures.
+
 ## [0.123.0] - 2026-11-20
 
 ### Added

@@ -77,6 +77,8 @@ def build_motion(
     prefix: str = "bob/motion",
     loras: list[tuple[str, float]] | None = None,
     references: int = 0,
+    audios: int = 0,
+    clean_audio: bool = False,
 ) -> Built:
     """Motion layers (app/motion.py): H3 image-to-video from the original picture, with Time-to-Move
     (vloTimeToMove from ComfyUI-vlo) holding the moved objects to a rough cut-and-drag animation.
@@ -90,7 +92,10 @@ def build_motion(
     With `references` (1-8, a 3D scene's object pictures: image_inputs ref_0...), it runs on H3 Reference instead
     (`files` are the ref2va set): MiniMaxH3ReferenceToVideo with the first frame as <Picture 1>, aligned to 0.00 s
     as H3's keyframe wording does, and the object pictures as <Picture 2>... Time-to-Move holds the motion the same
-    way (as FaceRefine does, H3 Reference's conditioning takes a latent made elsewhere)."""
+    way (as FaceRefine does, H3 Reference's conditioning takes a latent made elsewhere).
+
+    With `audios` (1-3 voices to speak with, image_inputs aref_0...: <Audio N> in the prompt), it runs on H3 Reference
+    too, even with no object pictures; `clean_audio` cleans each and keeps its best 6-10 s of speech (H3RefAudioPrep)."""
     if not 0 <= references <= H3_MAX_REFS - 1:
         raise ValueError(f"A scene render takes at most {H3_MAX_REFS - 1} object pictures")
     g = Graph()
@@ -115,7 +120,7 @@ def build_motion(
     first = g.add("LoadImage", image="")
     scaled = g.add("ImageScale", image=o(first), upscale_method="lanczos", width=width, height=height, crop="center")
     image_inputs: dict[str, str] = {"first_frame": first}
-    if references:
+    if references or audios:
         prompt = f"{h3_frame_alignment(True, False, length)}\n\n{prompt}"
         cond_inputs: dict[str, Any] = dict(clip=o(clip), vae=o(vae), audio_vae=o(audio_vae), prompt=prompt, width=width,
                                            height=height, length=length, ref_image_size="match")
@@ -124,6 +129,14 @@ def build_motion(
             load = g.add("LoadImage", image="")  # an object's picture, filled by the caller
             image_inputs[f"ref_{i}"] = load
             cond_inputs[f"ref_images.ref_image_{i + 1}"] = o(load)
+        for i in range(audios):
+            load = g.add("LoadAudio", audio="")  # a voice to speak with, filled by the caller
+            image_inputs[f"aref_{i}"] = load
+            a = o(load)
+            if clean_audio:
+                a = o(g.add("H3RefAudioPrep", audio=a, clean="voice_focus", crop_mode="best_window", target_seconds=8.0, max_seconds=10.0,
+                            max_pause_seconds=0.8, fade_ms=25, normalize_peak_db=-3.0, snap_to_latent_grid=True))
+            cond_inputs[f"ref_audios.ref_audio_{i}"] = a
         cond = g.add("MiniMaxH3ReferenceToVideo", **cond_inputs)
     else:
         cond = g.add("MiniMaxH3ImageToVideo", clip=o(clip), vae=o(vae), prompt=prompt, width=width, height=height,

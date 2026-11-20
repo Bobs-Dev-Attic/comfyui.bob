@@ -558,6 +558,7 @@ class V2Object(BaseModel):
     becomes: str = Field("", max_length=300)  # what it is in the picture
     pictures: list[str] = Field(default_factory=list, max_length=9)  # reference pictures (media refs); the first goes to H3 Reference
     loras: list[dict[str, Any]] = Field(default_factory=list, max_length=8)  # [{name, strength}] for H3
+    voice: str | None = Field(None, max_length=2000)  # a recording of its voice (a media ref): its lines are spoken with it
     notes: str = Field("", max_length=2000)
 
 
@@ -588,6 +589,12 @@ async def v2_objects_put(obj_id: str, req: V2Object):
         try:
             if media.kind_of(ref) != "image" or not media_path(ref).is_file():
                 raise HTTPException(400, f"Not a picture: {ref}")
+        except (media.MediaError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+    if req.voice:
+        try:
+            if media.kind_of(req.voice) not in ("audio", "video") or not media_path(req.voice).is_file():
+                raise HTTPException(400, "The voice must be a sound (or a video with sound)")
         except (media.MediaError, ValueError) as exc:
             raise HTTPException(400, str(exc)) from exc
     item = {**req.model_dump(), "updated": time.time()}
