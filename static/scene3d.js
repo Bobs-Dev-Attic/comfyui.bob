@@ -1574,7 +1574,7 @@ const Scene3D = (() => {
   function stages(el) {
     const L = [];
     let tick = 0;
-    const secs = x => { const t = ((x.t1 || Date.now()) - x.t0) / 1000; return t < 60 ? `${t.toFixed(0)} s` : `${Math.floor(t / 60)} min ${String(Math.round(t % 60)).padStart(2, "0")} s`; };
+    const secs = x => { const t = Math.round(((x.t1 || Date.now()) - x.t0) / 1000); return t < 60 ? `${t} s` : `${Math.floor(t / 60)} min ${String(t % 60).padStart(2, "0")} s`; };
     const ICON = { wait: "○", run: "", done: "✓", skip: "–", fail: "✕" };
     const draw = () => {
       if (!el.isConnected) { clearInterval(tick); return; }
@@ -1601,7 +1601,7 @@ const Scene3D = (() => {
         x.note = rest && x.name.includes(rest) ? "" : rest;  // nothing the name doesn't say already
         draw();
       },
-      note(note) { const x = L.find(y => y.state === "run"); if (x) { x.note = note; draw(); } },
+      note(note, key = null) { const x = L.find(y => y.state === "run"); if (x && (!key || x.key === key)) { x.note = note; draw(); } },
       say(m) { const hit = STAGE_OF.find(([re]) => re.test(m)); if (hit) sg.at(hit[1], m, hit[2]); else sg.note(m); },
       done(key, note) { const i = L.findIndex(y => y.key === key); if (i < 0) return; for (let j = 0; j < i; j++) close(L[j]);
         const x = L[i]; if (x.state !== "run") x.t0 = x.t0 || Date.now(); x.state = "run"; close(x); if (note != null) x.note = note; draw(); },
@@ -1613,6 +1613,32 @@ const Scene3D = (() => {
   }
   /* After Render queues it: follow the video through ComfyUI (its queue, the GPU's steps, saving it, and the word
      check when it has lines) on the live events, until it's done or the window closes. Returns a stop function. */
+  // "Node 12 · VAEDecode" (a job's log) -> what ComfyUI is doing, in words
+  const doingOf = (c, out = "video") => /Loader|Load[A-Z]|LoRA|Lora/.test(c) ? "loading the models" : /Sampler|Sample|TimeToMove/i.test(c) ? "sampling"
+    : /Decode/i.test(c) ? (out === "video" ? "decoding the frames" : "decoding") : /Encode/i.test(c) ? "encoding the inputs"
+    : /Save|Combine|Video/i.test(c) ? `writing the ${out}` : `running ${c}`;
+  /* While the photo of the first frame is made: its own progress in the photo stage's note (ComfyUI's queue, loading
+     the models, sampling step by step, saving it), until it's done. Returns a stop function. */
+  function followPhoto(id, sg) {
+    const es = new EventSource("/api/events");
+    let doing = "", ended = false;
+    const end = () => { if (!ended) { ended = true; es.close(); } };
+    const say = t => sg.note(t, "photo");
+    es.onmessage = e => {
+      if (!sg.alive()) return end();
+      let ev; try { ev = JSON.parse(e.data); } catch { return; }
+      if (ev.type === "item") { if (ev.item?.id !== id) return;
+        if (ev.item.status === "queued") say("waiting in ComfyUI's queue");
+        else if (["done", "failed", "cancelled"].includes(ev.item.status)) end();
+        return; }
+      if (ev.id !== id) return;
+      if (ev.type === "queue") say(`waiting in ComfyUI's queue${ev.position != null ? ` (position ${ev.position})` : ""}`);
+      else if (ev.type === "progress" && ev.steps > 1) say(`${doing || "sampling"}: step ${ev.step} of ${ev.steps} · ${Math.round(100 * ev.step / ev.steps)}%`);
+      else if (ev.type === "log" && /^Node \d+ · /.test(ev.msg)) { doing = doingOf(ev.msg.replace(/^Node \d+ · /, ""), "photo"); say(doing); }
+      else if (ev.type === "log" && /^Downloading the results/.test(ev.msg)) say("saving the photo");
+    };
+    return end;
+  }
   function followRender(it, sg, words, onEnd = () => {}) {
     const es = new EventSource("/api/events");
     let wordsT = 0, ended = false, doing = "";
@@ -1635,10 +1661,7 @@ const Scene3D = (() => {
       if (ev.type === "queue") sg.at("queue", ev.position != null ? `position ${ev.position}` : "", "Waiting in ComfyUI's queue");
       else if (ev.type === "progress" && ev.steps > 1) sg.at("gpu", `${doing || "sampling"}: step ${ev.step} of ${ev.steps} · ${Math.round(100 * ev.step / ev.steps)}%`);
       else if (ev.type === "log" && /^Node \d+ · /.test(ev.msg)) {  // what ComfyUI is on, between the sampler's steps
-        const c = ev.msg.replace(/^Node \d+ · /, "");
-        const what = /Loader|Load[A-Z]|LoRA|Lora/.test(c) ? "loading the models" : /Sampler|Sample|TimeToMove/i.test(c) ? "sampling" : /Decode/i.test(c) ? "decoding the frames"
-          : /Encode/i.test(c) ? "encoding the inputs" : /Save|Combine|Video/i.test(c) ? "writing the video" : `running ${c}`;
-        doing = what; sg.at("gpu", what);
+        doing = doingOf(ev.msg.replace(/^Node \d+ · /, "")); sg.at("gpu", doing);
       }
       else if (ev.type === "log" && /^Downloading the results/.test(ev.msg)) sg.at("save");
       else if (ev.type === "log" && /^Checking the words:/.test(ev.msg)) { sg.done("words", ev.msg.replace(/^Checking the words:\s*/, "didn't run: ")); sg.finish(); end(); }
@@ -1803,7 +1826,7 @@ const Scene3D = (() => {
     syncTo();
     foot.querySelector('[data-a="cancel"]').onclick = () => win.close();
     const sgEl = box.querySelector(".s3r-stages"), sg = stages(sgEl);
-    let stop = null;
+    let stop = null, stopPhoto = null;
     foot.querySelector('[data-a="go"]').onclick = async e => {
       e.target.disabled = true;
       stop?.(); stop = null;
@@ -1832,7 +1855,9 @@ const Scene3D = (() => {
         const fill = !!box.querySelector("#s3r-fill")?.checked;
         if (box.querySelector("#s3r-fill") && fromPhoto()) try { localStorage.setItem("bob.sceneGapFill", fill ? "1" : "0"); } catch { /* not kept */ }
         const r = await buildRender({ start, look, fill, refs: useRefs(), hold: holdSel.value, quality: box.querySelector("#s3r-q").value, speed: spSel.value, extra: extraNow(), prompt: edited ? box.querySelector("#s3r-prompt").value : null,
-          what: box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder }, m => { st.textContent = m; sg.say(m); });
+          what: box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder,
+          onPhoto: id => { stopPhoto?.(); stopPhoto = followPhoto(id, sg); } }, m => { st.textContent = m; sg.say(m); });
+        stopPhoto?.(); stopPhoto = null;
         if (to !== "now") {  // into a shot: Generate on the Shots step sends it
           const k = Shots.useScene(to === "new" ? -1 : +to, r.shot);
           sg.finish();
@@ -1849,7 +1874,7 @@ const Scene3D = (() => {
         e.target.textContent = "✓ Queued";
         stop = followRender(items[0], sg, words, () => { if (sgEl.isConnected) { st.textContent = ""; e.target.disabled = false; e.target.textContent = "🎬 Render again"; } });
         Media.toast(`3D scene: queued. ${toTl ? "It goes on the timeline when it's done." : "The video shows up in the gallery when it's done."}`);
-      } catch (err) { stop?.(); stop = null; sg.fail(err.message); st.textContent = ""; e.target.disabled = false; Media.toast(`Render: ${err.message}`); }
+      } catch (err) { stop?.(); stop = null; stopPhoto?.(); stopPhoto = null; sg.fail(err.message); st.textContent = ""; e.target.disabled = false; Media.toast(`Render: ${err.message}`); }
     };
   }
 
@@ -1872,6 +1897,7 @@ const Scene3D = (() => {
         const A = s.bg.aspect, PW = Math.round((A >= 1 ? Lg : Lg * A) / 8) * 8, PH = Math.round(PW / A / 8) * 8;
         const model = qk && editModels().some(m => m[0] === "qwen") ? "qwen" : editModels()[0][0];
         const photo = await makePhoto([PW, PH], 0, camForRender(0), o.look || "", model, o.refs, false, true, qk ? 0.4 : null, null, o.extra?.loras);
+        o.onPhoto?.(photo.id);  // the Render window follows its progress
         const it = await waitItem(photo.id);
         photoPath = (it.files || []).find(f => /^image\//.test(f.content_type || ""))?.path || it.files?.[0]?.path;
         if (it.status !== "done" || !photoPath) throw new Error("The photo didn't come out");
