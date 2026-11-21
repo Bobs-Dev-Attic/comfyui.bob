@@ -1768,12 +1768,14 @@ const Scene3D = (() => {
         if (it.status !== "done" || !photoPath) throw new Error("The photo didn't come out");
         say("Painting the photo onto the scene…");
         proj = await prepareProjection(photoPath, 0, camForRender(0), say);
+        proj.photoRef = photoPath;
       } else if (start.startsWith("photo:")) {
         const p = s.photos.find(x => x.id === start.slice(6)), it = state.items.get(start.slice(6));
         photoPath = it?.files?.[0]?.path;
         if (!p || !photoPath) throw new Error("That photo isn't there anymore");
         say("Painting the photo onto the scene…");
         proj = await prepareProjection(photoPath, p.t, p.cam, say);
+        proj.photoRef = photoPath;
       }
       if (proj && o.fill !== false && cameraMoves()) {
         try {
@@ -2065,8 +2067,8 @@ const Scene3D = (() => {
       const P = { ...r.proj, mask: !!r.mask };
       s.gpu.begin(W, H, [0, 0, 0], r.mask ? 1 : 0);
       if (!r.objsOnly) {  // objsOnly: the objects alone, over a background composed elsewhere
-        s.gpu.draw(s.bgMesh, { VP, M: ID, M0: ID, eye: e, key, proj: P });
-        s.gpu.draw(P.sphere, { VP, M: ID, M0: ID, eye: e, key, proj: P });
+        if (P.relief) s.gpu.draw(P.relief.mesh, { VP, M: ID, M0: ID, eye: e, key, proj: P });
+        else { s.gpu.draw(s.bgMesh, { VP, M: ID, M0: ID, eye: e, key, proj: P }); s.gpu.draw(P.sphere, { VP, M: ID, M0: ID, eye: e, key, proj: P }); }
       }
       for (const o of s.objs) {
         if (!o.mesh || !o.pos || o.hidden || r.skip?.includes(o)) continue;
@@ -3586,6 +3588,81 @@ const Scene3D = (() => {
     for (let i = 0; i < N; i++) for (let j = 0; j < M; j++) { const a = i * (M + 1) + j, b = a + M + 1; idx.push(a, b, a + 1, a + 1, b, b + 1); }
     return s.gpu.upload([{ pos: new Float32Array(pos), nrm: null, uv: null, col: null, idx: new Uint32Array(idx), base: [1, 1, 1, 1], tex: null, ao: null }]);
   }
+  /* Depth for a photo or a filled view of an empty scene (Depth Anything 3, /api/scenes/relief): what's in it (people
+     at the back, tables, walls) stands at its own depth, so a camera move gives it the right parallax and size. Laid
+     on the floor and a far dome instead, it smeared and stretched as the camera turned. Each mesh vertex keeps its
+     place in the picture and its depth; it's put back along this camera's own ray. The depth's scale: where it's
+     already known (anchors: the reliefs laid before, seen from this camera), else the scene's stand-ins (they stand
+     where the photo has them), else the nearest of the floor. -> { mesh, pos } or null (then as before). */
+  async function reliefOf(photoRef, cam, VP0, anchors = [], fitP = null) {
+    if (!s.bg.empty) return null;
+    const r = await api("/api/scenes/relief", { method: "POST", body: JSON.stringify({ source: photoRef }) });
+    const p = (await G().parseGLB(await (await fetch(r.url)).arrayBuffer()))[0];
+    if (!p?.uv || !p.pos) return null;
+    const n = p.pos.length / 3, e0 = eyeOf(cam), fwd = norm(sub(cam.target, e0)), inv = inv4(VP0);
+    const rays = new Float32Array(n * 3), dd = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const x = p.uv[i * 2] * 2 - 1, y = 1 - p.uv[i * 2 + 1] * 2, w = inv[3] * x + inv[7] * y + inv[11] + inv[15];
+      const d = sub(xf(inv, [x, y, 1], 1).map(c => c / w), e0), k = d[0] * fwd[0] + d[1] * fwd[1] + d[2] * fwd[2];
+      rays[i * 3] = d[0] / k; rays[i * 3 + 1] = d[1] / k; rays[i * 3 + 2] = d[2] / k;  // a unit step forward
+      dd[i] = Math.max(1e-6, -p.pos[i * 3 + 2]);
+    }
+    const step = Math.max(1, Math.floor(n / 6000)), median = a => a.sort((x, y) => x - y)[Math.floor(a.length / 2)];
+    let ratios = [];
+    if (anchors.length) {  // what's known: the earlier reliefs' points, in a coarse depth buffer through this camera
+      const GW = 160, GH = Math.max(1, Math.round(160 / s.bg.aspect)), zb = new Float32Array(GW * GH).fill(Infinity);
+      for (const A of anchors) for (let j = 0; j < A.pos.length; j += 3 * step) {
+        const q = [A.pos[j], A.pos[j + 1], A.pos[j + 2]], zf = (q[0] - e0[0]) * fwd[0] + (q[1] - e0[1]) * fwd[1] + (q[2] - e0[2]) * fwd[2]; if (zf <= 0) continue;
+        const v = xf(VP0, q, 1), ww = VP0[3] * q[0] + VP0[7] * q[1] + VP0[11] * q[2] + VP0[15], nx = v[0] / ww, ny = v[1] / ww;
+        if (Math.abs(nx) > 1 || Math.abs(ny) > 1) continue;
+        const c = Math.min(GH - 1, Math.floor((1 - ny) / 2 * GH)) * GW + Math.min(GW - 1, Math.floor((nx + 1) / 2 * GW));
+        if (zf < zb[c]) zb[c] = zf;
+      }
+      for (let i = 0; i < n; i += step) {
+        const c = Math.min(GH - 1, Math.floor(p.uv[i * 2 + 1] * GH)) * GW + Math.min(GW - 1, Math.floor(p.uv[i * 2] * GW));
+        if (isFinite(zb[c])) ratios.push(zb[c] / dd[i]);
+      }
+    }
+    if (ratios.length < 200) {  // the scene's own surfaces
+      const boxes = s.objs.filter(o => o.mesh && o.pos && !o.hidden).map(o => {
+        const cs = boxCorners(o, matOf(o, fitP?.t0 != null ? fitPose(o, fitP.t0, fitP) : poseAt(o, 0)));
+        return [0, 1, 2].map(j => [Math.min(...cs.map(c => c[j])), Math.max(...cs.map(c => c[j]))]);
+      });
+      const objR = [], floorR = [];
+      for (let i = 0; i < n; i += step) {
+        const rv = [rays[i * 3], rays[i * 3 + 1], rays[i * 3 + 2]], tf = rv[1] < -1e-4 ? (s.bg.floor - e0[1]) / rv[1] : Infinity;
+        let tb = Infinity;
+        for (const B of boxes) {  // the ray through the stand-in's box (slabs)
+          let t0 = 0, t1 = Infinity;
+          for (let j = 0; j < 3 && t0 <= t1; j++) {
+            if (Math.abs(rv[j]) < 1e-9) { if (e0[j] < B[j][0] || e0[j] > B[j][1]) t0 = Infinity; continue; }
+            const a = (B[j][0] - e0[j]) / rv[j], b = (B[j][1] - e0[j]) / rv[j];
+            t0 = Math.max(t0, Math.min(a, b)); t1 = Math.min(t1, Math.max(a, b));
+          }
+          if (t0 <= t1 && t0 > 0) tb = Math.min(tb, t0);
+        }
+        if (tb < tf) objR.push(tb / dd[i]); else if (isFinite(tf) && tf < s.bg.dmed * 30) floorR.push(tf / dd[i]);
+      }
+      // the floor behind what stands on it reads further than it is: its nearest fifth
+      ratios = objR.length >= 200 ? objR : floorR.sort((x, y) => x - y).slice(0, Math.max(1, Math.floor(floorR.length / 5)));
+    }
+    const k = ratios.length ? median(ratios) : NaN;
+    if (!isFinite(k) || k <= 0) return null;
+    const pos = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) for (let j = 0; j < 3; j++) pos[i * 3 + j] = e0[j] + rays[i * 3 + j] * dd[i] * k;
+    // What was found in the photo (the people, the objects) is left out: its stand-in carries it. Kept in the relief
+    // too, the two copies drew apart as the camera turned (a second her behind her).
+    let idx = p.idx || Uint32Array.from({ length: n }, (_, i) => i);
+    const F = fitP?.found;
+    if (F) {
+      const R = Math.round(F.W * 0.01) + 1, g = grow(F.a, F.W, F.H, R, R, R);
+      const out = (i => g[Math.min(F.H - 1, Math.floor(p.uv[i * 2 + 1] * F.H)) * F.W + Math.min(F.W - 1, Math.floor(p.uv[i * 2] * F.W))]);
+      const keep = [];
+      for (let j = 0; j < idx.length; j += 3) if (!out(idx[j]) && !out(idx[j + 1]) && !out(idx[j + 2])) keep.push(idx[j], idx[j + 1], idx[j + 2]);
+      idx = Uint32Array.from(keep);
+    }
+    return { pos, mesh: s.gpu.upload([{ pos, nrm: null, uv: null, col: null, idx, base: [1, 1, 1, 1], tex: null, ao: null }]) };
+  }
   // The photo (a media ref) as seen from `cam` at time t0: its texture, that camera's depth, and its projection.
   async function prepareProjection(photoRef, t0, cam, say = () => {}) {
     const img = await createImageBitmap(await (await fetch(`/api/media/file?path=${encodeURIComponent(photoRef)}`)).blob());
@@ -3597,9 +3674,13 @@ const Scene3D = (() => {
     const P = { VP0, near, far, t0, sphere, cam: camOf(cam) };
     try { await fitToPhoto(P, photoRef, e0, say); } catch (err) { console.warn("Fitting the photo:", err); }
     try { cardsFor(P, e0); } catch (err) { console.warn("Photo cards:", err); }
+    if (s.bg.empty) {
+      say("Measuring the depth of the photo (Depth Anything 3)…");
+      try { P.relief = await reliefOf(photoRef, cam, VP0, [], P); } catch (err) { console.warn("Photo depth:", err); }
+    }
     P.depth = s.gpu.depthPass(W0, H0, d => {
       const o0 = { VP: VP0, eye: e0, key: [0, 1, 0] };
-      d(s.bgMesh, { ...o0, M: ID }); d(sphere, { ...o0, M: ID });
+      if (P.relief) d(P.relief.mesh, { ...o0, M: ID }); else { d(s.bgMesh, { ...o0, M: ID }); d(sphere, { ...o0, M: ID }); }
       for (const o of s.objs) if (o.mesh && o.pos && !o.hidden) d(o.mesh, { ...o0, M: matOf(o, fitPose(o, t0, P)) });
     });
     P.photo = s.gpu.texture(img);
@@ -3718,27 +3799,75 @@ const Scene3D = (() => {
     return n / (W * H);
   }
   // A background-only projection (a filled view): no objects fitted, and its depth is the background's alone.
-  async function prepareBgProjection(photoRef, t0, cam) {
+  async function prepareBgProjection(photoRef, t0, cam, anchors = [], cutOut = null) {
     const img = await createImageBitmap(await (await fetch(`/api/media/file?path=${encodeURIComponent(photoRef)}`)).blob());
     const A = s.bg.aspect, near = s.bg.dmed * 0.01, far = s.bg.dmed * 50, e0 = eyeOf(cam);
     const VP0 = mul4(perspective(2 * Math.atan(fovOf(cam).tv), A, near, far), lookAt(e0, cam.target, axesOf(cam).u));
     const sphere = sphereMesh(e0, far * 0.8), W0 = Math.min(2048, img.width), H0 = Math.round(W0 / A);
     const P = { VP0, near, far, t0, sphere };
-    P.depth = s.gpu.depthPass(W0, H0, d => { const o0 = { VP: VP0, eye: e0, key: [0, 1, 0] }; d(s.bgMesh, { ...o0, M: ID }); d(sphere, { ...o0, M: ID }); });
+    if (s.bg.empty) try { P.relief = await reliefOf(photoRef, cam, VP0, anchors.filter(Boolean), cutOut ? { found: cutOut } : null); } catch (err) { console.warn("View depth:", err); }
+    P.depth = s.gpu.depthPass(W0, H0, d => {
+      const o0 = { VP: VP0, eye: e0, key: [0, 1, 0] };
+      if (P.relief) d(P.relief.mesh, { ...o0, M: ID }); else { d(s.bgMesh, { ...o0, M: ID }); d(sphere, { ...o0, M: ID }); }
+    });
     P.photo = s.gpu.texture(img);
     return P;
   }
-  const GAP_TEXT = look => "Replace every solid magenta area with the rest of this place, continuing the ground, the horizon, the sky and "
-    + "the surroundings from the rest of the picture, so it is one seamless photograph with the same light, colours, lens and style. "
-    + (look ? `The place: ${look.replace(/[.\s]+$/, "")}. ` : "")
-    + "Keep the ground near the camera flat and open; put anything tall (plants, rocks, buildings) only in the distance. "
+  /* Indoors (a room, a restaurant…): the fill continues its walls, floor and ceiling. The outdoor wording ("the
+     horizon, the sky") opened a candlelit restaurant onto a terrace with a skyline as the camera turned. */
+  const INDOOR = /\b(room|restaurant|caf[eé]|bar|pub|diner|bistro|kitchen|bedroom|bathroom|office|hall|lobby|interior|indoors?|inside|studio|library|church|museum|shop|store|corridor|hallway|classroom|apartment|flat|house|theat(?:er|re)|cinema|gym|hospital|warehouse|garage|cabin|wood panell?ing|wallpaper|ceiling)\b/i;
+  const OUTDOOR = /\b(outdoors?|outside|terrace|patio|street|beach|garden|park|forest|woods|field|meadow|mountains?|desert|ocean|sea|lake|river|rooftop|sky|skyline|courtyard)\b/i;
+  const isIndoor = look => INDOOR.test(look || "") && !OUTDOOR.test(look || "");
+  // withPhoto: the photo of the place goes along as the second picture
+  const GAP_TEXT = (look, withPhoto = false) => (isIndoor(look)
+    ? "Replace every solid magenta area with the rest of this same room, continuing its walls, floor, ceiling, furniture and "
+      + "lighting from the rest of the picture" + (withPhoto ? " and from the second picture, a photo of this same room" : "")
+      + ", so it is one seamless photograph with the same light, colours, lens and style. It is indoors: the magenta areas are "
+      + "more of the room, never sky, horizon or an open view outside. "
+      + (look ? `The place: ${look.replace(/[.\s]+$/, "")}. ` : "")
+      + "Keep the floor near the camera open. "
+    : "Replace every solid magenta area with the rest of this place, continuing the ground, the horizon, the sky and "
+      + "the surroundings from the rest of the picture" + (withPhoto ? " and from the second picture, a photo of this same place" : "")
+      + ", so it is one seamless photograph with the same light, colours, lens and style. "
+      + (look ? `The place: ${look.replace(/[.\s]+$/, "")}. ` : "")
+      + "Keep the ground near the camera flat and open; put anything tall (plants, rocks, buildings) only in the distance. ")
     + "Add no people, animals or large objects. No magenta remains. Keep everything that isn't magenta exactly the same.";
+  // How much of a picture is still solid magenta (the edit model left some unfilled): 0..1
+  async function magentaShare(path) {
+    const img = await createImageBitmap(await (await fetch(`/api/media/file?path=${encodeURIComponent(path)}`)).blob());
+    const W = 256, H = Math.max(1, Math.round(256 * img.height / img.width)), c = Object.assign(document.createElement("canvas"), { width: W, height: H });
+    const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(img, 0, 0, W, H);
+    const d = g.getImageData(0, 0, W, H).data; let n = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i] > 200 && d[i + 1] < 90 && d[i + 2] > 200) n++;
+    return n / (W * H);
+  }
   /* Detail: a camera that comes close (a push in, a zoom) enlarges the photo: at twice its size the ground in front
      turns into smeared streaks and H3 follows the blur. Where the move magnifies it most (over DETAIL_MIN), the view
      there is drawn from what the scene has, background only, and Qwen redraws it sharp, keeping every shape, colour
      and place (and filling what's cut out round the objects); it's painted on from that camera and faded in over the
      photo's background as the camera gets that close. The objects still come from the photo. */
   const DETAIL_MIN = 1.4;
+  /* Where the stand-ins are in a view (from `cam` at t, as fitted to the photo), grown a little: {a, W, H}, top row
+     first. A view sent to Qwen has them magenta, so it paints the room behind them (its relief keeps that: cut out,
+     it left black holes round her face that H3 drew as a mask). Bits of a person left in a view, Qwen made a whole
+     second one of, sitting behind her. */
+  function standInsAt(P, cam, t, W, H) {
+    const { VP } = viewProj(W, H, cam);
+    const raw = s.gpu.capture(W, H, d => {
+      const o0 = { VP, eye: eyeOf(cam), key: [0, 1, 0] };
+      d(s.bgMesh, { ...o0, M: ID, solid: [0, 0, 0] });
+      for (const o of s.objs) if (o.mesh && o.pos && !o.hidden) { figureMesh(o, t); d(o.mesh, { ...o0, M: matOf(o, fitPose(o, t, P)), solid: [1, 1, 1] }); }
+    });
+    const a = new Uint8Array(W * H);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) a[y * W + x] = raw[((H - 1 - y) * W + x) * 4] > 127 ? 1 : 0;
+    const R = Math.round(W * 0.02) + 2;
+    return { a: grow(a, W, H, R, R, R), W, H };
+  }
+  function magentaOver(vg, F) {
+    const px = vg.getImageData(0, 0, F.W, F.H), d = px.data;
+    for (let c = 0; c < F.W * F.H; c++) if (F.a[c]) { d[c * 4] = 255; d[c * 4 + 1] = 0; d[c * 4 + 2] = 255; d[c * 4 + 3] = 255; }
+    vg.putImageData(px, 0, 0);
+  }
   const magOf = (c0, c) => (c0.dist / Math.max(1e-6, c.dist)) * ((c.lens || baseLens()) / (c0.lens || baseLens()));
   function detailAlpha(P, cam, D) {
     if (!P?.cam) return 0;
@@ -3762,6 +3891,7 @@ const Scene3D = (() => {
     const px = vg.getImageData(0, 0, W, H), d = px.data;
     for (let i = 0; i < d.length; i += 4) if (d[i + 3] < 250) { d[i] = 255; d[i + 1] = 0; d[i + 2] = 255; d[i + 3] = 255; }
     vg.putImageData(px, 0, 0);
+    magentaOver(vg, standInsAt(P, cam, t, W, H));
     const blob = await new Promise(r => view.toBlob(r, "image/png")), fd = new FormData(); fd.append("file", blob, "scene_detail.png");
     const up = await (await fetch("/api/upload", { method: "POST", body: fd })).json();
     say(`The camera comes in ${best.m.toFixed(1)}× closer than the photo: Qwen redraws that view sharp (about half a minute)…`);
@@ -3770,7 +3900,7 @@ const Scene3D = (() => {
     const it = await waitItem(items[0].id);
     const path = (it.files || []).find(f => /^image\//.test(f.content_type || ""))?.path || it.files?.[0]?.path;
     if (it.status !== "done" || !path) throw new Error("Qwen couldn't redraw the detail view");
-    P.details = [{ t, cam, m: best.m, ref: path, P: await prepareBgProjection(path, t, cam) }];
+    P.details = [{ t, cam, m: best.m, ref: path, P: await prepareBgProjection(path, t, cam, [P.relief, ...(P.gaps || []).map(g => g.P.relief)]) }];
     return 1;
   }
   // Fill the gaps of a camera move from the photo P (adds P.gaps); `look`: how the place looks, in words.
@@ -3796,15 +3926,40 @@ const Scene3D = (() => {
       const px = vg.getImageData(0, 0, W, H), d = px.data;
       for (let i = 0; i < d.length; i += 4) if (d[i + 3] < 250) { d[i] = 255; d[i + 1] = 0; d[i + 2] = 255; d[i + 3] = 255; }
       vg.putImageData(px, 0, 0);
+      magentaOver(vg, standInsAt(P, cam, t, W, H));
       const blob = await new Promise(r => view.toBlob(r, "image/png")), fd = new FormData(); fd.append("file", blob, "scene_gap.png");
       const up = await (await fetch("/api/upload", { method: "POST", body: fd })).json();
       say(`Qwen is filling in what the photo can't see, ${Math.round((1 - worst.c) * 100)}% of the view at ${t.toFixed(1)} s (view ${k + 1}, about half a minute)…`);
-      const items = await submit({ kind: "image", engine: "imgedit", edit_op: "instruct", source: up.ref, prompt: GAP_TEXT(look), edit_model: model, seed: -1, batch: 1, project: s.sc.project });
-      if (!items?.length) throw new Error("Qwen didn't take the view to fill");
-      const it = await waitItem(items[0].id);
-      const path = (it.files || []).find(f => /^image\//.test(f.content_type || ""))?.path || it.files?.[0]?.path;
-      if (it.status !== "done" || !path) throw new Error("Qwen couldn't fill a view");
-      P.gaps.push({ t, cam, ref: path, P: await prepareBgProjection(path, t, cam) });
+      // the photo goes along (Qwen takes more pictures), so the fill continues the same place; what's left magenta is
+      // filled again (twice at most), or it stays in the guide as pink squares H3 copies
+      const withPhoto = model === "qwen" && !!P.photoRef;
+      if (withPhoto && !P.plateRef) {
+        // the photo without its people and objects (their places blurred over from round them): the room as it is. The
+        // photo itself, Qwen copied her from, sitting behind herself
+        const pw = Math.round((s.bg.aspect >= 1 ? 1024 : 1024 * s.bg.aspect) / 8) * 8, ph = Math.round(pw / s.bg.aspect / 8) * 8;
+        draw({ size: [pw, ph], t: P.t0, cam: P.cam, proj: bgOnly(P), skip: s.objs });
+        const plate = fillHoles(s.cv, pw, ph), pb = await new Promise(r => plate.toBlob(r, "image/png")), pf = new FormData();
+        pf.append("file", pb, "scene_plate.png");
+        P.plateRef = (await (await fetch("/api/upload", { method: "POST", body: pf })).json()).ref;
+      }
+      const fill = async src => {
+        const items = await submit({ kind: "image", engine: "imgedit", edit_op: "instruct", source: src, prompt: GAP_TEXT(look, withPhoto), edit_model: model,
+          ...(withPhoto && P.plateRef ? { references: [P.plateRef] } : {}), seed: -1, batch: 1, project: s.sc.project });
+        if (!items?.length) throw new Error("Qwen didn't take the view to fill");
+        const it = await waitItem(items[0].id);
+        const p = (it.files || []).find(f => /^image\//.test(f.content_type || ""))?.path || it.files?.[0]?.path;
+        if (it.status !== "done" || !p) throw new Error("Qwen couldn't fill a view");
+        return p;
+      };
+      let path = await fill(up.ref);
+      for (let again = 0; again < 2; again++) {
+        const left = await magentaShare(path).catch(() => 0);
+        if (left < 0.002) break;
+        say(`Qwen left ${(left * 100).toFixed(1)}% of view ${k + 1} unfilled: filling it again…`);
+        path = await fill(path);
+      }
+      say(`Measuring the depth of view ${k + 1}…`);
+      P.gaps.push({ t, cam, ref: path, P: await prepareBgProjection(path, t, cam, [P.relief, ...P.gaps.map(g => g.P.relief)]) });
     }
     return P.gaps.length;
   }

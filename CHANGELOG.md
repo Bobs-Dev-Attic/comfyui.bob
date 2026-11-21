@@ -5,6 +5,24 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.140.0] - 2026-11-21
+
+### Added
+- **Depth for a camera move's photo and filled views.** In an empty 3D scene, a render that starts from a photo
+  painted it, and every view Qwen filled, onto the flat floor and a far dome, so the people, tables and walls in them
+  stretched and smeared as the camera turned. Each picture now goes through Depth Anything 3 first
+  (`POST /api/scenes/relief`, kept per picture) and is laid on its own depth mesh along its camera's rays. The photo's
+  depth is scaled by the stand-ins (they stand where it has them) or the nearest of the floor; each filled view's by
+  the depth already laid down. The people and objects found in the photo are left out of its mesh: their stand-ins
+  carry them.
+
+### Changed
+- **Filling what the photo can't see keeps to the place.** Indoors (a restaurant, a room…), Qwen continues the same
+  room's walls, floor and ceiling, never sky or a view outside; the outdoor wording opened a candlelit restaurant
+  onto a terrace with a skyline. Qwen also gets the photo with its people and objects taken out, as the room to
+  continue, and the stand-ins' places in each view are magenta, so it paints the room behind them (given the photo
+  itself, or bits of her in a view, it drew a second Kristen behind her). What Qwen leaves magenta is filled again.
+
 ## [0.139.2] - 2026-11-21
 
 ### Fixed
