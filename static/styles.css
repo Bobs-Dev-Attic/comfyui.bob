@@ -893,6 +893,20 @@ details.post-proc > .hint { margin: 0 0 10px; }
 .s3p-dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 12px; margin: 0; font-size: 12.5px; }
 .s3p-dl dt { color: var(--muted); }
 .s3p-dl dd { margin: 0; }
+/* the Render window's progress: its stages, as the render goes */
+.s3r-stages h4 .s3r-sgh { font-weight: 400; color: var(--muted); }
+.s3r-stages ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 12.5px; }
+.s3r-sg { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 8px; align-items: start; }
+.s3r-sg .s3r-sn small { display: block; color: var(--muted); font-size: 11.5px; overflow-wrap: anywhere; }
+.s3r-sg .s3r-stm { color: var(--muted); font-variant-numeric: tabular-nums; }
+.s3r-si { width: 14px; height: 14px; margin-top: 1px; display: grid; place-items: center; font-size: 11px; line-height: 1; }
+.s3r-sg.wait, .s3r-sg.skip { color: var(--muted); }
+.s3r-sg.skip .s3r-sn { text-decoration: line-through; opacity: .7; }
+.s3r-sg.done .s3r-si { color: var(--ok); }
+.s3r-sg.fail .s3r-si, .s3r-sg.fail small { color: var(--bad); }
+.s3r-sg.run .s3r-sn { font-weight: 600; }
+.s3r-sg.run .s3r-si { border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; width: 10px; height: 10px; margin: 2px; animation: spin .8s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .s3r-sg.run .s3r-si { animation: none; border-color: var(--accent); } }
 .s3p-pics { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .s3p-pic { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px 2px 2px; background: var(--panel); }
 .s3p-pic img, .s3p-pic0 { width: 28px; height: 28px; border-radius: 4px; object-fit: cover; display: grid; place-items: center; background: var(--panel-2); }

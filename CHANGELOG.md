@@ -5,6 +5,20 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.142.0] - 2026-11-21
+
+### Added
+- **The Render window shows its progress, stage by stage.** Pressing Render adds a Progress section at the bottom
+  of the window with every stage the render goes through: the photo of the first frame, painting it onto the scene,
+  measuring its depth, filling what the photo can't see, the sharp close-up view, drawing the rough animation and its
+  mask, sending to H3, ComfyUI's queue (with its position), the GPU (loading the models, sampling step by step,
+  decoding), saving the video, and the word check when the shot has lines (with its score). Each stage shows waiting,
+  running (what it's on now and how long it's taken), done, skipped or failed. The window now stays open after the
+  render is queued so you can watch it through to the end; closing it doesn't stop the render, and Render again
+  is there when it's done.
+- **A folder picker in V2's New project window.** Browse… opens the project Explorer to choose (or make) the folder
+  the project is saved in; it starts at the last folder used and remembers the choice.
+
 ## [0.141.0] - 2026-11-21
 
 ### Added
