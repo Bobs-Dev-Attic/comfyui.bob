@@ -286,3 +286,20 @@ body.v2 { height: 100vh; overflow: hidden; display: grid; grid-template-rows: au
   .v2-tlbar .hint { display: none; }
 }
 html[data-motion="reduce"] .v2-panel { transition: none !important; }
+/* The shot's take: its words (🗣, app/heard.py), the takes best words first, and what can be done with it */
+.v2-ntakes { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.v2-ntakes select { width: auto; }
+.v2-words { margin: 6px 0 0; font-size: 12.5px; }
+.v2-words b { color: var(--sc, var(--text)); font-variant-numeric: tabular-nums; }
+.v2-takes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.v2-takes > .hint { flex-basis: 100%; }
+.v2-take { border: 1px solid var(--line); background: var(--panel-2); color: var(--text); border-radius: 999px; padding: 1px 9px; cursor: pointer; font-size: 12px; }
+.v2-take.on { border-color: var(--accent); }
+.v2-take b { color: var(--sc, var(--text)); font-variant-numeric: tabular-nums; }
+.v2-resact { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.v2-rt { display: grid; gap: 10px; }
+.v2-rt-l { display: grid; gap: 4px; font-size: 13px; }
+.v2-rt-l textarea { width: 100%; font-family: var(--mono, monospace); font-size: 12px; resize: vertical; }
+.v2-rt-l select { justify-self: start; width: auto; }
+.v2-rt-row { display: flex; gap: 6px; align-items: center; }
+.v2-rt-row input { flex: 1; min-width: 0; }

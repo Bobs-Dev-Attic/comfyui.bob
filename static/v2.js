@@ -74,7 +74,7 @@ const V2 = (() => {
   const $ = id => document.getElementById(id);
   const uid = () => Math.random().toString(16).slice(2, 10);
   const PKEY = "bob.v2.project";
-  const st = { board: { shots: [], settings: {} }, sel: null, scenes: new Map(), busy: new Set(), saveT: 0, say: new Map(), objs: [], cams: [], log: [], tlv: "tl" };
+  const st = { board: { shots: [], settings: {} }, sel: null, scenes: new Map(), busy: new Set(), hearing: new Set(), saveT: 0, say: new Map(), objs: [], cams: [], log: [], tlv: "tl" };
   const shotOf = id => st.board.shots.find(x => x.id === id);
   const cur = () => shotOf(st.sel);
   const status = t => { $("v2-status").textContent = t || ""; };
@@ -396,14 +396,76 @@ const V2 = (() => {
         const r = await Scene3D.autoRender(s.scene, { text: sentence(s.action), extra, look: String(s.setting || "").trim(), quality: s.quality, fill: true }, say);
         req = { ...r.req, project: state.project?.id ?? null, loras: lorasFor(s), ...(voices.length ? { ref_audios: voices.map(v => v.ref), clean_audio: true } : {}) };
       }
-      say("Sending to H3…");
+      req.batch = Math.min(4, Math.max(1, +s.takes || 1));
+      say(req.batch > 1 ? `Sending ${req.batch} takes to H3…` : "Sending to H3…");
       const items = await submit(req);
       if (!items?.length) throw new Error("H3 didn't take it");
-      s.results = [items[0].id, ...(s.results || [])].slice(0, 20);
+      s.results = [...items.map(i => i.id), ...(s.results || [])].slice(0, 20);
+      delete s.pick;  // the new takes: the shot uses the one whose words come out best
       save();
       say("Queued: it shows here when it's done.");
     } catch (e) { say(`⚠ ${e.message}`); Media.toast(`${s.name}: ${e.message}`); entry.failed = e.message; }
     finally { st.busy.delete(id); entry.prep = false; if (st.ctx === entry) st.ctx = null; renderAll(); renderLog(); }
+  }
+  /* 🗣 Words (app/heard.py): Whisper hears a take's lines and scores them; the shot then uses its best take. */
+  async function hear(it) {
+    if (st.hearing.has(it.id)) return;
+    st.hearing.add(it.id); renderPanel(true);
+    Media.toast("Checking the words: Whisper hears the sound…");
+    try { it.heard = await api(`/api/items/${it.id}/heard`, { method: "POST" }); state.items.set(it.id, it); Media.toast(`Words: ${it.heard.score}% said as written.`); }
+    catch (e) { Media.toast(`Checking the words: ${e.message}`); }
+    finally { st.hearing.delete(it.id); renderAll(); }
+  }
+  /* 🔁 Retake the sound (engine "retake", app/workflows.py build_retake): the take's sound made again from a prompt,
+     all of it or some stretches, its picture kept frame for frame. The new takes go on the shot, best words first. */
+  function retakeDialog(s, it) {
+    const f = fileOf(it); if (!f) return;
+    const p = it.params || {}, secs = +(it.info?.seconds || p.seconds || 0);
+    const box = document.createElement("div");
+    box.className = "wm-form v2-rt";
+    box.innerHTML = `<p class="hint">H3 Reference makes the sound again from the prompt: its lines (<code>&lt;d&gt;…&lt;/d&gt;</code>), voices and sounds. The picture stays exactly as it is${secs ? ` (${secs.toFixed(1)} s)` : ""}.</p>
+      <label class="v2-rt-l">What is said and heard<textarea id="v2-rt-prompt" rows="9" spellcheck="true">${esc(p.prompt || "")}</textarea></label>
+      <label class="v2-rt-l">Only these stretches <span class="hint">seconds, e.g. 1.2-3.4, 5-6 · empty: all of the sound; the rest keeps the original sound</span>
+        <span class="v2-rt-row"><input id="v2-rt-ranges" type="text" placeholder="All of it" autocomplete="off">
+        <button type="button" class="btn sm" data-m="start" title="Start a stretch where the shot's video is now">⏱ From here</button>
+        <button type="button" class="btn sm" data-m="end" title="End the stretch where the shot's video is now">⏱ To here</button></span></label>
+      <label class="v2-rt-l">Takes <span class="hint">each is checked for its words; the shot uses the best</span>
+        <select id="v2-rt-takes"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select></label>
+      <label class="check" title="MelBand RoFormer splits both: the new take's voice goes over the original's music and other sounds"><input type="checkbox" id="v2-rt-keepbg" checked> Keep its music and sounds: only the voice is new</label>
+      ${p.ref_audios?.length ? `<label class="check"><input type="checkbox" id="v2-rt-voices" checked> Use the ${p.ref_audios.length} voice${p.ref_audios.length > 1 ? "s" : ""} it was made with</label>` : ""}
+      <p class="v2-rt-err warn" hidden></p>`;
+    let mark = null;
+    box.querySelectorAll("[data-m]").forEach(b => b.onclick = () => {
+      const v = $("v2-result").querySelector("video"), t = v ? +v.currentTime.toFixed(2) : null;
+      if (t == null) return Media.toast("Play the shot's video and stop where the stretch starts or ends.");
+      const inp = box.querySelector("#v2-rt-ranges");
+      if (b.dataset.m === "start") { mark = t; Media.toast(`Stretch from ${t} s: now stop where it ends and press To here.`); return; }
+      const a = mark ?? 0; mark = null;
+      inp.value = [inp.value.trim(), `${a}-${+Math.max(a + 0.2, t).toFixed(2)}`].filter(Boolean).join(", ");
+    });
+    const foot = document.createElement("div");
+    foot.innerHTML = `<span class="wm-foot-gap"></span><button type="button" class="btn sm" data-a="cancel">Cancel</button>
+      <button type="button" class="btn sm primary" data-a="go">🔁 Retake</button>`;
+    const win = WM.open({ id: `v2rt-${it.id}`, title: `Retake the sound · ${s.name}`, content: box, footer: foot, width: 620, height: 560, minWidth: 420, minHeight: 380 });
+    foot.querySelector('[data-a="cancel"]').onclick = () => win.close();
+    foot.querySelector('[data-a="go"]').onclick = async e => {
+      const prompt = box.querySelector("#v2-rt-prompt").value.trim(), err = box.querySelector(".v2-rt-err");
+      if (!prompt) { err.hidden = false; err.textContent = "Write what is said and heard."; return; }
+      const voices = box.querySelector("#v2-rt-voices"), n = +box.querySelector("#v2-rt-takes").value;
+      e.target.disabled = true;
+      try {
+        const items = await submit({ ...p, kind: "video", engine: "retake", source: f.path, prompt, retake_ranges: box.querySelector("#v2-rt-ranges").value.trim(),
+          retake_keep_bg: box.querySelector("#v2-rt-keepbg").checked, seed: -1, batch: n, project: state.project?.id ?? null,
+          references: p.references || [], ref_audios: voices && !voices.checked ? [] : (p.ref_audios || []),
+          first_frame: null, last_frame: null, continue_from: null, enhance_after: null, motion_video: null, motion_video_mask: null, motion_layers: [] });
+        if (!items?.length) throw new Error("It wasn't taken");
+        s.results = [...items.map(i => i.id), ...(s.results || [])].slice(0, 20);
+        delete s.pick;
+        save(); renderAll();
+        Media.toast(`Retaking the sound of ${s.name}: ${n} take${n > 1 ? "s" : ""}.`);
+        win.close();
+      } catch (ex) { err.hidden = false; err.textContent = ex.message; e.target.disabled = false; }
+    };
   }
   async function generateAll() {
     for (const s of st.board.shots.slice()) await generate(s.id);
@@ -730,7 +792,20 @@ const V2 = (() => {
   }
 
   /* ---- drawing */
-  const latest = s => (s.results || []).map(id => state.items.get(id)).find(Boolean);
+  /* The take a shot uses: the one picked in its takes; else, of the newest generation's takes (same prompt and
+     model as the newest), the finished one whose words came out best (🗣, app/heard.py); else the newest. */
+  const byWords = (a, b) => (b.heard?.score ?? -1) - (a.heard?.score ?? -1) || b.created - a.created;  // best words, then newest
+  const autoTake = s => {
+    const its = (s.results || []).map(id => state.items.get(id)).filter(Boolean);
+    if (!its.length) return undefined;
+    const top = its[0], heard = its.filter(x => x.engine === top.engine && x.params?.prompt === top.params?.prompt && x.status === "done" && x.heard?.score != null);
+    return heard.length ? heard.sort(byWords)[0] : top;
+  };
+  const latest = s => { const pick = s.pick && (s.results || []).includes(s.pick) && state.items.get(s.pick); return pick || autoTake(s); };
+  const tone = v => v == null ? "" : v >= 80 ? "s-good" : v >= 60 ? "s-ok" : "s-bad";
+  // a shot's finished takes, best words first (then newest)
+  const takesOf = s => (s.results || []).map(id => state.items.get(id)).filter(x => x && x.status === "done" && fileOf(x))
+    .sort(byWords);
   const fileOf = it => it?.status === "done" ? (it.files || []).find(f => /^video\//.test(f.content_type || "")) || it.files?.[0] : null;
   const thumbOf = s => {
     const sc = st.scenes.get(s.scene) || {};
@@ -1043,12 +1118,24 @@ const V2 = (() => {
     $("v2-gen").disabled = busy;
     $("v2-gen").textContent = busy ? "Working…" : "🎬 Generate shot";
     $("v2-say").textContent = st.say.get(s.id) || "";
-    const it = latest(s), f = fileOf(it), box = $("v2-result");
-    const want = it ? `${it.id}:${it.status}` : "";
+    $("v2-takes").value = String(Math.min(4, Math.max(1, +s.takes || 1)));
+    const it = latest(s), f = fileOf(it), box = $("v2-result"), takes = takesOf(s);
+    const want = it ? `${it.id}:${it.status}:${it.heard?.score ?? ""}:${st.hearing.has(it.id)}:${takes.map(x => `${x.id}${x.heard?.score ?? ""}`).join(",")}:${s.pick || ""}` : "";
     if (box.dataset.k !== want) {
       box.dataset.k = want;
-      box.innerHTML = !it ? "" : f ? `<video src="${esc(f.url)}" controls preload="metadata"></video><p class="hint">Made ${new Date((it.finished || it.created) * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.</p>`
+      const h = it?.heard, lines = it && /<d>[\s\S]*?<\/d>/.test(it.params?.prompt || "");
+      const best = autoTake(s);  // ★: the take the shot uses unless one is picked
+      box.innerHTML = !it ? "" : f ? `<video src="${esc(f.url)}" controls preload="metadata"></video>
+        <p class="hint">${it.engine === "retake" ? "Retaken sound · " : ""}${takes.length > 1 ? `Take: seed ${it.seed}${s.pick ? " (picked)" : best?.id === it.id ? " (best words)" : ""} · ` : ""}made ${new Date((it.finished || it.created) * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.</p>
+        ${h?.score != null ? `<p class="v2-words"><b class="${tone(h.score)}">🗣 ${h.score}%</b> of the lines said as written · heard: ${h.heard ? `“${esc(h.heard)}”` : "<i>nothing</i>"}${h.extra ? ` <span class="warn">(${h.extra} word${h.extra > 1 ? "s" : ""} more than the lines)</span>` : ""}</p>` : ""}
+        ${takes.length > 1 ? `<div class="v2-takes" role="listbox" aria-label="Takes, best words first"><span class="hint">Takes, best words first: pick the one the shot uses</span>${takes.map(x =>
+          `<button type="button" class="v2-take${x.id === it.id ? " on" : ""}" data-take="${esc(x.id)}" aria-selected="${x.id === it.id}">${best?.id === x.id ? "★ " : ""}${x.engine === "retake" ? "retake" : "seed"} ${x.seed}${x.heard?.score != null ? ` <b class="${tone(x.heard.score)}">${x.heard.score}%</b>` : ""}</button>`).join("")}</div>` : ""}
+        <div class="v2-resact">${lines ? `<button type="button" class="btn sm" data-hear ${st.hearing.has(it.id) ? "disabled" : ""} title="Whisper hears the lines; the score is how much of them was said as written">${st.hearing.has(it.id) ? "🗣 Checking…" : h ? "🗣 Check the words again" : "🗣 Check the words"}</button>` : ""}
+          <button type="button" class="btn sm" data-retake title="Make the sound again from the prompt (H3 Reference): all of it or some stretches, the picture kept exactly; the takes land on this shot">🔁 Retake the sound…</button></div>`
         : `<p class="hint">${it.status === "failed" ? `⚠ Failed: ${esc(it.error || "")}` : `${esc(it.status)}…`}</p>`;
+      box.querySelectorAll("[data-take]").forEach(b => b.onclick = () => { s.pick = b.dataset.take; save(); renderAll(); });
+      box.querySelector("[data-hear]")?.addEventListener("click", () => hear(it));
+      box.querySelector("[data-retake]")?.addEventListener("click", () => retakeDialog(s, it));
     }
   }
   // The dialogue lines (kept as they are while one is being typed in).
@@ -1159,6 +1246,7 @@ const V2 = (() => {
       ta.dispatchEvent(new Event("input"));
     });
     $("v2-gen").onclick = () => st.sel && generate(st.sel);
+    $("v2-takes").onchange = e => { const s = cur(); if (s) { s.takes = +e.target.value; save(); } };
     $("v2-genall").onclick = generateAll;
     // the timeline: fold, height, zoom, timeline or log; click a clip to open its shot (its camera from the camera
     // layer), drag a clip to reorder
@@ -1211,7 +1299,8 @@ const V2 = (() => {
       Scene3D.onItem?.(ev.item);
       if (ev.item.id === st.board.settings.lastExport) renderExport();
       if (st.log.some(e2 => e2.items.some(x => x.id === ev.item.id))) renderLog();
-      if ((st.board.shots.some(s => s.results?.includes(ev.item.id)) || st.board.settings.soundtrack?.result === ev.item.id) && prev?.status !== ev.item.status) renderAll();
+      if ((st.board.shots.some(s => s.results?.includes(ev.item.id)) || st.board.settings.soundtrack?.result === ev.item.id)
+        && (prev?.status !== ev.item.status || prev?.heard?.score !== ev.item.heard?.score)) renderAll();
     };
   }
 

@@ -387,6 +387,10 @@ Other features:
   voice: MelBand RoFormer ([ComfyUI-MelBandRoFormer](https://github.com/kijai/ComfyUI-MelBandRoFormer) with
   `MelBandRoformer_fp16.safetensors` in `models/diffusion_models`) splits the new take and the original, and the new
   voice goes over the original background (`media.mix_audio`).
+- **In V2** (`/v2`, `static/v2.js`), a shot's panel has the same: **Takes** (1–4) next to Generate, the take's 🗣 words,
+  its takes best words first (★ the one the shot uses unless you pick another; the timeline and export follow it),
+  "Check the words" and "🔁 Retake the sound…", whose takes land on the shot. The shot keeps its pick (`pick`) and takes
+  count (`takes`) on the board.
 
 ## Layout
 
