@@ -5,6 +5,17 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.143.0] - 2026-11-21
+
+### Added
+- **The Render window's photo stage shows its own progress.** While the photo of the first frame is made, its note
+  follows the photo's job in ComfyUI: waiting in the queue (with its position), loading the models, sampling step by
+  step, then saving the photo.
+
+### Fixed
+- **Stage times round correctly.** A stage that took about four minutes could read "3 min 60 s"; it now reads
+  "4 min 00 s".
+
 ## [0.142.1] - 2026-11-21
 
 ### Fixed
