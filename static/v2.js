@@ -122,6 +122,39 @@ const V2 = (() => {
       Scene3D._state()?.win?.close();
       await loadBoard();
     };
+    $("v2-newproj").onclick = newProject;
+  }
+  // a new, empty project (saved where the classic page last saved one), then switch to it
+  function newProject() {
+    const box = document.createElement("div");
+    box.className = "wm-form";
+    box.innerHTML = `<div class="field"><label for="v2-np-name">Project name</label><input id="v2-np-name" type="text" maxlength="120" value="Untitled project"></div>
+      <div class="field"><label for="v2-np-notes">Notes <span class="opt">optional</span></label><textarea id="v2-np-notes" rows="3"></textarea></div>
+      <p class="err" id="v2-np-err"></p>`;
+    const foot = document.createElement("div");
+    foot.className = "wm-foot-row";
+    foot.innerHTML = `<span class="grow"></span><button type="button" class="btn ghost" data-a="close">Cancel</button>
+      <button type="button" class="btn primary" data-a="go">Create project</button>`;
+    const win = WM.open({ id: "v2-newproj", title: "New project", content: box, footer: foot, width: 460, height: 340, modal: true });
+    const name = box.querySelector("#v2-np-name");
+    setTimeout(() => { name.focus(); name.select(); }, 0);
+    const go = async () => {
+      if (!name.value.trim()) { box.querySelector("#v2-np-err").textContent = "Give the project a name."; return; }
+      let folder = "";
+      try { folder = JSON.parse(localStorage.getItem("bob.ui") || "{}")?.newProjectFolder ?? ""; } catch {}
+      try {
+        const p = await api("/api/projects", { method: "POST", body: JSON.stringify({ folder, name: name.value.trim(), settings: {}, notes: box.querySelector("#v2-np-notes").value }) });
+        win.close();
+        try { localStorage.setItem(PKEY, p.id); } catch {}
+        Scene3D._state()?.win?.close();
+        await loadProjects();
+        await loadBoard();
+        Media.toast(`Started “${p.name || name.value.trim()}”.`);
+      } catch (e) { box.querySelector("#v2-np-err").textContent = e.message; }
+    };
+    foot.querySelector('[data-a="close"]').onclick = () => win.close();
+    foot.querySelector('[data-a="go"]').onclick = go;
+    name.addEventListener("keydown", e => { if (e.key === "Enter") go(); });
   }
 
   /* ---- new shots */
