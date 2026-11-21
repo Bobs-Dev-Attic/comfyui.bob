@@ -5,6 +5,12 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.142.1] - 2026-11-21
+
+### Fixed
+- **The Render window's depth stage no longer repeats itself.** Its note under "Measuring the depth of the photo
+  (Depth Anything 3)" said the same thing again; a stage's note now only shows what its name doesn't already say.
+
 ## [0.142.0] - 2026-11-21
 
 ### Added
