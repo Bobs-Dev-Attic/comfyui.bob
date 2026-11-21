@@ -144,6 +144,7 @@ class GenerateRequest(BaseModel):
     # Retake (engine "retake"): the sound of `source` (a video) made again from the prompt, its picture kept. The
     # stretches to redo in seconds ("1.2-3.4, 5-6"); empty = all of it.
     retake_ranges: str = Field("", max_length=300)
+    retake_keep_bg: bool = False  # keep the original's music and sounds; only the voice is new (MelBand RoFormer)
     overlap: Literal[22, 39, 56] = 39
     # Motion layers (engine "motion", app/motion.py): first_frame is the picture, motion_plate the picture with the
     # objects erased, and each layer an object's mask with its place in every frame.
@@ -377,6 +378,14 @@ class JobManager:
         """A retake's new sound under the original picture (media.retake_mux): the video replaces the sound file."""
         sound = config.ROOT / saved[0]["path"]
         target = sound.with_name(f"{item['id']}_retake.mp4")
+        if info.get("keep_background") and len(saved) > 1:  # the new voice over the original's background
+            bed = config.ROOT / saved[1]["path"]
+            mixed = sound.with_name(f"{item['id']}_retake_mix.flac")
+            await asyncio.to_thread(media.mix_audio, sound, bed, mixed)
+            sound.unlink(missing_ok=True)
+            bed.unlink(missing_ok=True)
+            sound = mixed
+            self.log(item, "Kept the original's music and sounds under the new voice (MelBand RoFormer)")
         ranges = [tuple(r) for r in info.get("ranges") or []]
         await asyncio.to_thread(media.retake_mux, req.source, sound, ranges, target)
         sound.unlink(missing_ok=True)
@@ -473,6 +482,14 @@ class JobManager:
                 names = ", ".join(m["want"] for m in resolved["missing"])
                 raise ValueError(f"{mset.title} is missing model files: {names}")
             files[mset.key] = resolved["files"]
+        if req.engine == "retake" and req.retake_keep_bg:  # MelBand RoFormer's model, for keeping the background
+            names = installed.get("diffusion_models", [])
+            pick = (next((n for n in names if re.search(r"melband.*fp16", n, re.I)), None)
+                    or next((n for n in names if re.search(r"melband", n, re.I)), None))
+            if not pick:
+                raise ValueError("Keeping the background needs a MelBand RoFormer model (e.g. MelBandRoformer_fp16.safetensors) "
+                                 "in ComfyUI's models/diffusion_models")
+            files["h3ref"] = {**files["h3ref"], "melband": pick}
         if req.engine == "enhance":
             await self._enhance_check(req, installed)
             files["relay"] = {"unet": next((n for n in installed.get("diffusion_models", []) if "relayvsr" in n.lower()), ""),
@@ -601,6 +618,8 @@ class JobManager:
             if dur * 24 > workflows.RETAKE_MAX_FRAMES:
                 raise ValueError(f"The video is {dur:.1f} s long: a retake takes up to {workflows.RETAKE_MAX_FRAMES / 24:.0f} s")
             media.parse_ranges(req.retake_ranges, dur)  # raises when a stretch is wrong
+            if req.retake_keep_bg and not all(self.has_node(n) for n in workflows.ROFORMER_NODES):
+                raise ValueError("Keeping the background needs ComfyUI-MelBandRoFormer (MelBand RoFormer nodes) in ComfyUI")
         if req.continue_from:
             if req.engine != "h3ref":
                 raise ValueError("Continuing a video without a cut needs H3 Reference")
@@ -772,7 +791,7 @@ class JobManager:
                 files, prompt=req.prompt, width=w, height=h, frames=frames, seed=seed, turbo=req.turbo, steps=req.steps,
                 ranges=media.parse_ranges(req.retake_ranges, dur), references=len(req.references), audios=len(req.ref_audios),
                 clean_audio=req.clean_audio and self.has_node("H3RefAudioPrep"), prefix=prefix,
-                loras=[(lu.name, lu.strength) for lu in req.loras])
+                loras=[(lu.name, lu.strength) for lu in req.loras], keep_background=files.get("melband"))
             built.info.update(width=info.get("width"), height=info.get("height"), sample_width=w, sample_height=h,
                               seconds=round(dur, 2), source=req.source)
             return built

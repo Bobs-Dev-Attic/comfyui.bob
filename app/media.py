@@ -333,6 +333,21 @@ def retake_source(ref: str, width: int, height: int, frames: int, out: Path) -> 
     return out
 
 
+def mix_audio(voice: Path, background: Path, out: Path) -> Path:
+    """A voice over a background, as they are (no level change): a retake's new voice over the original's music and
+    sounds (MelBand RoFormer's two parts)."""
+    exe = ffmpeg()
+    if not exe:
+        raise MediaError("ffmpeg isn't installed")
+    cmd = [exe, "-nostdin", "-v", "error", "-y", "-i", str(voice), "-i", str(background), "-filter_complex",
+           "[0:a]aresample=48000,aformat=channel_layouts=stereo[v];[1:a]aresample=48000,aformat=channel_layouts=stereo[b];"
+           "[v][b]amix=inputs=2:normalize=0:duration=longest[a]", "-map", "[a]", "-c:a", "flac", str(out)]
+    r = subprocess.run(cmd, capture_output=True, timeout=300, creationflags=NO_WINDOW)
+    if r.returncode or not out.is_file():
+        raise MediaError((r.stderr or b"").decode("utf-8", "replace").strip()[-300:] or "Couldn't mix the voice and background")
+    return out
+
+
 def retake_mux(ref: str, new_audio: Path, ranges: list[tuple[float, float]], out: Path, fade: float = 0.08) -> Path:
     """The original video, picture untouched (stream copy), with the retake's sound: all of it, or with `ranges`
     only those stretches, crossfading over `fade` s at each edge into the original sound around them."""

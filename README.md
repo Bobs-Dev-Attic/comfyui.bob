@@ -379,7 +379,10 @@ Other features:
   (MaskVidExperiments custom nodes) marks the sound to redo, H3 voices it from the prompt's lines and voices, and the new
   sound is put under the original picture with ffmpeg, crossfading into the original sound around a stretch
   (`media.retake_mux`). Each take is a result of its own, its words checked (🗣 Words), so the takes come back ranked.
-  Up to about 15 s.
+  Up to about 15 s. "Keep its music and sounds" (on by default) keeps the original's background and replaces only the
+  voice: MelBand RoFormer ([ComfyUI-MelBandRoFormer](https://github.com/kijai/ComfyUI-MelBandRoFormer) with
+  `MelBandRoformer_fp16.safetensors` in `models/diffusion_models`) splits the new take and the original, and the new
+  voice goes over the original background (`media.mix_audio`).
 
 ## Layout
 

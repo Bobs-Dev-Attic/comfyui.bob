@@ -5,6 +5,20 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.137.0] - 2026-11-20
+
+### Added
+- **A retake keeps the original's music and sounds; only the voice is new.** This is the retake dialog's
+  "Keep its music and sounds" option, on by default.
+  - **How:** MelBand RoFormer splits the new take into voice and background, and the original's sound the same way.
+    The new voice is mixed over the original background. Stretches, crossfades, the untouched picture and the word
+    ranking work as before.
+  - **Measured on a test retake:** inside the retaken stretch, the background matches the original's at 7.6 dB SNR,
+    against −2.8 dB without the option.
+  - **Needs** [ComfyUI-MelBandRoFormer](https://github.com/kijai/ComfyUI-MelBandRoFormer) and
+    `MelBandRoformer_fp16.safetensors` (435 MB) in `models/diffusion_models`. Without them the retake is refused with
+    a message saying what's missing; untick the option to retake without them.
+
 ## [0.136.0] - 2026-11-20
 
 ### Added
