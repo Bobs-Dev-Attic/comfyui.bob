@@ -5,6 +5,15 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.134.12] - 2026-11-20
+
+### Changed
+- **Rewrite says each line once, too**, for H3 and H3 Reference, like the Prompt and Shots steps and V2. Its
+  instructions ask for "They say once:" (or "<who> says once:") followed by: only the words inside the dialogue tag
+  are spoken, once; before and after them the speaker stays silent with their lips closed. Whatever the model writes,
+  the finished rewrite is then checked: a "says" before a spoken line becomes "says once", and a shot with lines gets
+  that sentence once (worded for several lines when a shot has more than one).
+
 ## [0.134.11] - 2026-11-20
 
 ### Changed
