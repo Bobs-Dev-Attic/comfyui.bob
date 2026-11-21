@@ -5,6 +5,17 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.134.17] - 2026-11-20
+
+### Fixed
+- **A spoken line Rewrite put back goes in its own shot** (H3 and H3 Reference). A line the model left out, or put
+  below the sound fields, used to go at the end of the last shot. Now it goes in your own [Shot N] when your text has
+  one. Otherwise it goes in the shot that tells what your text tells around the line (the man's "Anyone home?" goes
+  in the shot where he knocks, not the one where the girl opens the door), and never before the shot of an earlier
+  line or after the shot of a later one.
+- A line the model wrote as a bare <d>…</d>, with nobody saying it, gets its speaker from your text ("The man says
+  once: …"), or "They say once:" when your text doesn't name one.
+
 ## [0.134.16] - 2026-11-20
 
 ### Fixed
