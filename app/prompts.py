@@ -347,17 +347,80 @@ def _tidy(text: str) -> str:
     return text.strip().strip('"').strip()
 
 
-_SAYS = re.compile(r"\b(says?)\b(?!\s+once)(?=(?:,(?:[^:<\n]|<Audio \d+>){0,80})?:\s*<d>)", re.I)
+_D = re.compile(r"<d>(.*?)</d>", re.S)
+_SOUND = re.compile(r"^(?:overall_soundscape|non_diegetic_music):", re.M)
+_QUOTED = re.compile(r"[\"“]([^\"“”\n]{1,400})[\"”]")
+
+
+def _said(t: str) -> str:
+    """A spoken line, compared loosely: no [Language] tag, quotes, punctuation or case."""
+    t = re.sub(r"^\s*\[[^\]]{1,20}\]", "", t)
+    return " ".join(re.sub(r"[^\w\s]", " ", t.lower()).split())
+
+
+def restore_lines(original: str, text: str) -> str:
+    """The spoken lines the user wrote (<d>…</d> in `original`), back in the rewrite as they wrote them. A small model
+    may drop the [English] tag, turn the tags into quotes, move a line below the sound fields, or leave it out: each
+    line goes back in its shot as <d>[as written]</d> (a line left out goes at the end of its shot)."""
+    lines = []  # (as written, loosely, its [Shot N] or 0, "<Audio N>" whose voice or "")
+    for m in _D.finditer(original):
+        before = original[:m.start()]
+        shot = re.findall(r"\[Shot (\d+)\]", before)
+        voice = re.search(r"voice of (<Audio \d+>)[^<.]{0,20}:\s*$", before)
+        lines.append((m.group(1).strip(), _said(m.group(1)), int(shot[-1]) if shot else 0, voice.group(1) if voice else ""))
+    if not lines:
+        return text
+    # the sound fields: what's below them that has a spoken line goes back up, at the end of the shots
+    cut = _SOUND.search(text)
+    body, sound = (text[:cut.start()], text[cut.start():]) if cut else (text, "")
+    moved = []
+    if sound:
+        keep = []
+        for ln in sound.split("\n"):
+            (moved if "<d>" in ln and not _SOUND.match(ln) else keep).append(ln)
+        sound = "\n".join(keep).strip()
+    body = body.rstrip()
+    if moved:
+        body = _into_shot(body, " ".join(s.strip() for s in moved), 0)
+    found = set()
+
+    def back(m: re.Match) -> str:  # a line the model wrote, in <d> or in quotes: as the user wrote it
+        k = next((i for i, l in enumerate(lines) if l[1] == _said(m.group(1)) and i not in found), None)
+        if k is None:
+            return m.group(0)
+        found.add(k)
+        return f"<d>{lines[k][0]}</d>"
+    body = _QUOTED.sub(back, _D.sub(back, body))
+    for i, (said, _, shot, voice) in enumerate(lines):
+        if i not in found:
+            body = _into_shot(body, f"They say once{f', in the voice of {voice}' if voice else ''}: <d>{said}</d>", shot)
+    return f"{body}\n\n{sound}" if sound else body
+
+
+def _into_shot(body: str, words: str, shot: int) -> str:
+    """`words` added to a shot's line: [Shot N] (else the last shot), before its camera sentence when it has one."""
+    rows = body.split("\n")
+    at = next((i for i, r in enumerate(rows) if shot and r.startswith(f"[Shot {shot}]")), None)
+    if at is None:
+        at = max((i for i, r in enumerate(rows) if r.strip()), default=0)
+    row = rows[at] if rows else ""
+    cam = row.rfind(" The camera ")
+    rows[at] = f"{row[:cam]} {words}{row[cam:]}" if cam > 0 else f"{row.rstrip()} {words}".strip()
+    return "\n".join(rows)
+
+
+_SAYS = re.compile(r"\b(says?|speaks?)\b(?!\s+once)(?=(?:,(?:[^:<\n]|<Audio \d+>){0,80})?:\s*<d>)", re.I)
 
 
 def say_once(text: str) -> str:
     """H3's spoken lines, said once: "says"/"say" right before a <d>…</d> becomes "says once", and each shot's line
-    with dialogue goes on with ONCE (ONCE_MANY for several lines) unless it already says so."""
+    with dialogue goes on with ONCE (ONCE_MANY for several lines) after its last line, once."""
     text = _SAYS.sub(lambda m: f"{m.group(1)} once", text)
     out = []
     for line in text.split("\n"):
         n = line.count("</d>")
-        if n and "lips closed" not in line:
+        if n:
+            line = re.sub(r" ?(?:" + re.escape(ONCE_MANY) + "|" + re.escape(ONCE) + ")", "", line)  # where the model put it
             i = line.rfind("</d>") + 4
             i += re.match(r"[ \t]*[.!?]?", line[i:]).end()  # past a full stop right after the tag
             line = f"{line[:i].rstrip()} {ONCE_MANY if n > 1 else ONCE} {line[i:].lstrip()}".rstrip()
@@ -447,7 +510,7 @@ async def rewrite_stream(text: str, profile: str, seconds: float, backend: str |
             yield (json.dumps({"t": piece}) + "\n").encode()
         done = _tidy("".join(out))
         if profile in ("h3video", "h3ref"):
-            done = say_once(done)
+            done = say_once(restore_lines(text, done))
         yield (json.dumps({"done": True, "text": done}) + "\n").encode()
     except (llm.LLMError, httpx.HTTPError) as exc:
         yield (json.dumps({"error": str(exc) or type(exc).__name__}) + "\n").encode()

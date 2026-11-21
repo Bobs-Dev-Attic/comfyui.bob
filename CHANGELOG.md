@@ -5,6 +5,17 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.134.13] - 2026-11-20
+
+### Fixed
+- **Rewrite keeps your spoken lines as you wrote them** (H3 and H3 Reference). A small local model often mangled
+  them: it dropped the [English] tag, turned <d>…</d> into plain quotes, moved the line below the sound fields, or
+  left it out altogether (on H3 Reference, every time with the instructions before 0.134.12). The finished rewrite is
+  now checked against your text: each line goes back in its shot as <d>[as you wrote it]</d>, and a line left out
+  goes at the end of its shot as "They say once: …" (with its voice, when you gave one).
+- When a shot ends up with several lines, the "only the words inside the dialogue tags are spoken" sentence follows
+  the last of them, once, worded for several lines.
+
 ## [0.134.12] - 2026-11-20
 
 ### Changed
