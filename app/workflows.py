@@ -511,6 +511,104 @@ def build_h3_ref(
     )
 
 
+RETAKE_NODES = ("LTXVConcatAVLatent", "MVEx_AudioMaskToLatent", "VAEEncodeAudio")
+RETAKE_MAX_FRAMES = 362  # 17k+5, about 15 s: what H3 Reference renders in one window
+
+
+def build_retake(
+    files: dict[str, str | None],
+    *,
+    prompt: str,
+    width: int,
+    height: int,
+    frames: int,
+    seed: int,
+    turbo: bool,
+    steps: int | None = None,
+    ranges: list[tuple[float, float]] | None = None,
+    references: int = 0,
+    audios: int = 0,
+    clean_audio: bool = True,
+    prefix: str = "bob/retake",
+    loras: list[tuple[str, float]] | None = None,
+) -> Built:
+    """Retake a video's sound and keep its picture (H3 Reference): the method of H3-AudioRetake-studio (MIT), with
+    nodes most installs have. The video (role "retake_src", made by media.retake_source at width x height and
+    `frames` long) and its sound go into one AV latent; MVEx_AudioMaskToLatent marks the sound to regenerate, all of
+    it or the `ranges` (seconds), and on a latent with no mask yet keeps the whole picture. H3 Reference then voices
+    it from the prompt: its lines, the voices (<Audio N>) and the pictures (<Picture N>; with none, the clip's middle
+    frame is <Picture 1>). Only the sound comes back (FLAC); jobs puts it under the original picture
+    (media.retake_mux), so the picture is the original's, frame for frame."""
+    if (frames - 5) % 17 or not 5 <= frames <= RETAKE_MAX_FRAMES:
+        raise ValueError(f"A retake is 5 + 17k frames, at most {RETAKE_MAX_FRAMES}")
+    g = Graph()
+    o = Graph.out
+    unet = g.add("UNETLoader", unet_name=files["unet"], weight_dtype="default")
+    model = unet
+    use_turbo = turbo and bool(files.get("turbo_lora"))
+    if use_turbo:
+        model = g.add("LoraLoaderModelOnly", model=o(unet), lora_name=files["turbo_lora"], strength_model=1.0)
+        default_steps = 8 if "8step" in files["turbo_lora"].lower() else 4
+    else:
+        default_steps = 20
+    n_steps = int(steps or default_steps)
+    model = chain_loras(g, model, loras)
+    clip = g.add("CLIPLoader", clip_name=files["clip"], type="minimax", device="default")
+    vae = g.add("VAELoader", vae_name=files["vae"])
+    audio_vae = g.add("VAELoader", vae_name=files["audio_vae"])
+
+    src = g.add("LoadVideo", file="")  # filled by the caller with media.retake_source's file
+    parts = g.add("GetVideoComponents", video=o(src))
+    image_inputs: dict[str, str] = {"retake_src": src}
+    leads = []
+    if "<Picture" not in prompt:
+        leads.append(h3_reference_lead(references) if references else
+                     "<Picture 1> is a frame of this very shot: keep its people, place and look.")
+    if audios and "<Audio" not in prompt:
+        leads.append(h3_audio_lead(audios, max(1, references)))
+    if leads:
+        prompt = " ".join(leads) + f"\n\n{prompt}"
+    cond_inputs: dict[str, Any] = dict(clip=o(clip), vae=o(vae), audio_vae=o(audio_vae), prompt=prompt, width=width,
+                                       height=height, length=frames, ref_image_size="match")
+    if references:
+        for i in range(references):
+            load = g.add("LoadImage", image="")
+            image_inputs[f"ref_{i}"] = load
+            cond_inputs[f"ref_images.ref_image_{i}"] = o(load)
+    else:
+        cond_inputs["ref_images.ref_image_0"] = o(g.add("ImageFromBatch", image=o(parts, 0), batch_index=frames // 2, length=1))
+    for i in range(audios):
+        load = g.add("LoadAudio", audio="")
+        image_inputs[f"aref_{i}"] = load
+        a = o(load)
+        if clean_audio:
+            a = o(g.add("H3RefAudioPrep", audio=a, clean="voice_focus", crop_mode="best_window", target_seconds=8.0,
+                        max_seconds=10.0, max_pause_seconds=0.8, fade_ms=25, normalize_peak_db=-3.0, snap_to_latent_grid=True))
+        cond_inputs[f"ref_audios.ref_audio_{i}"] = a
+    cond = g.add("MiniMaxH3ReferenceToVideo", **cond_inputs)
+
+    av = g.add("LTXVConcatAVLatent", video_latent=o(g.add("VAEEncode", pixels=o(parts, 0), vae=o(vae))),
+               audio_latent=o(g.add("VAEEncodeAudio", audio=o(parts, 1), vae=o(audio_vae))))
+    span = ",".join(f"{a:.3f},{b:.3f}" for a, b in ranges or [])
+    masked = g.add("MVEx_AudioMaskToLatent", latent=o(av), timing="auto", start_time=0.0, end_time=round(frames / FPS, 4),
+                   existing_mask="replace", vae=o(audio_vae), time_ranges=span)
+
+    noise = g.add("RandomNoise", noise_seed=int(seed))
+    sampler = g.add("KSamplerSelect", sampler_name="res_multistep")
+    sigmas = g.add("BasicScheduler", model=o(unet), scheduler="simple" if use_turbo else "beta", steps=n_steps, denoise=1.0)
+    guider = g.add("BasicGuider", model=o(model), conditioning=o(cond, 0))
+    latent = g.add("SamplerCustomAdvanced", noise=o(noise), guider=o(guider), sampler=o(sampler), sigmas=o(sigmas),
+                   latent_image=o(masked))
+    audio = g.add("VAEDecodeAudio", samples=o(latent), vae=o(audio_vae))
+    save = g.add("SaveAudio", audio=o(audio), filename_prefix=prefix)
+    return Built(
+        graph=g.nodes, outputs=[save], image_inputs=image_inputs,
+        info={"width": width, "height": height, "frames": frames, "steps": n_steps, "turbo": use_turbo,
+              "references": references, "audios": audios, "final_prompt": prompt,
+              "ranges": [[round(a, 3), round(b, 3)] for a, b in ranges or []]},
+    )
+
+
 # ------------------------------------------------------------------ FLUX 3 Klein
 
 KLEIN_UPSAMPLER_SYSTEM = (

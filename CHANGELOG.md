@@ -5,6 +5,25 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.136.0] - 2026-11-20
+
+### Added
+- **🔁 Retake the sound** (a video's details): its sound made again from a prompt by H3 Reference, with the picture
+  kept frame for frame. This is the audio-only retake of H3-AudioRetake-studio (MIT), done with nodes most installs
+  already have. No new node pack is needed.
+  - **What:** all of the sound, or only some stretches (e.g. `1.2-3.4, 5-6`). "From here" and "To here" mark a
+    stretch at the video's play position. Outside a stretch the original sound stays, with a short crossfade at each
+    edge.
+  - **The prompt** starts as the video's own and can be edited: its lines (`<d>…</d>`), voices (the voices it was
+    made with, optionally) and sounds.
+  - **1–4 takes**, each a result of its own ("Retaken sound"). Each take's words are checked (🗣 Words), so they come
+    back ranked best first.
+  - **How:** the video and its sound go into one AV latent. `MVEx_AudioMaskToLatent` (MaskVidExperiments custom
+    nodes) marks the sound to redo and keeps the whole picture, and H3 Reference voices it. Only the sound comes back
+    from ComfyUI. ffmpeg puts it under the original video's picture, which is copied as it is, so it is unchanged
+    even after Enhance or at any size or frame rate.
+  - **Speed and limit:** about 75 s a take for a 5 s clip at 4 steps. Up to about 15 s per retake.
+
 ## [0.135.0] - 2026-11-20
 
 ### Added

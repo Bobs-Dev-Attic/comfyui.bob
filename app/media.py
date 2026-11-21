@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import string
 import subprocess
@@ -285,6 +286,80 @@ def tail_clip(ref: str, frames: int, width: int, height: int, out: Path) -> Path
     r = subprocess.run(cmd, capture_output=True, timeout=300, creationflags=NO_WINDOW)
     if r.returncode or not out.is_file():
         raise MediaError((r.stderr or b"").decode("utf-8", "replace").strip()[-300:] or f"Couldn't cut the end of {src.name}")
+    return out
+
+
+def parse_ranges(text: str, duration: float) -> list[tuple[float, float]]:
+    """ "1.2-3.4, 5-6" (or "1.2,3.4,5,6") -> [(1.2, 3.4), (5.0, 6.0)]: stretches of a clip in seconds, sorted, merged
+    where they touch, inside 0..duration. "" -> []."""
+    nums = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", text or "")]
+    if len(nums) % 2:
+        raise MediaError("Give each stretch as a start and an end, in seconds (e.g. 1.2-3.4)")
+    out: list[tuple[float, float]] = []
+    for a, b in sorted(zip(nums[::2], nums[1::2])):
+        a, b = max(0.0, a), min(duration, b)
+        if b - a < 0.2:
+            raise MediaError(f"{a:g}-{b:g} s: a stretch needs at least 0.2 s inside the clip ({duration:.2f} s)")
+        if out and a <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], b))
+        else:
+            out.append((a, b))
+    return out
+
+
+def retake_source(ref: str, width: int, height: int, frames: int, out: Path) -> Path:
+    """A video for retaking its sound (engine "retake"): 24 fps at width x height (cropped to fill), the last frame
+    held out to `frames` (H3's 17k+5 grid), and its sound padded with silence to the same length (all silence when it
+    has none). The picture here is only what H3 hears the sound against; the result keeps the original's."""
+    src = resolve(ref)
+    exe = ffmpeg()
+    if not exe:
+        raise MediaError("ffmpeg isn't installed")
+    info = probe(ref)
+    secs = frames / 24.0
+    cmd = [exe, "-nostdin", "-v", "error", "-y", "-i", str(src)]
+    if info.get("has_audio"):
+        cmd += ["-map", "0:v:0", "-map", "0:a:0"]
+    else:
+        cmd += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-map", "0:v:0", "-map", "1:a:0"]
+    vf = (f"fps=24,scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},setsar=1,"
+          f"tpad=stop_mode=clone:stop_duration={secs:.3f},trim=end_frame={frames},setpts=PTS-STARTPTS")
+    cmd += ["-vf", vf, "-af", f"aresample=48000,apad,atrim=end={secs:.4f},asetpts=PTS-STARTPTS",
+            "-c:v", "libx264", "-crf", "12", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "256k", str(out)]
+    out.parent.mkdir(parents=True, exist_ok=True)
+    r = subprocess.run(cmd, capture_output=True, timeout=600, creationflags=NO_WINDOW)
+    if r.returncode or not out.is_file():
+        raise MediaError((r.stderr or b"").decode("utf-8", "replace").strip()[-300:] or f"Couldn't prepare {src.name}")
+    return out
+
+
+def retake_mux(ref: str, new_audio: Path, ranges: list[tuple[float, float]], out: Path, fade: float = 0.08) -> Path:
+    """The original video, picture untouched (stream copy), with the retake's sound: all of it, or with `ranges`
+    only those stretches, crossfading over `fade` s at each edge into the original sound around them."""
+    src = resolve(ref)
+    exe = ffmpeg()
+    if not exe:
+        raise MediaError("ffmpeg isn't installed")
+    info = probe(ref)
+    dur = float(info.get("duration") or 0)
+    cmd = [exe, "-nostdin", "-v", "error", "-y", "-i", str(src), "-i", str(new_audio)]
+    new = f"[1:a]aresample=48000,aformat=channel_layouts=stereo,apad,atrim=end={dur:.4f}"
+    if ranges and info.get("has_audio"):
+        # m(t): 1 inside a stretch, easing to 0 over `fade` s outside it; the new sound times m, the original 1 - m
+        f = max(0.01, fade)
+        m = "+".join(f"clip(min((t-{a:.4f}+{f})/{f},({b:.4f}+{f}-t)/{f}),0,1)" for a, b in ranges)
+        m = f"min(1,{m})"
+        fc = (f"{new},volume='{m}':eval=frame[n];"
+              f"[0:a]aresample=48000,aformat=channel_layouts=stereo,volume='1-({m})':eval=frame[o];"
+              "[n][o]amix=inputs=2:normalize=0:duration=first[a]")
+    else:
+        fc = f"{new}[a]"
+    cmd += ["-filter_complex", fc, "-map", "0:v:0", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+            "-movflags", "+faststart", str(out)]
+    out.parent.mkdir(parents=True, exist_ok=True)
+    r = subprocess.run(cmd, capture_output=True, timeout=600, creationflags=NO_WINDOW)
+    if r.returncode or not out.is_file():
+        raise MediaError((r.stderr or b"").decode("utf-8", "replace").strip()[-300:] or "Couldn't put the new sound in")
     return out
 
 
