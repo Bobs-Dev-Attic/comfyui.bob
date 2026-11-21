@@ -91,7 +91,10 @@
             <div class="field"><label for="v2-tlen">Its length <span class="opt">s</span></label><input type="number" id="v2-tlen" min="0.1" max="3" step="0.1" placeholder="0.5"></div></div>
         </details>
         <section class="v2-model" id="v2-model" aria-live="polite"></section>
-        <div class="v2-go"><button type="button" class="btn primary" id="v2-gen">🎬 Generate shot</button><span class="hint" id="v2-say"></span></div>
+        <div class="v2-go"><button type="button" class="btn primary" id="v2-gen">🎬 Generate shot</button>
+          <label class="v2-ntakes" title="Several takes of the shot, each with its own seed: their words are checked and the shot uses the one that says its lines best (or the one you pick)">Takes
+            <select id="v2-takes"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label>
+          <span class="hint" id="v2-say"></span></div>
         <div class="v2-result" id="v2-result"></div>
       </div>
     </aside>

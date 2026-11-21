@@ -5,6 +5,21 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.139.0] - 2026-11-20
+
+### Added
+- **V2 gets the takes, the words and the retake.** In 0.135–0.137 these were only on the classic page.
+  - **Takes:** 1–4 next to Generate shot, each with its own seed. Their words are checked, and the shot uses the take
+    that says its lines best; ties go to the newest.
+  - **The shot's result** shows its 🗣 words (the score and what was heard) and its takes, best words first. ★ marks
+    the take the shot uses unless you pick another; a click picks one, and the pick is kept on the board. The timeline
+    and export follow the take in use. New takes start picking by words again.
+  - **"Check the words"** and **"🔁 Retake the sound…"** work as on the classic page: all of the sound or some
+    stretches ("From here" / "To here" mark them on the shot's video), keep the music and sounds, 1–4 takes. The
+    retakes land on the shot.
+- Tested in V2: the Render window sizes Lena's line at her voice's measured pace ("about 4.2 s of speech (at their
+  voices' pace: Lena 4.5 syllables a second)", against 3.7 s at the default).
+
 ## [0.138.0] - 2026-11-20
 
 ### Changed
