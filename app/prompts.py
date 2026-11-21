@@ -200,8 +200,8 @@ REF_TAG = re.compile(r"<(?:Picture|Audio|Subject|Image|Video) \d+>|<d>")
 ONCE = "Only the words inside the dialogue tag are spoken, once; before and after them the speaker stays silent with their lips closed."
 ONCE_MANY = ("Only the words inside the dialogue tags are spoken, each line once; before, between and after them the speakers "
              "stay silent with their lips closed.")
-SAY_ONCE = (f'Spoken words go after "They say once:" (or "<who> says once:") as <d>[English] the words</d>, and the shot\'s '
-            f'line goes on with: "{ONCE}"')
+SAY_ONCE = (f'Only when the prompt has spoken words: they go after "They say once:" (or "<who> says once:") as <d>[English] the '
+            f'words</d>, and the shot\'s line goes on with: "{ONCE}" Add no spoken words of your own.')
 
 # H3's shot list (H3 and H3 Reference)
 H3_SHOTS = ("Format:\nLine 1: the style (medium, look, palette, lens, mood).\nA blank line.\nOne line per shot, each starting with its tag [Shot 1], [Shot 2]…: "
@@ -238,7 +238,10 @@ PROFILES: dict[str, tuple[str, str]] = {
     "h3video": ("MiniMax H3, a video model that renders picture and sound from a shot list", H3_SHOTS + " " + NO_NEG),
     # the same shot list, word for word: with a shorter version of it, small models skipped the style line and [Shot 1]
     "h3ref": ("MiniMax H3 Reference, a video model that uses reference pictures tagged <Picture 1>, <Picture 2>…",
-              H3_SHOTS + "\nRefer to people, objects and places from the references by tag instead of describing their looks. " + NO_NEG),
+              # the tags first: below the long shot-list format, small models dropped them (5 runs in 12, against 1)
+              "Most important: keep every reference tag. Each person, object and place from a reference picture is named by its "
+              "tag every time it comes up, as the prompt names it (e.g. \"the woman from <Picture 1>\", \"<Picture 2>\"); the "
+              "picture carries their looks, so describe only what they do.\n" + H3_SHOTS + " " + NO_NEG),
     "h3sound": ("MiniMax H3 making sound only",
                 "Exactly two lines:\noverall_soundscape: <ambience and sound effects in time order, with rough times such as at 2 seconds>\n"
                 "non_diegetic_music: <score style and mood, or N/A>\nThe clip is {seconds} seconds."),
@@ -419,12 +422,29 @@ def shot_list(text: str) -> str:
     tagged none), a blank line, the sound fields."""
     body, sound = _parts(text)
     rows = [r.strip() for r in body.split("\n") if r.strip()]
-    if rows and not any(r.startswith("[Shot ") for r in rows):
-        # a short first line on its own is the style; the shot starts after it
-        k = 1 if len(rows) > 1 and len(rows[0]) <= 200 and "<d>" not in rows[0] and not re.search(r"[.!?]\s+\S", rows[0]) else 0
-        rows[k] = f"[Shot 1] {rows[k]}"
+    tagged = next((i for i, r in enumerate(rows) if r.startswith("[Shot ")), len(rows))
+    if rows and not any(r.startswith("[Shot 1]") for r in rows) and tagged > 0:
+        # no [Shot 1]: the shot is what comes before the first tag (or all of it). A short first line on its own is
+        # the style; the shot starts after it.
+        short = len(rows[0]) <= 200 and "<d>" not in rows[0] and not re.search(r"[.!?]\s+\S", rows[0])
+        if tagged > 1 or (short and len(rows) > 1):
+            k = 1 if short else 0
+            rows[k] = f"[Shot 1] {rows[k]}"
+        elif tagged < len(rows):
+            # one paragraph run together before [Shot 2]: its first sentence is the style, the rest is shot 1
+            style, _, rest = rows[0].partition(". ")
+            rows[0:1] = [f"{style}.", f"[Shot 1] {rest}"] if rest else [f"[Shot 1] {rows[0]}"]
+        else:
+            rows[0] = f"[Shot 1] {rows[0]}"
     first = next((i for i, r in enumerate(rows) if r.startswith("[Shot ")), 0)
-    style, shots = " ".join(rows[:first]), "\n".join(rows[first:])
+    # a row below a shot that isn't a shot of its own (a line of dialogue put under it) belongs to that shot
+    shots: list[str] = []
+    for r in rows[first:]:
+        if shots and not r.startswith("[Shot "):
+            shots[-1] += " " + r
+        else:
+            shots.append(r)
+    style, shots = " ".join(rows[:first]), "\n".join(shots)
     return "\n\n".join(p for p in (style, shots, sound) if p)
 
 
@@ -452,9 +472,50 @@ async def style_line(shots: str, backend: str | None, url: str | None, model: st
     return "" if not line or line.startswith("[Shot ") or _SOUND.match(line) else line
 
 
+def restore_tags(original: str, text: str) -> str:
+    """A <Picture N> the rewrite dropped, back where it names what the user named with it: "the woman from <Picture 1>"
+    in the user's text, and the rewrite's first "the woman" (or "a young woman") in the shots gets it back. A tag the
+    user wrote on its own ("then <Picture 2> steps out") has nothing to find it by, and stays as the model left it."""
+    body, sound = _parts(text)
+    head, sep, shots = body.partition("[Shot ")  # not into the style line
+    shots = sep + shots
+    for n in dict.fromkeys(re.findall(r"<Picture (\d+)>", original)):
+        tag = f"<Picture {n}>"
+        if tag in text:
+            continue
+        m = re.search(rf"\b(?:the|an?)\s+(?:[\w-]+\s+){{0,2}}?([\w-]+)\s+from\s+{tag}", original, re.I)
+        if not m:
+            continue
+        at = re.search(rf"\b(?:the|an?)\s+(?:[\w-]+\s+){{0,2}}?{re.escape(m.group(1))}\b(?!\s+from\s+<Picture)", shots, re.I)
+        if at:
+            shots = f"{shots[:at.end()]} from {tag}{shots[at.end():]}"
+    body = head + shots if sep else head
+    return "\n\n".join(p for p in (body.strip(), sound) if p)
+
+
+def drop_invented(original: str, text: str) -> str:
+    """A spoken line the user didn't write (small models make one up, e.g. a chef saying "Perfect."), taken out with
+    the sentence that says it. A line the user wrote in plain quotes, not in <d>, counts as theirs."""
+    said = _said(re.sub(r"<[^>]+>", " ", original))
+    rows = []
+    for row in text.split("\n"):
+        for m in reversed(list(_D.finditer(row))):
+            w = _said(m.group(1))
+            if w and w in said:
+                continue
+            # the sentence starts after the last full stop (or spoken line) before it, else at the shot's start
+            ends = [row.rfind(s, 0, m.start()) + len(s) for s in (". ", "! ", "? ", "</d> ") if row.rfind(s, 0, m.start()) >= 0]
+            start = max(ends) if ends else (row.index("] ") + 2 if row.startswith("[Shot ") and "] " in row else 0)
+            end = m.end() + re.match(r"[.!?\"”]*\s*", row[m.end():]).end()
+            row = (row[:start] + row[end:]).rstrip()
+        rows.append(row)
+    return "\n".join(rows)
+
+
 def finish(original: str, text: str) -> str:
-    """An H3 rewrite checked: H3's shape, the user's spoken lines as they wrote them, each said once."""
-    return say_once(restore_lines(original, shot_list(text)))
+    """An H3 rewrite checked: H3's shape, the user's picture tags and spoken lines as they wrote them (and no others),
+    each line said once."""
+    return say_once(drop_invented(original, restore_lines(original, restore_tags(original, shot_list(text)))))
 
 
 _SAYS = re.compile(r"\b(says?|speaks?)\b(?!\s+once)(?=(?:,(?:[^:<\n]|<Audio \d+>){0,80})?:\s*<d>)", re.I)
