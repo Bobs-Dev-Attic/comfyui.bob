@@ -196,6 +196,13 @@ Reply with the rewritten prompt only: no title, no notes, no quotes around it, n
 # Reference tags the user wrote are named in the instructions (only those: naming others makes models invent them).
 REF_TAG = re.compile(r"<(?:Picture|Audio|Subject|Image|Video) \d+>|<d>")
 
+# A spoken line on H3: said once, with no words of H3's own around it (as the Prompt and Shots steps and V2 word it)
+ONCE = "Only the words inside the dialogue tag are spoken, once; before and after them the speaker stays silent with their lips closed."
+ONCE_MANY = ("Only the words inside the dialogue tags are spoken, each line once; before, between and after them the speakers "
+             "stay silent with their lips closed.")
+SAY_ONCE = (f'Spoken words go after "They say once:" (or "<who> says once:") as <d>[English] the words</d>, and the shot\'s '
+            f'line goes on with: "{ONCE}"')
+
 NO_NEG = "Describe only what is there: never use negations (no, not, without, never). Skip filler such as masterpiece, best quality, 8k, highly detailed."
 
 PROFILES: dict[str, tuple[str, str]] = {
@@ -225,15 +232,14 @@ PROFILES: dict[str, tuple[str, str]] = {
                 "Format:\nLine 1: the style (medium, look, palette, lens, mood).\nA blank line.\nOne line per shot, each starting with its tag [Shot 1], [Shot 2]…: "
                 "\"[Shot 1] <camera angle> <framing>. <setting and light>. <action in present tense>. The camera is <where it stands relative to the subject> and <one move>.\" "
                 "e.g. \"[Shot 1] Low-angle wide shot. … The camera is behind her at shoulder height and tracks her up the stairs.\" "
-                "Later shots begin with the start time, e.g. \"[Shot 2] At 00:04.000, close-up. …\". Spoken words go after "
-                "\"They say:\" as <d>[English] the words</d>.\nA blank line.\noverall_soundscape: <ambience and effects in order>\n"
+                "Later shots begin with the start time, e.g. \"[Shot 2] At 00:04.000, close-up. …\". " + SAY_ONCE + "\nA blank line.\noverall_soundscape: <ambience and effects in order>\n"
                 "non_diegetic_music: <score style, or N/A>\nUse one shot unless the user describes several; the clip is {seconds} seconds. " + NO_NEG),
     "h3ref": ("MiniMax H3 Reference, a video model that uses reference pictures tagged <Picture 1>, <Picture 2>…",
               "Use the same format as an H3 shot list:\nLine 1: the style.\nA blank line.\n\"[Shot 1] <framing>. <setting and light>. "
               "<action>. The camera is <where it stands relative to the subject> and <one move>.\" with the camera angle before the framing, "
               "e.g. \"Low-angle wide shot\" (later shots begin with their start time, e.g. At 00:04.000,).\nA blank line.\n"
               "overall_soundscape: …\nnon_diegetic_music: …\nRefer to people, objects and places from the references by tag instead of "
-              "describing their looks. The clip is {seconds} seconds. " + NO_NEG),
+              "describing their looks. " + SAY_ONCE + " The clip is {seconds} seconds. " + NO_NEG),
     "h3sound": ("MiniMax H3 making sound only",
                 "Exactly two lines:\noverall_soundscape: <ambience and sound effects in time order, with rough times such as at 2 seconds>\n"
                 "non_diegetic_music: <score style and mood, or N/A>\nThe clip is {seconds} seconds."),
@@ -259,7 +265,7 @@ def system_prompt(profile: str, seconds: float, text: str = "", keep: list[str] 
             out += "\nNo reference pictures are added yet: write no <Picture N> tags."
     if arefs and profile == "h3ref":
         pairs = ", ".join(f"<Audio {i}> is the voice of the person in <Picture {i}>" for i in range(1, arefs + 1))
-        out += (f"\nVoices: {pairs}. When that person speaks, write it as e.g. \"The woman from <Picture 1> says, in the "
+        out += (f"\nVoices: {pairs}. When that person speaks, write it as e.g. \"The woman from <Picture 1> says once, in the "
                 f"voice of <Audio 1>: <d>[English] …</d>\"; never give a person another number's voice.")
     if keep:
         out += "\nUse each of these words exactly as written, unchanged and once: " + "; ".join(f'"{k[:80]}"' for k in keep[:30]) + "."
@@ -339,6 +345,24 @@ def _tidy(text: str) -> str:
     text = re.sub(r"^```\w*\n?|\n?```$", "", text.strip())
     text = re.sub(r"^(here(?:'s| is) (?:the |your )?(?:rewritten |revised )?prompt[^:\n]*:)\s*", "", text, flags=re.I)
     return text.strip().strip('"').strip()
+
+
+_SAYS = re.compile(r"\b(says?)\b(?!\s+once)(?=(?:,(?:[^:<\n]|<Audio \d+>){0,80})?:\s*<d>)", re.I)
+
+
+def say_once(text: str) -> str:
+    """H3's spoken lines, said once: "says"/"say" right before a <d>…</d> becomes "says once", and each shot's line
+    with dialogue goes on with ONCE (ONCE_MANY for several lines) unless it already says so."""
+    text = _SAYS.sub(lambda m: f"{m.group(1)} once", text)
+    out = []
+    for line in text.split("\n"):
+        n = line.count("</d>")
+        if n and "lips closed" not in line:
+            i = line.rfind("</d>") + 4
+            i += re.match(r"[ \t]*[.!?]?", line[i:]).end()  # past a full stop right after the tag
+            line = f"{line[:i].rstrip()} {ONCE_MANY if n > 1 else ONCE} {line[i:].lstrip()}".rstrip()
+        out.append(line)
+    return "\n".join(out)
 
 
 def creativity_note(pct: int | None) -> str:
@@ -421,7 +445,10 @@ async def rewrite_stream(text: str, profile: str, seconds: float, backend: str |
         async for piece in rewrite(text, profile, seconds, backend, url, model, keep, problems, refs, arefs, creativity):
             out.append(piece)
             yield (json.dumps({"t": piece}) + "\n").encode()
-        yield (json.dumps({"done": True, "text": _tidy("".join(out))}) + "\n").encode()
+        done = _tidy("".join(out))
+        if profile in ("h3video", "h3ref"):
+            done = say_once(done)
+        yield (json.dumps({"done": True, "text": done}) + "\n").encode()
     except (llm.LLMError, httpx.HTTPError) as exc:
         yield (json.dumps({"error": str(exc) or type(exc).__name__}) + "\n").encode()
     except asyncio.CancelledError:  # the browser moved on (the user kept typing)
