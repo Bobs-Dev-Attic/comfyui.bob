@@ -74,7 +74,7 @@ const V2 = (() => {
   const $ = id => document.getElementById(id);
   const uid = () => Math.random().toString(16).slice(2, 10);
   const PKEY = "bob.v2.project";
-  const st = { board: { shots: [], settings: {} }, sel: null, scenes: new Map(), busy: new Set(), hearing: new Set(), saveT: 0, say: new Map(), objs: [], cams: [], log: [], tlv: "tl" };
+  const st = { board: { shots: [], settings: {} }, sel: null, scenes: new Map(), busy: new Set(), hearing: new Set(), saveT: 0, say: new Map(), stg: new Map(), objs: [], cams: [], log: [], tlv: "tl" };
   const shotOf = id => st.board.shots.find(x => x.id === id);
   const cur = () => shotOf(st.sel);
   const status = t => { $("v2-status").textContent = t || ""; };
@@ -413,11 +413,37 @@ const V2 = (() => {
   }
 
   /* ---- Generate */
+  /* A shot's progress while it's made: the Render window's stages (Scene3D.stages), one list per shot, shown under
+     Generate when that shot is open. */
+  function stagesFor(id) {
+    const old = st.stg.get(id); old?.stop?.(); old?.stopPhoto?.();
+    const el = document.createElement("section");
+    el.className = "s3p-set s3r-stages v2-stages";
+    el.setAttribute("aria-label", "Progress"); el.setAttribute("aria-live", "polite");
+    el.innerHTML = `<h4>Progress <span class="s3r-sgh"></span></h4><ol></ol>`;
+    const g = { el, sg: Scene3D.stages(el, () => st.stg.get(id) === g) };
+    st.stg.set(id, g); showStages();
+    return g;
+  }
+  function showStages() {
+    const host = $("v2-stages"), g = st.sel && st.stg.get(st.sel);
+    if (!g) { host.replaceChildren(); return; }
+    if (g.el.parentNode !== host) host.replaceChildren(g.el);
+  }
   async function generate(id) {
     const s = shotOf(id); if (!s || st.busy.has(id)) return;
     const entry = logStart(`🎬 ${s.name}`, id);
-    const d = decide(s), say = m => { st.say.set(id, m); if (st.sel === id) $("v2-say").textContent = m; logLine(entry, m); };
+    const d = decide(s), g = stagesFor(id), sg = g.sg;
+    const say = m => { st.say.set(id, m); if (st.sel === id) $("v2-say").textContent = m; logLine(entry, m); if (!/^Queued:/.test(m)) sg.say(m); };
     st.ctx = entry;
+    { // its stages: the 3D scene's (a photo and the fill come in if it makes them), then H3 and the word check
+      const n = Math.min(4, Math.max(1, +s.takes || 1)), words = linesOf(s).some(l => String(l.text || "").trim());
+      const gpu = `Rendering on the GPU (${d.ref ? "H3 Reference" : "H3"}${n > 1 ? `, take 1 of ${n}` : ""})`;
+      sg.plan([...(d.engine === "h3" ? [] : [["anim", "Drawing the rough animation"], ["mask", "Drawing its mask"]]),
+        ["send", n > 1 ? `Sending ${n} takes to H3` : "Sending to H3"], ["queue", "Waiting in ComfyUI's queue"], ["gpu", gpu], ["save", "Saving the video"],
+        ...(words ? [["words", "Checking the words (Whisper)"]] : [])]);
+      g.words = words;
+    }
     say(`Model: ${d.label}.`);
     st.busy.add(id); renderAll();
     try {
@@ -434,7 +460,9 @@ const V2 = (() => {
         if (Scene3D._state()?.id !== s.scene) { await openShot(id); }
         const voices = d.ref ? voicesFor(s) : [];
         const extra = { ...shotExtra(s.scene), voices };  // the voices H3 Reference gets (none on plain H3)
-        const r = await Scene3D.autoRender(s.scene, { text: sentence(s.action), extra, look: String(s.setting || "").trim(), quality: s.quality, fill: true }, say);
+        const r = await Scene3D.autoRender(s.scene, { text: sentence(s.action), extra, look: String(s.setting || "").trim(), quality: s.quality, fill: true,
+          onPhoto: pid => { g.stopPhoto?.(); g.stopPhoto = Scene3D.followPhoto(pid, sg); } }, say);
+        g.stopPhoto?.(); g.stopPhoto = null;
         req = { ...r.req, project: state.project?.id ?? null, loras: lorasFor(s), ...(voices.length ? { ref_audios: voices.map(v => v.ref), clean_audio: true } : {}) };
       }
       req.batch = Math.min(4, Math.max(1, +s.takes || 1));
@@ -445,7 +473,8 @@ const V2 = (() => {
       delete s.pick;  // the new takes: the shot uses the one whose words come out best
       save();
       say("Queued: it shows here when it's done.");
-    } catch (e) { say(`⚠ ${e.message}`); Media.toast(`${s.name}: ${e.message}`); entry.failed = e.message; }
+      g.stop = Scene3D.followRender(items[0], sg, g.words);
+    } catch (e) { g.stopPhoto?.(); sg.fail(e.message); say(`⚠ ${e.message}`); Media.toast(`${s.name}: ${e.message}`); entry.failed = e.message; }
     finally { st.busy.delete(id); entry.prep = false; if (st.ctx === entry) st.ctx = null; renderAll(); renderLog(); }
   }
   /* 🗣 Words (app/heard.py): Whisper hears a take's lines and scores them; the shot then uses its best take. */
@@ -1159,6 +1188,7 @@ const V2 = (() => {
     $("v2-gen").disabled = busy;
     $("v2-gen").textContent = busy ? "Working…" : "🎬 Generate shot";
     $("v2-say").textContent = st.say.get(s.id) || "";
+    showStages();
     $("v2-takes").value = String(Math.min(4, Math.max(1, +s.takes || 1)));
     const it = latest(s), f = fileOf(it), box = $("v2-result"), takes = takesOf(s);
     const want = it ? `${it.id}:${it.status}:${it.heard?.score ?? ""}:${st.hearing.has(it.id)}:${takes.map(x => `${x.id}${x.heard?.score ?? ""}`).join(",")}:${s.pick || ""}` : "";
