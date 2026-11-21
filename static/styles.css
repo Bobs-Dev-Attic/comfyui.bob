@@ -383,6 +383,16 @@ details.advanced .field + .field, details.advanced .row2 + .field { margin-top: 
 .sc-body p { margin: 4px 0; }
 .sc-y { color: #3fb950; font-weight: 700; } .sc-x { color: #f85149; font-weight: 700; }
 .sc-frames { display: flex; gap: 4px; overflow-x: auto; }
+/* Words (app.js heardCard; bin.js .b-heard) */
+.hd-row { margin: 0; font-size: 12.5px; display: grid; grid-template-columns: 4.5em 1fr; gap: 6px; }
+.hd-takes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
+.hd-takes > .hint { flex-basis: 100%; }
+.hd-take { border: 1px solid var(--line); background: var(--panel-2); color: var(--text); border-radius: 999px; padding: 1px 9px; cursor: pointer; font-size: 12px; }
+.hd-take.on { border-color: var(--accent); }
+.hd-take b { color: var(--sc, var(--text)); font-variant-numeric: tabular-nums; }
+.b-heard { position: absolute; top: 4px; left: 4px; font-size: 10px; padding: 0 5px; border-radius: 5px; background: rgba(0,0,0,.7);
+  color: var(--sc, #fff); font-weight: 700; font-variant-numeric: tabular-nums; }
+.b-heard.best { outline: 1px solid var(--sc, #fff); }
 .sc-frames img { height: 54px; border-radius: 4px; border: 1px solid var(--line); }
 .meta .facts { display: flex; flex-wrap: wrap; gap: 6px; }
 .meta .facts span { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }

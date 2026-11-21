@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, appsettings, audiotools, config, llm, media, model3d, modelpaths, models, projects, prompts, render, score, syscheck, tracking, updater, workflows
+from . import __version__, appsettings, audiotools, config, heard, llm, media, model3d, modelpaths, models, projects, prompts, render, score, syscheck, tracking, updater, workflows
 from .comfy import ComfyService
 from .jobs import EnhanceOpts, GenerateRequest, JobManager, media_path
 
@@ -951,6 +951,26 @@ async def score_result(item_id: str, req: ScoreReq):
     jobs._update(it, score=res)
     jobs.log(it, f"Score: {res['overall']} overall")
     return res
+
+
+@app.post("/api/items/{item_id}/heard")
+async def hear_result(item_id: str):
+    """Hear a finished video's words with Whisper and score them against its lines (app/heard.py)."""
+    it = jobs.items.get(item_id)
+    if not it:
+        raise HTTPException(404, "No such result")
+    if item_id in _hearing:
+        raise HTTPException(409, "Its words are being checked already")
+    _hearing.add(item_id)
+    try:
+        return await jobs.hear(it)
+    except heard.HeardError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    finally:
+        _hearing.discard(item_id)
+
+
+_hearing: set[str] = set()
 
 
 @app.post("/api/items/{item_id}/cancel")

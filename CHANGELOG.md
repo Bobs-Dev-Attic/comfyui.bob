@@ -5,6 +5,26 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.135.0] - 2026-11-20
+
+### Added
+- **🗣 Words: takes ranked by how well they say their lines.**
+  - **When:** once a video whose prompt has spoken lines (`<d>…</d>`) is rendered, Whisper large-v3-turbo hears its
+    sound, through faster-whisper and the crt-nodes `CRT_AudioTranscriptBatch` node in ComfyUI, using the language of
+    the lines' tag.
+  - **Score:** the words are compared with the lines. 100% means they're said as written and nothing else; each word
+    left out, changed or added costs one, following H3-AudioRetake-studio's word match (MIT).
+  - **Where it shows:** on the result's bar (🗣 92%) and its gallery tile. The result's details have a Words section:
+    the lines, what was heard, and the takes of the same prompt, best first, the best marked ★ (also on its tile).
+  - **Again by hand:** "🗣 Check the words" in a result's details runs it again, or for a video made before this
+    version.
+  - **About 2–3 s a take on the GPU.** The model (about 1.6 GB) is fetched into ComfyUI's
+    `models/stt/faster-whisper` on first use and freed after each check.
+  - **Errors:** a Whisper failure is reported as an error, not scored 0%. A Whisper job that hangs is taken out of
+    ComfyUI's queue after 10 minutes of running; time spent waiting behind renders doesn't count.
+- **Setup note:** faster-whisper's CTranslate2 is built for CUDA 12. A ComfyUI whose PyTorch is CUDA 13 also needs
+  CUDA 12's cuBLAS (`nvidia-cublas-cu12`, its two DLLs next to CTranslate2). The error says so when it's missing.
+
 ## [0.134.17] - 2026-11-20
 
 ### Fixed

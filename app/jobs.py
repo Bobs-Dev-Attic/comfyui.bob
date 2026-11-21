@@ -369,6 +369,23 @@ class JobManager:
         finally:
             self._enhancing.discard(key)
 
+    async def hear(self, item: dict[str, Any]) -> dict[str, Any]:
+        """Whisper hears a finished video's words and scores them against its lines (app/heard.py): item["heard"]."""
+        from . import heard
+
+        if not self.has_node(heard.NODE):
+            raise heard.HeardError("Checking the words needs the crt-nodes pack in ComfyUI (its CRT_AudioTranscriptBatch node)")
+        res = await heard.check(item, media_path, say=lambda m: self.log(item, m))
+        self._update(item, heard=res)
+        return res
+
+    async def _hear_after(self, item: dict[str, Any]) -> None:
+        """A video with spoken lines is heard once it's done, so its takes can be ranked by their words."""
+        try:
+            await self.hear(item)
+        except Exception as exc:  # noqa: BLE001 - a failed check mustn't touch the finished render
+            self.log(item, f"Checking the words: {exc}", "warn")
+
     async def _enhance_after(self, item: dict[str, Any]) -> None:
         """Settings > After generating (or Angles' "Enhance each"): the result asked to be enhanced
         when done. Runs here, once, so it doesn't depend on a page being open (or on how many are)."""
@@ -925,6 +942,10 @@ class JobManager:
             self._update(item, status="done", files=saved, progress=1.0, finished=time.time())
             if req.enhance_after and req.engine != "enhance" and saved:
                 asyncio.create_task(self._enhance_after(item))
+            from . import heard  # its spoken lines, as heard: ranks a set of takes
+
+            if heard.wants(item) and self.has_node(heard.NODE):
+                asyncio.create_task(self._hear_after(item))
             if item.get("project"):
                 from . import projects  # the project's thumbnail and "modified" follow its latest result
 
