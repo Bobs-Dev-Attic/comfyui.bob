@@ -5,6 +5,20 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.134.15] - 2026-11-20
+
+### Fixed
+- **H3 Reference's Rewrite keeps the picture tags again.** Since 0.134.14 its rule to name everyone by their tag came
+  after the long shot-list format, and a small local model dropped a <Picture N> tag in 5 rewrites of 12 (1 of 12
+  before). The rule now comes first: 0 of 18 in testing. The check also puts back a tag the rewrite dropped when your
+  text names it with a noun: your "the woman from <Picture 1>" and the rewrite's "the woman" get the tag back.
+- **Rewrite no longer makes up spoken lines.** The "says once" format is asked for only when your prompt has spoken
+  words. The check also takes out a line you didn't write, with the sentence that says it (a chef saying "Perfect.").
+  A line you wrote in plain quotes still counts as yours.
+- A spoken line the model put on its own row below a shot is joined back into that shot.
+- When the model wrote [Shot 2] but ran shot 1 into the style line, the style line and [Shot 1] are split apart
+  again.
+
 ## [0.134.14] - 2026-11-20
 
 ### Fixed
