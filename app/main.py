@@ -480,6 +480,42 @@ async def scenes_new(req: SceneNew):
                                objects=[o.model_dump() for o in req.objects], seconds=req.seconds, aspect=req.aspect)
 
 
+class ReliefReq(BaseModel):
+    source: str = Field(..., max_length=2000)
+
+
+@app.post("/api/scenes/relief")
+async def scenes_relief(req: ReliefReq):
+    """A picture as a depth mesh (Depth Anything 3, as a picture scene's background): the page lays a render's photo
+    and its filled views on it, so what's in them stands at its own depth instead of lying on the floor and the sky.
+    Kept per picture in outputs/3d."""
+    import hashlib
+    import shutil
+    try:
+        if media.kind_of(req.source) != "image" or not media_path(req.source).is_file():
+            raise HTTPException(400, "A depth mesh is made from a picture")
+    except (media.MediaError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    key = hashlib.sha1(req.source.encode("utf-8")).hexdigest()[:16]
+    target = model3d.OUT_DIR / f"relief_{key}.glb"
+    if not target.is_file():
+        built = workflows.build_scene_background(largest=1024, decimation=2, prefix=f"bob/relief/{key}")
+        paths: list[Path] = []
+        try:
+            paths = await jobs.run_quick(built, {"source": req.source}, timeout=300)
+            glb = next((p for p in paths if p.suffix.lower() == ".glb"), None)
+            model3d.OUT_DIR.mkdir(parents=True, exist_ok=True)
+            if glb:
+                shutil.move(str(glb), target)
+            elif not await model3d._fetch_glb(jobs.comfy.http, key, target):  # SaveGLB's "3d" output, from ComfyUI's history
+                raise HTTPException(502, "Depth Anything 3 returned no mesh")
+        finally:
+            for p in paths:
+                if p.exists() and p.parent == config.UPLOAD_DIR:
+                    p.unlink(missing_ok=True)
+    return {"url": "/" + target.relative_to(config.ROOT).as_posix()}
+
+
 @app.get("/api/scenes")
 async def scenes_list():
     return {"scenes": model3d.list_scenes()}
