@@ -1162,6 +1162,7 @@ function retakeDialog(it) {
       <button type="button" class="btn sm" data-m="end" title="End the stretch at the video's current time">⏱ To here</button></span></label>
     <label class="rt-l">Takes <span class="hint">each is checked for its words, best first</span>
       <span class="seg rt-takes">${[1, 2, 3, 4].map(n => `<button type="button" data-n="${n}"${n === 2 ? ' class="active"' : ""}>${n}</button>`).join("")}</span></label>
+    <label class="check" title="MelBand RoFormer splits both: the new take's voice goes over the original's music and other sounds"><input type="checkbox" id="rt-keepbg" checked> Keep its music and sounds: only the voice is new</label>
     ${p.ref_audios?.length ? `<label class="check"><input type="checkbox" id="rt-voices" checked> Use the ${p.ref_audios.length} voice${p.ref_audios.length > 1 ? "s" : ""} it was made with</label>` : ""}
     <p class="rt-err warn" hidden></p>`;
   let takes = 2, mark = null;
@@ -1185,7 +1186,7 @@ function retakeDialog(it) {
     const prompt = box.querySelector("#rt-prompt").value.trim(), err = box.querySelector(".rt-err");
     if (!prompt) { err.hidden = false; err.textContent = "Write what is said and heard."; return; }
     const voices = box.querySelector("#rt-voices");
-    const req = { ...p, kind: "video", engine: "retake", source: f.path, prompt, retake_ranges: box.querySelector("#rt-ranges").value.trim(),
+    const req = { ...p, kind: "video", engine: "retake", source: f.path, prompt, retake_ranges: box.querySelector("#rt-ranges").value.trim(), retake_keep_bg: box.querySelector("#rt-keepbg").checked,
       seed: -1, batch: takes, project: it.project ?? p.project ?? null, references: p.engine === "retake" || p.references ? (p.references || []) : [],
       ref_audios: voices && !voices.checked ? [] : (p.ref_audios || []), first_frame: null, last_frame: null, continue_from: null, enhance_after: null };
     const made = await submit(req);

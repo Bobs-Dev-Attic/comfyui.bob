@@ -512,6 +512,7 @@ def build_h3_ref(
 
 
 RETAKE_NODES = ("LTXVConcatAVLatent", "MVEx_AudioMaskToLatent", "VAEEncodeAudio")
+ROFORMER_NODES = ("MelBandRoFormerModelLoader", "MelBandRoFormerSampler")  # kijai/ComfyUI-MelBandRoFormer
 RETAKE_MAX_FRAMES = 362  # 17k+5, about 15 s: what H3 Reference renders in one window
 
 
@@ -531,6 +532,7 @@ def build_retake(
     clean_audio: bool = True,
     prefix: str = "bob/retake",
     loras: list[tuple[str, float]] | None = None,
+    keep_background: str | None = None,
 ) -> Built:
     """Retake a video's sound and keep its picture (H3 Reference): the method of H3-AudioRetake-studio (MIT), with
     nodes most installs have. The video (role "retake_src", made by media.retake_source at width x height and
@@ -538,7 +540,11 @@ def build_retake(
     it or the `ranges` (seconds), and on a latent with no mask yet keeps the whole picture. H3 Reference then voices
     it from the prompt: its lines, the voices (<Audio N>) and the pictures (<Picture N>; with none, the clip's middle
     frame is <Picture 1>). Only the sound comes back (FLAC); jobs puts it under the original picture
-    (media.retake_mux), so the picture is the original's, frame for frame."""
+    (media.retake_mux), so the picture is the original's, frame for frame.
+
+    keep_background (a MelBand RoFormer model's name): the new sound's voice alone is kept, over the original's
+    music and other sounds. Both are split by MelBand RoFormer; the voice and the background come back as two files
+    (outputs in that order) for jobs to mix."""
     if (frames - 5) % 17 or not 5 <= frames <= RETAKE_MAX_FRAMES:
         raise ValueError(f"A retake is 5 + 17k frames, at most {RETAKE_MAX_FRAMES}")
     g = Graph()
@@ -600,11 +606,18 @@ def build_retake(
     latent = g.add("SamplerCustomAdvanced", noise=o(noise), guider=o(guider), sampler=o(sampler), sigmas=o(sigmas),
                    latent_image=o(masked))
     audio = g.add("VAEDecodeAudio", samples=o(latent), vae=o(audio_vae))
-    save = g.add("SaveAudio", audio=o(audio), filename_prefix=prefix)
+    if keep_background:
+        rof = g.add("MelBandRoFormerModelLoader", model_name=keep_background)
+        voice = g.add("MelBandRoFormerSampler", model=o(rof), audio=o(audio))      # vocals, instruments
+        bed = g.add("MelBandRoFormerSampler", model=o(rof), audio=o(parts, 1))
+        outputs = [g.add("SaveAudio", audio=o(voice, 0), filename_prefix=f"{prefix}_voice"),
+                   g.add("SaveAudio", audio=o(bed, 1), filename_prefix=f"{prefix}_background")]
+    else:
+        outputs = [g.add("SaveAudio", audio=o(audio), filename_prefix=prefix)]
     return Built(
-        graph=g.nodes, outputs=[save], image_inputs=image_inputs,
+        graph=g.nodes, outputs=outputs, image_inputs=image_inputs,
         info={"width": width, "height": height, "frames": frames, "steps": n_steps, "turbo": use_turbo,
-              "references": references, "audios": audios, "final_prompt": prompt,
+              "references": references, "audios": audios, "final_prompt": prompt, "keep_background": bool(keep_background),
               "ranges": [[round(a, 3), round(b, 3)] for a, b in ranges or []]},
     )
 
