@@ -382,8 +382,6 @@ def restore_lines(original: str, text: str) -> str:
             (moved if "<d>" in ln and not _SOUND.match(ln) else keep).append(ln)
         sound = "\n".join(keep).strip()
     body = body.rstrip()
-    if moved:
-        body = _into_shot(body, " ".join(s.strip() for s in moved), 0)
     found = set()
 
     def back(m: re.Match) -> str:  # a line the model wrote, in <d> or in quotes: as the user wrote it
@@ -393,10 +391,43 @@ def restore_lines(original: str, text: str) -> str:
         found.add(k)
         return f"<d>{lines[k][0]}</d>"
     body = _QUOTED.sub(back, _D.sub(back, body))
+    moved = [_QUOTED.sub(back, _D.sub(back, s.strip())) for s in moved]
+    # what's put back goes in its own shot: the user's [Shot N], else the one that tells what the user's text tells
+    # around the line (a man knocking on a door), between the shots of the lines before and after it
+    for s in moved:
+        k = next((i for i, l in enumerate(lines) if f"<d>{l[0]}</d>" in s), -1)
+        body = _into_shot(body, s, _shot_for(body, original, lines, k) if k >= 0 else 0)
     for i, (said, _, shot, voice) in enumerate(lines):
         if i not in found:
-            body = _into_shot(body, f"They say once{f', in the voice of {voice}' if voice else ''}: <d>{said}</d>", shot)
+            body = _into_shot(body, f"They say once{f', in the voice of {voice}' if voice else ''}: <d>{said}</d>",
+                              _shot_for(body, original, lines, i))
     return f"{body}\n\n{sound}" if sound else body
+
+
+_STOP = {"the", "a", "an", "and", "then", "as", "at", "in", "on", "of", "to", "with", "from", "by", "for", "into", "says",
+         "say", "said", "once", "they", "he", "she", "him", "her", "his", "it", "its", "their", "is", "are", "who", "while"}
+
+
+def _shot_for(body: str, original: str, lines: list, i: int) -> int:
+    """The shot (its number) line i of the user's text belongs in: their own [Shot N]; else, among the shots between
+    those of the lines before and after it, the one sharing most words with the user's sentence around the line (the
+    first of them on a tie); 0 (the last shot) when there's no telling."""
+    if lines[i][2]:
+        return lines[i][2]
+    shots = [(int(m.group(1)), r) for r in body.split("\n") if (m := re.match(r"\[Shot (\d+)\]", r))]
+    if len(shots) < 2:
+        return 0
+    at = {j: n for j, l in enumerate(lines) for n, r in shots if f"<d>{l[0]}</d>" in r}
+    lo = max((n for j, n in at.items() if j < i), default=shots[0][0])
+    hi = min((n for j, n in at.items() if j > i), default=shots[-1][0])
+    if lo > hi:
+        return 0
+    m = list(_D.finditer(original))[i]
+    stem = lambda w: w[:-1] if len(w) > 3 and w.endswith("s") else w  # noqa: E731
+    words = lambda t: {stem(w) for w in re.findall(r"[a-z]+", re.sub(r"<[^>]+>", " ", t).lower()) if w not in _STOP}  # noqa: E731
+    near = words(original[_lead(original, m.start()):m.start()])
+    best = max((n for n, _ in shots if lo <= n <= hi), key=lambda n: (len(near & words(dict(shots)[n])), -n))
+    return best
 
 
 def _into_shot(body: str, words: str, shot: int) -> str:
@@ -551,16 +582,18 @@ def fix_speakers(original: str, text: str) -> str:
         name = word.capitalize() if word in _PRONOUN else f"The {word}{f' from {tag.group(1)}' if tag else ''}"
         voice = re.search(r"in the voice of <Audio \d+>", lead)
         speakers[_said(m.group(1))] = (sex, name, f", {voice.group(0)}" if voice else "")
-    if not speakers:
-        return text
     out = []
     for row in text.split("\n"):
         for m in reversed(list(_D.finditer(row))):
-            who = speakers.get(_said(m.group(1)))
-            if not who:
-                continue
             start = _lead(row, m.start())
             lead = row[start:m.start()]
+            who = speakers.get(_said(m.group(1)))
+            if not who:
+                if not lead.strip():  # a bare <d>…</d>, nobody saying it
+                    row = row[:start] + "They say once: " + row[m.start():]
+                continue
+            if not lead.strip():
+                lead = "They say once: "
             sex, _ = _who(lead)
             plain = re.fullmatch(r"\s*they\s+say\s+once\s*(?:,\s*in the voice of <Audio \d+>)?\s*:\s*", lead, re.I)
             if not plain and (not sex or sex == who[0]):
