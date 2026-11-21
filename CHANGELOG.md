@@ -5,6 +5,13 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.144.2] - 2026-11-21
+
+### Fixed
+- **The progress stages say what the sampler's set-up step is doing.** While H3's models loaded, the GPU stage's note
+  read "running RandomNoise"; set-up steps like that (noise, guider, sigmas, scheduler) now read "setting up the
+  sampler and loading the models".
+
 ## [0.144.1] - 2026-11-21
 
 ### Fixed
