@@ -373,6 +373,10 @@ Other features:
   (about 1.6 GB) is fetched into ComfyUI's `models/stt/faster-whisper` on first use. faster-whisper's CTranslate2 is
   built for CUDA 12: a ComfyUI whose PyTorch is CUDA 13 also needs CUDA 12's cuBLAS (`nvidia-cublas-cu12`, its
   `cublas64_12.dll` and `cublasLt64_12.dll` next to CTranslate2).
+- **A speaker's pace**: how long a shot's lines take to say (the Render window's "Lines", and the warning when a shot
+  is much longer than its lines) goes by each speaker's own voice. Their recording is measured once: Whisper's words
+  over the time it isn't pausing (ffmpeg's silencedetect), 3 to 8 syllables a second, 5.5 for a speaker without a voice
+  or with under five words heard (`POST /api/voice/rate`, cached in `data/speaking_rates.json`).
 - **🔁 Retake the sound** (a video's details): its sound made again from a prompt by H3 Reference, all of it or some
   stretches (marked with the video's play position), its picture kept frame for frame (engine `retake`,
   `workflows.build_retake`). The video and its sound go into one AV latent, `MVEx_AudioMaskToLatent`

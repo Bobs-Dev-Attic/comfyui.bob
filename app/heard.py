@@ -164,6 +164,62 @@ async def transcribe(video: Path, language: str, timeout: float = 600) -> str:
     return "" if text == "(empty)" else text
 
 
+RATE_DEFAULT, RATE_MIN, RATE_MAX = 5.5, 3.0, 8.0  # syllables a second (as H3-AudioRetake-studio's speakingRate)
+_RATES = config.DATA_DIR / "speaking_rates.json"
+
+
+def syllables(text: str) -> int:
+    """Syllables in English text, as static/scene3d.js speechSeconds counts them: vowel groups per word, a final
+    silent e left out, at least one a word."""
+    n = 0
+    for w in re.findall(r"[a-z]+", re.sub(r"['’]", "", (text or "").lower())):
+        n += max(1, len(re.findall(r"[aeiouy]+", re.sub(r"e$", "", w))))
+    return n
+
+
+def _voiced_seconds(wav: Path, total: float) -> float:
+    """How long a recording speaks: its length less the pauses ffmpeg's silencedetect finds (a quarter second or
+    more, 30 dB under full scale)."""
+    r = subprocess.run([media.ffmpeg(), "-nostdin", "-i", str(wav), "-af", "silencedetect=noise=-30dB:d=0.25", "-f", "null", "-"],
+                       capture_output=True, text=True, stdin=subprocess.DEVNULL, creationflags=media.NO_WINDOW)
+    quiet = sum(float(x) for x in re.findall(r"silence_duration:\s*([\d.]+)", r.stderr or ""))
+    return max(0.0, total - quiet)
+
+
+async def speaking_rate(path: Path, language: str = "english", seconds: float = 60.0) -> dict[str, Any]:
+    """How fast a voice speaks, in syllables a second of speech, from its first `seconds`: Whisper's words over the
+    time it isn't pausing, within 3-8 (5.5 when under five words are heard). Cached per file (path, size, time)."""
+    st = path.stat()
+    key = f"{path.resolve()}|{st.st_size}|{int(st.st_mtime)}"
+    try:
+        cache = json.loads(_RATES.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cache = {}
+    if key in cache:
+        return cache[key]
+    with tempfile.TemporaryDirectory() as tmp:
+        wav = Path(tmp) / "voice.wav"
+        r = await asyncio.to_thread(subprocess.run, [media.ffmpeg(), "-nostdin", "-v", "error", "-y", "-i", str(path), "-vn",
+                                                     "-t", f"{seconds:g}", "-ac", "1", "-ar", "16000", str(wav)],
+                                    capture_output=True, text=True, stdin=subprocess.DEVNULL, creationflags=media.NO_WINDOW)
+        if r.returncode or not wav.is_file():
+            raise HeardError(r.stderr.strip()[-300:] or "It has no sound to measure")
+        total = wav.stat().st_size / 32000  # 16-bit mono at 16 kHz, after the 44-byte header (close enough)
+        voiced = await asyncio.to_thread(_voiced_seconds, wav, total)
+        async with _lock:
+            text = await transcribe(wav, language)
+    n_words, n_syl = len(words(text)), syllables(text)
+    rate = min(RATE_MAX, max(RATE_MIN, n_syl / voiced)) if n_words >= 5 and voiced > 0.5 else None
+    res = {"rate": round(rate or RATE_DEFAULT, 2), "measured": rate is not None, "syllables": n_syl, "words": n_words,
+           "seconds": round(voiced, 2), "text": text[:400]}
+    cache[key] = res
+    try:
+        _RATES.write_text(json.dumps(cache, indent=1), encoding="utf-8")
+    except OSError:
+        pass
+    return res
+
+
 def wants(item: dict[str, Any]) -> bool:
     """A finished video whose prompt has spoken lines."""
     return (item.get("kind") == "video" and item.get("status") == "done" and bool(item.get("files"))

@@ -5,6 +5,19 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.138.0] - 2026-11-20
+
+### Changed
+- **Lines are sized at each speaker's own pace.** Before, everyone was assumed to speak at 5.5 syllables a second.
+  This follows H3-AudioRetake-studio's speaking rate (MIT).
+  - **Where it's used:** the Render window's "Lines: about N s of speech", and the warning (Render window and V2
+    Generate) when a shot is much longer than its lines.
+  - **How it's measured:** once per voice, from its recording. Whisper's words are counted in syllables and divided
+    by the time the voice isn't pausing (ffmpeg's silencedetect), kept within 3–8 syllables a second.
+  - **Default:** a speaker without a voice, or a recording with under five words heard, stays at 5.5.
+  - **Shown:** the Render window names the measured paces, e.g. "at their voices' pace: Lena 4.5 syllables a second".
+  - **Speed:** a measurement takes 2–4 s on the GPU and is cached per file. `POST /api/voice/rate` returns it.
+
 ## [0.137.0] - 2026-11-20
 
 ### Added

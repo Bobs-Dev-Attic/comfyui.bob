@@ -1632,7 +1632,8 @@ const Scene3D = (() => {
         ["Following", `the scene's rough animation (Time-to-Move), ${HOLD[holdSel.value] || holdSel.value}`],
         ["Quality", `${box.querySelector("#s3r-q").selectedOptions[0].textContent}: about ${w}×${h} px (${mp} MP)`],
         ["Length", `${frameCount()} frames, ${dur().toFixed(2)} s at ${FPS} fps`],
-        ...((extraNow()?.lines || []).length ? [["Lines", `about ${speechSeconds(extraNow().lines).toFixed(1)} s of speech`]] : []),
+        ...((extraNow()?.lines || []).length ? [["Lines", (() => { const x = extraNow(), pace = paceNote(x.lines, v2x?.voices);
+          return `about ${speechSeconds(x.lines, v2x?.voices).toFixed(1)} s of speech${pace ? ` (at their voices' pace: ${pace} syllables a second)` : ""}`; })()]] : []),
         ["Sampling", !sp.turbo ? `${steps} steps, full sampling without the turbo LoRA (several times slower)`
           : sp.steps ? `${steps} steps with ${R ? "H3 Reference's" : "H3's"} turbo LoRA${steps < turboSteps ? " (fewer than it's made for: rougher, quicker)" : steps > turboSteps ? " (more than it's made for: a little finer, slower)" : ""}`
           : R ? "4 steps with H3 Reference's turbo LoRA (8 with an 8-step one)" : "8 steps with H3's turbo LoRA (4 with a 4-step one)"],
@@ -1647,7 +1648,7 @@ const Scene3D = (() => {
         + (refs ? picObjs().map((x, i) => `<span class="s3p-pic"><img src="${esc(mediaUrl(x.picture))}" alt=""><b>&lt;Picture ${i + 2}&gt;</b> ${esc(x.name)}</span>`).join("") : "")
         + voices.map((v, i) => `<span class="s3p-pic"><span class="s3p-pic0">🎙</span><b>&lt;Audio ${i + 1}&gt;</b> ${esc(v.name)}'s voice</span>`).join("");
       if (!edited) box.querySelector("#s3r-prompt").value = renderPrompt(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder, refs, fromPhoto(), extraNow()).prompt;
-      const talk = speechSeconds(extraNow()?.lines || []), spare = talk ? dur() - talk : 0;
+      const talk = speechSeconds(extraNow()?.lines || [], v2x?.voices), spare = talk ? dur() - talk : 0;
       box.querySelector(".s3r-pnote").innerHTML = (spare > SPARE_TALK ? `<span class="warn">The lines take about ${talk.toFixed(1)} s of this ${dur().toFixed(1)} s shot: H3 may fill the rest with words of its own. A shorter shot, or more happening in What happens, keeps it to the lines.</span> ` : "") + (edited ? `<span class="warn">Edited: Render sends it as it is. ↻ Rebuild puts the built one back.</span> ` : "")
         + (refs ? "H3 Reference also puts a line before it that ties &lt;Picture 1&gt; to the first frame." : "");
     };
@@ -1670,6 +1671,8 @@ const Scene3D = (() => {
       syncStart(); holdSel.value = L.hold; showLevel(); review();
     };
     lvBox.addEventListener("click", e => { const b = e.target.closest("[data-lv]"); if (b) setLevel(b.dataset.lv); });
+    // the speakers' voices' own pace, measured once each: the review then sizes their lines by it
+    if (v2x?.voices?.length) loadRates(v2x.voices).then(() => { if (box.isConnected) review(); });
     // changing an option by hand makes it your own mix
     for (const sel of ["#s3r-q", "#s3r-sp", "#s3r-first", "#s3r-fill", "#s3r-hold"]) box.querySelector(sel)?.addEventListener("change", () => { level = null; showLevel(); });
     firstSel.onchange = syncStart; holdSel.onchange = () => { holdSel.dataset.touched = "1"; };
@@ -1801,15 +1804,32 @@ const Scene3D = (() => {
     // H3 fills time the lines leave over with speech of its own (more so with a voice reference): say there's none
     return { text: `${text.charAt(0).toUpperCase() + text.slice(1)} Only the words inside the dialogue tags are spoken, each line once; before, between and after them the speakers stay silent with their lips closed.`, ids };
   }
-  /* About how long lines take to say: their syllables at 5.5 a second, and half a second each to start (as
-     H3-AudioRetake-studio sizes a take). More than SPARE_TALK seconds of shot left over, H3 tends to fill it with
-     speech of its own. */
-  const SPARE_TALK = 2.5;
-  function speechSeconds(lines) {
-    const syl = w => { w = w.toLowerCase().replace(/[^a-z]/g, ""); if (!w) return 0; const n = (w.replace(/e$/, "").match(/[aeiouy]+/g) || []).length; return Math.max(1, n); };
-    const L = (lines || []).map(l => String(l.text || l || "").trim()).filter(Boolean);
-    return L.reduce((a, t) => a + t.split(/\s+/).reduce((b, w) => b + syl(w), 0) / 5.5 + 0.5, 0);
+  /* About how long lines take to say: their syllables at the speaker's pace, and half a second each to start (as
+     H3-AudioRetake-studio sizes a take). The pace is the speaker's voice's own, measured once from its recording
+     (/api/voice/rate: Whisper's words over the time it speaks, 3-8 syllables a second), else 5.5. More than
+     SPARE_TALK seconds of shot left over, H3 tends to fill it with speech of its own. */
+  const SPARE_TALK = 2.5, RATE = 5.5;
+  const RATES = new Map();  // a voice's recording -> syllables a second, or the request while it's measured
+  function loadRates(voices) {
+    return Promise.all((voices || []).filter(v => v?.ref).map(v => {
+      if (!RATES.has(v.ref)) RATES.set(v.ref, fetch("/api/voice/rate", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ref: v.ref }) }).then(r => r.ok ? r.json() : null).catch(() => null)
+        .then(j => { RATES.set(v.ref, j?.rate || RATE); return j; }));
+      return RATES.get(v.ref);
+    }));
   }
+  // the pace a speaker's lines are said at: their voice's, when it's measured
+  const rateOf = (voices, speaker) => { const v = (voices || []).find(x => x.name === speaker), r = v && RATES.get(v.ref); return typeof r === "number" ? r : RATE; };
+  const syllables = t => String(t || "").split(/\s+/).reduce((b, w) => { w = w.toLowerCase().replace(/[^a-z]/g, ""); if (!w) return b;
+    return b + Math.max(1, (w.replace(/e$/, "").match(/[aeiouy]+/g) || []).length); }, 0);
+  function speechSeconds(lines, voices = []) {
+    return (lines || []).map(l => typeof l === "string" ? { text: l } : l).filter(l => String(l.text || "").trim())
+      .reduce((a, l) => a + syllables(l.text) / rateOf(voices, l.speaker) + 0.5, 0);
+  }
+  // which speakers' paces are their own: "Lena 6.4 syllables a second, Tom 4.1"
+  const paceNote = (lines, voices) => [...new Set((lines || []).map(l => l.speaker).filter(Boolean))]
+    .map(n => { const v = (voices || []).find(x => x.name === n), r = v && RATES.get(v.ref); return typeof r === "number" && r !== RATE ? `${n} ${r.toFixed(1)}` : ""; })
+    .filter(Boolean).join(", ");
   // "a young woman in a white dress, barefoot" -> "young woman"
   const shortName = o => { const w = String(o.becomes || "").trim().toLowerCase().split(/,|\b(?:in|with|wearing|who|holding|from|on|at|carrying)\b/)[0].replace(/^(a|an|the)\s+/, "").trim().split(/\s+/).slice(0, 4).join(" ");
     return w || (o.prim === "figure" ? "person" : bare(o.name).toLowerCase()); };
@@ -4019,7 +4039,7 @@ const Scene3D = (() => {
       save(); setTime(s.t); renderSide(); s.dirty = true; return true;
     },
   };
-  return { mount, autoRender, current, addFromLibrary, camEdit, objEdit, speechSeconds, SPARE_TALK, select: i => s?.bg && select(i), selectCam: () => s?.bg && selectCam(),
+  return { mount, autoRender, current, addFromLibrary, camEdit, objEdit, speechSeconds, loadRates, paceNote, SPARE_TALK, select: i => s?.bg && select(i), selectCam: () => s?.bg && selectCam(),
     rename: (i, name) => { const o = s?.objs[i]; if (!o || !String(name || "").trim()) return; o.name = String(name).trim().slice(0, 120); save(); renderSide(); }, CAM_MOVES, applyCameraMove, cameraOut, applySavedCamera, renderForShot, photoForShot, fromTemplate, setTemplate, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
     _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _fill: (P, look, say) => fillGaps(P, look, say), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
 })();
