@@ -1561,6 +1561,90 @@ const Scene3D = (() => {
   // Speed: the sampling steps H3 takes (the turbo LoRA's own count, fewer, more, or full sampling without it)
   const SPEEDS = { "4": { steps: 4, turbo: true }, auto: { steps: null, turbo: true }, "12": { steps: 12, turbo: true }, full: { steps: null, turbo: false } };
   const lastLevel = () => { try { return LEVELS[localStorage.getItem("bob.sceneLevel")] ? localStorage.getItem("bob.sceneLevel") : "final"; } catch { return "final"; } };
+  /* The Render window's progress: its stages (the photo, the fill, the rough animation, H3…), each waiting, running
+     (with what it's on now and how long it's taken) or done, kept up to date as the render goes. say(message) is
+     buildRender's progress line: it moves to the stage it belongs to. */
+  const STAGE_OF = [
+    [/photo of the first frame/i, "photo"], [/^Painting the photo|^Finding .+ in the photo/, "paint"],
+    [/^Measuring the depth of the photo/, "depth", "Measuring the photo's depth (Depth Anything 3)"],
+    [/can't see|^Qwen left|^Measuring the depth of view|^Filled \d+ view/, "fill"],
+    [/^The camera comes in .* closer|^Added a sharp detail view/, "detail", "A sharp view where the camera comes close (Qwen)"],
+    [/^Drawing the rough animation/, "anim"], [/^Drawing its mask/, "mask"], [/^Sending to H3/, "send"],
+  ];
+  function stages(el) {
+    const L = [];
+    let tick = 0;
+    const secs = x => { const t = ((x.t1 || Date.now()) - x.t0) / 1000; return t < 60 ? `${t.toFixed(0)} s` : `${Math.floor(t / 60)} min ${String(Math.round(t % 60)).padStart(2, "0")} s`; };
+    const ICON = { wait: "○", run: "", done: "✓", skip: "–", fail: "✕" };
+    const draw = () => {
+      if (!el.isConnected) { clearInterval(tick); return; }
+      el.hidden = false;
+      el.querySelector("ol").innerHTML = L.map(x => `<li class="s3r-sg ${x.state}"><span class="s3r-si" aria-hidden="true">${ICON[x.state]}</span>
+        <span class="s3r-sn">${esc(x.name)}${x.note ? `<small>${esc(x.note)}</small>` : ""}</span><span class="s3r-stm">${x.t0 && x.state !== "skip" ? secs(x) : ""}</span></li>`).join("");
+      const cur = L.find(x => x.state === "run"), all = L.length, k = L.filter(x => x.state === "done" || x.state === "skip").length;
+      el.querySelector(".s3r-sgh").textContent = L.some(x => x.state === "fail") ? "· stopped" : k === all ? "· done" : `· stage ${Math.min(all, k + 1)} of ${all}`;
+    };
+    const close = (x, state = "done") => { if (x.state === "run") { x.t1 = Date.now(); x.state = state; } else if (x.state === "wait") x.state = "skip"; };
+    const sg = {
+      alive: () => el.isConnected,
+      plan(list) { L.length = 0; for (const [key, name] of list) L.push({ key, name, state: "wait", note: "" });
+        clearInterval(tick); tick = setInterval(() => { if (L.some(x => x.state === "run")) draw(); }, 1000); draw(); },
+      // start a stage (one not planned goes in after the running one); the ones before it are done, or skipped
+      at(key, note = "", name = key) {
+        let i = L.findIndex(x => x.key === key);
+        if (i < 0) { const r = L.findIndex(x => x.state === "run"); i = r >= 0 ? r + 1 : Math.max(0, L.findIndex(x => x.state === "wait")); L.splice(i, 0, { key, name, state: "wait", note: "" }); }
+        for (let j = 0; j < i; j++) close(L[j]);
+        const x = L[i]; if (x.state !== "run") { x.state = "run"; x.t0 = Date.now(); x.t1 = 0; }
+        // only what the message adds to the stage's name: "Drawing the rough animation: frame 9 of 121" -> "frame 9 of 121"
+        const head = x.name.replace(/\s*\(.*\)$/, "");
+        x.note = note.startsWith(head) ? note.slice(head.length).replace(/^[\s:…]+|[\s…]+$/g, "").replace(/^\((.*)\)$/, "$1") : note;
+        draw();
+      },
+      note(note) { const x = L.find(y => y.state === "run"); if (x) { x.note = note; draw(); } },
+      say(m) { const hit = STAGE_OF.find(([re]) => re.test(m)); if (hit) sg.at(hit[1], m, hit[2]); else sg.note(m); },
+      done(key, note) { const i = L.findIndex(y => y.key === key); if (i < 0) return; for (let j = 0; j < i; j++) close(L[j]);
+        const x = L[i]; if (x.state !== "run") x.t0 = x.t0 || Date.now(); x.state = "run"; close(x); if (note != null) x.note = note; draw(); },
+      fail(msg) { const x = L.find(y => y.state === "run") || L.find(y => y.state === "wait"); if (x) { if (!x.t0) x.t0 = Date.now(); x.t1 = Date.now(); x.state = "fail"; x.note = msg; }
+        clearInterval(tick); draw(); },
+      finish() { for (const x of L) close(x); clearInterval(tick); draw(); },
+    };
+    return sg;
+  }
+  /* After Render queues it: follow the video through ComfyUI (its queue, the GPU's steps, saving it, and the word
+     check when it has lines) on the live events, until it's done or the window closes. Returns a stop function. */
+  function followRender(it, sg, words, onEnd = () => {}) {
+    const es = new EventSource("/api/events");
+    let wordsT = 0, ended = false, doing = "";
+    const end = () => { if (ended) return; ended = true; es.close(); clearTimeout(wordsT); onEnd(); };
+    const onItem = x => {
+      if (x.status === "queued") sg.at("queue", "", "Waiting in ComfyUI's queue");
+      else if (x.status === "running") sg.at("gpu");
+      else if (x.status === "failed" || x.status === "cancelled") { sg.fail(x.error || x.status); end(); }
+      else if (x.status === "done") {
+        if (words && x.heard?.score != null) { sg.done("words", `${x.heard.score}% said as written`); sg.finish(); end(); }
+        else if (words) { sg.at("words", "Whisper listens to the lines…"); clearTimeout(wordsT); wordsT = setTimeout(() => { sg.done("words", "no word check came back"); sg.finish(); end(); }, 180000); }
+        else { sg.finish(); end(); }
+      }
+    };
+    es.onmessage = e => {
+      if (!sg.alive()) return end();
+      let ev; try { ev = JSON.parse(e.data); } catch { return; }
+      if (ev.type === "item") { if (ev.item?.id === it.id) onItem(ev.item); return; }
+      if (ev.id !== it.id) return;
+      if (ev.type === "queue") sg.at("queue", ev.position != null ? `position ${ev.position}` : "", "Waiting in ComfyUI's queue");
+      else if (ev.type === "progress" && ev.steps > 1) sg.at("gpu", `${doing || "sampling"}: step ${ev.step} of ${ev.steps} · ${Math.round(100 * ev.step / ev.steps)}%`);
+      else if (ev.type === "log" && /^Node \d+ · /.test(ev.msg)) {  // what ComfyUI is on, between the sampler's steps
+        const c = ev.msg.replace(/^Node \d+ · /, "");
+        const what = /Loader|Load[A-Z]|LoRA|Lora/.test(c) ? "loading the models" : /Sampler|Sample|TimeToMove/i.test(c) ? "sampling" : /Decode/i.test(c) ? "decoding the frames"
+          : /Encode/i.test(c) ? "encoding the inputs" : /Save|Combine|Video/i.test(c) ? "writing the video" : `running ${c}`;
+        doing = what; sg.at("gpu", what);
+      }
+      else if (ev.type === "log" && /^Downloading the results/.test(ev.msg)) sg.at("save");
+      else if (ev.type === "log" && /^Checking the words:/.test(ev.msg)) { sg.done("words", ev.msg.replace(/^Checking the words:\s*/, "didn't run: ")); sg.finish(); end(); }
+    };
+    onItem(state.items.get(it.id) || it);
+    return end;
+  }
   function renderDialog(o = {}) {
     if (!s?.bg) return;
     if (!s.objs.some(o => o.mesh && !o.hidden) && !cameraMoves()) return Media.toast("Nothing moves yet: key an object or the camera first.");
@@ -1620,7 +1704,8 @@ const Scene3D = (() => {
       <section class="s3p-set" aria-label="Model settings"><h4>Model settings</h4><dl class="s3p-dl s3r-dl"></dl><div class="s3p-pics s3r-pics"></div></section>
       <div class="field"><div class="s3p-ph"><label for="s3r-prompt">The prompt <span class="opt">the whole of it, as H3 gets it; edit it if you like</span></label>
         <button type="button" class="link" data-a="rebuild" title="Build the prompt again from the settings above">↻ Rebuild</button></div>
-        <textarea id="s3r-prompt" rows="8" spellcheck="false"></textarea><p class="hint s3r-pnote"></p></div>`;
+        <textarea id="s3r-prompt" rows="8" spellcheck="false"></textarea><p class="hint s3r-pnote"></p></div>
+      <section class="s3p-set s3r-stages" aria-label="Progress" aria-live="polite" hidden><h4>Progress <span class="s3r-sgh"></span></h4><ol></ol></section>`;
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
     foot.innerHTML = `<span class="hint s3r-st"></span><button type="button" class="btn ghost" data-a="cancel">Cancel</button><button type="button" class="btn primary" data-a="go">🎬 Render</button>`;
@@ -1716,10 +1801,28 @@ const Scene3D = (() => {
     if (toSel) { toSel.onchange = syncTo; const fs = forShot(); if (fs) toSel.value = String(fs.i); if (o.level === "sketch" && !fs) toSel.value = "now"; }
     syncTo();
     foot.querySelector('[data-a="cancel"]').onclick = () => win.close();
+    const sgEl = box.querySelector(".s3r-stages"), sg = stages(sgEl);
+    let stop = null;
     foot.querySelector('[data-a="go"]').onclick = async e => {
       e.target.disabled = true;
+      stop?.(); stop = null;
+      let words = false;
       try {
         const start = firstSel.value, look = box.querySelector("#s3r-look").value.trim();
+        {  // the stages this render goes through, from what's set
+          const to0 = toSel?.value ?? "now", ph = isPhoto(start), mv = cameraMoves() && !!box.querySelector("#s3r-fill")?.checked && ph;
+          const R = useRefs() || (extraNow()?.voices || []).length > 0;
+          words = (extraNow()?.lines || []).some(l => String(l.text || "").trim());
+          sg.plan([
+            ...(start === "newphoto" ? [["photo", "Making the photo of the first frame"]] : start === "quickphoto" ? [["photo", "Making a quick photo of the first frame"]] : []),
+            ...(ph ? [["paint", "Painting the photo onto the scene"]] : []),
+            ...(mv ? [["fill", "Filling what the photo can't see (Qwen)"]] : []),
+            ["anim", "Drawing the rough animation"], ["mask", "Drawing its mask"],
+            ...(to0 !== "now" ? [["send", "Putting it in the shot"]] : [["send", "Sending to H3"], ["queue", "Waiting in ComfyUI's queue"],
+              ["gpu", `Rendering on the GPU (${R ? "H3 Reference" : "H3"})`], ["save", "Saving the video"], ...(words ? [["words", "Checking the words (Whisper)"]] : [])]),
+          ]);
+          sgEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        }
         if (start === "newphoto" || start === "quickphoto") try { localStorage.setItem("bob.scenePhotoLook", look); } catch { /* not kept */ }
         if (level) try { localStorage.setItem("bob.sceneLevel", level); } catch { /* not kept */ }
         const to = toSel?.value ?? "now";
@@ -1728,9 +1831,10 @@ const Scene3D = (() => {
         const fill = !!box.querySelector("#s3r-fill")?.checked;
         if (box.querySelector("#s3r-fill") && fromPhoto()) try { localStorage.setItem("bob.sceneGapFill", fill ? "1" : "0"); } catch { /* not kept */ }
         const r = await buildRender({ start, look, fill, refs: useRefs(), hold: holdSel.value, quality: box.querySelector("#s3r-q").value, speed: spSel.value, extra: extraNow(), prompt: edited ? box.querySelector("#s3r-prompt").value : null,
-          what: box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder }, m => { st.textContent = m; });
+          what: box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder }, m => { st.textContent = m; sg.say(m); });
         if (to !== "now") {  // into a shot: Generate on the Shots step sends it
           const k = Shots.useScene(to === "new" ? -1 : +to, r.shot);
+          sg.finish();
           win.close();
           Media.toast(`3D scene: it's shot ${k + 1} now. Generate on the Shots step makes it.`);
           return;
@@ -1738,9 +1842,13 @@ const Scene3D = (() => {
         const items = await submit(r.req);
         if (!items?.length) throw new Error("H3 didn't take it (the reason is on the Generate step)");
         if (toTl) Shots.placeWhenDone(items, s.sc.project);
-        win.close();
+        // the window stays open on its progress; closing it doesn't stop the render
+        st.textContent = "Queued: closing this window doesn't stop it.";
+        foot.querySelector('[data-a="cancel"]').textContent = "Close";
+        e.target.textContent = "✓ Queued";
+        stop = followRender(items[0], sg, words, () => { if (sgEl.isConnected) { st.textContent = ""; e.target.disabled = false; e.target.textContent = "🎬 Render again"; } });
         Media.toast(`3D scene: queued. ${toTl ? "It goes on the timeline when it's done." : "The video shows up in the gallery when it's done."}`);
-      } catch (err) { st.textContent = ""; e.target.disabled = false; Media.toast(`Render: ${err.message}`); }
+      } catch (err) { stop?.(); stop = null; sg.fail(err.message); st.textContent = ""; e.target.disabled = false; Media.toast(`Render: ${err.message}`); }
     };
   }
 
