@@ -512,10 +512,73 @@ def drop_invented(original: str, text: str) -> str:
     return "\n".join(rows)
 
 
+_SHE = {"woman", "women", "girl", "lady", "mother", "mom", "daughter", "sister", "wife", "grandmother", "actress",
+        "waitress", "queen", "princess", "she", "her"}
+_HE = {"man", "men", "boy", "guy", "father", "dad", "son", "brother", "husband", "grandfather", "actor", "waiter",
+       "king", "prince", "he", "him", "his"}
+_PRONOUN = {"she", "her", "he", "him", "his"}
+
+
+def _lead(text: str, at: int) -> int:
+    """Where the sentence holding position `at` starts (after a full stop, a spoken line or the shot's tag)."""
+    ends = [text.rfind(s, 0, at) + len(s) for s in (". ", "! ", "? ", "</d> ", "\n") if text.rfind(s, 0, at) >= 0]
+    start = max(ends) if ends else 0
+    tag = re.match(r"\[Shot \d+\]\s*(?:At [\d:.]+,\s*)?", text[start:])
+    return start + (tag.end() if tag else 0)
+
+
+def _who(words: str) -> tuple[str, str]:
+    """The first person named in a sentence's opening: ("f" or "m", the word), else ("", "")."""
+    for w in re.findall(r"[a-z]+", words.lower()):
+        if w in _SHE or w in _HE:
+            return ("f" if w in _SHE else "m"), w
+    return "", ""
+
+
+def fix_speakers(original: str, text: str) -> str:
+    """Each spoken line said by whom the user's text has say it. Small models hand a line to the other person ("He
+    sits beside her and says once: <d>You came back.</d>" for the woman's line): where the rewrite's sentence names a
+    woman for a man's line, or the other way round, its "and says once: <d>…</d>" becomes a sentence of its own with
+    the user's speaker ("He sits beside her. The woman says once: <d>…</d>"). A plain "They say once:" gets the
+    speaker's name too. Lines whose speaker can't be told (no woman or man named) stay as they are."""
+    speakers = {}
+    for m in _D.finditer(original):
+        lead = original[_lead(original, m.start()):m.start()]
+        sex, word = _who(lead)
+        if not sex:
+            continue
+        tag = re.search(rf"\b{word}\s+from\s+(<Picture \d+>)", lead, re.I)
+        name = word.capitalize() if word in _PRONOUN else f"The {word}{f' from {tag.group(1)}' if tag else ''}"
+        voice = re.search(r"in the voice of <Audio \d+>", lead)
+        speakers[_said(m.group(1))] = (sex, name, f", {voice.group(0)}" if voice else "")
+    if not speakers:
+        return text
+    out = []
+    for row in text.split("\n"):
+        for m in reversed(list(_D.finditer(row))):
+            who = speakers.get(_said(m.group(1)))
+            if not who:
+                continue
+            start = _lead(row, m.start())
+            lead = row[start:m.start()]
+            sex, _ = _who(lead)
+            plain = re.fullmatch(r"\s*they\s+say\s+once\s*(?:,\s*in the voice of <Audio \d+>)?\s*:\s*", lead, re.I)
+            if not plain and (not sex or sex == who[0]):
+                continue
+            say = re.search(r"(?:,\s*|\s+)?(?:(?:and|then)\s+|as\s+(?:he|she|they)\s+)?(?:\b(?:he|she|they)\s+)?\b(?:says?|speaks?)\b(?:[^:<]|<Audio \d+>){0,60}:\s*$", lead, re.I)
+            rest = lead[:say.start()].strip() if say else ""
+            rest = rest.rstrip(",;") if len(rest.split()) > 2 and not plain else ""
+            new = f"{rest + '. ' if rest else ''}{who[1]} says once{who[2]}: "
+            row = row[:start] + new + row[m.start():]
+        out.append(row)
+    return "\n".join(out)
+
+
 def finish(original: str, text: str) -> str:
-    """An H3 rewrite checked: H3's shape, the user's picture tags and spoken lines as they wrote them (and no others),
-    each line said once."""
-    return say_once(drop_invented(original, restore_lines(original, restore_tags(original, shot_list(text)))))
+    """An H3 rewrite checked: H3's shape, the user's picture tags and spoken lines as they wrote them (and no others,
+    each said by whom the user has say it), each line said once."""
+    text = drop_invented(original, restore_lines(original, restore_tags(original, shot_list(text))))
+    return say_once(fix_speakers(original, text))
 
 
 _SAYS = re.compile(r"\b(says?|speaks?)\b(?!\s+once)(?=(?:,(?:[^:<\n]|<Audio \d+>){0,80})?:\s*<d>)", re.I)
