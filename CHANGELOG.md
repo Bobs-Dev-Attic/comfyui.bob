@@ -5,6 +5,15 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.139.1] - 2026-11-21
+
+### Fixed
+- **A seated person no longer disappears when the camera moves in.** When a 3D scene's render starts from a photo
+  and the camera moves, each person is found in the photo and their stand-in is moved to match, judged by where
+  their feet touch the floor. For someone sitting behind a table the feet are hidden, so the table's edge was taken
+  for them and the person was placed metres back and cut out of the room: a push-in ended on an empty seat. A person
+  whose feet are hidden now stays where the scene puts them and still carries their look from the photo.
+
 ## [0.139.0] - 2026-11-20
 
 ### Added

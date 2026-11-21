@@ -3851,6 +3851,12 @@ const Scene3D = (() => {
       const pb = boxOf(pick, W, H, v => v === 1), pw = pb.x1 - pb.x0, ph = pb.y1 - pb.y0;
       const area = (pw * ph) / (bw * bh);
       if (area < 0.2 || area > 5) continue;  // not the same thing
+      // Its feet hidden behind something (someone seated behind a table): its silhouette ends well above where it
+      // stands, and that edge, taken for its feet, put it metres away (the camera then pushed in on an empty chair).
+      // It stays where the scene has it and carries what was found there.
+      const c0 = poseAt(o, P.t0).pos, cw = P.VP0[3] * c0[0] + P.VP0[7] * c0[1] + P.VP0[11] * c0[2] + P.VP0[15];
+      const feetY = cw > 0 ? (1 - xf(P.VP0, c0, 1)[1] / cw) / 2 * H : null;
+      if (feetY != null && feetY - sb.y1 > 0.03 * H) { moves[o.id] = { d: [0, 0, 0], k: 1 }; found_[o.id] = { pb, pick }; continue; }
       // Where its feet are, on the ground through the photo's camera: at the stand-in's, and at what was found. A side
       // the frame cuts off is no guide, so the other one is lined up; feet out of the frame: left as it is.
       if (sb.y1 >= H - 1 || pb.y1 >= H - 1) continue;
