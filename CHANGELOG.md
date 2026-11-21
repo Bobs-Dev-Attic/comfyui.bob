@@ -5,6 +5,12 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.141.0] - 2026-11-21
+
+### Added
+- **A New button next to V2's project picker.** It asks for a name (and optional notes), creates the project on disk
+  in the folder the classic page last used for new projects, and switches V2 to it with an empty board.
+
 ## [0.140.0] - 2026-11-21
 
 ### Added
