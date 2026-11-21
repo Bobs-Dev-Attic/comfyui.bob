@@ -151,7 +151,7 @@ async function api(path, opts = {}) {
   return res.json();
 }
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const engineName = (kind, eng) => eng === "enhance" ? "Enhanced" : eng === "angles" ? "Angles" : eng === "imgedit" ? "Edited" : eng === "motion" ? "Animated objects" : (ENGINES[kind]?.find(e => e.key === eng) || {}).label || eng;
+const engineName = (kind, eng) => eng === "enhance" ? "Enhanced" : eng === "angles" ? "Angles" : eng === "imgedit" ? "Edited" : eng === "motion" ? "Animated objects" : eng === "retake" ? "Retaken sound" : (ENGINES[kind]?.find(e => e.key === eng) || {}).label || eng;
 function fmtDur(s) { if (s == null) return ""; s = Math.round(s); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`; }
 function waveHTML(seed, n = 28) {
   let x = 0; for (const c of seed) x = (x * 31 + c.charCodeAt(0)) >>> 0;
@@ -1092,6 +1092,7 @@ function renderViewer() {
       ${canFrame ? `<button class="btn" data-a="first">→ First frame</button><button class="btn" data-a="last">→ Last frame</button><button class="btn" data-a="ref">→ Reference</button>` : ""}
       ${f ? `<a class="btn" href="${esc(f.url)}" download="${esc(f.name)}">Download</a>` : ""}
       ${it.status === "done" && f && (it.kind === "video" || it.kind === "image") ? `<button class="btn" data-a="score" ${Score.busy.has(it.id) ? "disabled" : ""} title="How well it follows the prompt, the reference pictures, the camera, how good it looks, and whether it has the size and length asked: five checks, 0 to 100, with the reasons">${Score.busy.has(it.id) ? "🔎 Scoring…" : it.score ? "🔎 Score again" : "🔎 Score"}</button>` : ""}
+      ${it.status === "done" && f && it.kind === "video" ? `<button class="btn" data-a="retake" title="Make the sound again from a prompt (H3 Reference): all of it or some stretches, the picture kept exactly; each take's words are checked, best first">🔁 Retake the sound…</button>` : ""}
       ${it.status === "done" && f && Heard.hasLines(it) ? `<button class="btn" data-a="heard" ${Heard.busy.has(it.id) ? "disabled" : ""} title="Whisper hears the spoken lines; the score is how much of them was said as written, and the takes of this prompt are ranked by it">${Heard.busy.has(it.id) ? "🗣 Checking…" : it.heard ? "🗣 Check the words again" : "🗣 Check the words"}</button>` : ""}
       ${it.engine !== "timeline" && it.status !== "submitting" ? `<button class="btn" data-a="workflow" title="The exact ComfyUI workflow this was made with: compare it with yours, or load it in ComfyUI">{ } Workflow</button>` : ""}
       <button class="btn ghost danger" data-a="delete">Delete</button>
@@ -1145,6 +1146,53 @@ const Heard = {
     finally { this.busy.delete(it.id); if (state.selected === it.id) { renderViewer(); Info.set(true); } renderGallery(); }
   },
 };
+/* Retake the sound (engine "retake", app/workflows.py build_retake): a finished video's sound made again from a
+   prompt by H3 Reference, all of it or some stretches, its picture kept frame for frame. Each take is a result of its
+   own; their words are checked, so the takes come back ranked. */
+function retakeDialog(it) {
+  const f = it.files?.[0]; if (!f) return;
+  const p = it.params || {}, secs = +(it.info?.seconds || p.seconds || 0);
+  const box = document.createElement("div");
+  box.className = "wm-form rt-box";
+  box.innerHTML = `<p class="hint">H3 Reference makes the sound again from the prompt: its lines (<code>&lt;d&gt;…&lt;/d&gt;</code>), voices and sounds. The picture stays exactly as it is${secs ? ` (${secs.toFixed(1)} s)` : ""}.</p>
+    <label class="rt-l">What is said and heard<textarea id="rt-prompt" rows="9" spellcheck="true">${esc(p.prompt || "")}</textarea></label>
+    <label class="rt-l">Only these stretches <span class="hint">seconds, e.g. 1.2-3.4, 5-6 · empty: all of the sound; the rest keeps the original sound</span>
+      <span class="rt-row"><input id="rt-ranges" type="text" placeholder="All of it" autocomplete="off">
+      <button type="button" class="btn sm" data-m="start" title="Start a stretch at the video's current time">⏱ From here</button>
+      <button type="button" class="btn sm" data-m="end" title="End the stretch at the video's current time">⏱ To here</button></span></label>
+    <label class="rt-l">Takes <span class="hint">each is checked for its words, best first</span>
+      <span class="seg rt-takes">${[1, 2, 3, 4].map(n => `<button type="button" data-n="${n}"${n === 2 ? ' class="active"' : ""}>${n}</button>`).join("")}</span></label>
+    ${p.ref_audios?.length ? `<label class="check"><input type="checkbox" id="rt-voices" checked> Use the ${p.ref_audios.length} voice${p.ref_audios.length > 1 ? "s" : ""} it was made with</label>` : ""}
+    <p class="rt-err warn" hidden></p>`;
+  let takes = 2, mark = null;
+  box.querySelectorAll(".rt-takes button").forEach(b => b.onclick = () => {
+    takes = +b.dataset.n; box.querySelectorAll(".rt-takes button").forEach(x => x.classList.toggle("active", x === b)); });
+  box.querySelectorAll("[data-m]").forEach(b => b.onclick = () => {
+    const v = $("#viewer video"), t = v ? +v.currentTime.toFixed(2) : null;
+    if (t == null) return Media.toast("Play the video in the viewer and stop where the stretch starts or ends.");
+    const inp = box.querySelector("#rt-ranges");
+    if (b.dataset.m === "start") { mark = t; Media.toast(`Stretch from ${t} s: now stop where it ends and press To here.`); return; }
+    const a = mark ?? 0, z = Math.max(a + 0.2, t); mark = null;
+    inp.value = [inp.value.trim(), `${a}-${+z.toFixed(2)}`].filter(Boolean).join(", ");
+  });
+  const foot = document.createElement("div");
+  foot.innerHTML = `<span class="wm-foot-gap"></span><button type="button" class="btn sm" data-a="cancel">Cancel</button>
+    <button type="button" class="btn sm primary" data-a="go">🔁 Retake</button>`;
+  const win = WM.open({ id: `rt-${it.id}`, title: `Retake the sound · ${promptLabel(p.prompt || "").slice(0, 40)}`, content: box, footer: foot,
+    width: 620, height: 560, minWidth: 420, minHeight: 380 });
+  foot.querySelector('[data-a="cancel"]').onclick = () => win.close();
+  foot.querySelector('[data-a="go"]').onclick = async () => {
+    const prompt = box.querySelector("#rt-prompt").value.trim(), err = box.querySelector(".rt-err");
+    if (!prompt) { err.hidden = false; err.textContent = "Write what is said and heard."; return; }
+    const voices = box.querySelector("#rt-voices");
+    const req = { ...p, kind: "video", engine: "retake", source: f.path, prompt, retake_ranges: box.querySelector("#rt-ranges").value.trim(),
+      seed: -1, batch: takes, project: it.project ?? p.project ?? null, references: p.engine === "retake" || p.references ? (p.references || []) : [],
+      ref_audios: voices && !voices.checked ? [] : (p.ref_audios || []), first_frame: null, last_frame: null, continue_from: null, enhance_after: null };
+    const made = await submit(req);
+    if (made) { Media.toast(`Retaking the sound: ${takes} take${takes > 1 ? "s" : ""}.`); win.close(); }
+    else { err.hidden = false; err.textContent = $("#form-error").textContent || "The retake was refused."; }
+  };
+}
 function heardCard(it) {
   const h = it.heard, takes = Heard.takes(it).filter(x => x.heard?.score != null);
   return `<section class="scorecard heardcard"><div class="sc-head"><b class="sc-overall ${scoreTone(h.score)}">${h.score}%</b>
@@ -1216,6 +1264,7 @@ async function action(a, it) {
   if (a === "workflow") return workflowDialog(it);
   if (a === "score") return Score.run(it);
   if (a === "heard") return Heard.run(it);
+  if (a === "retake") return retakeDialog(it);
   if (a === "heardcard") { Info.set(true); requestAnimationFrame(() => $("#meta .heardcard")?.scrollIntoView({ block: "nearest" })); return; }
   if (a === "scorecard") { Info.set(true); requestAnimationFrame(() => $("#meta .scorecard")?.scrollIntoView({ block: "nearest" })); return; }
   if (a === "angles") { const f = it.files[0]; return Angles.dialog({ ref: f.path, url: f.url, name: f.name }); }

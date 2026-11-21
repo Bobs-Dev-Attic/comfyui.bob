@@ -23,7 +23,7 @@ from .comfy import ComfyService
 log = logging.getLogger("bob.jobs")
 
 Kind = Literal["video", "image", "audio"]
-Engine = Literal["h3", "h3ref", "klein", "krea2", "h3image", "moss", "mossedit", "music3", "reshoot", "enhance", "angles", "imgedit", "motion"]
+Engine = Literal["h3", "h3ref", "klein", "krea2", "h3image", "moss", "mossedit", "music3", "reshoot", "enhance", "angles", "imgedit", "motion", "retake"]
 EditOp = Literal["erase", "replace", "prompt", "instruct", "remove_bg", "adjust"]
 
 
@@ -141,6 +141,9 @@ class GenerateRequest(BaseModel):
     # H3 Reference: continue this video without a cut (its last `overlap` frames and sound are kept and carried on;
     # the result is only what comes after them). Needs ComfyUI-NKD-Basic-Tools (NKDAVLatentExtend).
     continue_from: str | None = Field(None, max_length=2000)
+    # Retake (engine "retake"): the sound of `source` (a video) made again from the prompt, its picture kept. The
+    # stretches to redo in seconds ("1.2-3.4, 5-6"); empty = all of it.
+    retake_ranges: str = Field("", max_length=300)
     overlap: Literal[22, 39, 56] = 39
     # Motion layers (engine "motion", app/motion.py): first_frame is the picture, motion_plate the picture with the
     # objects erased, and each layer an object's mask with its place in every frame.
@@ -369,6 +372,19 @@ class JobManager:
         finally:
             self._enhancing.discard(key)
 
+    async def _retake_mux(self, item: dict[str, Any], req: "GenerateRequest", saved: list[dict[str, Any]],
+                          info: dict[str, Any]) -> list[dict[str, Any]]:
+        """A retake's new sound under the original picture (media.retake_mux): the video replaces the sound file."""
+        sound = config.ROOT / saved[0]["path"]
+        target = sound.with_name(f"{item['id']}_retake.mp4")
+        ranges = [tuple(r) for r in info.get("ranges") or []]
+        await asyncio.to_thread(media.retake_mux, req.source, sound, ranges, target)
+        sound.unlink(missing_ok=True)
+        (config.UPLOAD_DIR / f"{item['id']}_retake_src.mp4").unlink(missing_ok=True)
+        rel = target.relative_to(config.ROOT).as_posix()
+        self.log(item, "Put the new sound under the original picture" + (" (the rest of the sound is the original's)" if ranges else ""))
+        return [{"name": target.name, "path": rel, "url": "/" + rel, "content_type": "video/mp4", "size": target.stat().st_size}]
+
     async def hear(self, item: dict[str, Any]) -> dict[str, Any]:
         """Whisper hears a finished video's words and scores them against its lines (app/heard.py): item["heard"]."""
         from . import heard
@@ -448,6 +464,7 @@ class JobManager:
             sets = ([models.ALL_SETS["h3"], models.ALL_SETS["klein"]] if req.engine == "reshoot"
                     # a 3D scene with object pictures renders on H3 Reference (workflows.build_motion)
                     else [models.ALL_SETS["h3ref" if req.references or req.ref_audios else "h3"]] if req.engine == "motion"
+                    else [models.ALL_SETS["h3ref"]] if req.engine == "retake"
                     else [models.ALL_SETS[req.engine]])
         files: dict[str, Any] = {}
         for mset in sets:
@@ -568,6 +585,22 @@ class JobManager:
                     raise ValueError("Object pictures need H3 Reference (MiniMaxH3ReferenceToVideo) in ComfyUI")
                 for ref in req.references:
                     media_path(ref)
+        if req.engine == "retake":
+            if req.kind != "video":
+                raise ValueError("A retake makes video")
+            if not req.source or media.kind_of(req.source) != "video":
+                raise ValueError("A retake needs the video whose sound to make again")
+            missing = [n for n in (*workflows.RETAKE_NODES, "MiniMaxH3ReferenceToVideo") if not self.has_node(n)]
+            if missing:
+                raise ValueError(f"Retaking the sound needs these nodes in ComfyUI: {', '.join(missing)} "
+                                 "(MVEx_AudioMaskToLatent is in the MaskVidExperiments custom nodes; the rest come with ComfyUI)")
+            if not req.prompt.strip():
+                raise ValueError("A retake needs a prompt: what is said and heard")
+            info = media.probe(req.source)
+            dur = float(info.get("duration") or 0)
+            if dur * 24 > workflows.RETAKE_MAX_FRAMES:
+                raise ValueError(f"The video is {dur:.1f} s long: a retake takes up to {workflows.RETAKE_MAX_FRAMES / 24:.0f} s")
+            media.parse_ranges(req.retake_ranges, dur)  # raises when a stretch is wrong
         if req.continue_from:
             if req.engine != "h3ref":
                 raise ValueError("Continuing a video without a cut needs H3 Reference")
@@ -656,7 +689,7 @@ class JobManager:
             raise ValueError("Prompt is empty")
         if req.aspect not in workflows.ASPECTS:
             raise ValueError(f"Unknown aspect ratio {req.aspect}")
-        if req.ref_audios and req.engine not in ("h3ref", "motion"):
+        if req.ref_audios and req.engine not in ("h3ref", "motion", "retake"):
             raise ValueError("Reference sounds (voice cloning) need the H3 Reference model")
         for ref in req.ref_audios:
             if media.kind_of(ref) not in ("audio", "video"):
@@ -728,6 +761,21 @@ class JobManager:
                 clean_audio=req.clean_audio and self.has_node("H3RefAudioPrep"), prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras],
                 continue_overlap=req.overlap if req.continue_from else 0,
             )
+        if req.engine == "retake":
+            info = media.probe(req.source)
+            dur = float(info.get("duration") or 0)
+            frames = workflows.h3_length(dur)
+            if frames < round(dur * workflows.FPS):  # h3_length rounds to the nearest: never shorter than the clip
+                frames += 17
+            w, h = workflows.dims_for((info.get("width") or 16, info.get("height") or 9), workflows.H3_QUALITY["draft"])
+            built = workflows.build_retake(
+                files, prompt=req.prompt, width=w, height=h, frames=frames, seed=seed, turbo=req.turbo, steps=req.steps,
+                ranges=media.parse_ranges(req.retake_ranges, dur), references=len(req.references), audios=len(req.ref_audios),
+                clean_audio=req.clean_audio and self.has_node("H3RefAudioPrep"), prefix=prefix,
+                loras=[(lu.name, lu.strength) for lu in req.loras])
+            built.info.update(width=info.get("width"), height=info.get("height"), sample_width=w, sample_height=h,
+                              seconds=round(dur, 2), source=req.source)
+            return built
         if req.engine == "motion":
             mp = workflows.H3_QUALITY.get(req.quality, workflows.H3_QUALITY["draft"])
             with Image.open(media_path(req.first_frame)) as im:  # framed like the picture
@@ -849,6 +897,18 @@ class JobManager:
                         sent["inputs"]["file"] = tail.name
                         sent.setdefault("_meta", {})["title"] = f"tail: {req.continue_from}"
                     continue
+                if role == "retake_src":  # retaking the sound: the video at the size and length H3 samples it
+                    prep = config.UPLOAD_DIR / f"{item['id']}_retake_src.mp4"
+                    await asyncio.to_thread(media.retake_source, req.source, int(built.info["sample_width"]),
+                                            int(built.info["sample_height"]), int(built.info["frames"]), prep)
+                    self.log(item, f"Retakes the sound of {req.source}"
+                             + (f" from {', '.join(f'{a:g}-{b:g} s' for a, b in built.info['ranges'])}" if built.info["ranges"] else ", all of it"))
+                    wf.set_input(node_id, "file", client.assets.from_file(prep))
+                    sent = saved.get(str(node_id))
+                    if sent:
+                        sent["inputs"]["file"] = prep.name
+                        sent.setdefault("_meta", {})["title"] = f"retake: {req.source}"
+                    continue
                 if role == "source":
                     ref, field = req.source, ("file" if media.kind_of(req.source or "") == "video" else "image")
                 elif role.startswith("aref_"):
@@ -936,6 +996,8 @@ class JobManager:
 
             self.log(item, "Downloading the results")
             saved = await self._download(item, done, built.outputs)
+            if req.engine == "retake" and saved:
+                saved = await self._retake_mux(item, req, saved, built.info)
             if req.white_bg and req.engine == "angles":
                 await self._whiten(item, saved)
             self.log(item, f"Done in {time.time() - t_start:.1f} s: " + ", ".join(f"{f['name']} ({f['size'] / 2**20:.1f} MB)" for f in saved))

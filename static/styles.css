@@ -1024,3 +1024,10 @@ details.post-proc > .hint { margin: 0 0 10px; }
 /* ---------------------------------------------------------------- Shots: a shot that renders a 3D scene */
 .shot-modal .sm-dim { opacity: .55; }
 .shot-modal .sm-scene .sm-mo img { object-fit: cover; }
+/* Retake the sound (app.js retakeDialog) */
+.rt-box { display: grid; gap: 10px; }
+.rt-l { display: grid; gap: 4px; font-size: 13px; }
+.rt-l textarea { width: 100%; font-family: var(--mono, monospace); font-size: 12px; resize: vertical; }
+.rt-row { display: flex; gap: 6px; align-items: center; }
+.rt-row input { flex: 1; min-width: 0; }
+.rt-takes { justify-self: start; }

@@ -373,6 +373,13 @@ Other features:
   (about 1.6 GB) is fetched into ComfyUI's `models/stt/faster-whisper` on first use. faster-whisper's CTranslate2 is
   built for CUDA 12: a ComfyUI whose PyTorch is CUDA 13 also needs CUDA 12's cuBLAS (`nvidia-cublas-cu12`, its
   `cublas64_12.dll` and `cublasLt64_12.dll` next to CTranslate2).
+- **🔁 Retake the sound** (a video's details): its sound made again from a prompt by H3 Reference, all of it or some
+  stretches (marked with the video's play position), its picture kept frame for frame (engine `retake`,
+  `workflows.build_retake`). The video and its sound go into one AV latent, `MVEx_AudioMaskToLatent`
+  (MaskVidExperiments custom nodes) marks the sound to redo, H3 voices it from the prompt's lines and voices, and the new
+  sound is put under the original picture with ffmpeg, crossfading into the original sound around a stretch
+  (`media.retake_mux`). Each take is a result of its own, its words checked (🗣 Words), so the takes come back ranked.
+  Up to about 15 s.
 
 ## Layout
 
@@ -434,4 +441,5 @@ Every change ships through a pull request: bump `__version__` in `app/__init__.p
   [ComfyUI-Sonder-Editor](https://github.com/SonderSaid/ComfyUI-Sonder-Editor). It is GPL-3.0, so no code was copied from it.
 - Take ranking by words (`app/heard.py`) follows the word-match score of
   [H3-AudioRetake-studio](https://github.com/Nebuluss/H3-AudioRetake-studio) (MIT, Copyright (c) 2026 H3 Audio Retake
-  Studio contributors), as is the "says once" wording and sizing a take to its lines.
+  Studio contributors), as are the "says once" wording, sizing a take to its lines and retaking a video's sound with
+  its picture kept. No code was copied; Bob Studio uses other nodes for it.
