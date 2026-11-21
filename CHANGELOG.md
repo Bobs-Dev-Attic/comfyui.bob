@@ -5,6 +5,17 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.134.16] - 2026-11-20
+
+### Fixed
+- **Rewrite gives each spoken line to the person who says it in your text** (H3 and H3 Reference). A small model
+  sometimes handed a line to the other person, e.g. "He sits beside her and says once: You came back." for the
+  woman's line. The check now looks at who your text has say each line (a woman, a man, a girl… or "she"/"he"). When
+  the rewrite's sentence names the other one, its "and says once: …" becomes a sentence of its own with your speaker:
+  "He sits beside her. The woman says once: …". Their picture tag and voice go with them ("The woman from
+  <Picture 1> says once, in the voice of <Audio 1>: …"). A plain "They say once:" gets the speaker's name too.
+  Lines whose speaker your text doesn't name as a woman or a man are left as they are.
+
 ## [0.134.15] - 2026-11-20
 
 ### Fixed
