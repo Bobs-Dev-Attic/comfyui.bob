@@ -1618,7 +1618,9 @@ const Scene3D = (() => {
   // "Node 12 · VAEDecode" (a job's log) -> what ComfyUI is doing, in words
   const doingOf = (c, out = "video") => /Loader|Load[A-Z]|LoRA|Lora/.test(c) ? "loading the models" : /Sampler|Sample|TimeToMove/i.test(c) ? "sampling"
     : /Decode/i.test(c) ? (out === "video" ? "decoding the frames" : "decoding") : /Encode/i.test(c) ? "encoding the inputs"
-    : /Save|Combine|Video/i.test(c) ? `writing the ${out}` : `running ${c}`;
+    : /Save|Combine|Video/i.test(c) ? `writing the ${out}`
+    // sizing the inputs: the models load after it, inside the next node, which reports in only once they're loaded
+    : /Scale|Resize|Size|Crop|Pad|Image|Mask|Latent/.test(c) ? "preparing the inputs and loading the models" : `running ${c}`;
   /* While the photo of the first frame is made: its own progress in the photo stage's note (ComfyUI's queue, loading
      the models, sampling step by step, saving it), until it's done. Returns a stop function. */
   function followPhoto(id, sg) {
