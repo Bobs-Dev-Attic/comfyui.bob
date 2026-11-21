@@ -128,7 +128,7 @@
       fld(`shots.${i}.setting`, sentence(s.setting)); tpl(" ");
       fld(`shots.${i}.action`, sentence(s.action));
       const line = cleanDialogue(s.dialogue || "", dialogueBudget(times[k + 1] - times[k]));
-      if (line) { tpl(` They say${mode === "ref" ? voiceOf(s.action, voices) : ""}: <d>[English] `); fld(`shots.${i}.dialogue`, line); tpl("</d>"); }
+      if (line) { tpl(` They say once${mode === "ref" ? voiceOf(s.action, voices) : ""}: <d>[English] `); fld(`shots.${i}.dialogue`, line); tpl("</d> Only the words inside the dialogue tag are spoken, once; before and after them the speaker stays silent with their lips closed."); }
       const pos = positionText(s.position);
       if (pos) { tpl(" The camera is "); opt(`shots.${i}.position`, pos); tpl(" and "); }
       else tpl(" The camera ");

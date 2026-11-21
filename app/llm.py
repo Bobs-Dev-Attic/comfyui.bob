@@ -614,7 +614,9 @@ def assemble(data: dict[str, Any], req: WriteRequest, n: int, frames: int) -> st
         body = f"{when}{head}. {_sentence(s['setting'])} {_sentence(s['action'])}"
         line = clean_dialogue(s.get("dialogue") or "", dialogue_budget(times[k + 1] - times[k]))
         if line:
-            body += f" They say{voice_of(s.get('action', ''), req.voices if req.mode == 'ref' else 0)}: <d>[English] {line}</d>"
+            # said once, with no words of H3's own around it (as the Shots step and the scene builder word it)
+            body += (f" They say once{voice_of(s.get('action', ''), req.voices if req.mode == 'ref' else 0)}: <d>[English] {line}</d>"
+                     " Only the words inside the dialogue tag are spoken, once; before and after them the speaker stays silent with their lips closed.")
         out.append(f"[Shot {k + 1}] {body[0].upper() + body[1:]} {_camera(s['camera'], s.get('position', ''))}")
     music = data.get("music", "").strip() or "N/A"
     out += ["", f"overall_soundscape: {_sentence(data['soundscape'])}", f"non_diegetic_music: {music}"]
