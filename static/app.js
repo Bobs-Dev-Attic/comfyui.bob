@@ -1065,6 +1065,7 @@ function renderViewer() {
   bar.innerHTML = `${rated ? `<span class="b-stars">${[1, 2, 3, 4, 5].map(i => `<button type="button" class="b-star${i <= bm.rating ? " on" : ""}" data-r="${i}" title="${i} star${i > 1 ? "s" : ""} (key ${i})">★</button>`).join("")}</span>` : ""}
     <span class="mb-facts" title="${esc(facts.join(" · "))}">${esc(facts.join(" · "))}</span>
     ${it.score?.overall != null ? `<button type="button" class="mb-score ${scoreTone(it.score.overall)}" data-a="scorecard" title="Score: ${it.score.overall} of 100 (see the scorecard)">🔎 ${it.score.overall}</button>` : ""}
+    ${it.heard?.score != null ? `<button type="button" class="mb-score ${scoreTone(it.heard.score)}" data-a="heardcard" title="Words: ${it.heard.score}% of the lines said as written${Heard.isBest(it) ? ", the best of its takes" : ""} (see Words)">🗣 ${it.heard.score}%${Heard.isBest(it) ? " ★" : ""}</button>` : ""}
     ${isBusy(it) ? `<button type="button" class="btn sm danger" data-a="cancel">Cancel</button>` : ""}
     ${rated ? `<button type="button" class="btn sm primary-soft" data-a="timeline" title="Add to the end of the timeline (Enter)">＋ Timeline</button>` : ""}`;
   $$("[data-a]", bar).forEach(b => b.onclick = () => action(b.dataset.a, it));
@@ -1077,6 +1078,7 @@ function renderViewer() {
     <div class="facts">${facts.map(x => `<span>${esc(x)}</span>`).join("")}</div>
     <div class="prompt-text">${esc(it.params.prompt)}${it.params.lyrics && it.engine === "music3" ? "\n\n" + esc(it.params.lyrics) : ""}</div>
     ${it.score ? scoreCard(it.score) : ""}
+    ${it.heard?.score != null ? heardCard(it) : ""}
     <div class="actions">
       ${isBusy(it) ? `<button class="btn danger" data-a="cancel">Cancel</button>` : ""}
       ${it.status === "done" && f ? `<button class="btn primary-soft" data-a="timeline" title="Add to the end of the timeline (Enter)">＋ Timeline</button>` : ""}
@@ -1090,11 +1092,13 @@ function renderViewer() {
       ${canFrame ? `<button class="btn" data-a="first">→ First frame</button><button class="btn" data-a="last">→ Last frame</button><button class="btn" data-a="ref">→ Reference</button>` : ""}
       ${f ? `<a class="btn" href="${esc(f.url)}" download="${esc(f.name)}">Download</a>` : ""}
       ${it.status === "done" && f && (it.kind === "video" || it.kind === "image") ? `<button class="btn" data-a="score" ${Score.busy.has(it.id) ? "disabled" : ""} title="How well it follows the prompt, the reference pictures, the camera, how good it looks, and whether it has the size and length asked: five checks, 0 to 100, with the reasons">${Score.busy.has(it.id) ? "🔎 Scoring…" : it.score ? "🔎 Score again" : "🔎 Score"}</button>` : ""}
+      ${it.status === "done" && f && Heard.hasLines(it) ? `<button class="btn" data-a="heard" ${Heard.busy.has(it.id) ? "disabled" : ""} title="Whisper hears the spoken lines; the score is how much of them was said as written, and the takes of this prompt are ranked by it">${Heard.busy.has(it.id) ? "🗣 Checking…" : it.heard ? "🗣 Check the words again" : "🗣 Check the words"}</button>` : ""}
       ${it.engine !== "timeline" && it.status !== "submitting" ? `<button class="btn" data-a="workflow" title="The exact ComfyUI workflow this was made with: compare it with yours, or load it in ComfyUI">{ } Workflow</button>` : ""}
       <button class="btn ghost danger" data-a="delete">Delete</button>
     </div>`;
   Info.sync();
   $$("[data-a]", meta).forEach(b => b.onclick = () => action(b.dataset.a, it));
+  $$("[data-sel]", meta).forEach(b => b.onclick = () => select(b.dataset.sel));
 }
 
 /* Score (app/score.py): five checks of a finished result, each 0-100 with its reasons, kept on the item. */
@@ -1113,6 +1117,45 @@ const Score = {
     finally { this.busy.delete(it.id); if (state.selected === it.id) { renderViewer(); Info.set(true); } }
   },
 };
+/* Words (app/heard.py): Whisper hears a video's spoken lines; the score is how much of them was said as written
+   (each word left out, changed or added costs one). Takes of the same prompt are ranked by it. */
+const Heard = {
+  busy: new Set(),
+  hasLines: it => it.kind === "video" && /<d>[\s\S]*?<\/d>/.test(it.params?.prompt || ""),
+  // the takes of a result: finished videos of the same prompt, engine and project, best words first
+  takes(it) {
+    return [...state.items.values()].filter(x => x.kind === "video" && x.status === "done" && x.engine === it.engine
+      && (x.project || null) === (it.project || null) && x.params?.prompt === it.params?.prompt)
+      .sort((a, b) => (b.heard?.score ?? -1) - (a.heard?.score ?? -1) || a.seed - b.seed);
+  },
+  // the best words among two or more heard takes
+  isBest(it) {
+    if (it.heard?.score == null) return false;
+    const heard = this.takes(it).filter(x => x.heard?.score != null);
+    return heard.length > 1 && heard[0].id === it.id;
+  },
+  async run(it) {
+    if (this.busy.has(it.id)) return;
+    this.busy.add(it.id); renderViewer();
+    Media.toast("Checking the words: Whisper hears the sound (the first time, ComfyUI fetches the model, about 1.6 GB)…");
+    try {
+      it.heard = await api(`/api/items/${it.id}/heard`, { method: "POST" });
+      Media.toast(`Words: ${it.heard.score}% said as written.`);
+    } catch (e) { Media.toast(`Checking the words: ${e.message}`); }
+    finally { this.busy.delete(it.id); if (state.selected === it.id) { renderViewer(); Info.set(true); } renderGallery(); }
+  },
+};
+function heardCard(it) {
+  const h = it.heard, takes = Heard.takes(it).filter(x => x.heard?.score != null);
+  return `<section class="scorecard heardcard"><div class="sc-head"><b class="sc-overall ${scoreTone(h.score)}">${h.score}%</b>
+      <div><b>Words</b> <span class="hint">said as written · Whisper ${esc(h.model || "")}, ${esc(h.language || "")}</span></div></div>
+    <p class="hd-row"><span class="hint">Lines</span> ${esc(h.expected || "")}</p>
+    <p class="hd-row"><span class="hint">Heard</span> ${h.heard ? esc(h.heard) : `<i class="hint">nothing</i>`}</p>
+    ${h.extra ? `<p class="warn">${h.extra} more word${h.extra > 1 ? "s" : ""} than the lines: H3 added speech of its own.</p>` : ""}
+    ${takes.length > 1 ? `<div class="hd-takes"><span class="hint">Takes, best words first</span>${takes.map((x, i) =>
+      `<button type="button" class="hd-take${x.id === it.id ? " on" : ""}" data-sel="${x.id}">${i === 0 ? "★ " : ""}seed ${x.seed} <b class="${scoreTone(x.heard.score)}">${x.heard.score}%</b></button>`).join("")}</div>` : ""}
+  </section>`;
+}
 const scoreTone = v => v == null ? "" : v >= 80 ? "s-good" : v >= 60 ? "s-ok" : "s-bad";
 const SCORE_NAMES = { prompt: "Prompt", identity: "Reference identity", camera: "Camera", quality: "Visual quality", settings: "Settings" };
 function scoreCard(sc) {
@@ -1172,6 +1215,8 @@ async function action(a, it) {
   if (a === "edit") return Editor.open(it);
   if (a === "workflow") return workflowDialog(it);
   if (a === "score") return Score.run(it);
+  if (a === "heard") return Heard.run(it);
+  if (a === "heardcard") { Info.set(true); requestAnimationFrame(() => $("#meta .heardcard")?.scrollIntoView({ block: "nearest" })); return; }
   if (a === "scorecard") { Info.set(true); requestAnimationFrame(() => $("#meta .scorecard")?.scrollIntoView({ block: "nearest" })); return; }
   if (a === "angles") { const f = it.files[0]; return Angles.dialog({ ref: f.path, url: f.url, name: f.name }); }
   if (a === "make3d") { const f = it.files[0]; return Model3D.start({ ref: f.path, url: f.url, name: (promptLabel(it.params?.prompt) || f.name).slice(0, 60) }); }

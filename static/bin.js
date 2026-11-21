@@ -57,7 +57,8 @@ const Bin = (() => {
     const secs = it.info?.seconds ? `${it.info.seconds}s` : "";
     return `<div class="tile b-tile${it.id === state.selected ? " selected" : ""}${busy ? " busy" : ""}" data-id="${it.id}" tabindex="-1"
         draggable="${it.status === "done" && refOf(it) ? "true" : "false"}" title="${esc(it.params?.prompt || "")}">
-      <div class="thumb">${thumbHTML(it)}${secs ? `<span class="b-dur">${secs}</span>` : ""}${onTl ? `<span class="b-ontl" title="On the timeline ${onTl}×">⧉${onTl > 1 ? onTl : ""}</span>` : ""}</div>
+      <div class="thumb">${thumbHTML(it)}${secs ? `<span class="b-dur">${secs}</span>` : ""}${onTl ? `<span class="b-ontl" title="On the timeline ${onTl}×">⧉${onTl > 1 ? onTl : ""}</span>` : ""}${it.heard?.score != null ? (() => { const best = Heard.isBest(it);
+        return `<span class="b-heard ${scoreTone(it.heard.score)}${best ? " best" : ""}" title="Words: ${it.heard.score}% of the lines said as written${best ? ", the best of its takes" : ""}">🗣 ${it.heard.score}${best ? " ★" : ""}</span>`; })() : ""}</div>
       ${it.status === "done" ? `<div class="b-row"><span class="b-stars">${stars(m.rating)}</span><span class="badge ${it.kind}">${it.engine === "timeline" ? "edit" : it.kind}</span></div>
         ${m.tags.length ? `<div class="b-tags">${m.tags.slice(0, 4).map(t => `<i style="--c:${Media.tagColor(t)}">${esc(t)}</i>`).join("")}${m.tags.length > 4 ? `<i>+${m.tags.length - 4}</i>` : ""}</div>` : ""}` : ""}
       <div class="t-prompt">${esc(promptLabel(it.params?.prompt).slice(0, 90))}</div>

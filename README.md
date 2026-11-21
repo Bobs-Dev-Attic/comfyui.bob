@@ -365,6 +365,14 @@ Other features:
   match), camera (against a 3D scene's camera move, or what the prompt says), visual quality (ratings and the defects
   it can point to) and settings (size, length, frame rate, sound). Measured in ComfyUI's Python (`app/score_worker.py`),
   judged with the Prompt writer's vision model (`app/score.py`).
+- **🗣 Words** (take ranking): once a video whose prompt has spoken lines (`<d>…</d>`) is rendered, Whisper
+  large-v3-turbo hears its sound (faster-whisper, the crt-nodes `CRT_AudioTranscriptBatch` node in ComfyUI) and the
+  words are scored against the lines: 100% when they're said as written and nothing else, each word left out,
+  changed or added costing one (`app/heard.py`). The score shows on the result and its gallery tile, and the takes
+  of a prompt are listed best first, the best marked ★. A result's details can check its words again. The model
+  (about 1.6 GB) is fetched into ComfyUI's `models/stt/faster-whisper` on first use. faster-whisper's CTranslate2 is
+  built for CUDA 12: a ComfyUI whose PyTorch is CUDA 13 also needs CUDA 12's cuBLAS (`nvidia-cublas-cu12`, its
+  `cublas64_12.dll` and `cublasLt64_12.dll` next to CTranslate2).
 
 ## Layout
 
@@ -424,3 +432,6 @@ Every change ships through a pull request: bump `__version__` in `app/__init__.p
   (Apache-2.0) and the Sonder Editor's documentation. No code was copied from any of them.
 - The gallery and takes ideas come from
   [ComfyUI-Sonder-Editor](https://github.com/SonderSaid/ComfyUI-Sonder-Editor). It is GPL-3.0, so no code was copied from it.
+- Take ranking by words (`app/heard.py`) follows the word-match score of
+  [H3-AudioRetake-studio](https://github.com/Nebuluss/H3-AudioRetake-studio) (MIT, Copyright (c) 2026 H3 Audio Retake
+  Studio contributors), as is the "says once" wording and sizing a take to its lines.
