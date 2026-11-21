@@ -5,6 +5,16 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.144.0] - 2026-11-21
+
+### Added
+- **V2's Generate shows the progress stages too.** Under Generate shot, a Progress list like the Render window's
+  follows the shot as it's made: a photo of the first frame (with its own queue, loading and sampling steps), painting
+  it onto the scene, measuring its depth and filling what it can't see (each added when it starts), drawing the rough
+  animation and its mask, sending to H3, ComfyUI's queue, the GPU (loading the models, sampling step by step), saving
+  the video, and the word check with its score when the shot has lines. Each shot keeps its own list, so it shows
+  again when you come back to that shot; with several takes it follows the first.
+
 ## [0.143.0] - 2026-11-21
 
 ### Added

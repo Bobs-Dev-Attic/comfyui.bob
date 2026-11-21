@@ -1565,19 +1565,21 @@ const Scene3D = (() => {
      (with what it's on now and how long it's taken) or done, kept up to date as the render goes. say(message) is
      buildRender's progress line: it moves to the stage it belongs to. */
   const STAGE_OF = [
-    [/photo of the first frame/i, "photo"], [/^Painting the photo|^Finding .+ in the photo/, "paint"],
+    [/photo of the first frame/i, "photo", m => /quick/i.test(m) ? "Making a quick photo of the first frame" : "Making the photo of the first frame"],
+    [/^Painting the photo|^Finding .+ in the photo/, "paint", "Painting the photo onto the scene"],
     [/^Measuring the depth of the photo/, "depth", "Measuring the depth of the photo (Depth Anything 3)"],
-    [/can't see|^Qwen left|^Measuring the depth of view|^Filled \d+ view/, "fill"],
+    [/can't see|^Qwen left|^Measuring the depth of view|^Filled \d+ view/, "fill", "Filling what the photo can't see (Qwen)"],
     [/^The camera comes in .* closer|^Added a sharp detail view/, "detail", "A sharp view where the camera comes close (Qwen)"],
-    [/^Drawing the rough animation/, "anim"], [/^Drawing its mask/, "mask"], [/^Sending to H3/, "send"],
+    [/^Drawing the rough animation/, "anim", "Drawing the rough animation"], [/^Drawing its mask/, "mask", "Drawing its mask"],
+    [/^Sending (\d+ takes )?to H3/, "send", "Sending to H3"],
   ];
-  function stages(el) {
+  function stages(el, alive = () => el.isConnected) {
     const L = [];
     let tick = 0;
     const secs = x => { const t = Math.round(((x.t1 || Date.now()) - x.t0) / 1000); return t < 60 ? `${t} s` : `${Math.floor(t / 60)} min ${String(t % 60).padStart(2, "0")} s`; };
     const ICON = { wait: "○", run: "", done: "✓", skip: "–", fail: "✕" };
     const draw = () => {
-      if (!el.isConnected) { clearInterval(tick); return; }
+      if (!alive()) { clearInterval(tick); return; }
       el.hidden = false;
       el.querySelector("ol").innerHTML = L.map(x => `<li class="s3r-sg ${x.state}"><span class="s3r-si" aria-hidden="true">${ICON[x.state]}</span>
         <span class="s3r-sn">${esc(x.name)}${x.note ? `<small>${esc(x.note)}</small>` : ""}</span><span class="s3r-stm">${x.t0 && x.state !== "skip" ? secs(x) : ""}</span></li>`).join("");
@@ -1586,7 +1588,7 @@ const Scene3D = (() => {
     };
     const close = (x, state = "done") => { if (x.state === "run") { x.t1 = Date.now(); x.state = state; } else if (x.state === "wait") x.state = "skip"; };
     const sg = {
-      alive: () => el.isConnected,
+      alive,
       plan(list) { L.length = 0; for (const [key, name] of list) L.push({ key, name, state: "wait", note: "" });
         clearInterval(tick); tick = setInterval(() => { if (L.some(x => x.state === "run")) draw(); }, 1000); draw(); },
       // start a stage (one not planned goes in after the running one); the ones before it are done, or skipped
@@ -1602,7 +1604,7 @@ const Scene3D = (() => {
         draw();
       },
       note(note, key = null) { const x = L.find(y => y.state === "run"); if (x && (!key || x.key === key)) { x.note = note; draw(); } },
-      say(m) { const hit = STAGE_OF.find(([re]) => re.test(m)); if (hit) sg.at(hit[1], m, hit[2]); else sg.note(m); },
+      say(m) { const hit = STAGE_OF.find(([re]) => re.test(m)); if (hit) sg.at(hit[1], m, typeof hit[2] === "function" ? hit[2](m) : hit[2]); else sg.note(m); },
       done(key, note) { const i = L.findIndex(y => y.key === key); if (i < 0) return; for (let j = 0; j < i; j++) close(L[j]);
         const x = L[i]; if (x.state !== "run") x.t0 = x.t0 || Date.now(); x.state = "run"; close(x); if (note != null) x.note = note; draw(); },
       fail(msg) { const x = L.find(y => y.state === "run") || L.find(y => y.state === "wait"); if (x) { if (!x.t0) x.t0 = Date.now(); x.t1 = Date.now(); x.state = "fail"; x.note = msg; }
@@ -2106,7 +2108,7 @@ const Scene3D = (() => {
     const best = photos.reverse().find(p => Math.abs(p.t) < 0.5 / FPS && camDiff(p.cam, cam0) < 0.02);
     const start = o.start || (s.sc.picture && startsAsPicture() ? "picture" : best ? `photo:${best.id}` : editModels().length ? "newphoto" : s.sc.picture ? "picture" : "composite");
     const refs = picObjs().length > 0 && refsReady();
-    const r = await buildRender({ start, look: o.look ?? lastLook(), fill: o.fill ?? lastFill(), refs, extra: o.extra || null, hold: start === "newphoto" || start === "quickphoto" || start.startsWith("photo:") ? "loose" : "normal",
+    const r = await buildRender({ start, look: o.look ?? lastLook(), fill: o.fill ?? lastFill(), refs, extra: o.extra || null, onPhoto: o.onPhoto, hold: start === "newphoto" || start === "quickphoto" || start.startsWith("photo:") ? "loose" : "normal",
       quality: ["draft", "standard", "full"].includes(o.quality) ? o.quality : "standard", what: fromShot(text) || defaultWhat() }, say);
     return { ...r, start, refs };
   }
@@ -4367,7 +4369,7 @@ const Scene3D = (() => {
       save(); setTime(s.t); renderSide(); s.dirty = true; return true;
     },
   };
-  return { mount, autoRender, current, addFromLibrary, camEdit, objEdit, speechSeconds, loadRates, paceNote, SPARE_TALK, select: i => s?.bg && select(i), selectCam: () => s?.bg && selectCam(),
+  return { mount, autoRender, current, stages, followPhoto, followRender, addFromLibrary, camEdit, objEdit, speechSeconds, loadRates, paceNote, SPARE_TALK, select: i => s?.bg && select(i), selectCam: () => s?.bg && selectCam(),
     rename: (i, name) => { const o = s?.objs[i]; if (!o || !String(name || "").trim()) return; o.name = String(name).trim().slice(0, 120); save(); renderSide(); }, CAM_MOVES, applyCameraMove, cameraOut, applySavedCamera, renderForShot, photoForShot, fromTemplate, setTemplate, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
     _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _fill: (P, look, say) => fillGaps(P, look, say), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
 })();

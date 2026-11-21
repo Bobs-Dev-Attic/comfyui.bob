@@ -303,3 +303,7 @@ html[data-motion="reduce"] .v2-panel { transition: none !important; }
 .v2-rt-l select { justify-self: start; width: auto; }
 .v2-rt-row { display: flex; gap: 6px; align-items: center; }
 .v2-rt-row input { flex: 1; min-width: 0; }
+
+/* a shot's progress while it's made (the Render window's stages) */
+#v2-stages:empty { display: none; }
+#v2-stages .v2-stages { margin: 8px 0 4px; }
