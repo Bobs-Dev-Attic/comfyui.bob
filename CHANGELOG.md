@@ -5,6 +5,19 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.134.14] - 2026-11-20
+
+### Fixed
+- **Rewrite keeps H3's shape** (H3 and H3 Reference): the style line, a blank line, the shots from [Shot 1], a blank
+  line, the sound fields.
+  - H3 Reference's Rewrite now gets the same shot-list instructions as H3, word for word. With the shorter version, a
+    small local model left out the style line and the [Shot 1] tag almost every time; now it writes them nearly always.
+  - The finished rewrite is checked too. A missing [Shot 1] tag is added, and a style line run into the shots gets its
+    blank line. A missing style line comes from your text when you wrote one; otherwise a short extra call to the model
+    writes one for the shots.
+- The "only the words inside the dialogue tag are spoken" sentence is taken out of shots that have no spoken line
+  (the model sometimes added it to every shot).
+
 ## [0.134.13] - 2026-11-20
 
 ### Fixed

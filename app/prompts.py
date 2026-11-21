@@ -203,6 +203,13 @@ ONCE_MANY = ("Only the words inside the dialogue tags are spoken, each line once
 SAY_ONCE = (f'Spoken words go after "They say once:" (or "<who> says once:") as <d>[English] the words</d>, and the shot\'s '
             f'line goes on with: "{ONCE}"')
 
+# H3's shot list (H3 and H3 Reference)
+H3_SHOTS = ("Format:\nLine 1: the style (medium, look, palette, lens, mood).\nA blank line.\nOne line per shot, each starting with its tag [Shot 1], [Shot 2]…: "
+            "\"[Shot 1] <camera angle> <framing>. <setting and light>. <action in present tense>. The camera is <where it stands relative to the subject> and <one move>.\" "
+            "e.g. \"[Shot 1] Low-angle wide shot. … The camera is behind her at shoulder height and tracks her up the stairs.\" "
+            "Later shots begin with the start time, e.g. \"[Shot 2] At 00:04.000, close-up. …\". " + SAY_ONCE + "\nA blank line.\noverall_soundscape: <ambience and effects in order>\n"
+            "non_diegetic_music: <score style, or N/A>\nUse one shot unless the user describes several; the clip is {seconds} seconds.")
+
 NO_NEG = "Describe only what is there: never use negations (no, not, without, never). Skip filler such as masterpiece, best quality, 8k, highly detailed."
 
 PROFILES: dict[str, tuple[str, str]] = {
@@ -228,18 +235,10 @@ PROFILES: dict[str, tuple[str, str]] = {
     "h3image": ("MiniMax H3 Image, a still-image model that can use reference pictures",
                 "Line 1: the style in one line.\nThen a blank line.\nThen one paragraph: framing, setting and light, subject and pose. "
                 "Refer to things from the reference pictures by their tags (e.g. the woman from <Picture 1>). " + NO_NEG),
-    "h3video": ("MiniMax H3, a video model that renders picture and sound from a shot list",
-                "Format:\nLine 1: the style (medium, look, palette, lens, mood).\nA blank line.\nOne line per shot, each starting with its tag [Shot 1], [Shot 2]…: "
-                "\"[Shot 1] <camera angle> <framing>. <setting and light>. <action in present tense>. The camera is <where it stands relative to the subject> and <one move>.\" "
-                "e.g. \"[Shot 1] Low-angle wide shot. … The camera is behind her at shoulder height and tracks her up the stairs.\" "
-                "Later shots begin with the start time, e.g. \"[Shot 2] At 00:04.000, close-up. …\". " + SAY_ONCE + "\nA blank line.\noverall_soundscape: <ambience and effects in order>\n"
-                "non_diegetic_music: <score style, or N/A>\nUse one shot unless the user describes several; the clip is {seconds} seconds. " + NO_NEG),
+    "h3video": ("MiniMax H3, a video model that renders picture and sound from a shot list", H3_SHOTS + " " + NO_NEG),
+    # the same shot list, word for word: with a shorter version of it, small models skipped the style line and [Shot 1]
     "h3ref": ("MiniMax H3 Reference, a video model that uses reference pictures tagged <Picture 1>, <Picture 2>…",
-              "Use the same format as an H3 shot list:\nLine 1: the style.\nA blank line.\n\"[Shot 1] <framing>. <setting and light>. "
-              "<action>. The camera is <where it stands relative to the subject> and <one move>.\" with the camera angle before the framing, "
-              "e.g. \"Low-angle wide shot\" (later shots begin with their start time, e.g. At 00:04.000,).\nA blank line.\n"
-              "overall_soundscape: …\nnon_diegetic_music: …\nRefer to people, objects and places from the references by tag instead of "
-              "describing their looks. " + SAY_ONCE + " The clip is {seconds} seconds. " + NO_NEG),
+              H3_SHOTS + "\nRefer to people, objects and places from the references by tag instead of describing their looks. " + NO_NEG),
     "h3sound": ("MiniMax H3 making sound only",
                 "Exactly two lines:\noverall_soundscape: <ambience and sound effects in time order, with rough times such as at 2 seconds>\n"
                 "non_diegetic_music: <score style and mood, or N/A>\nThe clip is {seconds} seconds."),
@@ -409,6 +408,55 @@ def _into_shot(body: str, words: str, shot: int) -> str:
     return "\n".join(rows)
 
 
+def _parts(text: str) -> tuple[str, str]:
+    """An H3 shot list split at its sound fields: (style and shots, sound)."""
+    cut = _SOUND.search(text)
+    return (text[:cut.start()].strip(), text[cut.start():].strip()) if cut else (text.strip(), "")
+
+
+def shot_list(text: str) -> str:
+    """An H3 rewrite in H3's shape: the style line, a blank line, the shots (the first tagged [Shot 1] when the model
+    tagged none), a blank line, the sound fields."""
+    body, sound = _parts(text)
+    rows = [r.strip() for r in body.split("\n") if r.strip()]
+    if rows and not any(r.startswith("[Shot ") for r in rows):
+        # a short first line on its own is the style; the shot starts after it
+        k = 1 if len(rows) > 1 and len(rows[0]) <= 200 and "<d>" not in rows[0] and not re.search(r"[.!?]\s+\S", rows[0]) else 0
+        rows[k] = f"[Shot 1] {rows[k]}"
+    first = next((i for i, r in enumerate(rows) if r.startswith("[Shot ")), 0)
+    style, shots = " ".join(rows[:first]), "\n".join(rows[first:])
+    return "\n\n".join(p for p in (style, shots, sound) if p)
+
+
+def has_style(text: str) -> bool:
+    body, _ = _parts(text)
+    return bool(body) and not body.startswith("[Shot ")
+
+
+def style_of(original: str) -> str:
+    """The style line the user wrote (their first line, above their [Shot 1]), else ""."""
+    body, _ = _parts(original)
+    head = body.split("[Shot ", 1)[0].strip() if "[Shot " in body else ""
+    return head if head and "\n" not in head and "<d>" not in head else ""
+
+
+async def style_line(shots: str, backend: str | None, url: str | None, model: str | None) -> str:
+    """Line 1 of an H3 shot list, written for these shots, when the rewrite left it out."""
+    b = _backend(backend, url)
+    name = await _model(b, model, "h3video")
+    messages = [{"role": "system", "content": "You write line 1 of a MiniMax H3 shot list: its style (medium, look, palette, lens, mood), "
+                 "in one line of 8 to 20 words that fits the shots. Reply with that line only."},
+                {"role": "user", "content": _parts(shots)[0]}]
+    line = _tidy("".join([p async for p in _chat(b, name, messages, 0.3, 60)])).split("\n")[0]
+    line = re.sub(r"^(?:line 1|style)\s*:\s*", "", line, flags=re.I).strip().strip('"').strip()
+    return "" if not line or line.startswith("[Shot ") or _SOUND.match(line) else line
+
+
+def finish(original: str, text: str) -> str:
+    """An H3 rewrite checked: H3's shape, the user's spoken lines as they wrote them, each said once."""
+    return say_once(restore_lines(original, shot_list(text)))
+
+
 _SAYS = re.compile(r"\b(says?|speaks?)\b(?!\s+once)(?=(?:,(?:[^:<\n]|<Audio \d+>){0,80})?:\s*<d>)", re.I)
 
 
@@ -419,8 +467,9 @@ def say_once(text: str) -> str:
     out = []
     for line in text.split("\n"):
         n = line.count("</d>")
+        # wherever the model put it (in a shot with no lines too, as small models do), then where it belongs
+        line = re.sub(r" ?(?:" + re.escape(ONCE_MANY) + "|" + re.escape(ONCE) + ")", "", line)
         if n:
-            line = re.sub(r" ?(?:" + re.escape(ONCE_MANY) + "|" + re.escape(ONCE) + ")", "", line)  # where the model put it
             i = line.rfind("</d>") + 4
             i += re.match(r"[ \t]*[.!?]?", line[i:]).end()  # past a full stop right after the tag
             line = f"{line[:i].rstrip()} {ONCE_MANY if n > 1 else ONCE} {line[i:].lstrip()}".rstrip()
@@ -456,9 +505,15 @@ async def rewrite(text: str, profile: str, seconds: float, backend: str | None, 
                 "wording; keep everything else:\n" + "\n".join(f"- {p[:400]}" for p in problems[:20]))
     messages = [{"role": "system", "content": system_prompt(profile, seconds, text, keep, refs, arefs) + creativity_note(creativity)},
                 {"role": "user", "content": ask}]
+    async for piece in _chat(b, name, messages, rewrite_temperature(creativity), 700):
+        yield piece
+
+
+async def _chat(b: llm.Backend, name: str, messages: list[dict[str, Any]], temperature: float, tokens: int) -> AsyncIterator[str]:
+    """The model's reply, streamed in pieces (Ollama or an OpenAI-style server)."""
     if b.name == "ollama":
         body: dict[str, Any] = {"model": name, "messages": messages, "stream": True, "keep_alive": KEEP,
-                                "options": {"temperature": rewrite_temperature(creativity), "num_ctx": 4096, "num_predict": 700,
+                                "options": {"temperature": temperature, "num_ctx": 4096, "num_predict": tokens,
                                             "repeat_penalty": 1.1}}
         try:
             if "thinking" in await b._capabilities(name):  # type: ignore[attr-defined]
@@ -477,7 +532,7 @@ async def rewrite(text: str, profile: str, seconds: float, backend: str | None, 
                     if piece:
                         yield piece
         return
-    body = {"model": name, "messages": messages, "stream": True, "temperature": rewrite_temperature(creativity), "max_tokens": 700,
+    body = {"model": name, "messages": messages, "stream": True, "temperature": temperature, "max_tokens": tokens,
             "chat_template_kwargs": {"enable_thinking": False}}
     async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=5), headers=b._headers()) as c:
         async with c.stream("POST", f"{b.url}/v1/chat/completions", json=body) as r:
@@ -510,7 +565,11 @@ async def rewrite_stream(text: str, profile: str, seconds: float, backend: str |
             yield (json.dumps({"t": piece}) + "\n").encode()
         done = _tidy("".join(out))
         if profile in ("h3video", "h3ref"):
-            done = say_once(restore_lines(text, done))
+            done = finish(text, done)
+            if not has_style(done):  # the model skipped it: the user's own, else one written for these shots
+                style = style_of(text) or await style_line(done, backend, url, model)
+                if style:
+                    done = f"{style}\n\n{done}"
         yield (json.dumps({"done": True, "text": done}) + "\n").encode()
     except (llm.LLMError, httpx.HTTPError) as exc:
         yield (json.dumps({"error": str(exc) or type(exc).__name__}) + "\n").encode()
