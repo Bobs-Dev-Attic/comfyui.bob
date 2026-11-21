@@ -1442,6 +1442,34 @@ const Scene3D = (() => {
     return base;
   }
 
+  /* The people who speak in the render (the shot's lines, by object name), set while it's drawn. Their heads are left
+     out of the mask (black: H3 is free there), so the still face the guide carries from the photo doesn't hold their
+     mouths shut at the start of sampling: with it held, the lips started late and lagged the words. */
+  let talkers = [];
+  function freeHeads(cv, size, t, proj) {
+    const [W, H] = size, out = Object.assign(document.createElement("canvas"), { width: W, height: H }), g = out.getContext("2d");
+    g.drawImage(cv, 0, 0, W, H);
+    g.fillStyle = "#000";
+    const { VP } = viewProj(W, H, camForRender(t));
+    for (const o of talkers) {
+      if (!o.mesh || !o.pos || o.hidden) continue;
+      figureMesh(o, t);
+      const lo = o.mesh.lo, hi = o.mesh.hi, cx = (lo[0] + hi[0]) / 2, hw = Math.max(0.14, (hi[0] - lo[0]) * 0.22);
+      const hh = Math.min(0.32, (hi[1] - lo[1]) * 0.2), M = matOf(o, proj ? fitPose(o, t, proj) : poseAt(o, t));
+      const pts = [];
+      for (let k = 0; k < 8; k++) {
+        const c = xf(M, [k & 1 ? cx + hw : cx - hw, k & 2 ? hi[1] + 0.04 : hi[1] - hh, k & 4 ? hi[2] : lo[2]], 1);
+        const w = VP[3] * c[0] + VP[7] * c[1] + VP[11] * c[2] + VP[15];
+        if (w <= 0) { pts.length = 0; break; }
+        const v = xf(VP, c, 1); pts.push([(v[0] / w + 1) / 2 * W, (1 - v[1] / w) / 2 * H]);
+      }
+      if (!pts.length) continue;
+      const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+      const gx = (x1 - x0) * 0.2, gy = (y1 - y0) * 0.15;
+      g.fillRect(x0 - gx, y0 - gy, x1 - x0 + 2 * gx, y1 - y0 + 2 * gy);
+    }
+    return out;
+  }
   async function renderVideo(kind, size, n, progress, proj = null) {
     const fd = new FormData();
     const mask = kind === "mask" ? (proj ? "proj" : cameraMoves() ? "all" : "objects") : null;
@@ -1488,6 +1516,7 @@ const Scene3D = (() => {
         draw({ size, t, cam: camForRender(t), proj });
         out.getContext("2d").drawImage(s.cv, 0, 0, size[0], size[1]);
       }
+      if (mask && talkers.length) out = freeHeads(out, size, t, proj);
       // toDataURL is synchronous: toBlob's callback (and setTimeout) crawl when the tab is in the background
       const url = out.toDataURL(mask ? "image/png" : "image/jpeg", 0.92), bin = atob(url.slice(url.indexOf(",") + 1));
       const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
@@ -1754,6 +1783,8 @@ const Scene3D = (() => {
         catch (err) { if (!s) throw err; Media.toast(`Filling the gaps: ${err.message}. Rendering without it.`); for (const g of proj.gaps || []) freeProjection(g.P); proj.gaps = []; }
       }
       say("Drawing the rough animation…");
+      const said = new Set((o.extra?.lines || []).filter(l => String(l.text || "").trim() && l.speaker).map(l => l.speaker.trim().toLowerCase()));
+      talkers = s.objs.filter(x => x.prim === "figure" && said.has(x.name.trim().toLowerCase()));
       const ref = await renderVideo("ref", [W, H], n, (f, N) => say(`Drawing the rough animation: frame ${f + 1} of ${N}`), proj);
       const mask = await renderVideo("mask", [W, H], n, (f, N) => say(`Drawing its mask: frame ${f + 1} of ${N}`), proj);
       say("Sending to H3…");
@@ -1779,7 +1810,7 @@ const Scene3D = (() => {
         req: { motion_video: ref, motion_video_mask: mask, first_frame: req.first_frame, motion_first: req.motion_first,
           motion_hold: req.motion_hold, quality: req.quality, references: req.references || [], turbo: req.turbo, ...(req.steps ? { steps: req.steps } : {}) } };
       return { req, shot };
-    } finally { freeProjection(proj); if (s) { s.cv.width = keep[0]; s.cv.height = keep[1]; s.dirty = true; } }
+    } finally { talkers = []; freeProjection(proj); if (s) { s.cv.width = keep[0]; s.cv.height = keep[1]; s.dirty = true; } }
   }
   // The render's prompt: what happens (tags filled in), the camera, and the sound fields.
   // extra (V2's shot): { dialogue: its said lines, after what happens; sound: its soundscape and music fields }
@@ -3856,7 +3887,8 @@ const Scene3D = (() => {
       // It stays where the scene has it and carries what was found there.
       const c0 = poseAt(o, P.t0).pos, cw = P.VP0[3] * c0[0] + P.VP0[7] * c0[1] + P.VP0[11] * c0[2] + P.VP0[15];
       const feetY = cw > 0 ? (1 - xf(P.VP0, c0, 1)[1] / cw) / 2 * H : null;
-      if (feetY != null && feetY - sb.y1 > 0.03 * H) { moves[o.id] = { d: [0, 0, 0], k: 1 }; found_[o.id] = { pb, pick }; continue; }
+      // (not when the frame cuts it off at the bottom: a close-up's person runs off the picture, as before)
+      if (feetY != null && feetY - sb.y1 > 0.03 * H && sb.y1 < H - 1 && pb.y1 < H - 1) { moves[o.id] = { d: [0, 0, 0], k: 1 }; found_[o.id] = { pb, pick }; continue; }
       // Where its feet are, on the ground through the photo's camera: at the stand-in's, and at what was found. A side
       // the frame cuts off is no guide, so the other one is lined up; feet out of the frame: left as it is.
       if (sb.y1 >= H - 1 || pb.y1 >= H - 1) continue;

@@ -5,6 +5,17 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.139.2] - 2026-11-21
+
+### Fixed
+- **Lips keep up with the words when the camera moves.** A 3D scene render holds every pixel to its camera guide for
+  the first sampling steps, and the guide's face is the still first-frame photo with the mouth shut, so the lips
+  started late and lagged the words. Each speaker's head (from the shot's lines) is now left free in the guide's
+  mask: the camera move is still followed, and the mouth moves with the words from the start.
+- **A close-up start no longer loses the person.** 0.139.1 took a person cut off by the bottom of the frame for one
+  whose feet were hidden, and stretched their face down over their whole stand-in, so a pull-back from a close-up
+  lost them. That case is left as it was before.
+
 ## [0.139.1] - 2026-11-21
 
 ### Fixed
