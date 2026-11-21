@@ -378,10 +378,12 @@ const V2 = (() => {
     const d = decide(s), say = m => { st.say.set(id, m); if (st.sel === id) $("v2-say").textContent = m; logLine(entry, m); };
     st.ctx = entry;
     say(`Model: ${d.label}.`);
-    { const talk = Scene3D.speechSeconds?.(linesOf(s)) || 0, len = +d.info?.seconds || +s.seconds || 0;
-      if (talk && len - talk > (Scene3D.SPARE_TALK || 2.5)) say(`⚠ The lines take about ${talk.toFixed(1)} s of this ${len.toFixed(1)} s shot: H3 may fill the rest with words of its own. A shorter shot, or more in What happens, keeps it to the lines.`); }
     st.busy.add(id); renderAll();
     try {
+      { const voices = voicesFor(s);  // each speaker's voice sets their pace (measured once, Scene3D.loadRates)
+        if (voices.length) await Promise.race([Scene3D.loadRates?.(voices), new Promise(r => setTimeout(r, 20000))]);
+        const talk = Scene3D.speechSeconds?.(linesOf(s), voices) || 0, len = +d.info?.seconds || +s.seconds || 0, pace = Scene3D.paceNote?.(linesOf(s), voices);
+        if (talk && len - talk > (Scene3D.SPARE_TALK || 2.5)) say(`⚠ The lines take about ${talk.toFixed(1)} s of this ${len.toFixed(1)} s shot${pace ? ` (at their voices' pace: ${pace} syllables a second)` : ""}: H3 may fill the rest with words of its own. A shorter shot, or more in What happens, keeps it to the lines.`); }
       let req;
       if (d.engine === "h3") {
         if (!String(s.action || s.setting || "").trim()) throw new Error("Say what the shot is: the setting, or what happens");

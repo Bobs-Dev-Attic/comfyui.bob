@@ -973,6 +973,23 @@ async def hear_result(item_id: str):
 _hearing: set[str] = set()
 
 
+class RateReq(BaseModel):
+    ref: str = Field(..., max_length=2000)  # a voice's recording (a media ref: sound or video)
+    language: str = Field("english", max_length=30)
+
+
+@app.post("/api/voice/rate")
+async def voice_rate(req: RateReq):
+    """How fast a voice speaks (syllables a second), for sizing its lines against a shot (app/heard.py)."""
+    path = media_path(req.ref)
+    if not jobs.has_node(heard.NODE):
+        raise HTTPException(400, "Measuring a voice needs the crt-nodes pack in ComfyUI (CRT_AudioTranscriptBatch)")
+    try:
+        return await heard.speaking_rate(path, req.language or "english")
+    except heard.HeardError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @app.post("/api/items/{item_id}/cancel")
 async def cancel(item_id: str):
     return {"ok": await jobs.cancel(item_id)}
