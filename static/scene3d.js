@@ -1566,7 +1566,7 @@ const Scene3D = (() => {
      buildRender's progress line: it moves to the stage it belongs to. */
   const STAGE_OF = [
     [/photo of the first frame/i, "photo"], [/^Painting the photo|^Finding .+ in the photo/, "paint"],
-    [/^Measuring the depth of the photo/, "depth", "Measuring the photo's depth (Depth Anything 3)"],
+    [/^Measuring the depth of the photo/, "depth", "Measuring the depth of the photo (Depth Anything 3)"],
     [/can't see|^Qwen left|^Measuring the depth of view|^Filled \d+ view/, "fill"],
     [/^The camera comes in .* closer|^Added a sharp detail view/, "detail", "A sharp view where the camera comes close (Qwen)"],
     [/^Drawing the rough animation/, "anim"], [/^Drawing its mask/, "mask"], [/^Sending to H3/, "send"],
@@ -1597,7 +1597,8 @@ const Scene3D = (() => {
         const x = L[i]; if (x.state !== "run") { x.state = "run"; x.t0 = Date.now(); x.t1 = 0; }
         // only what the message adds to the stage's name: "Drawing the rough animation: frame 9 of 121" -> "frame 9 of 121"
         const head = x.name.replace(/\s*\(.*\)$/, "");
-        x.note = note.startsWith(head) ? note.slice(head.length).replace(/^[\s:…]+|[\s…]+$/g, "").replace(/^\((.*)\)$/, "$1") : note;
+        const rest = note.startsWith(head) ? note.slice(head.length).replace(/^[\s:…]+|[\s…]+$/g, "").replace(/^\((.*)\)$/, "$1") : note;
+        x.note = rest && x.name.includes(rest) ? "" : rest;  // nothing the name doesn't say already
         draw();
       },
       note(note) { const x = L.find(y => y.state === "run"); if (x) { x.note = note; draw(); } },
