@@ -5,6 +5,17 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.161.0] - 2026-11-22
+
+### Added
+- **The log opens in a big window.** In V2's timeline Log view, a ⤢ button beside the tabs opens the log in a large,
+  movable window that keeps up while it's open (up to 400 lines a job), and the rest of the studio stays usable.
+
+### Fixed
+- **The log shows the newest line.** Each job's lines in the Log jumped back to the top every second while it ran; now
+  they stay on the newest line as it comes in. Scroll up to read and they stay where you put them until you scroll
+  back down.
+
 ## [0.160.1] - 2026-11-22
 
 ### Fixed
