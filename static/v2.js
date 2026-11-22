@@ -67,7 +67,7 @@ async function submit(req) {
 }
 // The classic Shots step isn't here: V2's shots are its own (the scene builder's shot links stay off).
 const Shots = { on: () => false, each: () => false, targets: () => [], shotOfScene: () => null, isImage: () => false,
-  placeWhenDone() {}, useScene() { return 0; }, linkScene() {}, unlinkScene() {} };
+  placeWhenDone: (items, project, sceneId) => V2.addWhenDone(sceneId, items), placeNow: (it, project, sceneId) => V2.addRender(sceneId, it), useScene() { return 0; }, linkScene() {}, unlinkScene() {} };
 
 /* ---------------------------------------------------------------- V2 */
 const V2 = (() => {
@@ -536,6 +536,38 @@ const V2 = (() => {
         win.close();
       } catch (ex) { err.hidden = false; err.textContent = ex.message; e.target.disabled = false; }
     };
+  }
+  /* The Render window's Add to Timeline: the finished video becomes the take of the shot that uses its scene (a new
+     shot at the end when none does), picked, so the timeline plays it. */
+  function addRender(sceneId, it) {
+    if (!it?.id || !sceneId) return false;
+    let s = st.board.shots.find(x => x.scene === sceneId), made = false;
+    if (!s) {
+      const n = st.board.shots.length + 1;
+      s = { id: uid(), scene: sceneId, name: st.scenes.get(sceneId)?.name || `Shot ${n}`, setting: "", action: "", lines: [], sound: "", music: "",
+        quality: "standard", transition: "cut", tlen: "", results: [] };
+      st.board.shots.push(s); made = true;
+    }
+    s.results = [it.id, ...(s.results || []).filter(x => x !== it.id)].slice(0, 20);
+    s.pick = it.id;
+    save(); renderAll();
+    Media.toast(made ? `It's on the timeline as a new shot, ${s.name}.` : `It's ${s.name}'s take on the timeline now.`);
+    return true;
+  }
+  // The Render window's "Add it to the timeline when it's done": the first good take goes in when it's done
+  const addLater = new Map();  // a take's id -> { scene, ids: all the takes }
+  function addWhenDone(sceneId, items) {
+    if (!sceneId || !items?.length) return;
+    const b = { scene: sceneId, ids: items.map(x => x.id) };
+    for (const id of b.ids) addLater.set(id, b);
+  }
+  function maybeAddLater(it) {
+    const b = addLater.get(it.id); if (!b) return;
+    const all = b.ids.map(id => id === it.id ? it : state.items.get(id));
+    const good = all.find(x => x?.status === "done" && x.files?.length);
+    if (!good && !all.every(x => ["done", "failed", "cancelled"].includes(x?.status))) return;
+    for (const id of b.ids) addLater.delete(id);
+    if (good) addRender(b.scene, good);
   }
   async function generateAll() {
     for (const s of st.board.shots.slice()) await generate(s.id);
@@ -1368,6 +1400,7 @@ const V2 = (() => {
       const prev = state.items.get(ev.item.id);
       state.items.set(ev.item.id, ev.item);
       Scene3D.onItem?.(ev.item);
+      maybeAddLater(ev.item);
       if (ev.item.id === st.board.settings.lastExport) renderExport();
       if (st.log.some(e2 => e2.items.some(x => x.id === ev.item.id))) renderLog();
       if ((st.board.shots.some(s => s.results?.includes(ev.item.id)) || st.board.settings.soundtrack?.result === ev.item.id)
@@ -1401,5 +1434,5 @@ const V2 = (() => {
     return { lines: linesOf(s).filter(l => String(l.text || "").trim()).map(l => ({ speaker: l.speaker || "", text: String(l.text).trim() })),
       voices, sound: soundOf(s), loras: lorasFor(s) };
   };
-  return { init, decide, generate, onSubmit, shotWhat, shotSetting, shotExtra, _st: st };
+  return { init, decide, generate, onSubmit, addRender, addWhenDone, shotWhat, shotSetting, shotExtra, _st: st };
 })();
