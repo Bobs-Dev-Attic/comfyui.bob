@@ -387,11 +387,33 @@ const V2 = (() => {
     return out;
   }
   // The LoRAs a shot takes: those of the library objects in its scene, each once, up to 8.
-  function lorasFor(s) {
-    const objs = objsOf(s).filter(o => o.lib);
+  /* The LoRAs a shot is made with: its own (s.loras, first: a style, a look), then its library objects' (a character).
+     One in both goes at the shot's strength, so a shot can turn an object's down or up for itself. At most 8. */
+  const objLoras = s => {
     const out = new Map();
-    for (const o of objs) for (const l of st.objs.find(x => x.id === o.lib)?.loras || []) if (l?.name && !out.has(l.name)) out.set(l.name, { name: l.name, strength: +l.strength || 1 });
+    for (const o of objsOf(s).filter(o => o.lib)) for (const l of st.objs.find(x => x.id === o.lib)?.loras || [])
+      if (l?.name && !out.has(l.name)) out.set(l.name, { name: l.name, strength: +l.strength || 1 });
+    return [...out.values()];
+  };
+  function lorasFor(s) {
+    const out = new Map();
+    for (const l of s.loras || []) if (l?.name && !out.has(l.name)) out.set(l.name, { name: l.name, strength: +l.strength || 1 });
+    for (const l of objLoras(s)) if (!out.has(l.name)) out.set(l.name, l);
     return [...out.values()].slice(0, 8);
+  }
+  // The H3 LoRAs to pick from (as the object editor's), loaded once
+  async function loadLoras() {
+    try { st.loraList = ((await api("/api/loras")).loras || []).filter(l => l.family === "h3" && !l.turbo && !l.missing_file); } catch { st.loraList = []; }
+  }
+  // The shot panel's LoRAs: a row each (which one, how strong), and what its objects add
+  function renderShotLoras(s) {
+    const box = $("v2-shotloras"); if (!box || box.contains(document.activeElement)) return;
+    const L = st.loraList || [], mine = s.loras || [], title = n => L.find(x => x.name === n)?.title || n;
+    const own = new Set(mine.map(l => l.name)), from = objLoras(s);
+    box.innerHTML = mine.map((l, k) => `<div class="v2-lora"><select data-slname="${k}" aria-label="LoRA ${k + 1}">${L.some(x => x.name === l.name) ? "" : `<option value="${esc(l.name)}">${esc(l.name)} (not found)</option>`}${L.map(x => `<option value="${esc(x.name)}"${x.name === l.name ? " selected" : ""}>${esc(x.title || x.name)}</option>`).join("")}</select>
+        <input type="number" data-slstr="${k}" min="0" max="2" step="0.05" value="${+l.strength || 1}" aria-label="Strength"><button type="button" class="btn sm ghost" data-slrm="${k}" aria-label="Remove this LoRA">✕</button></div>`).join("")
+      + (L.length ? `<button type="button" class="btn sm" data-sladd${mine.length >= 4 ? " disabled" : ""}>＋ LoRA</button>` : st.loraList ? `<p class="hint">No MiniMax H3 LoRAs found in ComfyUI.</p>` : "")
+      + (from.length ? `<p class="hint">With its objects': ${from.map(l => `${esc(title(l.name))} ${own.has(l.name) ? "(at this shot's strength)" : `(${+l.strength})`}`).join(", ")}.${lorasFor(s).length < mine.length + from.filter(l => !own.has(l.name)).length ? " Only the first 8 go along." : ""}</p>` : "");
   }
   /* decide(shot) -> {engine: "h3" | "scene", ref, label, why: [reasons]} */
   function decide(s) {
@@ -413,8 +435,8 @@ const V2 = (() => {
     else if (i.pictures) why.push("Objects have pictures, but H3 Reference isn't installed: they go by their descriptions.");
     if (voices.length) why.push(`${voices.map(v => v.name).join(" and ")} speak${voices.length === 1 ? "s" : ""} with ${voices.length === 1 ? "a voice" : "voices"} from the library (H3 Reference).`);
     else if (!caps.engines?.h3ref?.ready && voicesFor(s).length) why.push("Some speakers have voices, but H3 Reference isn't installed: H3 picks the voices.");
-    const L = lorasFor(s);
-    if (L.length) why.push(`${L.length} LoRA${L.length === 1 ? "" : "s"} from the objects go${L.length === 1 ? "es" : ""} along.`);
+    const L = lorasFor(s), mineN = (s.loras || []).filter(l => l?.name).length;
+    if (L.length) why.push(`${L.length} LoRA${L.length === 1 ? "" : "s"} go${L.length === 1 ? "es" : ""} along: ${[mineN ? `${mineN} the shot's` : "", L.length > mineN ? `${L.length - mineN} from its objects` : ""].filter(Boolean).join(", ")}.`);
     return { engine: "scene", ref: ref || byRef, label: ref || byRef ? `MiniMax H3 Reference · 3D scene render${byRef ? " (reference video)" : ""}` : "MiniMax H3 · 3D scene render", why, info: i };
   }
 
@@ -1257,6 +1279,7 @@ const V2 = (() => {
     const names = d.info.names;
     $("v2-tags").innerHTML = names.map(n => `<button type="button" class="chip-btn" data-tag="${esc(n)}" title="Put {${esc(n)}} in">${esc(n)}</button>`).join("");
     renderLines(s, names);
+    renderShotLoras(s);
     $("v2-len").textContent = `${d.info.seconds.toFixed(1)} s${d.info.live ? " (the scene's length: set it under the scene's timeline)" : ""}`;
     $("v2-model").innerHTML = `<div class="v2-mh"><span>Model</span><b>${esc(d.label)}</b><span class="v2-auto">auto</span></div><ul>${d.why.map(w => `<li>${esc(w)}</li>`).join("")}</ul>`;
     const busy = st.busy.has(s.id);
@@ -1376,6 +1399,25 @@ const V2 = (() => {
     $("v2-lines").addEventListener("input", e => { const s = cur(), k = e.target.dataset.ltx; if (s && k != null) { linesOf(s)[+k].text = e.target.value; save(); renderPanel(true); } });
     $("v2-lines").addEventListener("change", e => { const s = cur(), k = e.target.dataset.lsp; if (s && k != null) { linesOf(s)[+k].speaker = e.target.value; save(); $("v2-lines").dataset.shot = ""; renderPanel(true); } });
     $("v2-lines").addEventListener("click", e => { const s = cur(), k = e.target.closest("[data-lrm]")?.dataset.lrm; if (s && k != null) { linesOf(s).splice(+k, 1); save(); $("v2-lines").dataset.shot = ""; renderPanel(true); } });
+    // the shot's LoRAs
+    const shotLoras = () => { const s = cur(); if (s && !Array.isArray(s.loras)) s.loras = []; return s; };
+    $("v2-shotloras").addEventListener("change", e => {
+      const s = shotLoras(), t = e.target; if (!s) return;
+      if (t.dataset.slname != null) s.loras[+t.dataset.slname].name = t.value;
+      else if (t.dataset.slstr != null) s.loras[+t.dataset.slstr].strength = Math.max(0, Math.min(2, +t.value || 1));
+      else return;
+      save(); t.blur(); renderPanel(true);
+    });
+    $("v2-shotloras").addEventListener("click", e => {
+      const s = shotLoras(), t = e.target.closest("button"); if (!s || !t) return;
+      if (t.hasAttribute("data-sladd") && st.loraList?.length && s.loras.length < 4) {
+        const used = new Set(lorasFor(s).map(l => l.name));
+        s.loras.push({ name: (st.loraList.find(x => !used.has(x.name)) || st.loraList[0]).name, strength: 1 });
+      } else if (t.dataset.slrm != null) s.loras.splice(+t.dataset.slrm, 1);
+      else return;
+      save(); renderPanel(true);
+      $("v2-shotloras").querySelector(`[data-slname="${s.loras.length - 1}"]`)?.focus();
+    });
     // the soundtrack
     $("v2-music-btn").onclick = soundtrackDialog;
 
@@ -1515,6 +1557,7 @@ const V2 = (() => {
       flushSaves(); e.preventDefault(); e.returnValue = "";
     });
     await loadObjects();
+    await loadLoras();
     await loadCameras();
     await loadProjects();
     await loadBoard();
