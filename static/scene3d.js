@@ -1831,8 +1831,8 @@ const Scene3D = (() => {
       ${picObjs().length ? `<label class="check"><input type="checkbox" id="s3r-refs"${refsReady() ? " checked" : " disabled"}> Use the objects' pictures (H3 Reference)</label>
         <p class="hint s3r-refs-h">${refsReady() ? `The first frame is &lt;Picture 1&gt;; ${picObjs().map((o, i) => `${esc(o.name)} is &lt;Picture ${i + 2}&gt;`).join(", ")}. Runs on H3 Reference's model with the same motion.`
           : "Needs H3 Reference's model (ref2va) in ComfyUI: see the Model step."}${s.objs.filter(o => o.mesh && o.pos && !o.hidden && o.picture).length > 8 ? " Only the first 8 pictures are used." : ""}</p>` : ""}
-      ${v2x?.loras?.length ? `<label class="check"><input type="checkbox" id="s3r-loras" checked> Use the objects' LoRAs</label>
-        <p class="hint">${v2x.loras.length} LoRA${v2x.loras.length === 1 ? "" : "s"} from the library objects in this shot, as Generate sends them.</p>` : ""}
+      ${v2x?.loras?.length ? `<label class="check"><input type="checkbox" id="s3r-loras" checked> Use the shot's LoRAs</label>
+        <p class="hint">${v2x.loras.length} LoRA${v2x.loras.length === 1 ? "" : "s"}: the shot's own and its library objects', as Generate sends them.</p>` : ""}
       ${v2x?.voices?.length ? `<div class="s3r-vref"><label class="check"><input type="checkbox" id="s3r-voices" checked> Use the speakers' voices (H3 Reference)</label>
         <select id="s3r-vref" aria-label="How closely H3 keeps to the voices" title="Close: the voice as recorded. Loose: its timbre, with more room for H3 to act the line (weak_reference)">
           <option value="close">Close to the recording</option><option value="weak">Loosely: more room to act</option></select></div>
@@ -2096,7 +2096,7 @@ const Scene3D = (() => {
       if (o.refs) req.references = picObjs().map(x => x.picture);
       if (o.extra?.voices?.length) { req.ref_audios = o.extra.voices.map(v => v.ref); req.clean_audio = true; }
       if (o.extra?.quiet === false) req.quiet_extra = false;
-      if (o.extra?.loras?.length) req.loras = o.extra.loras.map(l => ({ name: l.name, strength: l.strength }));  // the library objects' LoRAs
+      if (o.extra?.loras?.length) req.loras = o.extra.loras.map(l => ({ name: l.name, strength: l.strength }));  // V2's shot: its own and its objects' LoRAs
       if (photoPath) req.first_frame = photoPath;
       else if (start === "picture") req.first_frame = s.sc.picture;
       else if (noPic) req.first_frame = await uploadFrame([W, H], 0, camForRender(0), "scene_first.png");  // as drawn
@@ -3996,7 +3996,7 @@ const Scene3D = (() => {
     const refs = [depthRef, ...pics.map(o => o.picture)].filter(Boolean);
     const items = await submit({ kind: "image", engine: "imgedit", edit_op: "instruct", source: ref, prompt, edit_model: model,
       ...(refs.length ? { references: refs } : {}), ...(megapixels ? { edit_megapixels: megapixels } : {}),
-      ...(loras?.length ? { loras: loras.map(l => ({ name: l.name, strength: l.strength })) } : {}),  // V2's shot: its objects' LoRAs
+      ...(loras?.length ? { loras: loras.map(l => ({ name: l.name, strength: l.strength })) } : {}),  // V2's shot: its own and its objects' LoRAs
       seed: -1, batch: 1, project: s.sc.project, scene: s.sc.id });
     if (!items?.length) throw new Error("The edit model didn't take it (the reason is on the Generate step)");
     s.photos.push({ id: items[0].id, t, cam: camOf(cam) });
@@ -4031,7 +4031,7 @@ const Scene3D = (() => {
       <div class="field"><label for="s3p-model">Model</label><select id="s3p-model">${models.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></div>
       <label class="check s3p-depthf" title="Sends a depth map of the view along (Qwen only): it holds the layout and shapes when the look changes a lot, e.g. a whole new setting or style"><input type="checkbox" id="s3p-depth"${lastDepth() ? " checked" : ""}> Use the depth map <span class="opt">keeps the layout in a big restyle</span></label>
       ${cast(s.t, pc).some(x => !x.off && x.o.picture) ? `<label class="check"><input type="checkbox" id="s3p-pics" checked> Use the objects' pictures</label>` : ""}
-      ${v2Loras.length ? `<label class="check"><input type="checkbox" id="s3p-loras" checked> Use the objects' LoRAs <span class="opt">${v2Loras.length} from the shot's library objects</span></label>` : ""}
+      ${v2Loras.length ? `<label class="check"><input type="checkbox" id="s3p-loras" checked> Use the shot's LoRAs <span class="opt">${v2Loras.length}: its own and its library objects'</span></label>` : ""}
       <section class="s3p-set" aria-label="Model settings"><h4>Model settings</h4><dl class="s3p-dl"></dl><div class="s3p-pics"></div></section>
       <div class="field"><div class="s3p-ph"><label for="s3p-prompt">The prompt <span class="opt">the whole of it, as the model gets it; edit it if you like</span></label>
         <button type="button" class="link" data-a="rebuild" title="Build the prompt again from the settings above">↻ Rebuild</button></div>

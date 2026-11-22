@@ -5,6 +5,16 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.158.0] - 2026-11-22
+
+### Added
+- **Shots have LoRAs of their own.** The V2 shot panel has a LoRAs field under Music, like an object's: up to 4
+  MiniMax H3 LoRAs, each with a strength, for what belongs to the shot rather than to an object (a style, a look, a
+  camera move). They go along with the shot's library objects' LoRAs, the shot's first; one in both goes at the shot's
+  strength, so a shot can turn an object's LoRA down or up for itself. At most 8 go along; the field lists what the
+  objects add. Generate shot, the Render window and the photo windows all use them ("Use the shot's LoRAs"), and the
+  Model box says how many are the shot's and how many its objects'.
+
 ## [0.157.0] - 2026-11-22
 
 ### Added
