@@ -1332,7 +1332,7 @@ const Scene3D = (() => {
       </aside>`;
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
-    foot.innerHTML = `<span class="hint s3-foot">Drag: orbit · Right-drag: pan · Wheel: zoom · Right-click: menu · 🏞 Scene › Generate photo or Render video</span>`;
+    foot.innerHTML = `<span class="hint s3-foot">Drag: orbit · Right-drag: pan · Wheel: zoom (stops at what's ahead; Alt+wheel: through) · Right-click: menu · 🏞 Scene › Generate photo or Render video</span>`;
     const onClose = () => { if (s) { cancelAnimationFrame(s.raf); clearTimeout(s.poll); clearTimeout(s.saveT); s.ro?.disconnect(); s.closed = true; } s = null; meshCache.clear(); };
     const win = host ? embed(host, root, foot, onClose)
       : WM.open({ id: "scene3d", title: `🏞 ${sc.name}`, content: root, footer: foot, width: 1100, height: 720, minWidth: 720, minHeight: 480, onClose });
@@ -2457,7 +2457,9 @@ const Scene3D = (() => {
     return { o: e, d: norm(addv(f, addv(mulv(r, nx * tx), mulv(u, ny * ty)))) };
   }
   // Which object is under the point: the ray against each object's box, in the object's own space.
-  function pick(px, py) {
+  const pick = (px, py) => hitAt(px, py).i;
+  // ...and how far along the ray its box starts (t: distance from the camera; i -1: nothing)
+  function hitAt(px, py) {
     const { o: ro, d: rd } = rayAt(px, py);
     let best = -1, bt = Infinity;
     s.objs.forEach((o, i) => {
@@ -2472,7 +2474,17 @@ const Scene3D = (() => {
       }
       if (t1 >= Math.max(0, t0) && t0 < bt) { bt = t0; best = i; }
     });
-    return best;
+    return { i: best, t: bt };
+  }
+  /* Zooming in moves the camera towards the point it turns round, which is often behind the person (a key, a preset
+     move, the empty scene's start all look past them at the floor): it went straight through them. Now, when
+     something is dead ahead between the camera and that point, the point moves onto its front, so the zoom closes in
+     on it and stops there. Alt+wheel zooms on through. */
+  function zoomStop() {
+    const h = hitAt(s.cv.clientWidth / 2, s.cv.clientHeight / 2);
+    if (h.i < 0 || !(h.t > 0) || h.t >= s.cam.dist - 1e-3) return;
+    const e = eye(), f = norm(sub(s.cam.target, e));
+    s.cam.target = addv(e, mulv(f, h.t)); s.cam.dist = h.t;
   }
 
   function wire(root, foot) {
@@ -2570,7 +2582,9 @@ const Scene3D = (() => {
         if (hit >= 0) objMenu(hit, e.clientX, e.clientY, px, py); else spaceMenu(e.clientX, e.clientY, px, py);
       }
     });
-    cv.addEventListener("wheel", e => { e.preventDefault(); if (!s?.bg) return; if (s.camObj && !s.camFree) { delete s.cam.roll; delete s.cam.lens; s.camFree = true; renderCam(); } s.cam.dist = Math.max(s.bg.dmed * 0.05, Math.min(s.bg.dmed * 20, s.cam.dist * Math.exp(e.deltaY * 0.0012))); s.dirty = true; }, { passive: false });
+    cv.addEventListener("wheel", e => { e.preventDefault(); if (!s?.bg) return; if (s.camObj && !s.camFree) { delete s.cam.roll; delete s.cam.lens; s.camFree = true; renderCam(); }
+      if (e.deltaY < 0 && !e.altKey) zoomStop();
+      s.cam.dist = Math.max(s.bg.dmed * 0.05, Math.min(s.bg.dmed * 20, s.cam.dist * Math.exp(e.deltaY * 0.0012))); s.dirty = true; }, { passive: false });
     cv.addEventListener("keydown", e => {
       const o = s.objs[s.sel];
       if (s.modal) {
