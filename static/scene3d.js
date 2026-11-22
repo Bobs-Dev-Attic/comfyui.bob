@@ -1580,7 +1580,7 @@ const Scene3D = (() => {
     [/^Measuring the depth of the photo/, "depth", "Measuring the depth of the photo (Depth Anything 3)"],
     [/can't see|% of view \d+ unfilled|^Measuring the depth of view|^Filled \d+ view/, "fill", "Filling what the photo can't see"],
     [/^The camera comes in .* closer|^Added a sharp detail view/, "detail", "A sharp view where the camera comes close"],
-    [/^Drawing the rough animation|^Drawing the 3D scene's render/, "anim", m => /3D scene/.test(m) ? "Drawing the 3D scene's render (<Video 1>)" : "Drawing the rough animation"], [/^Drawing its mask/, "mask", "Drawing its mask"],
+    [/^Drawing the rough animation|^Drawing the 3D scene's render/, "anim", m => /3D scene/.test(m) ? "Drawing the 3D scene's render (<Video 1>)" : "Drawing the rough animation"], [/^Drawing its mask/, "mask", "Drawing its mask"], [/^Drawing its depth map/, "dmap", "Drawing its depth map (to look at)"],
     [/^Sending (\d+ takes )?to H3/, "send", "Sending to H3"],
   ];
   function stages(el, alive = () => el.isConnected) {
@@ -1960,7 +1960,7 @@ const Scene3D = (() => {
             ...(start === "newphoto" ? [["photo", "Making the photo of the first frame"]] : start === "quickphoto" ? [["photo", "Making a quick photo of the first frame"]] : []),
             ...(ph ? [["paint", "Painting the photo onto the scene"]] : []),
             ...(mv ? [["fill", `Filling what the photo can't see (${fillWho()})`]] : []),
-            ["anim", byRef() ? "Drawing the 3D scene's render (<Video 1>)" : "Drawing the rough animation"], ["mask", "Drawing its mask"],
+            ["anim", byRef() ? "Drawing the 3D scene's render (<Video 1>)" : "Drawing the rough animation"], ["mask", "Drawing its mask"], ["dmap", "Drawing its depth map (to look at)"],
             ...(to0 !== "now" ? [["send", "Putting it in the shot"]] : [["send", "Sending to H3"], ["queue", "Waiting in ComfyUI's queue"],
               ["gpu", `Rendering on the GPU (${R ? "H3 Reference" : "H3"})`], ["save", "Saving the video"], ...(words ? [["words", "Checking the words (Whisper)"]] : [])]),
           ]);
@@ -2052,12 +2052,10 @@ const Scene3D = (() => {
       talkers = s.objs.filter(x => x.prim === "figure" && said.has(x.name.trim().toLowerCase()));
       const ref = await renderVideo("ref", [W, H], n, (f, N) => say(`${o.guide === "reference" ? "Drawing the 3D scene's render" : "Drawing the rough animation"}: frame ${f + 1} of ${N}`), proj);
       const mask = await renderVideo("mask", [W, H], n, (f, N) => say(`Drawing its mask: frame ${f + 1} of ${N}`), proj);
-      // the first frame's depth map, to look at in the Render window (near is white): not sent to H3
+      // the clip's depth map, to look at in the Render window (near is white): not sent to H3
       let depth = null;
-      try {
-        const z = depthDistances([W, H], 0, camForRender(0)), rg = depthRange(z);
-        if (rg) depth = await uploadBlob(new Blob([await grayPNG(depthGray(z, rg), W, H)], { type: "image/png" }), "scene_depth.png");
-      } catch (err) { console.warn("Depth map:", err); }
+      try { depth = await depthVideo([W, H], (f, N) => say(`Drawing its depth map: frame ${f + 1} of ${N}`)); }
+      catch (err) { if (!s) throw err; console.warn("Depth map:", err); }
       say("Sending to H3…");
       const built = renderPrompt(o.what, o.refs, fromPhoto, o.extra, o.guide), what = built.what;
       const cam = built.cam, prompt = String(o.prompt || "").trim() || built.prompt;
@@ -2084,7 +2082,7 @@ const Scene3D = (() => {
         req.motion_first === "composite" ? "the objects drawn on it" : o.guide === "reference" ? "<Picture 1>" : "first frame");
       add(ref, "video", o.guide === "reference" ? "The 3D scene's render" : "The 3D video", o.guide === "reference" ? "<Video 1>" : "the rough animation H3 follows");
       if (o.guide !== "reference") add(mask, "video", "Its mask", "white: where H3 may change it");  // H3 Reference's video doesn't use it
-      add(depth, "image", "Depth map", "the first frame: near is white");
+      add(depth, "video", "Depth map", "the whole clip: near is white");
       (proj?.gaps || []).forEach((g, i) => add(g.ref, "image", `Fill view ${i + 1}`, `what the photo can't see, at ${g.t.toFixed(1)} s`));
       (proj?.details || []).forEach(d => add(d.ref, "image", "Close-up view", `at ${d.t.toFixed(1)} s`));
       if (req.references) picObjs().forEach((x, i) => add(x.picture, "image", x.name, `<Picture ${i + 2}>`));
@@ -3655,6 +3653,36 @@ const Scene3D = (() => {
   }
 
   /* ---------------------------------------------------------------- 🌫 Save depth map */
+  /* The whole clip's depth as a video, near white (an upload ref), or null when nothing's in view. One range for all
+     its frames (measured first, unless given), so its brightness doesn't flicker. progress(f, n) now and then. */
+  async function depthVideo(size, progress = () => {}, range = null) {
+    const n = frameCount(), tick = () => new Promise(r => { const c = new MessageChannel(); c.port1.onmessage = r; c.port2.postMessage(0); });
+    const live = () => { if (!s) throw new Error("The scene was closed"); };
+    if (!range) {
+      let near = Infinity, far = 0;
+      for (let f = 0; f < n; f++) {
+        live();
+        const r = depthRange(depthDistances(size, f / FPS, camForRender(f / FPS)));
+        if (r) { near = Math.min(near, r[0]); far = Math.max(far, r[1]); }
+        if (f % 16 === 0) await tick();  // setTimeout crawls when the tab is in the background
+      }
+      if (!isFinite(near)) return null;
+      range = [near, far];
+    }
+    const fd = new FormData();
+    for (let f = 0; f < n; f++) {
+      live();
+      const c = depthCanvas(depthDistances(size, f / FPS, camForRender(f / FPS)), size, range);
+      const url = c.toDataURL("image/png"), bin = atob(url.slice(url.indexOf(",") + 1)), bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      fd.append("frame", new Blob([bytes], { type: "image/png" }), `${String(f).padStart(5, "0")}.png`);
+      if (f % 8 === 0) { progress(f, n); await tick(); }
+    }
+    fd.append("fps", String(FPS));
+    const r = await fetch("/api/frames/video", { method: "POST", body: fd }), j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    return j.ref;
+  }
   // What the camera frames as depth, the way depth ControlNets (MiDaS, Depth Anything) want it: near is white, far is
   // black, scaled as inverse depth between the nearest and farthest things in view; the open sky is black. It's drawn
   // offscreen with each pixel's distance along the camera's forward axis encoded in 24 bits, then read back here.
@@ -3787,19 +3815,8 @@ const Scene3D = (() => {
         Media.toast(`Depth map saved: ${n} PNGs, ${sizeV[0]}×${sizeV[1]}, ${FPS} fps.`);
         return;
       }
-      const fd = new FormData();
-      for (let f = 0; f < n; f++) {
-        const c = depthCanvas(depthDistances(sizeV, f / FPS, camForRender(f / FPS)), sizeV, [near, far]);
-        const url = c.toDataURL("image/png"), bin = atob(url.slice(url.indexOf(",") + 1)), bytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        fd.append("frame", new Blob([bytes], { type: "image/png" }), `${String(f).padStart(5, "0")}.png`);
-        if (f % 8 === 0) { Media.toast(`Depth map: frame ${f + 1} of ${n}…`); await new Promise(res => setTimeout(res)); }
-        if (!s) return;
-      }
-      fd.append("fps", String(FPS));
-      const r = await fetch("/api/frames/video", { method: "POST", body: fd }), j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.detail || r.statusText);
-      save(mediaUrl(j.ref), `${base}_depth.mp4`);
+      const ref = await depthVideo(sizeV, f => Media.toast(`Depth map: frame ${f + 1} of ${n}…`), [near, far]);
+      save(mediaUrl(ref), `${base}_depth.mp4`);
       Media.toast(`Depth map saved: ${n} frames.`);
     } catch (err) { Media.toast(`Depth map: ${err.message}`); }
     finally { if (s) s.dirty = true; }

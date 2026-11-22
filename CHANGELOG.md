@@ -5,6 +5,14 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.154.0] - 2026-11-22
+
+### Changed
+- **The Render window's depth map is a video of the whole clip.** It follows the camera and the objects' motion,
+  frame for frame with the 3D video (one brightness range for the whole clip, near is white), instead of a still of
+  the first frame. It adds a "Drawing its depth map" step, a few seconds. The Scene menu's whole-clip depth video is
+  made the same way.
+
 ## [0.153.0] - 2026-11-22
 
 ### Added
