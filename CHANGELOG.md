@@ -5,6 +5,14 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.163.0] - 2026-11-22
+
+### Added
+- **The retake threshold is a setting.** Settings > Generation > Words in 3D renders: "Retake the sound under" N %
+  (80 by default; 0 turns automatic retakes off). The Render window's box says the threshold it uses, and is left
+  out when it's off.
+- **Settings in V2.** A ⚙ button in V2's top bar (or Ctrl+,) opens the studio's Settings, the same as Classic's.
+
 ## [0.162.0] - 2026-11-22
 
 ### Added

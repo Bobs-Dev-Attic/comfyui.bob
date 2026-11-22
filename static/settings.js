@@ -161,6 +161,9 @@ const Settings = (() => {
         ${row("Play a sound", "A short chime when a picture, video or sound is ready", toggle("generation.sound_when_done", g.sound_when_done) + ` <button type="button" class="btn sm" data-a="chime">Try it</button>`)}
         ${row("Desktop notification", perm === "denied" ? "Blocked by the browser: allow notifications for this site first" : perm === "unsupported" ? "This browser can't show notifications" : "When the studio's tab is in the background",
           toggle("generation.notify_when_done", g.notify_when_done && perm === "granted"))}
+        <h3>Words in 3D renders</h3>
+        ${row("Retake the sound under", "When Whisper hears a 3D render's lines with fewer of their words right than this, the sound is made again once (the picture kept) and the shot uses the take with the best words. 0 turns it off.",
+          `<input type="number" min="0" max="100" step="5" data-k="generation.retake_below" value="${g.retake_below ?? 80}" aria-label="Retake the sound under this percent"> %`)}
         <h3>Results</h3>
         ${row("Ask before deleting a result", "Deleting removes its file from disk", toggle("generation.confirm_delete", g.confirm_delete))}`;
     } else if (sec === "editor") {
@@ -264,6 +267,7 @@ const Settings = (() => {
     let v = t.type === "checkbox" ? t.checked : t.type === "number" ? +t.value : t.value;
     if (key === "projects.version_minutes" || key === "updates.check_minutes") v = +v;
     if (key === "projects.versions_keep") { v = Math.max(5, Math.min(500, Math.round(v || 30))); t.value = v; }
+    if (key === "generation.retake_below") { v = Math.max(0, Math.min(100, Math.round(Number.isFinite(v) ? v : 80))); t.value = v; }
     if (key === "generation.notify_when_done" && v && "Notification" in window && Notification.permission !== "granted") {
       v = (await Notification.requestPermission()) === "granted";
       t.checked = v;

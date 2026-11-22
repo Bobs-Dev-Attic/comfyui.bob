@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/static/styles.css">
   <link rel="stylesheet" href="/static/shell.css">
   <link rel="stylesheet" href="/static/themes.css">
+  <link rel="stylesheet" href="/static/settings.css">
   <link rel="stylesheet" href="/static/v2.css">
   <script>
     try { const a = JSON.parse(localStorage.getItem("bob.look") || "null"); if (a) { const r = document.documentElement;
@@ -23,6 +24,7 @@
     <span class="v2-grow"></span>
     <span class="v2-status" id="v2-status" aria-live="polite"></span>
     <button type="button" class="btn sm" id="v2-paneltoggle" aria-expanded="false" aria-controls="v2-panel" title="The shot: its words, sound, settings and Generate">📝 Shot</button>
+    <button type="button" class="btn sm ghost" id="v2-settings" title="Settings (Ctrl+,)" aria-label="Settings">⚙</button>
     <a class="btn sm ghost" href="/" title="The classic Bob Studio, with everything it has">Classic ↗</a>
     <span class="v2-activity" id="v2-activity" aria-live="polite" title="What the generation is doing">Idle</span>
     <span class="v2-meters" id="v2-meters" title="The machine's load right now">
@@ -140,6 +142,7 @@
   <script src="/static/media.js"></script>
   <script src="/static/model3d.js"></script>
   <script src="/static/scene3d.js"></script>
+  <script src="/static/settings.js"></script>
   <script>V2.init();</script>
 </body>
 </html>
