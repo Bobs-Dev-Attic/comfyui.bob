@@ -1650,6 +1650,17 @@ const V2 = (() => {
     const e = st.log.find(x => x.items.some(y => y.id === of));
     if (e && !e.items.some(y => y.id === it.id)) { e.items.push({ id: it.id, title: "🔁 Sound retake (the words came out low)" }); renderLog(); }
   }
+  /* A job this page didn't start (it was running when the page opened, or the studio started it: the lips redrawn,
+     a sound retake, an enhance) goes in the log too: beside the job it's for when that's there, else on its own. */
+  function adopt(it) {
+    if (!["queued", "running"].includes(it?.status) || st.log.some(e => e.items.some(x => x.id === it.id))) return;
+    const p = it.params || {}, of = p.relock_of || p.retake_of || p.enhance_of;
+    const title = p.relock_of ? "👄 Lips redrawn to the cleaned sound" : p.retake_of ? "🔁 Sound retake (the words came out low)"
+      : p.enhance_of ? "✨ Enhance" : engineTitle({ ...p, engine: it.engine || p.engine });
+    const e = of && st.log.find(x => x.items.some(y => y.id === of));
+    if (e) { e.items.push({ id: it.id, title }); renderLog(); return; }
+    const n = logStart(title); n.prep = false; n.t0 = it.created || n.t0; n.items.push({ id: it.id, title }); renderLog();
+  }
   function events() {
     const es = new EventSource("/api/events");
     es.onmessage = e => {
@@ -1660,7 +1671,7 @@ const V2 = (() => {
       onActivity(ev);
       Scene3D.onItem?.(ev.item);
       maybeAddLater(ev.item);
-      if (!prev) retookItself(ev.item);
+      if (!prev) { retookItself(ev.item); adopt(ev.item); }
       if (ev.item.id === st.board.settings.lastExport) renderExport();
       if (st.log.some(e2 => e2.items.some(x => x.id === ev.item.id))) renderLog();
       if ((st.board.shots.some(s => s.results?.includes(ev.item.id)) || st.board.settings.soundtrack?.result === ev.item.id)
@@ -1675,6 +1686,7 @@ const V2 = (() => {
     try { const v = await api("/api/status"); $("v2-version").textContent = `v${v.version}`; } catch {}
     try { state.caps = await api("/api/capabilities"); } catch (e) { status(`Capabilities: ${e.message}`); }
     try { for (const it of (await api("/api/items")).items || []) state.items.set(it.id, it); } catch {}
+    for (const it of [...state.items.values()].sort((a, b) => a.created - b.created)) adopt(it);  // what's still being made
     events();
     activity(); meters(); setInterval(meters, 3000);
     saveSign();
