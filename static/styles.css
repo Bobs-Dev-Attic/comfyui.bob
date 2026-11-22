@@ -914,6 +914,17 @@ details.post-proc > .hint { margin: 0 0 10px; }
 .s3r-media figcaption { font-size: 11.5px; color: var(--muted); }
 .s3r-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 /* what a render is made from: thumbnails, and one large over everything */
+/* the machine's load while a render works: sticks to the top of the Render window */
+.s3r-use { position: sticky; top: -1px; z-index: 2; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px;
+  margin: -4px 0 10px; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; font-size: 12px; color: var(--muted); }
+.s3r-use[hidden] { display: none; }
+.s3r-um { display: grid; grid-template-columns: auto auto 1fr; align-items: center; column-gap: 4px; row-gap: 3px; white-space: nowrap; }
+.s3r-um b { justify-self: end; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); }
+.s3r-um > i { grid-column: 1 / -1; height: 4px; border-radius: 2px; background: var(--panel-2); overflow: hidden; }
+.s3r-um > i > i { display: block; height: 100%; background: var(--accent); transition: width .6s ease; }
+.s3r-um.hot b { color: #e5484d; }
+.s3r-um.hot > i > i { background: #e5484d; }
+@media (max-width: 520px) { .s3r-use { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .s3r-files-l { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
 .s3r-file { display: grid; gap: 4px; padding: 4px; text-align: left; font: inherit; color: inherit; cursor: zoom-in;
   background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }

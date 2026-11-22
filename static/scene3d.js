@@ -1771,6 +1771,32 @@ const Scene3D = (() => {
     document.body.appendChild(d);
     d.querySelector("[data-x]").focus();
   }
+  /* CPU, GPU (use and its memory) and memory use at the top of the Render window while it works (/api/system/usage,
+     every 2 s). Returns stop(), which hides it; closing the window stops it too. */
+  function usageStrip(el) {
+    if (!el) return () => {};
+    let t = 0, live = true;
+    const gb = b => (b / 1024 ** 3).toFixed(1);
+    const meter = (icon, name, v, tip) => `<span class="s3r-um${v >= 90 ? " hot" : ""}" title="${esc(tip)}"><span aria-hidden="true">${icon}</span> ${name}
+      <b>${v == null ? "–" : `${Math.round(v)}%`}</b><i aria-hidden="true"><i style="width:${Math.max(0, Math.min(100, v || 0))}%"></i></i></span>`;
+    const stop = () => { live = false; clearTimeout(t); el.hidden = true; };
+    const tick = async () => {
+      if (!live) return;
+      if (!el.isConnected) return stop();
+      try {
+        const u = await (await fetch("/api/system/usage")).json(), g = u.gpu;
+        if (!live) return;
+        el.innerHTML = meter("⚙️", "CPU", u.cpu, "CPU use")
+          + meter("🎮", "GPU", g?.pct, g ? `GPU use: ${g.name}` : "GPU use (no NVIDIA GPU found)")
+          + meter("🧮", "VRAM", g?.mem_pct, g?.mem_total ? `GPU memory: ${gb(g.mem_used)} of ${gb(g.mem_total)} GB` : "GPU memory")
+          + meter("🧠", "Memory", u.memory?.pct, u.memory ? `Memory (RAM): ${gb(u.memory.used)} of ${gb(u.memory.total)} GB` : "Memory (RAM) use");
+        el.hidden = false;
+      } catch { /* the next one */ }
+      t = setTimeout(tick, 2000);
+    };
+    tick();
+    return stop;
+  }
   function renderDialog(o = {}) {
     if (!s?.bg) return;
     if (!s.objs.some(o => o.mesh && !o.hidden) && !cameraMoves()) return Media.toast("Nothing moves yet: key an object or the camera first.");
@@ -1790,7 +1816,8 @@ const Scene3D = (() => {
     const when = it => new Date((it.finished || it.created) * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     const box = document.createElement("div");
     box.className = "m3-make";
-    box.innerHTML = `<div class="field"><span class="s3p-lbl">Level <span class="opt">rough to final; each sets the options below</span></span>
+    box.innerHTML = `<div class="s3r-use" role="status" aria-label="The machine's load" hidden></div>
+      <div class="field"><span class="s3p-lbl">Level <span class="opt">rough to final; each sets the options below</span></span>
         <div class="seg s3r-lv" role="group" aria-label="Level">${Object.entries(LEVELS).map(([k, L]) => `<button type="button" data-lv="${k}" title="${esc(L.name)}: ${esc(L.says)}">${L.icon} ${esc(L.name)}</button>`).join("")}</div>
         <p class="hint s3r-lvh" aria-live="polite"></p></div>
       ${adopted.length ? `<p class="hint">From the shot: ${esc(adopted.join(", "))} (its picture, sent to H3 Reference).</p>` : ""}<p class="hint">H3 makes the video from the picture, following this scene's rough animation (Time-to-Move, as in Animate objects):
@@ -1945,10 +1972,11 @@ const Scene3D = (() => {
     syncTo();
     foot.querySelector('[data-a="cancel"]').onclick = () => win.close();
     const sgEl = box.querySelector(".s3r-stages"), sg = stages(sgEl);
-    let stop = null, stopPhoto = null;
+    let stop = null, stopPhoto = null, stopUse = null;
     foot.querySelector('[data-a="go"]').onclick = async e => {
       e.target.disabled = true;
       stop?.(); stop = null;
+      stopUse?.(); stopUse = usageStrip(box.querySelector(".s3r-use"));
       let words = false;
       try {
         const start = firstSel.value, look = box.querySelector("#s3r-look").value.trim();
@@ -1995,10 +2023,10 @@ const Scene3D = (() => {
         foot.querySelector('[data-a="cancel"]').textContent = "Close";
         e.target.textContent = "✓ Queued";
         const photoRef = fromPhoto() ? r.req.first_frame : null, sceneId = s.sc.id, project = s.sc.project;
-        stop = followRender(items, sg, words, its => { if (sgEl.isConnected) { st.textContent = ""; e.target.disabled = false; e.target.textContent = "🎬 Render again";
+        stop = followRender(items, sg, words, its => { stopUse?.(); stopUse = null; if (sgEl.isConnected) { st.textContent = ""; e.target.disabled = false; e.target.textContent = "🎬 Render again";
           showResult(box.querySelector(".s3r-result"), (its || []).find(x => x?.status === "done" && x.files?.length), photoRef, sceneId, project); } });
         Media.toast(`3D scene: queued. ${toTl ? "It goes on the timeline when it's done." : "The video shows up in the gallery when it's done."}`);
-      } catch (err) { stop?.(); stop = null; stopPhoto?.(); stopPhoto = null; sg.fail(err.message); st.textContent = ""; e.target.disabled = false; Media.toast(`Render: ${err.message}`); }
+      } catch (err) { stop?.(); stop = null; stopPhoto?.(); stopPhoto = null; stopUse?.(); stopUse = null; sg.fail(err.message); st.textContent = ""; e.target.disabled = false; Media.toast(`Render: ${err.message}`); }
     };
   }
 

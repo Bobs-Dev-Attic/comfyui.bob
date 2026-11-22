@@ -5,6 +5,14 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.155.0] - 2026-11-22
+
+### Added
+- **The Render window shows the machine's load while it works.** From 🎬 Render until the video is done (or it
+  fails), a strip at the top of the window, pinned there as it scrolls, shows CPU, GPU, GPU memory (VRAM) and memory
+  use, each with a bar, every 2 seconds; 90% or more turns red. Hovering one shows the details (the GPU's name, GB used
+  of the total).
+
 ## [0.154.0] - 2026-11-22
 
 ### Changed
