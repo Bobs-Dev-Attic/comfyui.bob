@@ -364,7 +364,9 @@ const V2 = (() => {
     }
     const voices = caps.engines?.h3ref?.ready ? voicesFor(s) : [];
     const ref = (i.pictures > 0 || voices.length > 0) && !!caps.engines?.h3ref?.ready;
-    if (i.camMoves) why.push("The camera moves: H3 follows the scene's camera path (Time-to-Move).");
+    const byRef = Scene3D.lastGuide?.() === "reference";  // the Render window's choice: a reference video or Time-to-Move
+    if (i.camMoves) why.push(byRef ? "The camera moves: H3 Reference follows the 3D scene's render of the move, shown it as <Video 1> (Time-to-Move instead: the Render window)."
+      : "The camera moves: H3 follows the scene's camera path (Time-to-Move).");
     if (i.objMoves) why.push("Objects move along their paths.");
     if (i.objects && !i.objMoves && !i.camMoves) why.push("The objects are where you put them; nothing moves, so they hold their places.");
     why.push(i.picture ? "It starts from the scene's picture." : "It starts from a photo of the first frame, made first (about a minute).");
@@ -375,7 +377,7 @@ const V2 = (() => {
     else if (!caps.engines?.h3ref?.ready && voicesFor(s).length) why.push("Some speakers have voices, but H3 Reference isn't installed: H3 picks the voices.");
     const L = lorasFor(s);
     if (L.length) why.push(`${L.length} LoRA${L.length === 1 ? "" : "s"} from the objects go${L.length === 1 ? "es" : ""} along.`);
-    return { engine: "scene", ref, label: ref ? "MiniMax H3 Reference · 3D scene render" : "MiniMax H3 · 3D scene render", why, info: i };
+    return { engine: "scene", ref: ref || byRef, label: ref || byRef ? `MiniMax H3 Reference · 3D scene render${byRef ? " (reference video)" : ""}` : "MiniMax H3 · 3D scene render", why, info: i };
   }
 
   /* ---- the words for H3 */
@@ -439,7 +441,8 @@ const V2 = (() => {
     { // its stages: the 3D scene's (a photo and the fill come in if it makes them), then H3 and the word check
       const n = Math.min(4, Math.max(1, +s.takes || 1)), words = linesOf(s).some(l => String(l.text || "").trim());
       const gpu = `Rendering on the GPU (${d.ref ? "H3 Reference" : "H3"}${n > 1 ? `, ${n} takes` : ""})`;
-      sg.plan([...(d.engine === "h3" ? [] : [["anim", "Drawing the rough animation"], ["mask", "Drawing its mask"]]),
+      const byRef = d.engine !== "h3" && Scene3D.lastGuide?.() === "reference";
+      sg.plan([...(d.engine === "h3" ? [] : [["anim", byRef ? "Drawing the 3D scene's render (<Video 1>)" : "Drawing the rough animation"], ["mask", "Drawing its mask"]]),
         ["send", n > 1 ? `Sending ${n} takes to H3` : "Sending to H3"], ["queue", "Waiting in ComfyUI's queue"], ["gpu", gpu], ["save", n > 1 ? "Saving the videos" : "Saving the video"],
         ...(words ? [["words", "Checking the words (Whisper)"]] : [])]);
       g.words = words;

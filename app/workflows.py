@@ -79,6 +79,7 @@ def build_motion(
     references: int = 0,
     audios: int = 0,
     clean_audio: bool = False,
+    guide: str = "ttm",
 ) -> Built:
     """Motion layers (app/motion.py): H3 image-to-video from the original picture, with Time-to-Move
     (vloTimeToMove from ComfyUI-vlo) holding the moved objects to a rough cut-and-drag animation.
@@ -95,19 +96,26 @@ def build_motion(
     way (as FaceRefine does, H3 Reference's conditioning takes a latent made elsewhere).
 
     With `audios` (1-3 voices to speak with, image_inputs aref_0...: <Audio N> in the prompt), it runs on H3 Reference
-    too, even with no object pictures; `clean_audio` cleans each and keeps its best 6-10 s of speech (H3RefAudioPrep)."""
+    too, even with no object pictures; `clean_audio` cleans each and keeps its best 6-10 s of speech (H3RefAudioPrep).
+
+    guide "reference" (a 3D scene's render): no Time-to-Move. The rough animation goes to H3 Reference as a reference
+    video, <Video 1>, which the prompt says to follow for the camera and blocking only, not its look; H3 draws every
+    frame itself. Looser than Time-to-Move's hold, but it copies none of the rough animation's holes and seams.
+    The mask isn't used then."""
     if not 0 <= references <= H3_MAX_REFS - 1:
         raise ValueError(f"A scene render takes at most {H3_MAX_REFS - 1} object pictures")
     g = Graph()
     o = Graph.out
     unet = g.add("UNETLoader", unet_name=files["unet"], weight_dtype="default")
     model = unet
+    by_ref = guide == "reference"
+    ref_model = bool(references or audios or by_ref)  # on H3 Reference's model (files are the ref2va set)
     use_turbo = turbo and bool(files.get("turbo_lora"))
     if use_turbo:
         model = g.add("LoraLoaderModelOnly", model=o(unet), lora_name=files["turbo_lora"], strength_model=1.0)
         lora = files["turbo_lora"].lower()
         # the ref2v turbo LoRA is 4-step unless it says 8; the fl2v one is 8-step unless it says 4 (as build_h3_ref, build_h3)
-        default_steps = (8 if "8step" in lora else 4) if references else (4 if "4step" in lora else 8)
+        default_steps = (8 if "8step" in lora else 4) if ref_model else (4 if "4step" in lora else 8)
     else:
         default_steps = 20
     n_steps = int(steps or default_steps)
@@ -120,7 +128,9 @@ def build_motion(
     first = g.add("LoadImage", image="")
     scaled = g.add("ImageScale", image=o(first), upscale_method="lanczos", width=width, height=height, crop="center")
     image_inputs: dict[str, str] = {"first_frame": first}
-    if references or audios:
+    ref = g.add("LoadVideo", file="")
+    ref_parts = g.add("GetVideoComponents", video=o(ref))
+    if ref_model:
         prompt = f"{h3_frame_alignment(True, False, length)}\n\n{prompt}"
         cond_inputs: dict[str, Any] = dict(clip=o(clip), vae=o(vae), audio_vae=o(audio_vae), prompt=prompt, width=width,
                                            height=height, length=length, ref_image_size="match")
@@ -137,27 +147,31 @@ def build_motion(
                 a = o(g.add("H3RefAudioPrep", audio=a, clean="voice_focus", crop_mode="best_window", target_seconds=8.0, max_seconds=10.0,
                             max_pause_seconds=0.8, fade_ms=25, normalize_peak_db=-3.0, snap_to_latent_grid=True))
             cond_inputs[f"ref_audios.ref_audio_{i}"] = a
+        if by_ref:  # the 3D scene's move: <Video 1>
+            cond_inputs["ref_videos.ref_video_0"] = o(ref_parts, 0)
         cond = g.add("MiniMaxH3ReferenceToVideo", **cond_inputs)
     else:
         cond = g.add("MiniMaxH3ImageToVideo", clip=o(clip), vae=o(vae), prompt=prompt, width=width, height=height,
                      length=length, first_frame=o(scaled))
 
-    ref = g.add("LoadVideo", file="")
-    ref_parts = g.add("GetVideoComponents", video=o(ref))
-    ref_lat = g.add("VAEEncode", pixels=o(ref_parts, 0), vae=o(vae))
-    msk = g.add("LoadVideo", file="")
-    msk_parts = g.add("GetVideoComponents", video=o(msk))
-    mask = o(g.add("ThresholdMask", mask=o(g.add("ImageToMask", image=o(msk_parts, 0), channel="red")), value=0.5))
-    if edge > 0:
-        mask = o(g.add("GrowMask", mask=mask, expand=-int(edge), tapered_corners=True))
-    end = {"loose": 2, "tight": max(3, round(n_steps / 2))}.get(hold, max(2, round(n_steps / 3)))
-    end = max(2, min(end, n_steps))
-    ttm = g.add("vloTimeToMove", model=o(model), reference_latents=o(ref_lat), mask=mask, start_step=1, end_step=end)
+    msk = None
+    if by_ref:
+        ttm, end = model, 0
+    else:
+        ref_lat = g.add("VAEEncode", pixels=o(ref_parts, 0), vae=o(vae))
+        msk = g.add("LoadVideo", file="")
+        msk_parts = g.add("GetVideoComponents", video=o(msk))
+        mask = o(g.add("ThresholdMask", mask=o(g.add("ImageToMask", image=o(msk_parts, 0), channel="red")), value=0.5))
+        if edge > 0:
+            mask = o(g.add("GrowMask", mask=mask, expand=-int(edge), tapered_corners=True))
+        end = {"loose": 2, "tight": max(3, round(n_steps / 2))}.get(hold, max(2, round(n_steps / 3)))
+        end = max(2, min(end, n_steps))
+        ttm = g.add("vloTimeToMove", model=o(model), reference_latents=o(ref_lat), mask=mask, start_step=1, end_step=end)
 
     noise = g.add("RandomNoise", noise_seed=int(seed))
     sampler = g.add("KSamplerSelect", sampler_name="res_multistep")
     # H3 Reference: beta for full sampling, simple with its turbo LoRA (see build_h3_ref)
-    scheduler = "beta" if references and not use_turbo else "simple"
+    scheduler = "beta" if ref_model and not use_turbo else "simple"
     sigmas = g.add("BasicScheduler", model=o(model), scheduler=scheduler, steps=n_steps, denoise=1.0)
     guider = g.add("BasicGuider", model=o(ttm), conditioning=o(cond, 0))
     latent = g.add("SamplerCustomAdvanced", noise=o(noise), guider=o(guider), sampler=o(sampler), sigmas=o(sigmas),
@@ -168,10 +182,11 @@ def build_motion(
     save = g.add("SaveVideo", video=o(video), filename_prefix=prefix, format="auto", codec="auto")
     return Built(
         graph=g.nodes, outputs=[save],
-        image_inputs={**image_inputs, "motion_ref": ref, "motion_mask": msk},
+        image_inputs={**image_inputs, "motion_ref": ref, **({"motion_mask": msk} if msk else {})},
         info={"width": width, "height": height, "frames": length, "seconds": round(length / FPS, 2), "steps": n_steps,
-              "turbo": use_turbo, "hold_steps": f"1-{end}", "edge": edge, "final_prompt": prompt,
-              **({"references": references, "model": "H3 Reference", "scheduler": scheduler} if references else {})},
+              "turbo": use_turbo, "final_prompt": prompt,
+              **({"guide": "reference video (<Video 1>)"} if by_ref else {"guide": "Time-to-Move", "hold_steps": f"1-{end}", "edge": edge}),
+              **({"references": references, "model": "H3 Reference", "scheduler": scheduler} if ref_model else {})},
     )
 
 

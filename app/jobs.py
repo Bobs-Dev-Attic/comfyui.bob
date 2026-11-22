@@ -159,6 +159,8 @@ class GenerateRequest(BaseModel):
     # plate and layers; both are conformed to the render's size and length here.
     motion_video: str | None = Field(None, max_length=2000)
     motion_video_mask: str | None = Field(None, max_length=2000)
+    # how H3 follows a 3D scene's rough animation: held to it (Time-to-Move), or shown it as <Video 1> on H3 Reference
+    motion_guide: Literal["ttm", "reference"] = "ttm"
     enhance: bool = False  # Klein prompt upsampler / Krea 2 prompt expander
     layout: list[LayoutBox] | None = Field(None, max_length=60)  # MOSS-Image layout control
     clean_texture: bool = True  # H3 Image: EasyFix steering + re-noise, when ComfyUI-H3-Image-EasyFix is installed
@@ -472,7 +474,7 @@ class JobManager:
         else:
             sets = ([models.ALL_SETS["h3"], models.ALL_SETS["klein"]] if req.engine == "reshoot"
                     # a 3D scene with object pictures renders on H3 Reference (workflows.build_motion)
-                    else [models.ALL_SETS["h3ref" if req.references or req.ref_audios else "h3"]] if req.engine == "motion"
+                    else [models.ALL_SETS["h3ref" if req.references or req.ref_audios or req.motion_guide == "reference" else "h3"]] if req.engine == "motion"
                     else [models.ALL_SETS["h3ref"]] if req.engine == "retake"
                     else [models.ALL_SETS[req.engine]])
         files: dict[str, Any] = {}
@@ -575,7 +577,12 @@ class JobManager:
         if req.engine == "motion":
             if req.kind != "video":
                 raise ValueError("Motion layers make video")
-            if not self.has_node("vloTimeToMove"):
+            if req.motion_guide == "reference":
+                if not req.motion_video:
+                    raise ValueError("A reference video is a 3D scene's render: it needs the scene's rough animation")
+                if not self.has_node("MiniMaxH3ReferenceToVideo"):
+                    raise ValueError("Following a reference video needs H3 Reference (MiniMaxH3ReferenceToVideo) in ComfyUI")
+            elif not self.has_node("vloTimeToMove"):
                 raise ValueError("Motion layers need ComfyUI-vlo (vloTimeToMove) in ComfyUI")
             n = workflows.h3_length(req.seconds)
             if req.motion_video:
@@ -805,7 +812,7 @@ class JobManager:
                 files, prompt=req.prompt, width=w, height=h, seconds=req.seconds, seed=seed, turbo=req.turbo, steps=req.steps,
                 hold=req.motion_hold, edge=edge, prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras],
                 references=len(req.references), audios=len(req.ref_audios),
-                clean_audio=req.clean_audio and self.has_node("H3RefAudioPrep"),
+                clean_audio=req.clean_audio and self.has_node("H3RefAudioPrep"), guide=req.motion_guide,
             )
         if req.engine == "imgedit":
             return workflows.build_imgedit(

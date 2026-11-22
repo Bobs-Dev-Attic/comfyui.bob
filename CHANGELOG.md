@@ -5,6 +5,20 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.146.0] - 2026-11-21
+
+### Added
+- **A 3D scene renders with its move as a reference video.** H3 Reference is shown the 3D scene's own render as
+  `<Video 1>` and draws every frame itself, starting from the photo (`<Picture 1>`): it follows the camera move and
+  where everything is, and copies none of the rough animation's holes and seams. The prompt says what `<Video 1>` is
+  (a gray, untextured layout of the shot), what each stand-in in it becomes, and that only its movement is kept
+  ("motion_only") while every frame looks like `<Picture 1>`. With no photo painted onto the scene and nothing to
+  fill, the steps before H3 take seconds instead of minutes.
+- **How H3 follows the 3D scene** in the Render window: **As a reference video** (the default when H3 Reference is
+  installed) or **Time-to-Move**, held exactly to the rough animation as before (its Follow the plan setting and the
+  fill show only then). The choice is remembered and V2's Generate uses it; V2's model summary says which.
+  `motion_guide` ("ttm" or "reference") on a motion render request.
+
 ## [0.145.1] - 2026-11-21
 
 ### Fixed
