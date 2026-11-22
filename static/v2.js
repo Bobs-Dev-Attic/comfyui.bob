@@ -832,7 +832,7 @@ const V2 = (() => {
   const LOG_MAX = 12;
   const engineTitle = req => req.engine === "imgedit" ? (/^Replace every solid magenta/.test(req.prompt || "") ? "🧩 Qwen fills what the photo can't see" : "📷 Photo of the first frame")
     : req.engine === "motion" ? "🎬 Video (H3 following the scene)" : req.engine === "h3" || req.engine === "h3ref" ? "🎬 Video (H3)" : req.engine === "music3" ? "🎵 Soundtrack (Music 3)"
-    : req.engine === "timeline" ? "⬇ Export" : `⚙ ${req.engine}`;
+    : req.engine === "timeline" ? "⬇ Export" : req.engine === "retake" ? "🔁 Sound retake" : `⚙ ${req.engine}`;
   function logStart(title, shot = null) {
     const e = { key: uid(), title, shot, t0: Date.now() / 1000, lines: [], items: [], prep: true, failed: null };
     st.log.unshift(e); st.log.length = Math.min(st.log.length, LOG_MAX);
@@ -1640,6 +1640,15 @@ const V2 = (() => {
     set("gpu", u.gpu?.pct, u.gpu ? `GPU use: ${u.gpu.name}${u.gpu.mem_total ? `; its memory ${gb(u.gpu.mem_used)} of ${gb(u.gpu.mem_total)} GB (${Math.round(u.gpu.mem_pct)}%)` : ""}` : "GPU use (no NVIDIA GPU found)");
     set("memory", u.memory?.pct, u.memory ? `Memory (RAM): ${gb(u.memory.used)} of ${gb(u.memory.total)} GB` : "Memory (RAM) use");
   }
+  /* A retake the studio made by itself (a scene render's words came out low): another take of the shot that has the
+     render, beside it (the shot uses the take with the best words), and a step in that render's log. */
+  function retookItself(it) {
+    const of = it.params?.retake_of; if (!of) return;
+    const s = st.board.shots.find(x => x.results?.includes(of));
+    if (s && !s.results.includes(it.id)) { s.results = [it.id, ...s.results].slice(0, 20); save(); renderAll(); }
+    const e = st.log.find(x => x.items.some(y => y.id === of));
+    if (e && !e.items.some(y => y.id === it.id)) { e.items.push({ id: it.id, title: "🔁 Sound retake (the words came out low)" }); renderLog(); }
+  }
   function events() {
     const es = new EventSource("/api/events");
     es.onmessage = e => {
@@ -1650,6 +1659,7 @@ const V2 = (() => {
       onActivity(ev);
       Scene3D.onItem?.(ev.item);
       maybeAddLater(ev.item);
+      if (!prev) retookItself(ev.item);
       if (ev.item.id === st.board.settings.lastExport) renderExport();
       if (st.log.some(e2 => e2.items.some(x => x.id === ev.item.id))) renderLog();
       if ((st.board.shots.some(s => s.results?.includes(ev.item.id)) || st.board.settings.soundtrack?.result === ev.item.id)

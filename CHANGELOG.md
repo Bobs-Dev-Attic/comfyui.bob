@@ -5,6 +5,17 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.162.0] - 2026-11-22
+
+### Added
+- **A 3D render whose words come out wrong gets its sound retaken by itself.** After a scene render with lines is
+  checked (Whisper scores the words against the lines; extra words silenced and the lips redrawn first), a score
+  under 80% makes the studio retake the sound once with H3 Reference: the picture is kept frame for frame and, when
+  MelBand RoFormer is installed, the music and sounds too, so only the voice is new. The retake is checked the same
+  way and goes on the shot as another take; the shot uses the take with the best words, as before. It shows as a step
+  in the render's Log. The Render window has a box to turn it off ("Retake the sound once if the words come out under
+  80%"); a retake is never retaken again.
+
 ## [0.161.0] - 2026-11-22
 
 ### Added
