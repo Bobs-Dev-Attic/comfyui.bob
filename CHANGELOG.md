@@ -5,6 +5,13 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.160.1] - 2026-11-22
+
+### Fixed
+- **The shot panel's ＋ LoRA button does something.** Clicking it (or a LoRA's ✕) added or removed the LoRA but didn't
+  show it: the field isn't redrawn while something in it has the focus (so it doesn't jump under a picker you're
+  using), and the clicked button had it. Now the button's own click redraws it.
+
 ## [0.160.0] - 2026-11-22
 
 ### Added

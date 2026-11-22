@@ -446,8 +446,8 @@ const V2 = (() => {
     try { st.loraList = ((await api("/api/loras")).loras || []).filter(l => l.family === "h3" && !l.turbo && !l.missing_file); } catch { st.loraList = []; }
   }
   // The shot panel's LoRAs: a row each (which one, how strong), and what its objects add
-  function renderShotLoras(s) {
-    const box = $("v2-shotloras"); if (!box || box.contains(document.activeElement)) return;
+  function renderShotLoras(s, force = false) {
+    const box = $("v2-shotloras"); if (!box || (!force && box.contains(document.activeElement))) return;
     const L = st.loraList || [], mine = s.loras || [], title = n => L.find(x => x.name === n)?.title || n;
     const src = loraSources(s), at = n => src.find(x => x.name === n);
     const said = (list, kind) => list.length ? `With ${kind}: ${list.map(l => { const w = at(l.name);
@@ -1507,8 +1507,8 @@ const V2 = (() => {
         s.loras.push({ name: (st.loraList.find(x => !used.has(x.name)) || st.loraList[0]).name, strength: 1 });
       } else if (t.dataset.slrm != null) s.loras.splice(+t.dataset.slrm, 1);
       else return;
-      save(); renderPanel(true);
-      $("v2-shotloras").querySelector(`[data-slname="${s.loras.length - 1}"]`)?.focus();
+      save(); renderPanel(true); renderShotLoras(s, true);  // the button clicked has the focus: draw them anyway
+      if (t.hasAttribute("data-sladd")) $("v2-shotloras").querySelector(`[data-slname="${s.loras.length - 1}"]`)?.focus();
     });
     // the soundtrack, and the project's LoRAs
     $("v2-music-btn").onclick = soundtrackDialog;
