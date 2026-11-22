@@ -1570,7 +1570,7 @@ const Scene3D = (() => {
     [/^Measuring the depth of the photo/, "depth", "Measuring the depth of the photo (Depth Anything 3)"],
     [/can't see|% of view \d+ unfilled|^Measuring the depth of view|^Filled \d+ view/, "fill", "Filling what the photo can't see"],
     [/^The camera comes in .* closer|^Added a sharp detail view/, "detail", "A sharp view where the camera comes close"],
-    [/^Drawing the rough animation/, "anim", "Drawing the rough animation"], [/^Drawing its mask/, "mask", "Drawing its mask"],
+    [/^Drawing the rough animation|^Drawing the 3D scene's render/, "anim", m => /3D scene/.test(m) ? "Drawing the 3D scene's render (<Video 1>)" : "Drawing the rough animation"], [/^Drawing its mask/, "mask", "Drawing its mask"],
     [/^Sending (\d+ takes )?to H3/, "send", "Sending to H3"],
   ];
   function stages(el, alive = () => el.isConnected) {
@@ -1765,10 +1765,13 @@ const Scene3D = (() => {
         <select id="s3r-vref" aria-label="How closely H3 keeps to the voices" title="Close: the voice as recorded. Loose: its timbre, with more room for H3 to act the line (weak_reference)">
           <option value="close">Close to the recording</option><option value="weak">Loosely: more room to act</option></select></div>
         <p class="hint">${v2x.voices.map((v, i) => `${esc(v.name)} speaks with &lt;Audio ${i + 1}&gt;`).join(", ")}: their library voices, so H3 says the lines in them. Runs on H3 Reference's model with the same motion.</p>` : ""}
+      ${refReady() ? `<div class="field"><label for="s3r-guide">How H3 follows the 3D scene</label><select id="s3r-guide">
+        <option value="reference"${lastGuide() === "reference" ? " selected" : ""}>As a reference video: H3 Reference draws every frame, following the move closely</option>
+        <option value="ttm"${lastGuide() === "ttm" ? " selected" : ""}>Time-to-Move: held exactly to the rough animation, its seams too</option></select></div>` : ""}
       <div class="row2 s3r-row3"><div class="field"><label for="s3r-q">Quality</label><select id="s3r-q"><option value="draft">Draft</option><option value="standard" selected>Standard</option><option value="full">Full</option></select></div>
         <div class="field"><label for="s3r-sp">Speed</label><select id="s3r-sp" title="How many steps H3 takes: fewer is quicker and rougher">
           <option value="4">Fastest (4 steps)</option><option value="auto" selected>Normal (the turbo's own)</option><option value="12">Finer (12 steps)</option><option value="full">Best (no turbo, 20 steps, slow)</option></select></div>
-        <div class="field"><label for="s3r-hold">Follow the plan</label><select id="s3r-hold"><option value="loose">Loosely</option><option value="normal" selected>Normally</option><option value="tight">Tightly</option></select></div></div>
+        <div class="field s3r-holdf"><label for="s3r-hold">Follow the plan</label><select id="s3r-hold"><option value="loose">Loosely</option><option value="normal" selected>Normally</option><option value="tight">Tightly</option></select></div></div>
       <div class="field"><label for="s3r-first">Start from</label><select id="s3r-first">
         ${noPic ? "" : `<option value="picture">The picture${pic ? " (the scene starts as the picture)" : " (the camera starts elsewhere)"}</option>`}
         ${editModels().length ? `<option value="newphoto">A new photo of the first frame (made first, about a minute, then the video)</option>
@@ -1797,6 +1800,7 @@ const Scene3D = (() => {
     foot.innerHTML = `<span class="hint s3r-st"></span><button type="button" class="btn ghost" data-a="cancel">Cancel</button><button type="button" class="btn primary" data-a="go">🎬 Render</button>`;
     const win = WM.open({ id: "scene3d-render", title: `Render · ${s.sc.name}`, content: box, footer: foot, width: 600, height: 760, modal: true });
     const useRefs = () => !!box.querySelector("#s3r-refs")?.checked;
+    const guideNow = () => box.querySelector("#s3r-guide")?.value || "ttm", byRef = () => guideNow() === "reference";
     const fillWho = () => FILL_SHORT[box.querySelector("#s3r-fillm")?.value || fillModel()] || "the edit model";
     box.querySelector("#s3r-fill")?.addEventListener("change", e => { const fm = box.querySelector(".s3r-fillm"); if (fm) fm.hidden = !e.target.checked; });
     const isPhoto = v => v === "newphoto" || v === "quickphoto" || v.startsWith("photo:");
@@ -1815,8 +1819,10 @@ const Scene3D = (() => {
     const syncStart = () => {
       const v = firstSel.value, photo = isPhoto(v);
       box.querySelector(".s3r-lookf").hidden = v !== "newphoto" && v !== "quickphoto";
-      const ff = box.querySelector(".s3r-fillf"); if (ff) ff.hidden = !photo;
-      const fm = box.querySelector(".s3r-fillm"); if (fm) fm.hidden = !photo || !box.querySelector("#s3r-fill")?.checked;
+      // a reference video is the plain 3D scene: no photo painted on, so nothing to fill, and no hold to set
+      const ff = box.querySelector(".s3r-fillf"); if (ff) ff.hidden = !photo || byRef();
+      const fm = box.querySelector(".s3r-fillm"); if (fm) fm.hidden = !photo || byRef() || !box.querySelector("#s3r-fill")?.checked;
+      box.querySelector(".s3r-holdf").hidden = byRef();
       if (photo && !holdSel.dataset.touched) holdSel.value = "loose";
       if (!photo && !holdSel.dataset.touched) holdSel.value = "normal";
       box.querySelector("#s3r-what").dispatchEvent(new Event("input"));  // what H3 reads follows the start
@@ -1826,13 +1832,14 @@ const Scene3D = (() => {
     const MP = { draft: 0.4, standard: 0.6, full: 0.98 }, HOLD = { loose: "loosely (its look carries through)", normal: "normally", tight: "tightly (close to the rough animation)" };
     const review = () => {
       const refs = useRefs(), v = firstSel.value, q = box.querySelector("#s3r-q").value, mp = MP[q] || 0.6, A = s.bg.aspect, sp = SPEEDS[spSel.value] || SPEEDS.auto;
-      const voices = extraNow()?.voices || [], R = refs || voices.length > 0;  // H3 Reference: pictures or voices
+      const voices = extraNow()?.voices || [], R = refs || voices.length > 0 || byRef();  // H3 Reference: pictures, voices or the reference video
       const turboSteps = R ? 4 : 8, steps = sp.turbo ? sp.steps || turboSteps : 20;
       const w = Math.max(32, Math.round(Math.sqrt(mp * 1048576 * A) / 32) * 32), h = Math.max(32, Math.round(w / A / 32) * 32);
-      const fill = !!box.querySelector("#s3r-fill")?.checked && fromPhoto() && cameraMoves();
+      const fill = !!box.querySelector("#s3r-fill")?.checked && fromPhoto() && cameraMoves() && !byRef();
       box.querySelector(".s3r-dl").innerHTML = [
-        ["Model", R ? `MiniMax H3 Reference, image to video with ${[refs && "the objects' pictures", voices.length && "the speakers' voices"].filter(Boolean).join(" and ")}` : "MiniMax H3, image to video"],
-        ["Following", `the scene's rough animation (Time-to-Move), ${HOLD[holdSel.value] || holdSel.value}`],
+        ["Model", R ? `MiniMax H3 Reference, image to video with ${[byRef() && "the 3D scene's render as <Video 1>", refs && "the objects' pictures", voices.length && "the speakers' voices"].filter(Boolean).join(", ")}` : "MiniMax H3, image to video"],
+        ["Following", byRef() ? "the 3D scene's render as a reference video (<Video 1>): its camera move and where everything is, not its look"
+          : `the scene's rough animation (Time-to-Move), ${HOLD[holdSel.value] || holdSel.value}`],
         ["Quality", `${box.querySelector("#s3r-q").selectedOptions[0].textContent}: about ${w}×${h} px (${mp} MP)`],
         ["Length", `${frameCount()} frames, ${dur().toFixed(2)} s at ${FPS} fps`],
         ...((extraNow()?.lines || []).length ? [["Lines", (() => { const x = extraNow(), pace = paceNote(x.lines, v2x?.voices);
@@ -1846,16 +1853,18 @@ const Scene3D = (() => {
           : v === "newphoto" ? `a photo of the first frame (the edit model)${fill ? `, then ${fillWho()} fills what the camera move reveals and redraws a sharp view where it comes close` : ""}` : fill ? `${fillWho()} fills what the camera move reveals, and redraws a sharp view where it comes close` : "nothing: it starts at once"],
       ].map(([k, x]) => `<dt>${esc(k)}</dt><dd>${esc(x)}</dd>`).join("");
       const startName = v === "picture" ? "the scene's picture" : v === "newphoto" ? "the new photo of the first frame" : v === "quickphoto" ? "the quick photo of the first frame" : v.startsWith("photo:") ? "the chosen photo" : "the first frame as drawn";
-      box.querySelector(".s3r-pics").innerHTML = `<span class="s3p-pic"><span class="s3p-pic0">🖼</span><b>${refs ? "&lt;Picture 1&gt;" : "First frame"}</b> ${esc(startName)}</span>`
-        + `<span class="s3p-pic"><span class="s3p-pic0">🎞</span><b>Motion</b> the rough animation and its mask</span>`
+      box.querySelector(".s3r-pics").innerHTML = `<span class="s3p-pic"><span class="s3p-pic0">🖼</span><b>${R ? "&lt;Picture 1&gt;" : "First frame"}</b> ${esc(startName)}</span>`
+        + (byRef() ? `<span class="s3p-pic"><span class="s3p-pic0">🎞</span><b>&lt;Video 1&gt;</b> the 3D scene's render of the move</span>`
+          : `<span class="s3p-pic"><span class="s3p-pic0">🎞</span><b>Motion</b> the rough animation and its mask</span>`)
         + (refs ? picObjs().map((x, i) => `<span class="s3p-pic"><img src="${esc(mediaUrl(x.picture))}" alt=""><b>&lt;Picture ${i + 2}&gt;</b> ${esc(x.name)}</span>`).join("") : "")
         + voices.map((v, i) => `<span class="s3p-pic"><span class="s3p-pic0">🎙</span><b>&lt;Audio ${i + 1}&gt;</b> ${esc(v.name)}'s voice</span>`).join("");
-      if (!edited) box.querySelector("#s3r-prompt").value = renderPrompt(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder, refs, fromPhoto(), extraNow()).prompt;
+      if (!edited) box.querySelector("#s3r-prompt").value = renderPrompt(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder, refs, fromPhoto(), extraNow(), guideNow()).prompt;
       const talk = speechSeconds(extraNow()?.lines || [], v2x?.voices), spare = talk ? dur() - talk : 0;
       box.querySelector(".s3r-pnote").innerHTML = (spare > SPARE_TALK ? `<span class="warn">The lines take about ${talk.toFixed(1)} s of this ${dur().toFixed(1)} s shot: H3 may fill the rest with words of its own. A shorter shot, or more happening in What happens, keeps it to the lines.</span> ` : "") + (edited ? `<span class="warn">Edited: Render sends it as it is. ↻ Rebuild puts the built one back.</span> ` : "")
         + (refs ? "H3 Reference also puts a line before it that ties &lt;Picture 1&gt; to the first frame." : "");
     };
     box.querySelector("#s3r-prompt").addEventListener("input", () => { if (!edited) { edited = true; review(); } });
+    box.querySelector("#s3r-guide")?.addEventListener("change", () => syncStart());
     box.querySelector('[data-a="rebuild"]').onclick = () => { edited = false; review(); };
     box.addEventListener("change", review);
     box.querySelector("#s3r-what").addEventListener("input", review);
@@ -1899,14 +1908,14 @@ const Scene3D = (() => {
       try {
         const start = firstSel.value, look = box.querySelector("#s3r-look").value.trim();
         {  // the stages this render goes through, from what's set
-          const to0 = toSel?.value ?? "now", ph = isPhoto(start), mv = cameraMoves() && !!box.querySelector("#s3r-fill")?.checked && ph;
-          const R = useRefs() || (extraNow()?.voices || []).length > 0;
+          const to0 = toSel?.value ?? "now", ph = isPhoto(start) && !byRef(), mv = cameraMoves() && !!box.querySelector("#s3r-fill")?.checked && ph;
+          const R = useRefs() || (extraNow()?.voices || []).length > 0 || byRef();
           words = (extraNow()?.lines || []).some(l => String(l.text || "").trim());
           sg.plan([
             ...(start === "newphoto" ? [["photo", "Making the photo of the first frame"]] : start === "quickphoto" ? [["photo", "Making a quick photo of the first frame"]] : []),
             ...(ph ? [["paint", "Painting the photo onto the scene"]] : []),
             ...(mv ? [["fill", `Filling what the photo can't see (${fillWho()})`]] : []),
-            ["anim", "Drawing the rough animation"], ["mask", "Drawing its mask"],
+            ["anim", byRef() ? "Drawing the 3D scene's render (<Video 1>)" : "Drawing the rough animation"], ["mask", "Drawing its mask"],
             ...(to0 !== "now" ? [["send", "Putting it in the shot"]] : [["send", "Sending to H3"], ["queue", "Waiting in ComfyUI's queue"],
               ["gpu", `Rendering on the GPU (${R ? "H3 Reference" : "H3"})`], ["save", "Saving the video"], ...(words ? [["words", "Checking the words (Whisper)"]] : [])]),
           ]);
@@ -1917,10 +1926,11 @@ const Scene3D = (() => {
         const to = toSel?.value ?? "now";
         const toTl = to === "now" && box.querySelector("#s3r-tl").checked;
         if (to === "now") try { localStorage.setItem("bob.sceneAutoTl", toTl ? "1" : "0"); } catch { /* not kept */ }
-        const fill = !!box.querySelector("#s3r-fill")?.checked, fillM = box.querySelector("#s3r-fillm")?.value || null;
+        const fill = !!box.querySelector("#s3r-fill")?.checked, fillM = box.querySelector("#s3r-fillm")?.value || null, guide = guideNow();
+        if (box.querySelector("#s3r-guide")) try { localStorage.setItem("bob.sceneGuide", guide); } catch { /* not kept */ }
         if (fillM) try { localStorage.setItem("bob.sceneFillModel", fillM); } catch { /* not kept */ }
         if (box.querySelector("#s3r-fill") && fromPhoto()) try { localStorage.setItem("bob.sceneGapFill", fill ? "1" : "0"); } catch { /* not kept */ }
-        const r = await buildRender({ start, look, fill, fillModel: fillM, refs: useRefs(), hold: holdSel.value, quality: box.querySelector("#s3r-q").value, speed: spSel.value, extra: extraNow(), prompt: edited ? box.querySelector("#s3r-prompt").value : null,
+        const r = await buildRender({ start, look, fill, fillModel: fillM, guide, refs: useRefs(), hold: holdSel.value, quality: box.querySelector("#s3r-q").value, speed: spSel.value, extra: extraNow(), prompt: edited ? box.querySelector("#s3r-prompt").value : null,
           what: box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder,
           onPhoto: id => { stopPhoto?.(); stopPhoto = followPhoto(id, sg); } }, m => { st.textContent = m; sg.say(m); });
         stopPhoto?.(); stopPhoto = null;
@@ -1969,16 +1979,20 @@ const Scene3D = (() => {
         const it = await waitItem(photo.id);
         photoPath = (it.files || []).find(f => /^image\//.test(f.content_type || ""))?.path || it.files?.[0]?.path;
         if (it.status !== "done" || !photoPath) throw new Error("The photo didn't come out");
-        say("Painting the photo onto the scene…");
-        proj = await prepareProjection(photoPath, 0, camForRender(0), say);
-        proj.photoRef = photoPath;
+        if (o.guide !== "reference") {  // a reference video is the plain 3D scene: nothing painted on
+          say("Painting the photo onto the scene…");
+          proj = await prepareProjection(photoPath, 0, camForRender(0), say);
+          proj.photoRef = photoPath;
+        }
       } else if (start.startsWith("photo:")) {
         const p = s.photos.find(x => x.id === start.slice(6)), it = state.items.get(start.slice(6));
         photoPath = it?.files?.[0]?.path;
         if (!p || !photoPath) throw new Error("That photo isn't there anymore");
-        say("Painting the photo onto the scene…");
-        proj = await prepareProjection(photoPath, p.t, p.cam, say);
-        proj.photoRef = photoPath;
+        if (o.guide !== "reference") {
+          say("Painting the photo onto the scene…");
+          proj = await prepareProjection(photoPath, p.t, p.cam, say);
+          proj.photoRef = photoPath;
+        }
       }
       if (proj && o.fill !== false && cameraMoves()) {
         try {
@@ -1987,17 +2001,17 @@ const Scene3D = (() => {
         }
         catch (err) { if (!s) throw err; Media.toast(`Filling the gaps: ${err.message}. Rendering without it.`); for (const g of proj.gaps || []) freeProjection(g.P); proj.gaps = []; }
       }
-      say("Drawing the rough animation…");
+      say(o.guide === "reference" ? "Drawing the 3D scene's render…" : "Drawing the rough animation…");
       const said = new Set((o.extra?.lines || []).filter(l => String(l.text || "").trim() && l.speaker).map(l => l.speaker.trim().toLowerCase()));
       talkers = s.objs.filter(x => x.prim === "figure" && said.has(x.name.trim().toLowerCase()));
-      const ref = await renderVideo("ref", [W, H], n, (f, N) => say(`Drawing the rough animation: frame ${f + 1} of ${N}`), proj);
+      const ref = await renderVideo("ref", [W, H], n, (f, N) => say(`${o.guide === "reference" ? "Drawing the 3D scene's render" : "Drawing the rough animation"}: frame ${f + 1} of ${N}`), proj);
       const mask = await renderVideo("mask", [W, H], n, (f, N) => say(`Drawing its mask: frame ${f + 1} of ${N}`), proj);
       say("Sending to H3…");
-      const built = renderPrompt(o.what, o.refs, fromPhoto, o.extra), what = built.what;
+      const built = renderPrompt(o.what, o.refs, fromPhoto, o.extra, o.guide), what = built.what;
       const cam = built.cam, prompt = String(o.prompt || "").trim() || built.prompt;
       const req = { kind: "video", engine: "motion", prompt, seconds: n / FPS, aspect: "16:9", quality: o.quality || "standard",
         seed: -1, batch: 1, turbo: true, first_frame: null, motion_video: ref, motion_video_mask: mask,
-        motion_hold: o.hold || "normal", motion_first: "picture", project: s.sc.project };
+        motion_hold: o.hold || "normal", motion_first: "picture", motion_guide: o.guide === "reference" ? "reference" : "ttm", project: s.sc.project };
       const sp = SPEEDS[o.speed]; if (sp) { req.turbo = sp.turbo; if (sp.steps) req.steps = sp.steps; }
       if (o.refs) req.references = picObjs().map(x => x.picture);
       if (o.extra?.voices?.length) { req.ref_audios = o.extra.voices.map(v => v.ref); req.clean_audio = true; }
@@ -2013,7 +2027,7 @@ const Scene3D = (() => {
       const rev = await flushSave();
       const shot = { id: s.sc.id, name: s.sc.name, thumb, seconds: n / FPS, what, cam, rev,
         req: { motion_video: ref, motion_video_mask: mask, first_frame: req.first_frame, motion_first: req.motion_first,
-          motion_hold: req.motion_hold, quality: req.quality, references: req.references || [], turbo: req.turbo, ...(req.steps ? { steps: req.steps } : {}) } };
+          motion_hold: req.motion_hold, motion_guide: req.motion_guide, quality: req.quality, references: req.references || [], turbo: req.turbo, ...(req.steps ? { steps: req.steps } : {}) } };
       return { req, shot };
     } finally { talkers = []; freeProjection(proj); if (s) { s.cv.width = keep[0]; s.cv.height = keep[1]; s.dirty = true; } }
   }
@@ -2075,32 +2089,41 @@ const Scene3D = (() => {
      subject_definitions (each picture's subject, each voice and whose it is, with their speaker ID), summary,
      retention_analysis, then the description, in which a pictured object is its <Subject N>. Without them H3 has no
      way to tell whose voice <Audio 1> is, or who <Picture 2> is. */
-  function renderPrompt(whatText, refs, fromPhoto, extra = null) {
-    const w = whatText || defaultWhat(), lines = linesText(extra, refs, w), voices = extra?.voices || [];
-    const full = (refs && picObjs().length > 0) || voices.length > 0;  // H3 Reference's full form
+  function renderPrompt(whatText, refs, fromPhoto, extra = null, guide = "ttm") {
+    const w = whatText || defaultWhat(), lines = linesText(extra, refs, w), voices = extra?.voices || [], byRef = guide === "reference";
+    const full = (refs && picObjs().length > 0) || voices.length > 0 || byRef;  // H3 Reference's full form
     const what = videoText([lines.text ? endOf(w) : w, lines.text].filter(Boolean).join(" "), refs, fromPhoto, full).text;
     const glides = s.camKeys.length > 1 && s.camKeys.some(k => camDiff(k, s.camKeys[0]) > 1e-3);
-    const cam = [glides ? (shakes() ? "The camera moves through the scene." : "The camera moves smoothly through the scene.") : shakes() ? "" : "The camera holds a static shot.",
+    const cam = [byRef ? (glides ? "The camera moves exactly as it does in <Video 1>, with the same path, speed and framing." : "The camera holds the framing of <Video 1>.")
+      : glides ? (shakes() ? "The camera moves through the scene." : "The camera moves smoothly through the scene.") : shakes() ? "" : "The camera holds a static shot.",
       shakes() ? SHAKES[shakeStyle()].says : ""].filter(Boolean).join(" ");
     const sound = extra?.sound || "overall_soundscape: Natural sound of the scene.\n\nnon_diegetic_music: N/A";
     const pics = refs ? picObjs() : [];
-    if (!pics.length && !voices.length) return { what, cam, prompt: `integrated_multimodal_description: [Shot 1] ${what.replace(/\s+/g, " ")} ${cam}\n\n${sound}` };
+    if (!pics.length && !voices.length && !byRef) return { what, cam, prompt: `integrated_multimodal_description: [Shot 1] ${what.replace(/\s+/g, " ")} ${cam}\n\n${sound}` };
     const lc = t => t.charAt(0).toLowerCase() + t.slice(1);
     const defs = pics.map((o, i) => `<Subject ${i + 2}> is the subject of <Picture ${i + 2}>: ${lc(subjectOf(o))}.`);
     // whose each voice is: the speaker's <Subject N>, or what they are
     const owner = v => { const o = s.objs.find(x => x.name.trim().toLowerCase() === String(v.name).trim().toLowerCase()), k = o ? pics.indexOf(o) : -1;
       return k >= 0 ? `<Subject ${k + 2}>` : o ? `the ${shortName(o)}` : String(v.name); };
     voices.forEach((v, i) => { const sid = lines.ids.get(v.name); defs.push(`<Audio ${i + 1}> is the voice-timbre reference for ${owner(v)}${sid ? ` (S${sid})` : ""}.`); });
+    if (byRef) {  // the 3D scene's render: its move, and what each of its stand-ins becomes
+      const shown = s.objs.filter(o => o.mesh && o.pos && !o.hidden);
+      const becomes = o => { const k = pics.indexOf(o); return k >= 0 ? `<Subject ${k + 2}>` : lc(subjectOf(o)); };
+      defs.push(`<Video 1> is a rough 3D layout of this shot: plain gray stand-ins on a plain floor, without textures or real light. It shows only the camera movement, the framing, and where everything stands and moves.`
+        + (shown.length ? ` In it, ${shown.map(o => `the gray ${o.prim === "figure" ? "figure" : "shape"} ${s.objs.filter(x => x.prim === o.prim && x.mesh && !x.hidden).length > 1 ? `"${o.name}" ` : ""}is ${becomes(o)}`).join("; ")}.` : "")
+        + ` Everything looks as it does in <Picture 1>.`);
+    }
     const who = pics.map((o, i) => `<Subject ${i + 2}>`), whoText = who.length > 1 ? `${who.slice(0, -1).join(", ")} and ${who.at(-1)}` : who[0] || "the people in it";
-    const tasks = ["reference generation", ...(voices.length ? ["audio reference"] : [])];
+    const tasks = ["reference generation", ...(byRef ? ["video reference"] : []), ...(voices.length ? ["audio reference"] : [])];
     const first = videoText(w, refs, fromPhoto, true).text.replace(/<Picture (\d+)>/g, (m, n) => +n >= 2 ? `<Subject ${n}>` : m).split(/(?<=[.!?])\s+/)[0];
     const opening = first.split(/\s+/).length <= 40 ? first.replace(/[.\s]+$/, "") : "";
     const summary = `[${tasks.join(" + ")}] The target video is a single ${dur().toFixed(1)}-second scene with ${whoText}`
       + (voices.length ? `, using ${voices.map((v, i) => `<Audio ${i + 1}> as the voice-timbre reference for ${owner(v)}`).join(" and ")}` : "") + "."
-      + (opening ? ` It opens as ${lc(opening)}.` : "");
+      + (opening ? ` It opens as ${lc(opening)}.` : "") + (byRef ? " Its camera movement and blocking follow <Video 1>; its look follows <Picture 1>." : "");
     const retention = [
       ...pics.map((o, i) => `<Subject ${i + 2}> (appears in [Shot 1]): fully_preserved - the identity, face, hair, build and appearance from <Picture ${i + 2}> are retained.`),
       ...voices.map((v, i) => `<Audio ${i + 1}>: ${extra?.voiceRef === "weak" ? "weak_reference - its voice timbre loosely guides" : "reference - its voice timbre guides"} the delivery of ${owner(v)} without copying the original signal.`),
+      ...(byRef ? ["<Video 1>: motion_only - its camera movement, framing, timing, and the places and movements of everything in it are followed exactly; its look (gray untextured stand-ins, plain floor, flat light) is not copied. Every frame looks like <Picture 1>."] : []),
     ];
     const body = `[Shot 1] ${what.replace(/\s+/g, " ")} ${cam}`.replace(/<Picture (\d+)>/g, (m, n) => +n >= 2 ? `<Subject ${n}>` : m);
     const prompt = [`subject_definitions:\n${defs.join("\n")}`, `summary:\n${summary}`, `retention_analysis:\n${retention.join("\n")}`,
@@ -2174,7 +2197,7 @@ const Scene3D = (() => {
     const best = photos.reverse().find(p => Math.abs(p.t) < 0.5 / FPS && camDiff(p.cam, cam0) < 0.02);
     const start = o.start || (s.sc.picture && startsAsPicture() ? "picture" : best ? `photo:${best.id}` : editModels().length ? "newphoto" : s.sc.picture ? "picture" : "composite");
     const refs = picObjs().length > 0 && refsReady();
-    const r = await buildRender({ start, look: o.look ?? lastLook(), fill: o.fill ?? lastFill(), refs, extra: o.extra || null, onPhoto: o.onPhoto, hold: start === "newphoto" || start === "quickphoto" || start.startsWith("photo:") ? "loose" : "normal",
+    const r = await buildRender({ start, look: o.look ?? lastLook(), fill: o.fill ?? lastFill(), guide: o.guide ?? lastGuide(), refs, extra: o.extra || null, onPhoto: o.onPhoto, hold: start === "newphoto" || start === "quickphoto" || start.startsWith("photo:") ? "loose" : "normal",
       quality: ["draft", "standard", "full"].includes(o.quality) ? o.quality : "standard", what: fromShot(text) || defaultWhat() }, say);
     return { ...r, start, refs };
   }
@@ -3565,6 +3588,11 @@ const Scene3D = (() => {
     return photoPrompt(said, pics.length || d ? tag(1) : "", free, person) + (d ? depthLine(tag, model) : "") + photoObjects(t, cam, pics, model, 2 + d, free, pasted);
   }
   const lastLook = () => { try { return localStorage.getItem("bob.scenePhotoLook") || ""; } catch { return ""; } };
+  // How H3 follows a 3D scene: shown its render as a reference video (H3 Reference; the default when it's there), or
+  // held to it with Time-to-Move
+  const refReady = () => !!state.caps?.engines?.h3ref?.ready;
+  const lastGuide = () => { let g = null; try { g = localStorage.getItem("bob.sceneGuide"); } catch { /* none kept */ }
+    return !refReady() ? "ttm" : g === "ttm" ? "ttm" : "reference"; };
   const lastFill = () => { try { return localStorage.getItem("bob.sceneGapFill") !== "0"; } catch { return true; } };
   // the model that fills what the photo can't see: Qwen (it takes the photo along, so the fill continues the same
   // place) unless another installed edit model was picked last
@@ -4455,7 +4483,7 @@ const Scene3D = (() => {
       save(); setTime(s.t); renderSide(); s.dirty = true; return true;
     },
   };
-  return { mount, autoRender, current, stages, followPhoto, followRender, addFromLibrary, camEdit, objEdit, speechSeconds, loadRates, paceNote, SPARE_TALK, select: i => s?.bg && select(i), selectCam: () => s?.bg && selectCam(),
+  return { mount, autoRender, current, stages, followPhoto, followRender, lastGuide, addFromLibrary, camEdit, objEdit, speechSeconds, loadRates, paceNote, SPARE_TALK, select: i => s?.bg && select(i), selectCam: () => s?.bg && selectCam(),
     rename: (i, name) => { const o = s?.objs[i]; if (!o || !String(name || "").trim()) return; o.name = String(name).trim().slice(0, 120); save(); renderSide(); }, CAM_MOVES, applyCameraMove, cameraOut, applySavedCamera, renderForShot, photoForShot, fromTemplate, setTemplate, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
     _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _fill: (P, look, say) => fillGaps(P, look, say), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
 })();
