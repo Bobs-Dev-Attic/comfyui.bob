@@ -11,6 +11,10 @@ const Enhance = (() => {
   let caps = null;
   const load = () => { try { return { ...DEF, ...(JSON.parse(localStorage.getItem(KEY) || "{}") || {}) }; } catch { return { ...DEF }; } };
   const store = o => { try { localStorage.setItem(KEY, JSON.stringify(o)); } catch {} };
+  // The 3D Render window's "Enhance the final take": its own choices, starting from the window's last ones
+  const FINAL_KEY = KEY + ".final";
+  const finalOpts = () => { try { const r = localStorage.getItem(FINAL_KEY); return r ? { ...DEF, ...(JSON.parse(r) || {}), facerefine: false } : { ...load(), facerefine: false }; } catch { return { ...DEF, facerefine: false }; } };
+  const storeFinal = o => { try { localStorage.setItem(FINAL_KEY, JSON.stringify(o)); } catch {} };
   async function getCaps() {
     if (!caps) { try { caps = await api("/api/enhance/caps"); } catch { caps = {}; } }
     return caps;
@@ -109,11 +113,12 @@ const Enhance = (() => {
     ? "Plus (ComfyUI-H3-FaceRefine-Plus): pastes only the new detail over the shot's own light and colour, pins the face so it doesn't wobble on the head, and matches the colours (lips too) back to the source. Plus' authors refine at 0.30; 0.15 keeps more of the face H3 drew."
     : "Stock stitch. Install ComfyUI-H3-FaceRefine-Plus for a steadier face that keeps the shot's colours.";
 
-  /* The window. it = a studio result, or null for the Settings › After generating choices. */
-  async function dialog(it = null) {
+  /* The window. it = a studio result, or null for the Settings › After generating choices. x.final: the 3D Render
+     window's final-take choices (x.onPick(v) once saved); x.onRun(v): run it the caller's way (V2's shot take). */
+  async function dialog(it = null, x = {}) {
     const c = await getCaps();
-    const o = load(), kind = it?.kind || "video";
-    const h3 = it ? ["h3", "h3ref"].includes(it.params?.engine) : true;
+    const o = x.final ? finalOpts() : load(), kind = it?.kind || "video";
+    const h3 = it ? ["h3", "h3ref"].includes(it.params?.engine) : !x.final;
     const isVideo = kind === "video";
     if (!o.seedvr2_model || !(c.seedvr2_models || []).includes(o.seedvr2_model))
       o.seedvr2_model = (c.seedvr2_models || []).find(m => /3b_fp8/.test(m)) || (c.seedvr2_models || [])[0] || "";
@@ -121,7 +126,9 @@ const Enhance = (() => {
     const form = document.createElement("div");
     form.className = "enh";
     form.innerHTML = `
-      <p class="hint">${it ? `${esc(it.kind === "video" ? "Video" : "Picture")}: ${esc((promptLabel(it.params?.prompt) || it.files?.[0]?.name || "").slice(0, 90))}` : "Runs on every new picture or video (Settings › Post-Processing)."}
+      <p class="hint">${it ? `${esc(it.kind === "video" ? "Video" : "Picture")}: ${esc(((typeof promptLabel === "function" ? promptLabel(it.params?.prompt) : "") || it.files?.[0]?.name || "").slice(0, 90))}`
+        : x.final ? "Runs on the 3D render's final take: once its words are checked, its lips redrawn and any sound retake done, the take with the best words. FaceRefine isn't for 3D renders yet."
+        : "Runs on every new picture or video (Settings › Post-Processing)."}
         The steps run in this order; each is optional.</p>
       <div class="enh-step${isVideo && h3 && c.facerefine ? "" : " off"}">
         <label class="check"><input type="checkbox" data-k="facerefine"${o.facerefine && isVideo && h3 ? " checked" : ""}${dis(isVideo && h3 && c.facerefine,
@@ -185,14 +192,16 @@ const Enhance = (() => {
     const foot = document.createElement("div");
     foot.innerHTML = `<span class="wm-foot-gap"></span><button type="button" class="btn sm" data-a="cancel">Cancel</button>
       <button type="button" class="btn sm primary" data-a="go">${it ? "✨ Enhance" : "Save"}</button>`;
-    const w = WM.open({ id: "enhance", title: it ? "Enhance" : "Enhance after generating", content: form, footer: foot, width: 620, height: 640, minWidth: 340, minHeight: 300 });
+    const w = WM.open({ id: "enhance", title: it ? "Enhance" : x.final ? "Enhance the final take" : "Enhance after generating", content: form, footer: foot, width: 620, height: 640, minWidth: 340, minHeight: 300 });
     form.addEventListener("input", show); form.addEventListener("change", show); show();
     foot.querySelector('[data-a="cancel"]').onclick = () => w.close();
     foot.querySelector('[data-a="go"]').onclick = async () => {
       const v = read();
+      if (x.final) { storeFinal(v); w.close(); x.onPick?.(v); return; }
       store({ ...load(), ...v, ...(isVideo ? {} : { facerefine: o.facerefine, upscaler: v.upscaler === "none" && o.upscaler === "relayvsr" ? "relayvsr" : v.upscaler }) });
       w.close();
       if (!it) { renderAfter(); return; }
+      if (x.onRun) return x.onRun(v);
       await run(it, v);
     };
   }
@@ -309,5 +318,5 @@ const Enhance = (() => {
   // A generation that asked to be enhanced afterwards is enhanced by the server when it's done
   // (app/jobs.py _enhance_after): once, whether or not a page is open. Nothing to do here.
   function onItem() {}
-  return { dialog, after, initSettings, onItem, estimate, expected, afterTime, fmtTime, renderAfter, renderSettings };
+  return { dialog, after, initSettings, onItem, estimate, expected, afterTime, fmtTime, renderAfter, renderSettings, summary, finalOpts, anyOn };
 })();
