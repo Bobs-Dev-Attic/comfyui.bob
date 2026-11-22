@@ -5,6 +5,14 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.147.2] - 2026-11-21
+
+### Fixed
+- **Show in Explorer opens the file's own folder.** With a space in the path (the projects' folders, "Restaurant
+  dinner/scenes/Side dolly"), the whole `/select,…` was quoted as one argument and Explorer opened its default
+  folder; it's now written out as Explorer wants it, so it opens the folder with the file selected. The same for a
+  3D model's Show in folder.
+
 ## [0.147.1] - 2026-11-21
 
 ### Added

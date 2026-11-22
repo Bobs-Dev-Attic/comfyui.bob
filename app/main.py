@@ -747,7 +747,7 @@ async def models3d_open(model_id: str, req: Model3DOpen):
         raise HTTPException(404, "The model's file isn't there anymore")
     try:
         if req.how == "folder":
-            subprocess.Popen(["explorer.exe", f"/select,{path}"], creationflags=media.NO_WINDOW)
+            media.reveal(path)
         else:
             os.startfile(str(path))  # noqa: S606 - the user's own file, with their own default app
     except OSError as exc:
@@ -1620,7 +1620,7 @@ async def media_reveal(req: RevealReq):
     if not f.is_file():
         raise HTTPException(404, "The file isn't there anymore")
     try:
-        subprocess.Popen(["explorer.exe", f"/select,{f}"], creationflags=media.NO_WINDOW)
+        media.reveal(f)
     except OSError as exc:
         raise HTTPException(409, str(exc)) from exc
     return {"ok": True}

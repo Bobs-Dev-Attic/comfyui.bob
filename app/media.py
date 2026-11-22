@@ -128,6 +128,14 @@ def allowed_roots() -> list[Path]:
     return roots
 
 
+def reveal(path: Path) -> None:
+    """Open Explorer with the file selected. The command line is written out as Explorer wants it,
+    /select,"C:\a folder\file.mp4": given as a list, the whole /select,... argument was quoted as one
+    when the path had a space, and Explorer opened its default folder instead."""
+    p = os.path.normpath(str(path))
+    subprocess.Popen(f'explorer.exe /select,"{p}"', creationflags=NO_WINDOW)
+
+
 def resolve(ref: str) -> Path:
     """Turn a media ref into a real file path, refusing anything outside the allowed places."""
     if not ref:
