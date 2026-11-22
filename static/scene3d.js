@@ -2089,13 +2089,104 @@ const Scene3D = (() => {
      subject_definitions (each picture's subject, each voice and whose it is, with their speaker ID), summary,
      retention_analysis, then the description, in which a pictured object is its <Subject N>. Without them H3 has no
      way to tell whose voice <Audio 1> is, or who <Picture 2> is. */
+  /* The camera's move in words, measured from its path in the 3D scene, so the prompt says what <Video 1> (or the
+     rough animation) shows: how big the main subject is in frame at the start and the end (extreme close-up to
+     extreme wide), the angle (eye level, high, low, from above), and what the camera does in each stretch between
+     its keys (pushes in or pulls back, arcs or orbits round them by so many degrees, rises or comes down, tracks,
+     pans, tilts, zooms, a dolly zoom, or holds), how (smoothly, slowly) and when. who(o): the subject as the prompt
+     names it. Returns "" when there's no camera to speak of. */
+  function narrateCamera(who = o => `the ${shortName(o)}`) {
+    if (!s?.bg) return "";
+    const T = dur(), shown = s.objs.filter(o => o.mesh && o.pos && !o.hidden);
+    const at = t => { const c = camBase(t), e = eyeOf(c); return { c, e, f: norm(sub(c.target, e)) }; };
+    // the subject: what the camera ends looking at most squarely (a person before a thing)
+    const end = at(T), mid = (o, t) => { const q = poseAt(o, t), h = Math.max(0.05, (o.mesh.hi[1] - o.mesh.lo[1]) * (o.stretch?.[1] || 1) * (q.scale ?? 1));
+      return { p: [q.pos[0], q.pos[1] + h * 0.55, q.pos[2]], base: q.pos, h }; };
+    const off = o => { const m = mid(o, T), v = norm(sub(m.p, end.e)); return 1 - (v[0] * end.f[0] + v[1] * end.f[1] + v[2] * end.f[2]) + (o.prim === "figure" ? 0 : 0.3); };
+    const o = shown.slice().sort((a, b) => off(a) - off(b))[0] || null;
+    const name = o ? who(o) : "the scene";
+    const SIZES = [[0.2, "an extreme close-up"], [0.36, "a close-up"], [0.56, "a medium close-up"], [0.85, "a medium shot"], [1.7, "a full shot"], [4, "a wide shot"], [Infinity, "an extreme wide shot"]];
+    const size = t => {
+      const k = at(t); if (!o) return "a view";
+      const m = mid(o, t), d = sub(m.p, k.e), z = d[0] * k.f[0] + d[1] * k.f[1] + d[2] * k.f[2];
+      if (z <= 0) return null;  // behind the camera
+      const fv = fovOf(k.c), r = (2 * z * fv.tv) / m.h, side = Math.abs(d[0] * k.f[2] - d[2] * k.f[0]) / z;
+      if (side > fv.t * 1.15) return null;  // out of frame
+      return SIZES.find(([lim]) => r <= lim)[1];
+    };
+    const angle = t => {
+      const k = at(t); if (!o) return "";
+      const m = mid(o, t), eyeY = m.base[1] + m.h * 0.9, hz = Math.hypot(k.e[0] - m.p[0], k.e[2] - m.p[2]);
+      const a = Math.atan2(k.e[1] - eyeY, hz) / rad, pitch = Math.asin(Math.max(-1, Math.min(1, k.f[1]))) / rad;
+      return pitch < -65 ? "from straight above" : a > 40 ? "from high above" : a > 14 ? "from a high angle" : a < -14 ? "from a low angle" : "at eye level";
+    };
+    const of = (sz, t) => sz ? `${sz} of ${name}${angle(t) ? ` ${angle(t)}` : ""}` : `a view away from ${name}`;
+    // stretches between the keys, each one measured; the same kind of move over several keys (an orbit's) is one
+    const ts = [...new Set([0, ...s.camKeys.map(k => Math.max(0, Math.min(T, k.t))), T])].sort((a, b) => a - b);
+    const az = e => Math.atan2(e[0] - (o ? mid(o, 0).p[0] : 0), e[2] - (o ? mid(o, 0).p[2] : 0)) / rad;
+    const parts = [];
+    for (let i = 0; i + 1 < ts.length; i++) {
+      const t0 = ts[i], t1 = ts[i + 1]; if (t1 - t0 < 0.05) continue;
+      const a0 = at(t0), a1 = at(t1), h = o ? mid(o, t0).h : 1.7;
+      let turn = 0, prev = az(a0.e);  // round the subject, signed (+: the camera goes to its right)
+      for (let t = t0 + 0.1; t <= t1 + 1e-6; t += 0.1) { const z = az(at(Math.min(t, t1)).e); let dz = z - prev; dz -= Math.round(dz / 360) * 360; turn += dz; prev = z; }
+      const r0 = norm(cross(a0.f, [0, 1, 0])), mv = sub(a1.e, a0.e), moved = Math.hypot(...mv);
+      const dist = t => o ? Math.hypot(...sub(mid(o, t).p, at(t).e)) : 1, dr = dist(t1) / dist(t0);
+      const lens = (a1.c.lens || baseLens()) / (a0.c.lens || baseLens());
+      const look = Math.atan2(a1.f[0] * r0[0] + a1.f[2] * r0[2], a1.f[0] * a0.f[0] + a1.f[2] * a0.f[2]) / rad;  // + : turned right
+      const tilt = (Math.asin(a1.f[1]) - Math.asin(a0.f[1])) / rad, side = mv[0] * r0[0] + mv[2] * r0[2];
+      const k = [];
+      if (o && Math.abs(turn) >= 8 && Math.abs(look) > 0.4 * Math.abs(turn)) k.push(["orbit", turn]);
+      if (lens > 1.12 && dr > 1.15) k.push(["vertigo"]);
+      else {
+        if (dr < 0.86) k.push(["push"]); else if (dr > 1.16) k.push(["pull"]);
+        if (lens > 1.12) k.push(["zoomin"]); else if (lens < 0.89) k.push(["zoomout"]);
+      }
+      if (Math.abs(mv[1]) > 0.25 * h) k.push([mv[1] > 0 ? "rise" : "fall"]);
+      if (!k.some(x => x[0] === "orbit") && Math.abs(side) > 0.3 * h && dr > 0.86 && dr < 1.16) k.push([side > 0 ? "trackr" : "trackl"]);
+      if (moved < 0.15 * h && Math.abs(look) > 5) k.push([look > 0 ? "panr" : "panl"]);
+      if (moved < 0.15 * h && Math.abs(tilt) > 5) k.push([tilt > 0 ? "tiltup" : "tiltdown"]);
+      const sig = k.map(x => x[0] === "orbit" ? `orbit${x[1] > 0 ? "r" : "l"}` : x[0]).sort().join("+") || "hold";
+      const key = [...s.camKeys].reverse().find(x => x.t <= t0 + 1e-6);
+      const last = parts.at(-1);
+      if (last && last.sig === sig) { last.t1 = t1; last.turn += turn; }
+      else parts.push({ t0, t1, sig, k, turn, eased: !!key?.ease });
+    }
+    if (!parts.length) return "";
+    const deg = x => `${Math.round(Math.abs(x) / 5) * 5}°`;
+    const verbs = p => {
+      const v = [], d = p.t1 - p.t0, slow = "";
+      for (const [kind] of p.k) {
+        if (kind === "orbit") v.push(Math.abs(p.turn) >= 300 ? `${slow}circles all the way around ${name}` : `${slow}${Math.abs(p.turn) >= 120 ? "orbits" : "arcs"} ${deg(p.turn)} to the ${p.turn > 0 ? "right" : "left"} around ${name}`);
+        else if (kind === "vertigo") v.push("pulls back while zooming in (a dolly zoom)");
+        else v.push({ push: `${slow}pushes in`, pull: `${slow}pulls back`, zoomin: "zooms in", zoomout: "zooms out", rise: "rises", fall: "comes down",
+          trackl: "tracks to the left", trackr: "tracks to the right", panl: "pans to the left", panr: "pans to the right", tiltup: "tilts up", tiltdown: "tilts down" }[kind]);
+      }
+      const [first, ...rest] = v;
+      // how: slowly (a long stretch), smoothly (eased in and out)
+      const how = [d >= 3.5 && "slowly", p.eased && "smoothly"].filter(Boolean).join(" and ");
+      return first ? `${how ? `${how} ` : ""}${first}${rest.length ? ` while it ${rest.length > 1 ? `${rest.slice(0, -1).join(", ")} and ${rest.at(-1)}` : rest[0]}` : ""}` : "holds still";
+    };
+    const sec = t => `${(Math.round(t * 10) / 10).toFixed(1)} s`;
+    const start = size(0), finish = size(T);
+    if (parts.length === 1 && parts[0].sig === "hold") return `The camera holds still on ${of(start, 0)}.`;
+    if (parts.length === 1) {
+      const p = parts[0];
+      const same = start === finish && angle(0) === angle(T);
+      return `The camera starts on ${of(start, 0)}, then ${verbs(p)} over ${Math.round((p.t1 - p.t0) * 10) / 10} seconds, ${same && start ? `staying on ${start}` : `ending on ${of(finish, T)}`}.`;
+    }
+    return `The camera starts on ${of(start, 0)}. ` + parts.map((p, i) => `${i ? "Then, from" : "From"} ${sec(p.t0)} to ${sec(p.t1)}, it ${verbs(p)}${i === parts.length - 1 ? `, ending on ${of(finish, T)}` : p.sig !== "hold" && size(p.t1) ? `, to ${of(size(p.t1), p.t1)}` : ""}.`).join(" ");
+  }
   function renderPrompt(whatText, refs, fromPhoto, extra = null, guide = "ttm") {
     const w = whatText || defaultWhat(), lines = linesText(extra, refs, w), voices = extra?.voices || [], byRef = guide === "reference";
     const full = (refs && picObjs().length > 0) || voices.length > 0 || byRef;  // H3 Reference's full form
     const what = videoText([lines.text ? endOf(w) : w, lines.text].filter(Boolean).join(" "), refs, fromPhoto, full).text;
     const glides = s.camKeys.length > 1 && s.camKeys.some(k => camDiff(k, s.camKeys[0]) > 1e-3);
-    const cam = [byRef ? (glides ? "The camera moves exactly as it does in <Video 1>, with the same path, speed and framing." : "The camera holds the framing of <Video 1>.")
-      : glides ? (shakes() ? "The camera moves through the scene." : "The camera moves smoothly through the scene.") : shakes() ? "" : "The camera holds a static shot.",
+    const picsNow = refs ? picObjs() : [];
+    const narr = narrateCamera(o => { const k = picsNow.indexOf(o); return k >= 0 && full ? `<Subject ${k + 2}>` : `the ${shortName(o)}`; });
+    const cam = [byRef ? (glides ? `${narr || "The camera moves through the scene."} It moves exactly as the camera does in <Video 1>, with the same path, speed and framing.`
+        : `${narr || "The camera holds still."} It keeps the framing of <Video 1>.`)
+      : narr ? narr : glides ? (shakes() ? "The camera moves through the scene." : "The camera moves smoothly through the scene.") : shakes() ? "" : "The camera holds a static shot.",
       shakes() ? SHAKES[shakeStyle()].says : ""].filter(Boolean).join(" ");
     const sound = extra?.sound || "overall_soundscape: Natural sound of the scene.\n\nnon_diegetic_music: N/A";
     const pics = refs ? picObjs() : [];
@@ -4483,7 +4574,7 @@ const Scene3D = (() => {
       save(); setTime(s.t); renderSide(); s.dirty = true; return true;
     },
   };
-  return { mount, autoRender, current, stages, followPhoto, followRender, lastGuide, addFromLibrary, camEdit, objEdit, speechSeconds, loadRates, paceNote, SPARE_TALK, select: i => s?.bg && select(i), selectCam: () => s?.bg && selectCam(),
+  return { mount, autoRender, current, stages, followPhoto, followRender, lastGuide, narrateCamera: (...a) => narrateCamera(...a), addFromLibrary, camEdit, objEdit, speechSeconds, loadRates, paceNote, SPARE_TALK, select: i => s?.bg && select(i), selectCam: () => s?.bg && selectCam(),
     rename: (i, name) => { const o = s?.objs[i]; if (!o || !String(name || "").trim()) return; o.name = String(name).trim().slice(0, 120); save(); renderSide(); }, CAM_MOVES, applyCameraMove, cameraOut, applySavedCamera, renderForShot, photoForShot, fromTemplate, setTemplate, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
     _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _fill: (P, look, say) => fillGaps(P, look, say), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
 })();
