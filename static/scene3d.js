@@ -2120,41 +2120,93 @@ const Scene3D = (() => {
       const a = Math.atan2(k.e[1] - eyeY, hz) / rad, pitch = Math.asin(Math.max(-1, Math.min(1, k.f[1]))) / rad;
       return pitch < -65 ? "from straight above" : a > 40 ? "from high above" : a > 14 ? "from a high angle" : a < -14 ? "from a low angle" : "at eye level";
     };
-    const of = (sz, t) => sz ? `${sz} of ${name}${angle(t) ? ` ${angle(t)}` : ""}` : `a view away from ${name}`;
-    // stretches between the keys, each one measured; the same kind of move over several keys (an orbit's) is one
+    const person = o?.prim === "figure", poss = `${name}'s`;
+    // the camera's bearing round them: 0 in front, + on their left, ±180 behind
+    const rel = t => { const k = at(t), m = mid(o, t), v = xf(matOf(o, poseAt(o, t)), [0, 0, 1], 0), l = Math.hypot(v[0], v[2]) || 1, f = [v[0] / l, v[2] / l];
+      const d = [k.e[0] - m.p[0], k.e[2] - m.p[2]]; return Math.atan2(d[0] * f[1] - d[1] * f[0], d[0] * f[0] + d[1] * f[1]) / rad; };
+    const sideOf = r => r > 0 ? "left" : "right";
+    const view = r => { const a = Math.abs(r);
+      return a < 22.5 ? "from the front" : a < 67.5 ? `from ${poss} front ${sideOf(r)}, a three-quarter view` : a < 112.5 ? `from ${poss} ${sideOf(r)} side`
+        : a < 157.5 ? `from behind, on ${poss} ${sideOf(r)}` : "from behind"; };
+    const facing = r => { const a = Math.abs(r);  // what of them faces the camera, for an orbit's way points
+      return a < 22.5 ? "the front" : a < 112.5 ? `the ${sideOf(r)} side` : "the back"; };
+    const of = (sz, t) => sz ? `${sz} of ${name}${angle(t) ? ` ${angle(t)}` : ""}${person ? `, ${view(rel(t))}` : ""}` : `a view away from ${name}`;
+    // The path, measured between its keys (no judging yet: a move sampled in many small keys is small in each), then
+    // grouped where it goes the same way (holding still, or each of its parts in the same direction), and each group
+    // judged as a whole: an orbit's 16 steps are one orbit, a push that stops and pulls back is two moves.
     const ts = [...new Set([0, ...s.camKeys.map(k => Math.max(0, Math.min(T, k.t))), T])].sort((a, b) => a - b);
     const az = e => Math.atan2(e[0] - (o ? mid(o, 0).p[0] : 0), e[2] - (o ? mid(o, 0).p[2] : 0)) / rad;
-    const parts = [];
+    const dist = t => o ? Math.hypot(...sub(mid(o, t).p, at(t).e)) : 1;
+    const steps = [];
     for (let i = 0; i + 1 < ts.length; i++) {
-      const t0 = ts[i], t1 = ts[i + 1]; if (t1 - t0 < 0.05) continue;
+      const t0 = ts[i], t1 = ts[i + 1]; if (t1 - t0 < 0.02) continue;
       const a0 = at(t0), a1 = at(t1), h = o ? mid(o, t0).h : 1.7;
       let turn = 0, prev = az(a0.e);  // round the subject, signed (+: the camera goes to its right)
-      for (let t = t0 + 0.1; t <= t1 + 1e-6; t += 0.1) { const z = az(at(Math.min(t, t1)).e); let dz = z - prev; dz -= Math.round(dz / 360) * 360; turn += dz; prev = z; }
-      const r0 = norm(cross(a0.f, [0, 1, 0])), mv = sub(a1.e, a0.e), moved = Math.hypot(...mv);
-      const dist = t => o ? Math.hypot(...sub(mid(o, t).p, at(t).e)) : 1, dr = dist(t1) / dist(t0);
-      const lens = (a1.c.lens || baseLens()) / (a0.c.lens || baseLens());
-      const look = Math.atan2(a1.f[0] * r0[0] + a1.f[2] * r0[2], a1.f[0] * a0.f[0] + a1.f[2] * a0.f[2]) / rad;  // + : turned right
-      const tilt = (Math.asin(a1.f[1]) - Math.asin(a0.f[1])) / rad, side = mv[0] * r0[0] + mv[2] * r0[2];
-      const k = [];
-      if (o && Math.abs(turn) >= 8 && Math.abs(look) > 0.4 * Math.abs(turn)) k.push(["orbit", turn]);
-      if (lens > 1.12 && dr > 1.15) k.push(["vertigo"]);
-      else {
-        if (dr < 0.86) k.push(["push"]); else if (dr > 1.16) k.push(["pull"]);
-        if (lens > 1.12) k.push(["zoomin"]); else if (lens < 0.89) k.push(["zoomout"]);
-      }
-      if (Math.abs(mv[1]) > 0.25 * h) k.push([mv[1] > 0 ? "rise" : "fall"]);
-      if (!k.some(x => x[0] === "orbit") && Math.abs(side) > 0.3 * h && dr > 0.86 && dr < 1.16) k.push([side > 0 ? "trackr" : "trackl"]);
-      if (moved < 0.15 * h && Math.abs(look) > 5) k.push([look > 0 ? "panr" : "panl"]);
-      if (moved < 0.15 * h && Math.abs(tilt) > 5) k.push([tilt > 0 ? "tiltup" : "tiltdown"]);
-      const sig = k.map(x => x[0] === "orbit" ? `orbit${x[1] > 0 ? "r" : "l"}` : x[0]).sort().join("+") || "hold";
+      const nT = Math.max(1, Math.ceil((t1 - t0) / 0.1));
+      for (let j = 1; j <= nT; j++) { const z = az(at(t0 + (t1 - t0) * j / nT).e); let dz = z - prev; dz -= Math.round(dz / 360) * 360; turn += dz; prev = z; }
+      const r0 = norm(cross(a0.f, [0, 1, 0])), mv = sub(a1.e, a0.e);
       const key = [...s.camKeys].reverse().find(x => x.t <= t0 + 1e-6);
+      steps.push({ t0, t1, h, turn, lnd: Math.log(dist(t1) / dist(t0)), dy: mv[1] / h, side: (mv[0] * r0[0] + mv[2] * r0[2]) / h,
+        look: Math.atan2(a1.f[0] * r0[0] + a1.f[2] * r0[2], a1.f[0] * a0.f[0] + a1.f[2] * a0.f[2]) / rad,
+        tilt: (Math.asin(a1.f[1]) - Math.asin(a0.f[1])) / rad, lnl: Math.log((a1.c.lens || baseLens()) / (a0.c.lens || baseLens())),
+        moved: Math.hypot(...mv) / h, eased: !!key?.ease });
+    }
+    const still = x => x.moved < 0.01 && Math.abs(x.look) < 0.3 && Math.abs(x.tilt) < 0.3 && Math.abs(x.lnl) < 0.003 && Math.abs(x.turn) < 0.3;
+    // [measure, a step's noise, how much of it makes it part of the move]
+    const DIMS = [["turn", 0.5, 4], ["lnd", 0.004, 0.04], ["dy", 0.01, 0.06], ["side", 0.01, 0.06], ["look", 0.5, 3], ["tilt", 0.5, 3], ["lnl", 0.003, 0.03]];
+    const groups = [];
+    for (const x of steps) {
+      const g = groups.at(-1);
+      const flips = g && DIMS.some(([d, eps, big]) => Math.abs(x[d]) > eps && Math.abs(g[d]) > big && Math.sign(x[d]) !== Math.sign(g[d]));
+      if (g && still(x) === g.still && !flips) { g.t1 = x.t1; g.moved += x.moved; for (const [d] of DIMS) g[d] += x[d]; }
+      else groups.push({ ...x, still: still(x) });
+    }
+    const parts = [];
+    for (const g of groups) {
+      const h = g.h, dr = Math.exp(g.lnd), lens = Math.exp(g.lnl), moved = g.moved, k = [];  // moved: how far it travels
+      if (!g.still) {
+        if (o && Math.abs(g.turn) >= 8 && Math.abs(g.look) > 0.4 * Math.abs(g.turn)) k.push(["orbit", g.turn]);
+        if (lens > 1.12 && dr > 1.15) k.push(["vertigo"]);
+        else {
+          if (dr < 0.86) k.push(["push"]); else if (dr > 1.16) k.push(["pull"]);
+          if (lens > 1.12) k.push(["zoomin"]); else if (lens < 0.89) k.push(["zoomout"]);
+        }
+        if (Math.abs(g.dy) > 0.25) k.push([g.dy > 0 ? "rise" : "fall"]);
+        if (!k.some(x => x[0] === "orbit") && Math.abs(g.side) > 0.3 && dr > 0.86 && dr < 1.16) k.push([g.side > 0 ? "trackr" : "trackl"]);
+        if (moved < 0.15 && Math.abs(g.look) > 5) k.push([g.look > 0 ? "panr" : "panl"]);
+        if (moved < 0.15 && Math.abs(g.tilt) > 5) k.push([g.tilt > 0 ? "tiltup" : "tiltdown"]);
+      }
+      const sig = k.map(x => x[0] === "orbit" ? `orbit${x[1] > 0 ? "r" : "l"}` : x[0]).sort().join("+") || "hold";
       const last = parts.at(-1);
-      if (last && last.sig === sig) { last.t1 = t1; last.turn += turn; }
-      else parts.push({ t0, t1, sig, k, turn, eased: !!key?.ease });
+      if (last && !g.still && sig === "hold") { last.t1 = g.t1; continue; }  // moving, but too little to name: part of the move before
+      if (last && last.sig === sig) { last.t1 = g.t1; last.turn += g.turn; }
+      else parts.push({ t0: g.t0, t1: g.t1, sig, k, turn: g.turn, eased: g.eased, pauses: [] });
+    }
+    // a hold under half a second between two stretches of moving isn't a stop to speak of
+    for (let i = parts.length - 2; i >= 1; i--) {
+      const p = parts[i];
+      if (p.sig === "hold" && p.t1 - p.t0 < 0.5 && parts[i - 1].sig === parts[i + 1].sig) {
+        parts[i - 1].t1 = parts[i + 1].t1; parts[i - 1].turn += parts[i + 1].turn; parts.splice(i, 2);
+      }
     }
     if (!parts.length) return "";
-    const deg = x => `${Math.round(Math.abs(x) / 5) * 5}°`;
-    const verbs = p => {
+    // where the camera all but stops inside a move (as the 3D render shows it): its speed (moving, and turning)
+    const speed = t => { const a = at(t), b = at(t + 0.04), h = o ? mid(o, t).h : 1.7;
+      const turnDeg = Math.acos(Math.max(-1, Math.min(1, a.f[0] * b.f[0] + a.f[1] * b.f[1] + a.f[2] * b.f[2]))) / rad;
+      return Math.hypot(...sub(b.e, a.e)) / h + turnDeg / 30 + Math.abs(Math.log((b.c.lens || baseLens()) / (a.c.lens || baseLens()))) * 8; };
+    for (const p of parts) {
+      if (p.sig === "hold" || p.t1 - p.t0 < 1) continue;
+      const ts2 = []; for (let t = p.t0; t <= p.t1 - 0.04 + 1e-6; t += 0.05) ts2.push(t);
+      const v = ts2.map(speed), mean = v.reduce((x, y) => x + y, 0) / v.length;
+      if (!p.eased && v.length > 4 && v[0] < 0.4 * mean && v.at(-1) < 0.4 * mean) p.eased = true;  // it eases in and out
+      for (let i = 1; i + 1 < v.length; i++) {
+        const t = ts2[i];
+        if (t < p.t0 + 0.3 || t > p.t1 - 0.3 || v[i] > v[i - 1] || v[i] > v[i + 1] || v[i] > 0.15 * mean) continue;
+        if (!p.pauses.length || t - p.pauses.at(-1) > 0.3) p.pauses.push(t);
+      }
+    }
+    const deg = x => `${Math.round(Math.abs(x) / 5) * 5}°`, sec = t => `${(Math.round(t * 10) / 10).toFixed(1)} s`;
+    const verbs = (p, over = false) => {
       const v = [], d = p.t1 - p.t0, slow = "";
       for (const [kind] of p.k) {
         if (kind === "orbit") v.push(Math.abs(p.turn) >= 300 ? `${slow}circles all the way around ${name}` : `${slow}${Math.abs(p.turn) >= 120 ? "orbits" : "arcs"} ${deg(p.turn)} to the ${p.turn > 0 ? "right" : "left"} around ${name}`);
@@ -2162,18 +2214,33 @@ const Scene3D = (() => {
         else v.push({ push: `${slow}pushes in`, pull: `${slow}pulls back`, zoomin: "zooms in", zoomout: "zooms out", rise: "rises", fall: "comes down",
           trackl: "tracks to the left", trackr: "tracks to the right", panl: "pans to the left", panr: "pans to the right", tiltup: "tilts up", tiltdown: "tilts down" }[kind]);
       }
+      let passing = "";
+      if (person && p.k.some(x => x[0] === "orbit") && Math.abs(p.turn) >= 80) {  // what it passes on the way round
+        const marks = [], NAMES = ["the front", "the left side", "the back", "the right side"];
+        let prev = rel(p.t0), B = prev;  // the bearing, unwrapped: crossing a multiple of 90° passes front, left, back or right
+        const n = Math.max(2, Math.ceil((p.t1 - p.t0) / 0.05));
+        for (let j = 1; j <= n; j++) {
+          const t = p.t0 + (p.t1 - p.t0) * j / n, r = rel(t); let dr = r - prev; dr -= Math.round(dr / 360) * 360; prev = r;
+          const B1 = B + dr;  // each 90° crossed once: (B, B1] going up, [B1, B) going down
+          if (B1 > B) for (let m = Math.floor(B / 90 + 1e-9) + 1; m * 90 <= B1 + 1e-9; m++) marks.push(`${NAMES[((m % 4) + 4) % 4]} at ${sec(t)}`);
+          else for (let m = Math.ceil(B / 90 - 1e-9) - 1; m * 90 >= B1 - 1e-9; m--) marks.push(`${NAMES[((m % 4) + 4) % 4]} at ${sec(t)}`);
+          B = B1;
+        }
+        if (marks.length) { marks[0] = marks[0].replace(/^(the \S+(?: side)?)/, `$1 of ${name}`); passing = `, passing ${marks.length > 1 ? `${marks.slice(0, -1).join(", ")} and ${marks.at(-1)}` : marks[0]}`; }
+      }
+      const pause = p.pauses.length ? `, easing almost to a stop at ${p.pauses.map(sec).join(" and ")} before going on` : "";
       const [first, ...rest] = v;
       // how: slowly (a long stretch), smoothly (eased in and out)
       const how = [d >= 3.5 && "slowly", p.eased && "smoothly"].filter(Boolean).join(" and ");
-      return first ? `${how ? `${how} ` : ""}${first}${rest.length ? ` while it ${rest.length > 1 ? `${rest.slice(0, -1).join(", ")} and ${rest.at(-1)}` : rest[0]}` : ""}` : "holds still";
+      return first ? `${how ? `${how} ` : ""}${first}${rest.length ? ` while it ${rest.length > 1 ? `${rest.slice(0, -1).join(", ")} and ${rest.at(-1)}` : rest[0]}` : ""}`
+        + `${over ? ` over ${Math.round(d * 10) / 10} seconds` : ""}${passing}${pause}` : "holds still";
     };
-    const sec = t => `${(Math.round(t * 10) / 10).toFixed(1)} s`;
     const start = size(0), finish = size(T);
     if (parts.length === 1 && parts[0].sig === "hold") return `The camera holds still on ${of(start, 0)}.`;
     if (parts.length === 1) {
       const p = parts[0];
-      const same = start === finish && angle(0) === angle(T);
-      return `The camera starts on ${of(start, 0)}, then ${verbs(p)} over ${Math.round((p.t1 - p.t0) * 10) / 10} seconds, ${same && start ? `staying on ${start}` : `ending on ${of(finish, T)}`}.`;
+      const same = start === finish && angle(0) === angle(T) && (!person || view(rel(0)) === view(rel(T)));
+      return `The camera starts on ${of(start, 0)}, then ${verbs(p, true)}, ${same && start ? `staying on ${start}` : `ending on ${of(finish, T)}`}.`;
     }
     return `The camera starts on ${of(start, 0)}. ` + parts.map((p, i) => `${i ? "Then, from" : "From"} ${sec(p.t0)} to ${sec(p.t1)}, it ${verbs(p)}${i === parts.length - 1 ? `, ending on ${of(finish, T)}` : p.sig !== "hold" && size(p.t1) ? `, to ${of(size(p.t1), p.t1)}` : ""}.`).join(" ");
   }
@@ -3038,6 +3105,12 @@ const Scene3D = (() => {
       case "rack": keys = [{ t: 0, ...at(yaw0, pitch0, d0 * 1.4, look, { focus: d0 * 6 }) }, { t: T * 0.45, ...at(yaw0, pitch0, d0 * 1.1, look, { focus: d0 * 6 }) }, { t: T, ...at(yaw0, pitch0, d0 * 0.85, look, { focus: d0 * 0.85 }) }];
         dof = 2.8; break;
       default: return null;
+    }
+    if (ease && keys.length > 2 && T > 0) {
+      const f = u => 0.5 - 0.5 * Math.cos(Math.PI * u), inv = u => { let a = 0, b = 1; for (let j = 0; j < 30; j++) { const m = (a + b) / 2; if (f(m) < u) a = m; else b = m; } return (a + b) / 2; };
+      const K = keys.map(k => ({ ...camOf(k), t: k.t })), N = 16;
+      return { keys: Array.from({ length: N + 1 }, (_, j) => { const u = j / N, c = interp(K, T * u, ["target"]);
+        return { ...camOf(c), ...(c.lens ? { lens: c.lens } : {}), ...(c.focus ? { focus: c.focus } : {}), ...(c.roll ? { roll: c.roll } : {}), t: +(T * inv(u)).toFixed(3) }; }), fx, dof };
     }
     return { keys: keys.map((k, i) => ({ ...camOf(k), t: k.t, ...(ease && i < keys.length - 1 && keys.length > 1 ? { ease } : {}) })), fx, dof };
   }
