@@ -5,6 +5,23 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.149.0] - 2026-11-21
+
+### Changed
+- **The camera narration says what the camera sees, as the 3D render shows it.**
+  - Which side of a person it sees them from at the start and the end: from the front, a three-quarter view of
+    their front left or right, their left or right side, from behind.
+  - What an orbit passes on its way round and when: "passing the left side of her at 1.7 s, the back at 2.5 s,
+    the right side at 3.4 s and the front at 5.0 s".
+  - Where the camera all but stops partway, measured from its actual speed ("easing almost to a stop at 2.5 s
+    before going on"), and whether it eases in and out, from the speed too.
+  - A move is judged as a whole, not key by key, so a move in many small keys reads as one move, and a push that
+    stops and pulls back reads as two with the hold between them. "over N seconds" comes right after the move.
+- **Camera move presets ease once over the whole move.** Easing each stretch between keys made the camera slow to a
+  stop at every key (a 360° orbit pulsed every 45°, an arc halfway through). Arcs, orbits, tracks and pans are now
+  sampled in 16 steps along one gentle ease-in-out. A move already on a scene keeps its keys; apply the preset again
+  for the smooth one.
+
 ## [0.148.0] - 2026-11-21
 
 ### Added
