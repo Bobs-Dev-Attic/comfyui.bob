@@ -5,6 +5,14 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.163.1] - 2026-11-22
+
+### Fixed
+- **V2's Log shows jobs it didn't start.** It listed only what that page had started since it opened, so after a
+  reload (or with a job from Classic) it was empty while something was being made. Now it picks up whatever is queued
+  or running when the page opens, with its time so far and its log lines, and the steps the studio starts by itself
+  (the lips redrawn to the cleaned sound, a sound retake, an enhance) join the job they're for.
+
 ## [0.163.0] - 2026-11-22
 
 ### Added
