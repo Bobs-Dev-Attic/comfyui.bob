@@ -135,6 +135,9 @@ class GenerateRequest(BaseModel):
     enhance_opts: EnhanceOpts | None = None  # engine "enhance": the chain
     enhance_of: str | None = Field(None, max_length=64)  # enhance: the studio item it came from
     enhance_after: dict[str, Any] | None = None  # set by the page: enhance this result when it's done (Settings)
+    # a scene render: enhance its final take (EnhanceOpts) once it has settled: its words checked, its lips redrawn
+    # and any sound retake done; the take with the best words is the one enhanced
+    enhance_final: dict[str, Any] | None = None
     pose: str | None = Field(None, max_length=200)  # angles: "<azimuth> <elevation> <distance>" (workflows.ANGLE_*)
     white_bg: bool = False  # angles: make the plain backdrop pure white (imaging.whiten_backdrop)
     clean_audio: bool = True  # clean them and keep the best 6-10 s of speech (H3RefAudioPrep, when installed)
@@ -489,7 +492,34 @@ class JobManager:
         self.log(orig, f"Lips redrawn to the cleaned sound ({helper['id']}); the version before is {keep.name}")
         src.unlink(missing_ok=True)
         self.delete(helper["id"])
-        await self._maybe_retake(orig)
+        if not await self._maybe_retake(orig):
+            await self._enhance_final(orig)
+
+    async def _enhance_final(self, item: dict[str, Any]) -> None:
+        """A scene render asked to enhance its final take (enhance_final): once nothing more is coming (its retake, if
+        any, finished or failed), the take with the best words, it or its retake, is enhanced. Once."""
+        p = item.get("params") or {}
+        if not p.get("enhance_final") or item.get("final_enhance") or item.get("status") != "done":
+            return
+        best, rid = item, (item.get("auto_retake") or {}).get("by")
+        r = rid and self.items.get(rid)
+        if r and r.get("status") in ("queued", "running"):
+            return  # when the retake is done (or fails)
+        if r and r.get("status") == "done" and r.get("files") and ((r.get("heard") or {}).get("score") or -1) > ((item.get("heard") or {}).get("score") or -1):
+            best = r
+        try:
+            opts = EnhanceOpts.model_validate(p["enhance_final"])
+            if best.get("engine") == "retake" or p.get("engine") not in ("h3", "h3ref"):
+                opts.facerefine = False  # FaceRefine re-samples with H3's own settings: H3 and H3 Reference only
+            if not (opts.facerefine or opts.dlss or opts.upscaler != "none"):
+                return
+            self._update(item, final_enhance={"status": "starting", "of": best["id"], "at": time.time()})
+            made = await self.enhance_item(best, opts)
+            self._update(item, final_enhance={"status": "queued", "of": best["id"], "by": made[0]["id"] if made else None, "at": time.time()})
+            self.log(item, f"Enhancing the final take ({'the sound retake' if best is not item else 'this one'}): {', '.join(x['id'] for x in made)}")
+        except Exception as exc:  # noqa: BLE001 - the takes stand as they are
+            self._update(item, final_enhance={"status": "failed", "error": _short_error(exc)[:300], "at": time.time()})
+            self.log(item, f"Couldn't enhance the final take: {_short_error(exc)}", "warn")
 
     async def _maybe_retake(self, item: dict[str, Any]) -> dict[str, Any] | None:
         """A scene render whose lines came out under its auto_retake_below score: its sound made again once (engine
@@ -509,13 +539,14 @@ class JobManager:
         params.update(engine="retake", kind="video", source=f["path"], retake_ranges="", seed=-1, batch=1, retake_of=item["id"],
                       retake_keep_bg=all(self.has_node(n) for n in workflows.ROFORMER_NODES), auto_retake_below=0,
                       first_frame=None, last_frame=None, continue_from=None, enhance_after=None, motion_video=None,
-                      motion_video_mask=None, motion_layers=[], lock_audio=None, relock_of=None)
+                      motion_video_mask=None, motion_layers=[], lock_audio=None, relock_of=None, enhance_final=None)
         self._update(item, auto_retake={"status": "starting", "at": time.time()})
         try:
             new = (await self.generate(GenerateRequest(**params)))[0]
         except Exception as exc:  # noqa: BLE001 - the render stands as it is
             self._update(item, auto_retake={"status": "failed", "error": str(exc)[:300], "at": time.time()})
             self.log(item, f"Words {score}% (under {below}%), but the sound couldn't be retaken: {exc}", "warn")
+            await self._enhance_final(item)
             return None
         self._update(item, auto_retake={"by": new["id"], "status": "queued", "at": time.time()})
         self.log(item, f"Words {score}% (under {below}%): retaking the sound once, the picture kept ({new['id']})")
@@ -527,9 +558,18 @@ class JobManager:
             await self.hear(item)
         except Exception as exc:  # noqa: BLE001 - a failed check mustn't touch the finished render
             self.log(item, f"Checking the words: {exc}", "warn")
-            return
-        if (item.get("resync") or {}).get("status") != "running":  # else once the lips are redrawn (_on_resynced)
-            await self._maybe_retake(item)
+        await self._settled(item)
+
+    async def _settled(self, item: dict[str, Any]) -> None:
+        """After a video's words check: a scene render may want its sound retaken, then its final take enhanced; a
+        retake that's done (or failed) lets its render's final take be enhanced."""
+        of = (item.get("params") or {}).get("retake_of")
+        if of and self.items.get(of):
+            return await self._enhance_final(self.items[of])
+        if (item.get("resync") or {}).get("status") == "running":
+            return  # once the lips are redrawn (_on_resynced)
+        if item.get("heard") is None or not await self._maybe_retake(item):
+            await self._enhance_final(item)
 
     async def _enhance_after(self, item: dict[str, Any]) -> None:
         """Settings > After generating (or Angles' "Enhance each"): the result asked to be enhanced
@@ -1172,6 +1212,8 @@ class JobManager:
                 await self._on_resynced(item, saved)
             elif heard.wants(item) and self.has_node(heard.NODE):
                 asyncio.create_task(self._hear_after(item))
+            elif req.enhance_final or req.retake_of:  # no words to check: it has settled already
+                asyncio.create_task(self._settled(item))
             if item.get("project"):
                 from . import projects  # the project's thumbnail and "modified" follow its latest result
 
@@ -1195,6 +1237,9 @@ class JobManager:
         finally:
             self._handles.pop(item["id"], None)
             self._tasks.pop(item["id"], None)
+            of = (item.get("params") or {}).get("retake_of")
+            if of and item.get("status") in ("failed", "cancelled") and self.items.get(of):  # the render's final take: itself
+                asyncio.create_task(self._enhance_final(self.items[of]))
 
     async def run_quick(self, built: workflows.Built, refs: dict[str, str], timeout: float = 300) -> list[Path]:
         """Run a small helper graph (not a studio item, e.g. the editor's AI select) and save its

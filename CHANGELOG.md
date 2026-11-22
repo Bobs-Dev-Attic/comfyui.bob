@@ -5,6 +5,19 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.164.0] - 2026-11-22
+
+### Added
+- **✨ Enhance in V2.** The shot's take has an "✨ Enhance…" button: the studio's Enhance window (FaceRefine for
+  H3 videos, DLSS 5, SeedVR2 or RelayVSR), with its size and time estimate. The enhanced video joins the shot's takes
+  ("✨ enhanced") and, once it's done, is the one the shot uses (the timeline and Export too); another take can still
+  be picked. A take enhanced from Classic joins its V2 shot the same way.
+- **The Render window can enhance the final take.** "✨ Enhance the final take" with its steps (Choose… opens the
+  Enhance window; the choice and the box are remembered in this browser). The studio waits until the 3D render has
+  settled (its words checked, extra words silenced and the lips redrawn, and any sound retake done or failed), then
+  enhances the take with the best words, once. FaceRefine is left out for 3D renders for now: it re-samples with
+  H3's own settings, which a 3D render doesn't have.
+
 ## [0.163.1] - 2026-11-22
 
 ### Fixed

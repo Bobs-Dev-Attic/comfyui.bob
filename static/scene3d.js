@@ -1841,6 +1841,8 @@ const Scene3D = (() => {
         <p class="hint">${v2x.voices.map((v, i) => `${esc(v.name)} speaks with &lt;Audio ${i + 1}&gt;`).join(", ")}: their library voices, so H3 says the lines in them. Runs on H3 Reference's model with the same motion.</p>` : ""}
       ${v2x?.lines?.some(l => String(l.text || "").trim()) ? `<label class="check" title="H3 fills spare time with words of its own. After the render, Whisper hears it in pieces, between its pauses, and a piece that isn't the lines is turned down to silence. Then the picture is drawn again with that sound held, so the lips move only for the lines: one more render (needs ComfyUI-H3-NativeAudioLock). The versions before are kept beside it."><input type="checkbox" id="s3r-quiet" checked> Silence any words that aren't the lines, and redraw the lips to match</label>
         ${retakeBelow() ? `<label class="check" title="Whisper scores the words against the lines. Under ${retakeBelow()}%, the sound is made again once (H3 Reference), the picture kept frame for frame; the new take goes beside it and the shot uses the one with the best words. One more render, only when it's needed. The threshold is in Settings > Generation."><input type="checkbox" id="s3r-retake" checked> Retake the sound once if the words come out under ${retakeBelow()}%</label>` : ""}` : ""}
+      ${typeof Enhance !== "undefined" ? `<div class="s3r-enh"><label class="check" title="Once the render has settled (its words checked, its lips redrawn, any sound retake done), the take with the best words is enhanced; the enhanced video becomes the shot's take"><input type="checkbox" id="s3r-enh"${(() => { try { return localStorage.getItem("bob.enhance.finalOn") === "1" ? " checked" : ""; } catch { return ""; } })()}> ✨ Enhance the final take: <span class="s3r-enhsum"></span></label>
+        <button type="button" class="btn sm ghost" id="s3r-enhpick" title="Choose the steps: DLSS 5, SeedVR2 or RelayVSR">Choose…</button></div>` : ""}
       ${refReady() ? `<div class="field"><label for="s3r-guide">How H3 follows the 3D scene</label><select id="s3r-guide">
         <option value="reference"${lastGuide() === "reference" ? " selected" : ""}>As a reference video: H3 Reference draws every frame, following the move closely</option>
         <option value="ttm"${lastGuide() === "ttm" ? " selected" : ""}>Time-to-Move: held exactly to the rough animation, its seams too</option></select></div>` : ""}
@@ -1888,6 +1890,12 @@ const Scene3D = (() => {
       voiceRef: box.querySelector("#s3r-vref")?.value || "close", quiet: box.querySelector("#s3r-quiet")?.checked !== false,
       retake: box.querySelector("#s3r-retake")?.checked !== false };
     box.querySelector("#s3r-voices")?.addEventListener("change", e => { const v = box.querySelector("#s3r-vref"); if (v) v.disabled = !e.target.checked; });
+    // ✨ the final take enhanced (Enhance.finalOpts: chosen in the Enhance window, kept in this browser)
+    const enhOn = () => !!box.querySelector("#s3r-enh")?.checked && Enhance.anyOn(Enhance.finalOpts());
+    const enhSum = () => { const el = box.querySelector(".s3r-enhsum"); if (el) el.textContent = Enhance.summary(Enhance.finalOpts(), "video"); };
+    box.querySelector("#s3r-enhpick")?.addEventListener("click", () => Enhance.dialog(null, { final: true, onPick: () => { enhSum(); const c = box.querySelector("#s3r-enh"); if (c && !c.checked) { c.checked = true; c.dispatchEvent(new Event("change")); } } }));
+    box.querySelector("#s3r-enh")?.addEventListener("change", e => { try { localStorage.setItem("bob.enhance.finalOn", e.target.checked ? "1" : "0"); } catch { /* not kept */ } });
+    enhSum();
     const withLines = t => { const d = linesText(extraNow(), useRefs(), t).text; return [d ? endOf(t) : t, d].filter(Boolean).join(" "); };
     box.querySelector("#s3r-voices")?.addEventListener("change", () => box.querySelector("#s3r-what").dispatchEvent(new Event("input")));
     wireTags(box, box.querySelector("#s3r-what"), () => videoText(withLines(box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder), useRefs(), fromPhoto()));
@@ -2009,7 +2017,7 @@ const Scene3D = (() => {
         if (box.querySelector("#s3r-guide")) try { localStorage.setItem("bob.sceneGuide", guide); } catch { /* not kept */ }
         if (fillM) try { localStorage.setItem("bob.sceneFillModel", fillM); } catch { /* not kept */ }
         if (box.querySelector("#s3r-fill") && fromPhoto()) try { localStorage.setItem("bob.sceneGapFill", fill ? "1" : "0"); } catch { /* not kept */ }
-        const r = await buildRender({ start, look, fill, fillModel: fillM, guide, depth: true, refs: useRefs(), hold: holdSel.value, quality: box.querySelector("#s3r-q").value, speed: spSel.value, extra: extraNow(), prompt: edited ? box.querySelector("#s3r-prompt").value : null,
+        const r = await buildRender({ start, look, fill, fillModel: fillM, guide, depth: true, enhance: enhOn() ? Enhance.finalOpts() : null, refs: useRefs(), hold: holdSel.value, quality: box.querySelector("#s3r-q").value, speed: spSel.value, extra: extraNow(), prompt: edited ? box.querySelector("#s3r-prompt").value : null,
           what: box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder,
           onPhoto: id => { stopPhoto?.(); stopPhoto = followPhoto(id, sg); } }, m => { st.textContent = m; sg.say(m); });
         stopPhoto?.(); stopPhoto = null;
@@ -2102,6 +2110,7 @@ const Scene3D = (() => {
       if (o.extra?.quiet === false) req.quiet_extra = false;
       if (o.extra?.retake === false) req.auto_retake_below = 0;
       if (o.extra?.loras?.length) req.loras = o.extra.loras.map(l => ({ name: l.name, strength: l.strength }));  // V2's shot: its own and its objects' LoRAs
+      if (o.enhance) req.enhance_final = o.enhance;  // the final take enhanced once it has settled (the server)
       if (photoPath) req.first_frame = photoPath;
       else if (start === "picture") req.first_frame = s.sc.picture;
       else if (noPic) req.first_frame = await uploadFrame([W, H], 0, camForRender(0), "scene_first.png");  // as drawn

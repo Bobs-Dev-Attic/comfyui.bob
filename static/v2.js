@@ -1404,13 +1404,15 @@ const V2 = (() => {
         <p class="hint">${it.engine === "retake" ? "Retaken sound · " : ""}${takes.length > 1 ? `Take: seed ${it.seed}${s.pick ? " (picked)" : best?.id === it.id ? " (best words)" : ""} · ` : ""}made ${new Date((it.finished || it.created) * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.</p>
         ${h?.score != null ? `<p class="v2-words"><b class="${tone(h.score)}">🗣 ${h.score}%</b> of the lines said as written · heard: ${h.heard ? `“${esc(h.heard)}”` : "<i>nothing</i>"}${h.extra ? ` <span class="warn">(${h.extra} word${h.extra > 1 ? "s" : ""} more than the lines)</span>` : ""}</p>` : ""}
         ${takes.length > 1 ? `<div class="v2-takes" role="listbox" aria-label="Takes, best words first"><span class="hint">Takes, best words first: pick the one the shot uses</span>${takes.map(x =>
-          `<button type="button" class="v2-take${x.id === it.id ? " on" : ""}" data-take="${esc(x.id)}" aria-selected="${x.id === it.id}">${best?.id === x.id ? "★ " : ""}${x.engine === "retake" ? "retake" : "seed"} ${x.seed}${x.heard?.score != null ? ` <b class="${tone(x.heard.score)}">${x.heard.score}%</b>` : ""}</button>`).join("")}</div>` : ""}
+          `<button type="button" class="v2-take${x.id === it.id ? " on" : ""}" data-take="${esc(x.id)}" aria-selected="${x.id === it.id}">${best?.id === x.id ? "★ " : ""}${x.engine === "retake" ? `retake ${x.seed}` : x.engine === "enhance" ? "✨ enhanced" : `seed ${x.seed}`}${x.heard?.score != null ? ` <b class="${tone(x.heard.score)}">${x.heard.score}%</b>` : ""}</button>`).join("")}</div>` : ""}
         <div class="v2-resact">${lines ? `<button type="button" class="btn sm" data-hear ${st.hearing.has(it.id) ? "disabled" : ""} title="Whisper hears the lines; the score is how much of them was said as written">${st.hearing.has(it.id) ? "🗣 Checking…" : h ? "🗣 Check the words again" : "🗣 Check the words"}</button>` : ""}
-          <button type="button" class="btn sm" data-retake title="Make the sound again from the prompt (H3 Reference): all of it or some stretches, the picture kept exactly; the takes land on this shot">🔁 Retake the sound…</button></div>`
+          <button type="button" class="btn sm" data-retake title="Make the sound again from the prompt (H3 Reference): all of it or some stretches, the picture kept exactly; the takes land on this shot">🔁 Retake the sound…</button>
+          ${it.engine !== "enhance" ? `<button type="button" class="btn sm" data-enhance title="FaceRefine, DLSS 5, SeedVR2 or RelayVSR: the enhanced video becomes the shot's take">✨ Enhance…</button>` : ""}</div>`
         : `<p class="hint">${it.status === "failed" ? `⚠ Failed: ${esc(it.error || "")}` : `${esc(it.status)}…`}</p>`;
       box.querySelectorAll("[data-take]").forEach(b => b.onclick = () => { s.pick = b.dataset.take; save(); renderAll(); });
       box.querySelector("[data-hear]")?.addEventListener("click", () => hear(it));
       box.querySelector("[data-retake]")?.addEventListener("click", () => retakeDialog(s, it));
+      box.querySelector("[data-enhance]")?.addEventListener("click", () => Enhance.dialog(it, { onRun: v => enhanceTake(it, v) }));
     }
   }
   // The dialogue lines (kept as they are while one is being typed in).
@@ -1650,6 +1652,25 @@ const V2 = (() => {
     const e = st.log.find(x => x.items.some(y => y.id === of));
     if (e && !e.items.some(y => y.id === it.id)) { e.items.push({ id: it.id, title: "🔁 Sound retake (the words came out low)" }); renderLog(); }
   }
+  /* ✨ A take enhanced (here, from Classic, or the Render window's final take by the studio): it becomes another take
+     of the shot that has its source, and once it's done, the one the shot uses. */
+  function enhancedTake(it, prev = null) {
+    const of = it?.engine === "enhance" && it.params?.enhance_of; if (!of) return;
+    const s = st.board.shots.find(x => x.results?.includes(of) || x.results?.includes(it.id)); if (!s) return;
+    const add = !s.results.includes(it.id), pick = it.status === "done" && prev?.status !== "done" && s.pick !== it.id;
+    if (!add && !pick) return;
+    if (add) s.results = [it.id, ...s.results].slice(0, 20);
+    if (pick) s.pick = it.id;
+    save(); renderAll();
+  }
+  async function enhanceTake(it, opts) {
+    try {
+      const { items } = await api("/api/enhance", { method: "POST", body: JSON.stringify({ item: it.id, options: opts }) });
+      if (!items.length) return Media.toast("That enhance is already being set up.");
+      for (const x of items) { const known = state.items.has(x.id); state.items.set(x.id, x); if (!known) { enhancedTake(x); adopt(x); } }
+      Media.toast(`Enhancing (${Enhance.summary(opts, it.kind)}): it becomes the shot's take when it's done.`);
+    } catch (e) { Media.toast(`Enhance: ${e.message}`); }
+  }
   /* A job this page didn't start (it was running when the page opened, or the studio started it: the lips redrawn,
      a sound retake, an enhance) goes in the log too: beside the job it's for when that's there, else on its own. */
   function adopt(it) {
@@ -1671,6 +1692,7 @@ const V2 = (() => {
       onActivity(ev);
       Scene3D.onItem?.(ev.item);
       maybeAddLater(ev.item);
+      enhancedTake(ev.item, prev);
       if (!prev) { retookItself(ev.item); adopt(ev.item); }
       if (ev.item.id === st.board.settings.lastExport) renderExport();
       if (st.log.some(e2 => e2.items.some(x => x.id === ev.item.id))) renderLog();
