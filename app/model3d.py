@@ -202,6 +202,9 @@ def _write_scenes(items: list[dict[str, Any]]) -> None:
     tmp = SCENES_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps({"scenes": items}, indent=1, ensure_ascii=False), "utf-8")
     tmp.replace(SCENES_FILE)
+    from . import projectmedia  # each scene's JSON in its project's folder too
+
+    projectmedia.mirror_scenes(items)
 
 
 def _scene_public(s: dict[str, Any]) -> dict[str, Any]:

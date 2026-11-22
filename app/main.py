@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, appsettings, audiotools, config, heard, llm, media, model3d, modelpaths, models, projects, prompts, render, score, syscheck, tracking, updater, workflows
+from . import __version__, appsettings, audiotools, config, heard, llm, media, model3d, modelpaths, models, projectmedia, projects, prompts, render, score, syscheck, tracking, updater, workflows
 from .comfy import ComfyService
 from .jobs import EnhanceOpts, GenerateRequest, JobManager, media_path
 
@@ -579,6 +579,7 @@ async def v2_board_put(req: V2Board, project: str | None = None):
     tmp = f.with_suffix(".tmp")
     tmp.write_text(json.dumps(req.model_dump(), ensure_ascii=False, indent=1), "utf-8")
     tmp.replace(f)
+    projectmedia.mirror_board(project, req.model_dump())  # a copy in the project's folder
     return {"ok": True}
 
 
@@ -1942,6 +1943,8 @@ async def events(request: Request):
 
 
 app.mount("/outputs", StaticFiles(directory=config.OUTPUT_DIR), name="outputs")
+# each project's own folder: ComfyUI's output/bob/<Project>, linked in as bob/ (app/projectmedia.py)
+app.mount("/bob", StaticFiles(directory=projectmedia.setup()), name="bob")
 app.mount("/data/uploads", StaticFiles(directory=config.UPLOAD_DIR), name="uploads")
 app.mount("/static", StaticFiles(directory=config.STATIC_DIR), name="static")
 

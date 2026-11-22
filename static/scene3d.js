@@ -2011,7 +2011,7 @@ const Scene3D = (() => {
       const cam = built.cam, prompt = String(o.prompt || "").trim() || built.prompt;
       const req = { kind: "video", engine: "motion", prompt, seconds: n / FPS, aspect: "16:9", quality: o.quality || "standard",
         seed: -1, batch: 1, turbo: true, first_frame: null, motion_video: ref, motion_video_mask: mask,
-        motion_hold: o.hold || "normal", motion_first: "picture", motion_guide: o.guide === "reference" ? "reference" : "ttm", project: s.sc.project };
+        motion_hold: o.hold || "normal", motion_first: "picture", motion_guide: o.guide === "reference" ? "reference" : "ttm", project: s.sc.project, scene: s.sc.id };
       const sp = SPEEDS[o.speed]; if (sp) { req.turbo = sp.turbo; if (sp.steps) req.steps = sp.steps; }
       if (o.refs) req.references = picObjs().map(x => x.picture);
       if (o.extra?.voices?.length) { req.ref_audios = o.extra.voices.map(v => v.ref); req.clean_audio = true; }
@@ -3704,7 +3704,7 @@ const Scene3D = (() => {
     const items = await submit({ kind: "image", engine: "imgedit", edit_op: "instruct", source: ref, prompt, edit_model: model,
       ...(refs.length ? { references: refs } : {}), ...(megapixels ? { edit_megapixels: megapixels } : {}),
       ...(loras?.length ? { loras: loras.map(l => ({ name: l.name, strength: l.strength })) } : {}),  // V2's shot: its objects' LoRAs
-      seed: -1, batch: 1, project: s.sc.project });
+      seed: -1, batch: 1, project: s.sc.project, scene: s.sc.id });
     if (!items?.length) throw new Error("The edit model didn't take it (the reason is on the Generate step)");
     s.photos.push({ id: items[0].id, t, cam: camOf(cam) });
     save();
@@ -4146,7 +4146,7 @@ const Scene3D = (() => {
     const blob = await new Promise(r => view.toBlob(r, "image/png")), fd = new FormData(); fd.append("file", blob, "scene_detail.png");
     const up = await (await fetch("/api/upload", { method: "POST", body: fd })).json();
     say(`The camera comes in ${best.m.toFixed(1)}× closer than the photo: ${who} redraws that view sharp (about half a minute)…`);
-    const items = await submit({ kind: "image", engine: "imgedit", edit_op: "instruct", source: up.ref, prompt: DETAIL_TEXT(look), edit_model: model, seed: -1, batch: 1, project: s.sc.project });
+    const items = await submit({ kind: "image", engine: "imgedit", edit_op: "instruct", source: up.ref, prompt: DETAIL_TEXT(look), edit_model: model, seed: -1, batch: 1, project: s.sc.project, scene: s.sc.id });
     if (!items?.length) throw new Error(`${who} didn't take the detail view`);
     const it = await waitItem(items[0].id);
     const path = (it.files || []).find(f => /^image\//.test(f.content_type || ""))?.path || it.files?.[0]?.path;
@@ -4195,7 +4195,7 @@ const Scene3D = (() => {
       }
       const fill = async src => {
         const items = await submit({ kind: "image", engine: "imgedit", edit_op: "instruct", source: src, prompt: GAP_TEXT(look, withPhoto), edit_model: model,
-          ...(withPhoto && P.plateRef ? { references: [P.plateRef] } : {}), seed: -1, batch: 1, project: s.sc.project });
+          ...(withPhoto && P.plateRef ? { references: [P.plateRef] } : {}), seed: -1, batch: 1, project: s.sc.project, scene: s.sc.id });
         if (!items?.length) throw new Error(`${who} didn't take the view to fill`);
         const it = await waitItem(items[0].id);
         const p = (it.files || []).find(f => /^image\//.test(f.content_type || ""))?.path || it.files?.[0]?.path;

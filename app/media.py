@@ -121,7 +121,9 @@ def bookmark(bid: str) -> Path:
 # --------------------------------------------------------------------------- refs and paths
 
 def allowed_roots() -> list[Path]:
-    roots = [config.UPLOAD_DIR.resolve(), config.OUTPUT_DIR.resolve()]
+    from . import projectmedia  # the projects' folders (ComfyUI's output/bob)
+
+    roots = [config.UPLOAD_DIR.resolve(), config.OUTPUT_DIR.resolve(), projectmedia.LINK.resolve()]
     roots += [Path(b["path"]) for b in _read_library().get("bookmarks", [])]
     return roots
 
@@ -162,7 +164,9 @@ def recycle(paths: list[Path]) -> None:
         if rc or op.fAnyOperationsAborted:
             raise MediaError(f"Windows couldn't move the files to the Recycle Bin (code {rc})")
         return
-    own = [config.UPLOAD_DIR.resolve(), config.OUTPUT_DIR.resolve()]
+    from . import projectmedia
+
+    own = [config.UPLOAD_DIR.resolve(), config.OUTPUT_DIR.resolve(), projectmedia.LINK.resolve()]
     for p in paths:
         if not any(r in p.parents for r in own):
             raise MediaError(f"Only the studio's own files can be deleted here (no Recycle Bin): {p.name}")
