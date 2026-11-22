@@ -5,6 +5,13 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.164.1] - 2026-11-22
+
+### Fixed
+- **V2's Log is still there after a reload.** It's kept in this browser (the last 12 jobs, their own steps and which
+  results they made); the results' lines and progress come back from the studio. A job that was still being prepared
+  in the page when it reloaded shows as not sent, and a result the studio no longer has is left out.
+
 ## [0.164.0] - 2026-11-22
 
 ### Added

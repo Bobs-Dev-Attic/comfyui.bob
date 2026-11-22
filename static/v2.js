@@ -829,7 +829,28 @@ const V2 = (() => {
   }
 
   /* ---- the log: what's being made, step by step, with the studio's own log lines and progress */
-  const LOG_MAX = 12;
+  const LOG_MAX = 12, LOG_KEY = "bob.v2.log";
+  /* The log is kept in this browser (its jobs, their own steps and which studio results they made), so a reload
+     shows it again; the results' lines and progress come back from the studio. */
+  function keepLog() {
+    if (!st.logReady) return;  // not before the kept one is back
+    clearTimeout(st.logKeepT);
+    st.logKeepT = setTimeout(() => {
+      try { localStorage.setItem(LOG_KEY, JSON.stringify(st.log.map(e => ({ ...e, lines: e.lines.slice(-80) })))); } catch { /* not kept */ }
+    }, 400);
+  }
+  function restoreLog() {
+    let kept = [];
+    st.logReady = true;
+    try { kept = JSON.parse(localStorage.getItem(LOG_KEY) || "[]"); } catch { /* none */ }
+    if (!Array.isArray(kept)) return;
+    st.log = kept.filter(e => e && e.key && Array.isArray(e.lines) && Array.isArray(e.items)).slice(0, LOG_MAX).map(e => {
+      const items = e.items.filter(x => state.items.has(x?.id));  // results the studio no longer has go
+      // one that was still being prepared in the page when it reloaded was never sent
+      const failed = e.failed || (e.prep && !items.length ? "the page was reloaded before it was sent" : null);
+      return { ...e, items, prep: false, failed };
+    });
+  }
   const engineTitle = req => req.engine === "imgedit" ? (/^Replace every solid magenta/.test(req.prompt || "") ? "🧩 Qwen fills what the photo can't see" : "📷 Photo of the first frame")
     : req.engine === "motion" ? "🎬 Video (H3 following the scene)" : req.engine === "h3" || req.engine === "h3ref" ? "🎬 Video (H3)" : req.engine === "music3" ? "🎵 Soundtrack (Music 3)"
     : req.engine === "timeline" ? "⬇ Export" : req.engine === "retake" ? "🔁 Sound retake" : `⚙ ${req.engine}`;
@@ -851,6 +872,7 @@ const V2 = (() => {
   setInterval(() => { if ((st.tlv === "log" || st.logWin?.isConnected) && st.log.some(entryBusy)) renderLog(); }, 1000);
   const entryBusy = e => e.prep || e.items.some(x => !FIN.includes(state.items.get(x.id)?.status || "queued"));
   function renderLog() {
+    keepLog();
     const busy = st.log.filter(entryBusy).length;
     $("v2-logn").textContent = busy ? `· ${busy}` : "";
     if (!$("v2-log").hidden) drawLog($("v2-log"), 40);
@@ -862,7 +884,7 @@ const V2 = (() => {
   /* The log into a box (the timeline's, or the big window's), its last n lines a job. Each job's lines stay on the
      newest one as they come in, unless they were scrolled up to read (then they stay put). */
   function drawLog(box, n) {
-    if (!st.log.length) { box.innerHTML = `<p class="hint">Nothing made yet in this window. When a shot, photo, soundtrack or export is being made, every step shows here.</p>`; return; }
+    if (!st.log.length) { box.innerHTML = `<p class="hint">Nothing made yet. When a shot, photo, soundtrack or export is being made, every step shows here.</p>`; return; }
     const keep = box.scrollTop, was = new Map();
     box.querySelectorAll(".v2-logjob[data-k] ol").forEach(ol => was.set(ol.parentElement.dataset.k, ol.scrollHeight - ol.scrollTop - ol.clientHeight < 6 ? null : ol.scrollTop));
     box.innerHTML = st.log.map(e => {
@@ -1708,7 +1730,9 @@ const V2 = (() => {
     try { const v = await api("/api/status"); $("v2-version").textContent = `v${v.version}`; } catch {}
     try { state.caps = await api("/api/capabilities"); } catch (e) { status(`Capabilities: ${e.message}`); }
     try { for (const it of (await api("/api/items")).items || []) state.items.set(it.id, it); } catch {}
+    restoreLog();  // the log as it was before a reload
     for (const it of [...state.items.values()].sort((a, b) => a.created - b.created)) adopt(it);  // what's still being made
+    renderLog();
     events();
     activity(); meters(); setInterval(meters, 3000);
     saveSign();
