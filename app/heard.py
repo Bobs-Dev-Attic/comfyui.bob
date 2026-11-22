@@ -244,3 +244,81 @@ async def check(item: dict[str, Any], path_of: Callable[[str], Path], say: Calla
            "model": MODEL, "at": time.time(), "seconds": round(time.time() - t0, 1)}
     say(f"Words: {res['score']}% heard as written" + (f", {extra} more word{'s' if extra > 1 else ''} than the lines" if extra else ""))
     return res
+
+
+# ---- Silencing the words that aren't the lines -------------------------------------------------------------------
+# H3 fills a shot's spare time with speech of its own (often before the line: "taking attention to these deep calls…
+# Good morning, Bob."). Whisper's node gives text without times, so the sound is split where it pauses, each stretch
+# heard on its own, and a stretch whose words aren't the lines is turned down to nothing. A stretch that runs into the
+# lines without a pause can't be told apart and stays.
+QUIET_DB, QUIET_MIN = -35, 0.18  # a pause: this far under full scale, at least this long (seconds)
+
+
+def _stretches(wav: Path, total: float) -> list[tuple[float, float]]:
+    """Where the sound has something in it: [(start, end)], between the pauses silencedetect finds."""
+    r = subprocess.run([media.ffmpeg(), "-nostdin", "-i", str(wav), "-af", f"silencedetect=noise={QUIET_DB}dB:d={QUIET_MIN}",
+                        "-f", "null", "-"], capture_output=True, text=True, stdin=subprocess.DEVNULL, creationflags=media.NO_WINDOW)
+    starts = [float(x) for x in re.findall(r"silence_start:\s*(-?[\d.]+)", r.stderr or "")]
+    ends = [float(x) for x in re.findall(r"silence_end:\s*([\d.]+)", r.stderr or "")]
+    quiet = list(zip(starts, ends + [total] * (len(starts) - len(ends))))
+    out, at = [], 0.0
+    for a, b in quiet:
+        if a - at > 0.12:
+            out.append((round(at, 3), round(a, 3)))
+        at = b
+    if total - at > 0.12:
+        out.append((round(at, 3), round(total, 3)))
+    return out
+
+
+def _is_lines(text: str, expected: str) -> bool:
+    """Whether a stretch says (some of) the lines: most of its words are theirs."""
+    w, want = words(text), set(words(expected))
+    return bool(w) and sum(x in want for x in w) / len(w) >= 0.6
+
+
+async def quiet_extra(video: Path, expected: str, language: str, say: Callable[[str], None] = lambda m: None) -> dict[str, Any] | None:
+    """Turn down the stretches of a video's sound that aren't its lines. The video is rewritten in place (its picture
+    copied as is), the original kept beside it as <name>_unsilenced.mp4. -> {"dropped": [[start, end, words]],
+    "original": path} or None when there's nothing to drop (or no way to tell)."""
+    orig = video.with_name(f"{video.stem}_unsilenced{video.suffix}")  # done before: from the original again
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        wav = tmp / "sound.wav"
+        r = await asyncio.to_thread(subprocess.run, [media.ffmpeg(), "-nostdin", "-v", "error", "-y", "-i", str(orig if orig.exists() else video), "-vn",
+                                                     "-ac", "1", "-ar", "16000", str(wav)],
+                                    capture_output=True, text=True, stdin=subprocess.DEVNULL, creationflags=media.NO_WINDOW)
+        if r.returncode or not wav.is_file():
+            return None
+        total = (wav.stat().st_size - 44) / 32000
+        parts = await asyncio.to_thread(_stretches, wav, total)
+        if len(parts) < 2:
+            return None  # one stretch: the extra words run into the lines, nothing to cut between
+        kept, dropped = [], []
+        async with _lock:
+            for i, (a, b) in enumerate(parts):
+                piece = tmp / f"part{i}.wav"
+                await asyncio.to_thread(subprocess.run, [media.ffmpeg(), "-nostdin", "-v", "error", "-y", "-i", str(wav),
+                                                         "-ss", f"{max(0, a - 0.05):.3f}", "-to", f"{b + 0.05:.3f}", str(piece)],
+                                        capture_output=True, stdin=subprocess.DEVNULL, creationflags=media.NO_WINDOW)
+                text = await transcribe(piece, language)
+                (kept if _is_lines(text, expected) else dropped).append([a, b, text])
+        dropped = [d for d in dropped if words(d[2])]  # a breath or a sound with no words stays
+        if not dropped or not kept:
+            return None
+        say("Silencing what isn't the lines: " + "; ".join(f"{a:.1f}-{b:.1f} s \"{t[:60]}\"" for a, b, t in dropped))
+        # each dropped stretch down to nothing, with a short fade at its ends so it doesn't click
+        vol = ",".join(f"volume=enable='between(t,{max(0, a - 0.06):.3f},{b + 0.06:.3f})':volume=0" for a, b, _ in dropped)
+        if not orig.exists():
+            video.replace(orig)
+        out = tmp / f"out{video.suffix}"
+        r = await asyncio.to_thread(subprocess.run, [media.ffmpeg(), "-nostdin", "-v", "error", "-y", "-i", str(orig),
+                                                     "-map", "0", "-c:v", "copy", "-af", vol, "-c:a", "aac", "-b:a", "192k", str(out)],
+                                    capture_output=True, text=True, stdin=subprocess.DEVNULL, creationflags=media.NO_WINDOW)
+        if r.returncode or not out.is_file():
+            if not video.exists():
+                orig.replace(video)
+            raise HeardError(f"Couldn't silence the extra words: {r.stderr.strip()[-300:]}")
+        out.replace(video)
+    return {"dropped": dropped, "original": orig.relative_to(config.ROOT).as_posix() if orig.is_relative_to(config.ROOT) else str(orig),
+            "at": time.time()}

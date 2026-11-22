@@ -8,6 +8,7 @@ import json
 import logging
 import random
 import re
+import subprocess
 import time
 import urllib.parse
 import uuid
@@ -137,6 +138,12 @@ class GenerateRequest(BaseModel):
     pose: str | None = Field(None, max_length=200)  # angles: "<azimuth> <elevation> <distance>" (workflows.ANGLE_*)
     white_bg: bool = False  # angles: make the plain backdrop pure white (imaging.whiten_backdrop)
     clean_audio: bool = True  # clean them and keep the best 6-10 s of speech (H3RefAudioPrep, when installed)
+    quiet_extra: bool = True  # after a video with lines: silence the stretches of its sound that aren't them (app/heard.py)
+    # ...and then draw its picture again to that sound, so the lips move only for the lines (a scene render, when
+    # ComfyUI-H3-NativeAudioLock is installed)
+    resync_after_quiet: bool = True
+    lock_audio: str | None = Field(None, max_length=2000)  # a scene render: keep this sound exactly, sample the picture only
+    relock_of: str | None = Field(None, max_length=40)  # that render's id: its picture is replaced by this one's when done
     preview: Literal["off", "fast"] = "off"  # live preview while sampling (Settings > Advanced)
     max_fidelity: bool = False  # reference pictures at 2048px instead of the output's size
     # H3 Reference: continue this video without a cut (its last `overlap` frames and sound are kept and carried on;
@@ -407,7 +414,77 @@ class JobManager:
             raise heard.HeardError("Checking the words needs the crt-nodes pack in ComfyUI (its CRT_AudioTranscriptBatch node)")
         res = await heard.check(item, media_path, say=lambda m: self.log(item, m))
         self._update(item, heard=res)
+        if res.get("extra") and (item.get("params") or {}).get("quiet_extra", True) and not item.get("quieted"):
+            res = await self.quiet(item, res) or res
         return res
+
+    async def quiet(self, item: dict[str, Any], res: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        """Silence the stretches of a video's sound that aren't its lines (app/heard.py quiet_extra), then hear it
+        again. -> the new item["heard"], or None when there was nothing it could take out."""
+        from . import heard
+
+        f = next((x for x in item.get("files", []) if (x.get("content_type") or "").startswith("video")), None)
+        lines, lang = heard.lines_of((item.get("params") or {}).get("prompt", ""))
+        if not f or not lines:
+            raise heard.HeardError("It has no video with spoken lines")
+        path = media_path(f["path"])
+        q = await heard.quiet_extra(path, " ".join(lines), lang, say=lambda m: self.log(item, m))
+        if not q:
+            self.log(item, "The extra words run into the lines without a pause: nothing could be silenced on its own")
+            return None
+        files = [dict(x, size=path.stat().st_size) if x is f else x for x in item["files"]]
+        self._update(item, files=files, quieted=q)
+        res = await heard.check(item, media_path, say=lambda m: self.log(item, m))
+        self._update(item, heard=res)
+        p = item.get("params") or {}
+        if p.get("engine") == "motion" and p.get("resync_after_quiet", True) and self.has_node("MiniMaxH3NativeAudioLock"):
+            try:
+                await self.resync(item)
+            except Exception as exc:  # noqa: BLE001 - the silenced video stands
+                self.log(item, f"Couldn't redraw the picture to the cleaned sound: {exc}", "warn")
+        return res
+
+    async def resync(self, item: dict[str, Any]) -> dict[str, Any]:
+        """Draw a scene render's picture again with its (cleaned) sound held exactly, so the lips follow that sound:
+        the same request and seed, with lock_audio. When it's done its picture replaces this one's (_on_resynced)."""
+        f = next((x for x in item.get("files", []) if (x.get("content_type") or "").startswith("video")), None)
+        if not f:
+            raise ValueError("It has no video")
+        sound = config.UPLOAD_DIR / f"{item['id']}_held_sound.wav"
+        r = await asyncio.to_thread(subprocess.run, [media.ffmpeg(), "-nostdin", "-v", "error", "-y", "-i", str(media_path(f["path"])),
+                                                     "-vn", "-ac", "1", "-ar", "48000", str(sound)],
+                                    capture_output=True, text=True, stdin=subprocess.DEVNULL, creationflags=media.NO_WINDOW)
+        if r.returncode or not sound.is_file():
+            raise ValueError(r.stderr.strip()[-200:] or "no sound")
+        params = {k: v for k, v in (item.get("params") or {}).items() if k in GenerateRequest.model_fields}
+        params.update(lock_audio=sound.relative_to(config.ROOT).as_posix(), relock_of=item["id"], quiet_extra=False,
+                      seed=item.get("seed", -1), batch=1)
+        new = (await self.generate(GenerateRequest(**params)))[0]
+        self.log(item, f"Drawing the picture again to the cleaned sound, so the lips move only for the lines ({new['id']})")
+        self._update(item, resync={"by": new["id"], "status": "running", "at": time.time()})
+        return new
+
+    async def _on_resynced(self, helper: dict[str, Any], saved: list[dict[str, Any]]) -> None:
+        """The lip-synced picture is done: it replaces the original render's video (kept as <name>_unsynced.mp4) and
+        the helper result goes."""
+        import shutil
+
+        orig = self.items.get((helper.get("params") or {}).get("relock_of") or "")
+        new = next((x for x in saved if (x.get("content_type") or "").startswith("video")), None)
+        f = orig and next((x for x in orig.get("files", []) if (x.get("content_type") or "").startswith("video")), None)
+        if not (orig and new and f):
+            return
+        dst, src = media_path(f["path"]), media_path(new["path"])
+        keep = dst.with_name(f"{dst.stem}_unsynced{dst.suffix}")
+        if not keep.exists():
+            dst.replace(keep)
+        shutil.copyfile(src, dst)
+        self._update(orig, files=[dict(x, size=dst.stat().st_size) if x is f else x for x in orig["files"]],
+                     resync={"by": helper["id"], "status": "done", "at": time.time(),
+                             "unsynced": keep.relative_to(config.ROOT).as_posix() if keep.is_relative_to(config.ROOT) else str(keep)})
+        self.log(orig, f"Lips redrawn to the cleaned sound ({helper['id']}); the version before is {keep.name}")
+        src.unlink(missing_ok=True)
+        self.delete(helper["id"])
 
     async def _hear_after(self, item: dict[str, Any]) -> None:
         """A video with spoken lines is heard once it's done, so its takes can be ranked by their words."""
@@ -820,6 +897,7 @@ class JobManager:
                 hold=req.motion_hold, edge=edge, prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras],
                 references=len(req.references), audios=len(req.ref_audios),
                 clean_audio=req.clean_audio and self.has_node("H3RefAudioPrep"), guide=req.motion_guide,
+                lock_audio=bool(req.lock_audio),
             )
         if req.engine == "imgedit":
             return workflows.build_imgedit(
@@ -956,6 +1034,8 @@ class JobManager:
                     ref, field = req.source, ("file" if media.kind_of(req.source or "") == "video" else "image")
                 elif role.startswith("aref_"):
                     ref, field = req.ref_audios[int(role[5:])], "audio"
+                elif role == "lock_audio":
+                    ref, field = req.lock_audio, "audio"
                 elif role.startswith("ref_"):
                     ref = req.references[int(role[4:])]
                 elif role.startswith("guide_"):
@@ -1050,7 +1130,9 @@ class JobManager:
                 asyncio.create_task(self._enhance_after(item))
             from . import heard  # its spoken lines, as heard: ranks a set of takes
 
-            if heard.wants(item) and self.has_node(heard.NODE):
+            if req.relock_of:  # a lip-sync pass: its picture goes to the render it redraws
+                await self._on_resynced(item, saved)
+            elif heard.wants(item) and self.has_node(heard.NODE):
                 asyncio.create_task(self._hear_after(item))
             if item.get("project"):
                 from . import projects  # the project's thumbnail and "modified" follow its latest result

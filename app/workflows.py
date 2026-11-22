@@ -80,6 +80,7 @@ def build_motion(
     audios: int = 0,
     clean_audio: bool = False,
     guide: str = "ttm",
+    lock_audio: bool = False,
 ) -> Built:
     """Motion layers (app/motion.py): H3 image-to-video from the original picture, with Time-to-Move
     (vloTimeToMove from ComfyUI-vlo) holding the moved objects to a rough cut-and-drag animation.
@@ -101,7 +102,12 @@ def build_motion(
     guide "reference" (a 3D scene's render): no Time-to-Move. The rough animation goes to H3 Reference as a reference
     video, <Video 1>, which the prompt says to follow for the camera and blocking only, not its look; H3 draws every
     frame itself. Looser than Time-to-Move's hold, but it copies none of the rough animation's holes and seams.
-    The mask isn't used then."""
+    The mask isn't used then.
+
+    lock_audio (image_inputs lock_audio: a sound, or a video's soundtrack): the video's sound is that, exactly, and only
+    the picture is sampled, attending to it (MiniMaxH3NativeAudioLock, ComfyUI-H3-NativeAudioLock), so the lips
+    follow it. A render whose extra words were silenced is drawn again this way: the mouth then moves only for the
+    lines."""
     if not 0 <= references <= H3_MAX_REFS - 1:
         raise ValueError(f"A scene render takes at most {H3_MAX_REFS - 1} object pictures")
     g = Graph()
@@ -173,18 +179,25 @@ def build_motion(
     # H3 Reference: beta for full sampling, simple with its turbo LoRA (see build_h3_ref)
     scheduler = "beta" if ref_model and not use_turbo else "simple"
     sigmas = g.add("BasicScheduler", model=o(model), scheduler=scheduler, steps=n_steps, denoise=1.0)
-    guider = g.add("BasicGuider", model=o(ttm), conditioning=o(cond, 0))
+    sample_model, start = o(ttm), o(cond, 1)
+    lock = None
+    if lock_audio:  # the sound held as given; only the picture is sampled
+        held = g.add("LoadAudio", audio="")
+        image_inputs["lock_audio"] = held
+        lock = g.add("MiniMaxH3NativeAudioLock", model=sample_model, av_latent=start, audio_vae=o(audio_vae), audio=o(held))
+        sample_model, start = o(lock, 0), o(lock, 1)
+    guider = g.add("BasicGuider", model=sample_model, conditioning=o(cond, 0))
     latent = g.add("SamplerCustomAdvanced", noise=o(noise), guider=o(guider), sampler=o(sampler), sigmas=o(sigmas),
-                   latent_image=o(cond, 1))
-    audio = g.add("VAEDecodeAudio", samples=o(latent), vae=o(audio_vae))
+                   latent_image=start)
+    audio = o(lock, 2) if lock else o(g.add("VAEDecodeAudio", samples=o(latent), vae=o(audio_vae)))
     frames = g.add("VAEDecode", samples=o(latent), vae=o(vae))
-    video = g.add("CreateVideo", images=o(frames), audio=o(audio), fps=float(FPS))
+    video = g.add("CreateVideo", images=o(frames), audio=audio, fps=float(FPS))
     save = g.add("SaveVideo", video=o(video), filename_prefix=prefix, format="auto", codec="auto")
     return Built(
         graph=g.nodes, outputs=[save],
         image_inputs={**image_inputs, "motion_ref": ref, **({"motion_mask": msk} if msk else {})},
         info={"width": width, "height": height, "frames": length, "seconds": round(length / FPS, 2), "steps": n_steps,
-              "turbo": use_turbo, "final_prompt": prompt,
+              "turbo": use_turbo, "final_prompt": prompt, **({"audio": "held (lips drawn to it)"} if lock_audio else {}),
               **({"guide": "reference video (<Video 1>)"} if by_ref else {"guide": "Time-to-Move", "hold_steps": f"1-{end}", "edge": edge}),
               **({"references": references, "model": "H3 Reference", "scheduler": scheduler} if ref_model else {})},
     )
