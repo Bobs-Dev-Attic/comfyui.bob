@@ -4018,7 +4018,8 @@ const Scene3D = (() => {
     const pc = shotView(), keep = startLook(), inView = cast(s.t, pc).filter(x => !x.off);
     const box = document.createElement("div");
     box.className = "m3-make";
-    box.innerHTML = `<p class="hint">Draws what ${s.camObj ? "the shot camera sees" : "the camera frames"}${s.camKeys.length ? ` (at ${s.t.toFixed(2)} s)` : ""} and has the edit model turn it into a photograph,
+    box.innerHTML = `<div class="s3r-use" role="status" aria-label="The machine's load" hidden></div>
+      <p class="hint">Draws what ${s.camObj ? "the shot camera sees" : "the camera frames"}${s.camKeys.length ? ` (at ${s.t.toFixed(2)} s)` : ""} and has the edit model turn it into a photograph,
         keeping where everything is. The photo shows up in the gallery.</p>
       <div class="field"><label for="s3p-look">How it should look <span class="opt">optional</span></label>
         <textarea id="s3p-look" rows="3" placeholder="${s.bg.empty ? "On a sunny beach at golden hour, shot on 35 mm film." : "Soft daylight, shot on 35 mm film."}">${esc(keep)}</textarea></div>
@@ -4033,7 +4034,8 @@ const Scene3D = (() => {
       <div class="field"><div class="s3p-ph"><label for="s3p-prompt">The prompt <span class="opt">the whole of it, as the model gets it; edit it if you like</span></label>
         <button type="button" class="link" data-a="rebuild" title="Build the prompt again from the settings above">↻ Rebuild</button></div>
         <textarea id="s3p-prompt" rows="9" spellcheck="false"></textarea>
-        <p class="hint s3-said"></p></div>`;
+        <p class="hint s3-said"></p></div>
+      <section class="s3p-set s3r-result" aria-label="The photo" hidden></section>`;
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
     foot.innerHTML = `<span class="hint s3p-st"></span><button type="button" class="btn ghost" data-a="cancel">Cancel</button><button type="button" class="btn primary" data-a="go">${quick ? "⚡ Generate the quick photo" : "📷 Generate"}</button>`;
@@ -4084,19 +4086,37 @@ const Scene3D = (() => {
     box.querySelector("#s3p-look").addEventListener("input", told);
     told();
     foot.querySelector('[data-a="cancel"]').onclick = () => win.close();
+    let stopUse = null;
     foot.querySelector('[data-a="go"]').onclick = async e => {
       e.target.disabled = true;
-      const st = foot.querySelector(".s3p-st"), look = box.querySelector("#s3p-look").value.trim();
+      const st = foot.querySelector(".s3p-st"), look = box.querySelector("#s3p-look").value.trim(), res = box.querySelector(".s3r-result");
       try { localStorage.setItem("bob.scenePhotoLook", look); } catch { /* not kept */ }
       const size0 = [s.cv.width, s.cv.height];
+      stopUse?.(); stopUse = usageStrip(box.querySelector(".s3r-use"));  // the machine's load while it's made
+      let item = null;
       try {
         st.textContent = "Drawing the view and sending it to the edit model…";
         try { localStorage.setItem("bob.scenePhotoDepth", box.querySelector("#s3p-depth")?.checked ? "1" : "0"); } catch { /* not kept */ }
-        await makePhoto([W, H], s.t, pc, look, model(), usePics(), useDepth(), dof, quick ? 0.4 : null, edited ? box.querySelector("#s3p-prompt").value : null, useLoras() ? v2Loras : null);
-        win.close();
-        Media.toast("3D scene: the photo is being made. It shows up in the gallery.");
-      } catch (err) { st.textContent = ""; e.target.disabled = false; Media.toast(`Photo: ${err.message}`); }
+        item = await makePhoto([W, H], s.t, pc, look, model(), usePics(), useDepth(), dof, quick ? 0.4 : null, edited ? box.querySelector("#s3p-prompt").value : null, useLoras() ? v2Loras : null);
+      } catch (err) { stopUse?.(); stopUse = null; st.textContent = ""; e.target.disabled = false; Media.toast(`Photo: ${err.message}`); return; }
       finally { if (s) { s.cv.width = size0[0]; s.cv.height = size0[1]; s.dirty = true; } }
+      // the window stays open while it's made (closing it doesn't stop it), then shows the photo
+      Media.toast("3D scene: the photo is being made. It shows up in the gallery.");
+      st.textContent = "Making the photo: closing this window doesn't stop it.";
+      foot.querySelector('[data-a="cancel"]').textContent = "Close";
+      e.target.textContent = "✓ Queued";
+      try {
+        const it = await waitItem(item.id);
+        if (!box.isConnected) return;
+        const f = (it.files || []).find(x => /^image\//.test(x.content_type || "")) || it.files?.[0];
+        if (it.status !== "done" || !f) throw new Error(it.error || "it didn't come out");
+        st.textContent = "";
+        res.hidden = false;
+        res.innerHTML = `<h4>The photo</h4><button type="button" class="s3r-file s3p-res" title="Click to see it large"><span class="s3r-ft"><img src="${esc(f.url || mediaUrl(f.path))}" alt="The photo"></span></button>`;
+        res.querySelector("button").onclick = ev => bigView({ ref: f.path, kind: "image", label: "The photo", note: look }, ev.currentTarget);
+        res.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      } catch (err) { if (box.isConnected) { st.textContent = ""; Media.toast(`Photo: ${err.message}`); } }
+      finally { stopUse?.(); stopUse = null; if (box.isConnected) { e.target.disabled = false; e.target.textContent = quick ? "⚡ Another quick photo" : "📷 Generate again"; } }
     };
   }
 
