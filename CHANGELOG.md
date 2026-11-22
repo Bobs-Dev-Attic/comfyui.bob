@@ -5,6 +5,17 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.144.3] - 2026-11-21
+
+### Fixed
+- **The progress stages follow every take, not just the first.** With several takes, V2's Generate (and the Render
+  window) said "done" once the first take was checked while the others were still rendering. Now the GPU stage stays
+  on until the last take is made, saying which take it's on ("take 2 of 2: sampling: step 4 of 8"); a later take's
+  queue doesn't take the list back; saving starts with the last take; and the word check waits for every take and
+  gives each one's score ("take 1: 92% · take 2: 100%"). A take that fails is noted; the list fails only if all do.
+- **A step count always reads as sampling.** If the sampler's steps came in before ComfyUI named the sampler, the note
+  could read "setting up the sampler and loading the models: step 4 of 8".
+
 ## [0.144.2] - 2026-11-21
 
 ### Fixed
