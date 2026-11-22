@@ -83,7 +83,7 @@ const V2 = (() => {
   async function loadBoard() {
     const b = await api(`/api/v2/board?project=${encodeURIComponent(state.project?.id ?? "")}`);
     st.board = { shots: Array.isArray(b.shots) ? b.shots : [], settings: b.settings || {} };
-    saves.k.clear(); saves.at = b.saved ? b.saved * 1000 : 0; saves.err = ""; saveSign();
+    saves.k.clear(); saves.at = b.saved ? b.saved * 1000 : 0; saves.err = ""; saveSign(); projLoraBtn();
     st.sel = st.board.shots.some(x => x.id === st.board.settings.sel) ? st.board.settings.sel : st.board.shots[0]?.id || null;
     await refreshScenes();
     renderAll();
@@ -420,19 +420,26 @@ const V2 = (() => {
     return out;
   }
   // The LoRAs a shot takes: those of the library objects in its scene, each once, up to 8.
-  /* The LoRAs a shot is made with: its own (s.loras, first: a style, a look), then its library objects' (a character).
-     One in both goes at the shot's strength, so a shot can turn an object's down or up for itself. At most 8. */
+  /* The LoRAs a shot is made with: its own (s.loras: a style, a look), then its library objects' (a character), then
+     the project's (every shot: the film's look). One in more than one goes at the first one's strength, so a shot can
+     turn an object's or the project's down or up for itself; at 0 it's off. At most 8 go along. */
+  const strengthOf = l => { const v = +l?.strength; return Number.isFinite(v) ? Math.max(0, Math.min(2, v)) : 1; };
   const objLoras = s => {
     const out = new Map();
     for (const o of objsOf(s).filter(o => o.lib)) for (const l of st.objs.find(x => x.id === o.lib)?.loras || [])
-      if (l?.name && !out.has(l.name)) out.set(l.name, { name: l.name, strength: +l.strength || 1 });
+      if (l?.name && !out.has(l.name)) out.set(l.name, { name: l.name, strength: strengthOf(l) });
     return [...out.values()];
   };
-  function lorasFor(s) {
+  const projLoras = () => (st.board.settings.loras || []).filter(l => l?.name).map(l => ({ name: l.name, strength: strengthOf(l) }));
+  // every LoRA with where it comes from ("shot" | "objects" | "project"), the first of each name, before the cap
+  function loraSources(s) {
     const out = new Map();
-    for (const l of s.loras || []) if (l?.name && !out.has(l.name)) out.set(l.name, { name: l.name, strength: +l.strength || 1 });
-    for (const l of objLoras(s)) if (!out.has(l.name)) out.set(l.name, l);
-    return [...out.values()].slice(0, 8);
+    for (const [from, list] of [["shot", (s.loras || []).filter(l => l?.name).map(l => ({ name: l.name, strength: strengthOf(l) }))], ["objects", objLoras(s)], ["project", projLoras()]])
+      for (const l of list) if (!out.has(l.name)) out.set(l.name, { ...l, from });
+    return [...out.values()];
+  }
+  function lorasFor(s) {
+    return loraSources(s).filter(l => l.strength > 0).slice(0, 8).map(({ name, strength }) => ({ name, strength }));
   }
   // The H3 LoRAs to pick from (as the object editor's), loaded once
   async function loadLoras() {
@@ -442,11 +449,14 @@ const V2 = (() => {
   function renderShotLoras(s) {
     const box = $("v2-shotloras"); if (!box || box.contains(document.activeElement)) return;
     const L = st.loraList || [], mine = s.loras || [], title = n => L.find(x => x.name === n)?.title || n;
-    const own = new Set(mine.map(l => l.name)), from = objLoras(s);
+    const src = loraSources(s), at = n => src.find(x => x.name === n);
+    const said = (list, kind) => list.length ? `With ${kind}: ${list.map(l => { const w = at(l.name);
+      return `${esc(title(l.name))} ${w.from !== (kind === "the project's" ? "project" : "objects") ? (w.strength > 0 ? `(at ${w.from === "shot" ? "this shot's" : "its object's"} strength, ${w.strength})` : "(off in this shot)") : `(${l.strength})`}`; }).join(", ")}. ` : "";
+    const on = src.filter(l => l.strength > 0).length;
     box.innerHTML = mine.map((l, k) => `<div class="v2-lora"><select data-slname="${k}" aria-label="LoRA ${k + 1}">${L.some(x => x.name === l.name) ? "" : `<option value="${esc(l.name)}">${esc(l.name)} (not found)</option>`}${L.map(x => `<option value="${esc(x.name)}"${x.name === l.name ? " selected" : ""}>${esc(x.title || x.name)}</option>`).join("")}</select>
-        <input type="number" data-slstr="${k}" min="0" max="2" step="0.05" value="${+l.strength || 1}" aria-label="Strength"><button type="button" class="btn sm ghost" data-slrm="${k}" aria-label="Remove this LoRA">✕</button></div>`).join("")
+        <input type="number" data-slstr="${k}" min="0" max="2" step="0.05" value="${strengthOf(l)}" aria-label="Strength" title="0 turns it off in this shot"><button type="button" class="btn sm ghost" data-slrm="${k}" aria-label="Remove this LoRA">✕</button></div>`).join("")
       + (L.length ? `<button type="button" class="btn sm" data-sladd${mine.length >= 4 ? " disabled" : ""}>＋ LoRA</button>` : st.loraList ? `<p class="hint">No MiniMax H3 LoRAs found in ComfyUI.</p>` : "")
-      + (from.length ? `<p class="hint">With its objects': ${from.map(l => `${esc(title(l.name))} ${own.has(l.name) ? "(at this shot's strength)" : `(${+l.strength})`}`).join(", ")}.${lorasFor(s).length < mine.length + from.filter(l => !own.has(l.name)).length ? " Only the first 8 go along." : ""}</p>` : "");
+      + (objLoras(s).length || projLoras().length ? `<p class="hint">${said(objLoras(s), "its objects'")}${said(projLoras(), "the project's")}A shot's own at 0 turns one off here.${on > 8 ? " Only the first 8 go along." : ""}</p>` : "");
   }
   /* decide(shot) -> {engine: "h3" | "scene", ref, label, why: [reasons]} */
   function decide(s) {
@@ -468,8 +478,8 @@ const V2 = (() => {
     else if (i.pictures) why.push("Objects have pictures, but H3 Reference isn't installed: they go by their descriptions.");
     if (voices.length) why.push(`${voices.map(v => v.name).join(" and ")} speak${voices.length === 1 ? "s" : ""} with ${voices.length === 1 ? "a voice" : "voices"} from the library (H3 Reference).`);
     else if (!caps.engines?.h3ref?.ready && voicesFor(s).length) why.push("Some speakers have voices, but H3 Reference isn't installed: H3 picks the voices.");
-    const L = lorasFor(s), mineN = (s.loras || []).filter(l => l?.name).length;
-    if (L.length) why.push(`${L.length} LoRA${L.length === 1 ? "" : "s"} go${L.length === 1 ? "es" : ""} along: ${[mineN ? `${mineN} the shot's` : "", L.length > mineN ? `${L.length - mineN} from its objects` : ""].filter(Boolean).join(", ")}.`);
+    const L = lorasFor(s), src = loraSources(s).filter(l => l.strength > 0).slice(0, 8), n = k => src.filter(l => l.from === k).length;
+    if (L.length) why.push(`${L.length} LoRA${L.length === 1 ? "" : "s"} go${L.length === 1 ? "es" : ""} along: ${[n("shot") ? `${n("shot")} the shot's` : "", n("objects") ? `${n("objects")} from its objects` : "", n("project") ? `${n("project")} the project's` : ""].filter(Boolean).join(", ")}.`);
     return { engine: "scene", ref: ref || byRef, label: ref || byRef ? `MiniMax H3 Reference · 3D scene render${byRef ? " (reference video)" : ""}` : "MiniMax H3 · 3D scene render", why, info: i };
   }
 
@@ -735,6 +745,47 @@ const V2 = (() => {
   }
 
   /* ---- the soundtrack: one piece of music for the whole timeline (MiniMax Music 3) */
+  /* 🧩 The project's LoRAs: every shot in it is made with them (after its own and its objects'; a shot's own at 0
+     turns one off there). Kept with the shots (the board's settings). */
+  function projectLorasDialog() {
+    const box = document.createElement("div");
+    box.className = "v2-ed";
+    const list = () => (st.board.settings.loras ||= []);
+    const draw = () => {
+      const L = st.loraList || [], mine = list();
+      box.innerHTML = `<p class="hint">LoRAs every shot in ${esc(state.project?.name || "Experiment")} is made with: the film's look, a style. A shot's own LoRAs and its objects' come first; one a shot has too goes at the shot's strength, and at 0 it's off in that shot.</p>
+        ${mine.map((l, k) => `<div class="v2-lora"><select data-plname="${k}" aria-label="LoRA ${k + 1}">${L.some(x => x.name === l.name) ? "" : `<option value="${esc(l.name)}">${esc(l.name)} (not found)</option>`}${L.map(x => `<option value="${esc(x.name)}"${x.name === l.name ? " selected" : ""}>${esc(x.title || x.name)}</option>`).join("")}</select>
+          <input type="number" data-plstr="${k}" min="0" max="2" step="0.05" value="${strengthOf(l)}" aria-label="Strength"><button type="button" class="btn sm ghost" data-plrm="${k}" aria-label="Remove this LoRA">✕</button></div>`).join("")}
+        ${L.length ? `<button type="button" class="btn sm" data-pladd${mine.length >= 4 ? " disabled" : ""}>＋ LoRA</button>` : `<p class="hint">No MiniMax H3 LoRAs found in ComfyUI.</p>`}`;
+    };
+    const changed = () => { save(); projLoraBtn(); renderPanel(true); };
+    box.addEventListener("change", e => {
+      const t = e.target, l = list()[+(t.dataset.plname ?? t.dataset.plstr)]; if (!l) return;
+      if (t.dataset.plname != null) l.name = t.value; else l.strength = t.value === "" ? 1 : strengthOf({ strength: t.value });
+      changed();
+    });
+    box.addEventListener("click", e => {
+      const t = e.target.closest("button"); if (!t) return;
+      if (t.hasAttribute("data-pladd") && st.loraList?.length && list().length < 4) {
+        const used = new Set(list().map(l => l.name)); list().push({ name: (st.loraList.find(x => !used.has(x.name)) || st.loraList[0]).name, strength: 1 });
+      } else if (t.dataset.plrm != null) list().splice(+t.dataset.plrm, 1);
+      else return;
+      changed(); draw();
+      if (t.hasAttribute("data-pladd")) box.querySelector(`[data-plname="${list().length - 1}"]`)?.focus();
+    });
+    draw();
+    const foot = document.createElement("div");
+    foot.innerHTML = `<span class="wm-foot-gap"></span><button type="button" class="btn sm primary" data-a="done">Done</button>`;
+    const win = WM.open({ id: "v2-projloras", title: `LoRAs · ${state.project?.name || "Experiment"}`, content: box, footer: foot, width: 560, height: 420, modal: true });
+    foot.querySelector('[data-a="done"]').onclick = () => win.close();
+  }
+  // the timeline bar's button: how many the project has
+  function projLoraBtn() {
+    const b = $("v2-projloras"); if (!b) return;
+    const n = projLoras().length;
+    b.textContent = n ? `🧩 LoRAs · ${n}` : "🧩 LoRAs";
+    b.classList.toggle("on", n > 0);
+  }
   function soundtrackDialog() {
     const t = { on: true, style: "", lyrics: "", ...(st.board.settings.soundtrack || {}) }, T = totalSeconds();
     const it = t.result && state.items.get(t.result), f = it?.status === "done" ? it.files?.[0] : null;
@@ -1445,7 +1496,7 @@ const V2 = (() => {
     $("v2-shotloras").addEventListener("change", e => {
       const s = shotLoras(), t = e.target; if (!s) return;
       if (t.dataset.slname != null) s.loras[+t.dataset.slname].name = t.value;
-      else if (t.dataset.slstr != null) s.loras[+t.dataset.slstr].strength = Math.max(0, Math.min(2, +t.value || 1));
+      else if (t.dataset.slstr != null) s.loras[+t.dataset.slstr].strength = t.value === "" ? 1 : strengthOf({ strength: t.value });
       else return;
       save(); t.blur(); renderPanel(true);
     });
@@ -1459,8 +1510,9 @@ const V2 = (() => {
       save(); renderPanel(true);
       $("v2-shotloras").querySelector(`[data-slname="${s.loras.length - 1}"]`)?.focus();
     });
-    // the soundtrack
+    // the soundtrack, and the project's LoRAs
     $("v2-music-btn").onclick = soundtrackDialog;
+    $("v2-projloras").onclick = projectLorasDialog;
 
     for (const [id, k] of fields) $(id).addEventListener(id === "v2-quality" || id === "v2-trans" ? "change" : "input", e => {
       const s = cur(); if (!s) return;

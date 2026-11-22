@@ -5,6 +5,19 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.160.0] - 2026-11-22
+
+### Added
+- **Project LoRAs: every shot in a project is made with them.** A 🧩 LoRAs button on V2's timeline bar (beside
+  🎵 Soundtrack; it shows how many) opens the project's list: up to 4 MiniMax H3 LoRAs with their strengths, for the
+  film's look or a style. They go along after a shot's own LoRAs and its objects'; one a shot has too goes at the
+  shot's strength. They're kept with the project's shots.
+
+### Changed
+- **A shot's LoRA at strength 0 turns it off in that shot** (a project's or an object's), instead of snapping back
+  to 1. The shot's LoRAs field lists what its objects and the project add, and which are off or overridden there;
+  the Model box counts the shot's, its objects' and the project's.
+
 ## [0.159.0] - 2026-11-22
 
 ### Added
