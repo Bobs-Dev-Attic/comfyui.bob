@@ -1728,6 +1728,39 @@ const Scene3D = (() => {
       const ok = await Shots.placeNow?.(it, project, sceneId); ev.target.textContent = ok ? "✓ On the timeline" : "➕ Add to Timeline"; ev.target.disabled = !!ok; };
     el.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
+  /* What a render is made from, as thumbnails in the Render window (media: buildRender's): the first frame, the 3D
+     video, its mask, the depth map, the fill views, the objects' pictures and the voices. A click shows one large. */
+  function showFiles(el, media) {
+    if (!el || !media?.length) return;
+    el.hidden = false;
+    el.innerHTML = `<h4>What it's made from <span class="opt">click one to see it large</span></h4><div class="s3r-files-l">${media.map((m, i) => {
+      const url = esc(mediaUrl(m.ref));
+      return `<button type="button" class="s3r-file" data-i="${i}" title="${esc(m.label)}${m.note ? ` (${esc(m.note)})` : ""}: click to see it large">
+        <span class="s3r-ft">${m.kind === "video" ? `<video src="${url}#t=0.3" muted loop playsinline preload="metadata"></video><span class="s3r-fk" aria-hidden="true">▶</span>`
+          : m.kind === "audio" ? `<span class="s3r-fa" aria-hidden="true">🔊</span>` : `<img src="${url}" alt="" loading="lazy">`}</span>
+        <span class="s3r-fl">${esc(m.label)}${m.note ? `<small>${esc(m.note)}</small>` : ""}</span></button>`;
+    }).join("")}</div>`;
+    el.querySelectorAll(".s3r-file").forEach(b => {
+      const v = b.querySelector("video");
+      if (v) { b.addEventListener("mouseenter", () => v.play().catch(() => {})); b.addEventListener("mouseleave", () => v.pause()); }
+      b.onclick = () => bigView(media[+b.dataset.i], b);
+    });
+  }
+  // One of them large, over everything (the Render window stays open under it): Esc, ✕ or a click outside closes it.
+  function bigView(m, back) {
+    const url = esc(mediaUrl(m.ref)), d = document.createElement("div");
+    d.className = "s3r-big"; d.setAttribute("role", "dialog"); d.setAttribute("aria-modal", "true"); d.setAttribute("aria-label", m.label);
+    d.innerHTML = `<figure>${m.kind === "video" ? `<video src="${url}" controls autoplay loop muted playsinline></video>`
+      : m.kind === "audio" ? `<audio src="${url}" controls autoplay></audio>` : `<img src="${url}" alt="${esc(m.label)}">`}
+      <figcaption><b>${esc(m.label)}</b>${m.note ? ` · ${esc(m.note)}` : ""}<span class="s3r-bigsp"></span>
+        <a class="btn sm" href="${url}" target="_blank" rel="noopener">Open in a new tab ↗</a><button type="button" class="btn sm" data-x>✕ Close</button></figcaption></figure>`;
+    const close = () => { d.remove(); document.removeEventListener("keydown", key, true); back?.focus(); };
+    const key = e => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } };
+    d.addEventListener("click", e => { if (e.target === d || e.target.closest("[data-x]")) close(); });
+    document.addEventListener("keydown", key, true);
+    document.body.appendChild(d);
+    d.querySelector("[data-x]").focus();
+  }
   function renderDialog(o = {}) {
     if (!s?.bg) return;
     if (!s.objs.some(o => o.mesh && !o.hidden) && !cameraMoves()) return Media.toast("Nothing moves yet: key an object or the camera first.");
@@ -1794,6 +1827,7 @@ const Scene3D = (() => {
       <div class="field"><div class="s3p-ph"><label for="s3r-prompt">The prompt <span class="opt">the whole of it, as H3 gets it; edit it if you like</span></label>
         <button type="button" class="link" data-a="rebuild" title="Build the prompt again from the settings above">↻ Rebuild</button></div>
         <textarea id="s3r-prompt" rows="8" spellcheck="false"></textarea><p class="hint s3r-pnote"></p></div>
+      <section class="s3p-set s3r-files" aria-label="What it's made from" hidden></section>
       <section class="s3p-set s3r-stages" aria-label="Progress" aria-live="polite" hidden><h4>Progress <span class="s3r-sgh"></span></h4><ol></ol></section>
       <section class="s3p-set s3r-result" aria-label="The render" hidden></section>`;
     const foot = document.createElement("div");
@@ -1935,6 +1969,7 @@ const Scene3D = (() => {
           what: box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder,
           onPhoto: id => { stopPhoto?.(); stopPhoto = followPhoto(id, sg); } }, m => { st.textContent = m; sg.say(m); });
         stopPhoto?.(); stopPhoto = null;
+        showFiles(box.querySelector(".s3r-files"), r.media);
         if (to !== "now") {  // into a shot: Generate on the Shots step sends it
           const k = Shots.useScene(to === "new" ? -1 : +to, r.shot);
           sg.finish();
@@ -2007,6 +2042,12 @@ const Scene3D = (() => {
       talkers = s.objs.filter(x => x.prim === "figure" && said.has(x.name.trim().toLowerCase()));
       const ref = await renderVideo("ref", [W, H], n, (f, N) => say(`${o.guide === "reference" ? "Drawing the 3D scene's render" : "Drawing the rough animation"}: frame ${f + 1} of ${N}`), proj);
       const mask = await renderVideo("mask", [W, H], n, (f, N) => say(`Drawing its mask: frame ${f + 1} of ${N}`), proj);
+      // the first frame's depth map, to look at in the Render window (near is white): not sent to H3
+      let depth = null;
+      try {
+        const z = depthDistances([W, H], 0, camForRender(0)), rg = depthRange(z);
+        if (rg) depth = await uploadBlob(new Blob([await grayPNG(depthGray(z, rg), W, H)], { type: "image/png" }), "scene_depth.png");
+      } catch (err) { console.warn("Depth map:", err); }
       say("Sending to H3…");
       const built = renderPrompt(o.what, o.refs, fromPhoto, o.extra, o.guide), what = built.what;
       const cam = built.cam, prompt = String(o.prompt || "").trim() || built.prompt;
@@ -2027,10 +2068,21 @@ const Scene3D = (() => {
       const thumb = (pic && state.items.get(pic.id)?.files?.[0]?.url) || `/${req.first_frame.replace(/^\/+/, "")}`;  // its first picture
       // the scene as saved now: a later change makes Generate draw it again
       const rev = await flushSave();
+      // what it's made from, for the Render window's thumbnails
+      const media = [], add = (ref, kind, label, note = "") => { if (ref) media.push({ ref, kind, label, note }); };
+      add(req.first_frame, "image", photoPath ? "The photo of the first frame" : start === "picture" ? "The scene's picture" : noPic ? "The first frame, as drawn" : "The scene's picture",
+        req.motion_first === "composite" ? "the objects drawn on it" : o.guide === "reference" ? "<Picture 1>" : "first frame");
+      add(ref, "video", o.guide === "reference" ? "The 3D scene's render" : "The 3D video", o.guide === "reference" ? "<Video 1>" : "the rough animation H3 follows");
+      if (o.guide !== "reference") add(mask, "video", "Its mask", "white: where H3 may change it");  // H3 Reference's video doesn't use it
+      add(depth, "image", "Depth map", "the first frame: near is white");
+      (proj?.gaps || []).forEach((g, i) => add(g.ref, "image", `Fill view ${i + 1}`, `what the photo can't see, at ${g.t.toFixed(1)} s`));
+      (proj?.details || []).forEach(d => add(d.ref, "image", "Close-up view", `at ${d.t.toFixed(1)} s`));
+      if (req.references) picObjs().forEach((x, i) => add(x.picture, "image", x.name, `<Picture ${i + 2}>`));
+      (o.extra?.voices || []).forEach((v, i) => add(v.ref, "audio", `${v.name}'s voice`, `<Audio ${i + 1}>`));
       const shot = { id: s.sc.id, name: s.sc.name, thumb, seconds: n / FPS, what, cam, rev,
         req: { motion_video: ref, motion_video_mask: mask, first_frame: req.first_frame, motion_first: req.motion_first,
           motion_hold: req.motion_hold, motion_guide: req.motion_guide, quality: req.quality, references: req.references || [], turbo: req.turbo, ...(req.steps ? { steps: req.steps } : {}) } };
-      return { req, shot };
+      return { req, shot, media };
     } finally { talkers = []; freeProjection(proj); if (s) { s.cv.width = keep[0]; s.cv.height = keep[1]; s.dirty = true; } }
   }
   // The render's prompt: what happens (tags filled in), the camera, and the sound fields.

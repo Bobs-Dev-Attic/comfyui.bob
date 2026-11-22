@@ -5,6 +5,15 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.152.0] - 2026-11-22
+
+### Added
+- **The Render window shows what a render is made from, as thumbnails.** As soon as a render is built, a "What it's
+  made from" strip shows its first frame (photo or picture), the 3D video H3 follows (the rough animation, or the 3D
+  scene's render for H3 Reference), its mask, a depth map of the first frame (near is white), the views filled where
+  the photo can't see, the objects' pictures and the speakers' voices. Videos play on hover; a click shows one large
+  over the window (Esc, ✕ or a click outside closes it), with a link to open it in a new tab.
+
 ## [0.151.0] - 2026-11-22
 
 ### Added
