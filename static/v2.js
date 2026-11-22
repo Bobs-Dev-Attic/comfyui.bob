@@ -311,7 +311,8 @@ const V2 = (() => {
     }
     if (!force && box.contains(document.activeElement)) return;
     const o = c.sel >= 0 ? c.objs[c.sel] : null;
-    const key = JSON.stringify([c.camSel, o?.id, o?.name, o?.lib, linesOf(s).filter(l => o && l.speaker === o.name), st.objs.length, st.cams.length]);
+    const key = JSON.stringify([c.camSel, o?.id, o?.name, o?.lib, linesOf(s).filter(l => o && l.speaker === o.name), st.objs.length, st.cams.length,
+      o?.lib && st.objs.find(x => x.id === o.lib)?.loras, st.loraList?.length]);
     if (!force && box.dataset.k === key) return;
     box.dataset.k = key;
     const back = `<button type="button" class="btn sm ghost v2-back" data-x="shot" title="The shot's words, sound and settings">← 🎞 ${esc(s.name)}</button>`;
@@ -331,11 +332,38 @@ const V2 = (() => {
         ${mine.map(([l, k]) => `<div class="v2-xline"><input data-xl="${k}" maxlength="300" value="${esc(l.text || "")}" placeholder="What ${esc(o.name)} says" aria-label="Line ${k + 1}"><button type="button" class="v2-x" data-xrm="${k}" aria-label="Remove this line">✕</button></div>`).join("")}
         <button type="button" class="btn sm" data-x="addline">＋ Line for ${esc(o.name)}</button>
         <p class="hint">The shot's dialogue keeps every line in order${lib?.voice ? `; ${esc(o.name)} speaks with the voice from the library` : ""}.</p></div>
+      ${objLoraField(lib)}
       <div class="v2-xrow">${lib ? `<span class="hint">From the library: <b>${esc(lib.name)}</b></span><button type="button" class="btn sm ghost" data-x="editlib">Edit…</button>`
         : `<button type="button" class="btn sm ghost" data-x="savelib" title="Keep it in the object library, with its shape, what it is and its picture">💾 Save to the library</button>`}</div>`;
   }
+  /* A library object's LoRAs, in the selected object's panel: a row each (which, how strong). They're the library
+     object's, so every shot it's in uses them; one that isn't in the library is saved there with its first. */
+  function objLoraField(lib) {
+    const L = st.loraList || [], mine = lib?.loras || [];
+    return `<div class="field"><span class="v2-flbl">LoRAs <span class="opt">${lib ? "the library object's: every shot it's in uses them" : "a character, a look"}</span></span>
+      ${mine.map((l, k) => `<div class="v2-lora"><select data-xlname="${k}" aria-label="LoRA ${k + 1}">${L.some(x => x.name === l.name) ? "" : `<option value="${esc(l.name)}">${esc(l.name)} (not found)</option>`}${L.map(x => `<option value="${esc(x.name)}"${x.name === l.name ? " selected" : ""}>${esc(x.title || x.name)}</option>`).join("")}</select>
+        <input type="number" data-xlstr="${k}" min="0" max="2" step="0.05" value="${+l.strength || 1}" aria-label="Strength"><button type="button" class="btn sm ghost" data-xlrm="${k}" aria-label="Remove this LoRA">✕</button></div>`).join("")}
+      ${L.length ? `<button type="button" class="btn sm" data-x="addlora"${mine.length >= 4 ? " disabled" : ""} title="${lib ? "Add a MiniMax H3 LoRA" : "Saves it to the object library, then adds a MiniMax H3 LoRA"}">＋ LoRA</button>`
+        : st.loraList ? `<p class="hint">No MiniMax H3 LoRAs found in ComfyUI.</p>` : ""}</div>`;
+  }
+  const putLib = e => api(`/api/v2/objects/${e.id}`, { method: "PUT", body: JSON.stringify({ id: e.id, name: e.name, kind: e.kind, prim: e.prim, model: e.model, becomes: e.becomes,
+    pictures: e.pictures || [], loras: e.loras || [], voice: e.voice || null, notes: e.notes || "" }) });
+  // the selected object into the object library (its shape, what it is, its picture); its entry
+  async function saveToLib(c, o) {
+    const e2 = { id: uid(), name: o.name, kind: o.prim ? "prim" : "model", prim: o.prim || null, model: o.prim ? null : o.model || null, becomes: o.becomes || "",
+      pictures: o.picture ? [o.picture] : [], loras: [], voice: null, notes: "" };
+    await api(`/api/v2/objects/${e2.id}`, { method: "PUT", body: JSON.stringify(e2) }); o.lib = e2.id; Scene3D.rename(c.sel, o.name); await loadObjects();
+    return st.objs.find(x => x.id === e2.id) || e2;
+  }
+  // a change to the selected object's library LoRAs: kept, and the panels redrawn
+  async function libLoras(lib, change) {
+    if (!Array.isArray(lib.loras)) lib.loras = [];
+    change(lib.loras);
+    try { await putLib(lib); } catch (err) { Media.toast(`LoRAs: ${err.message}`); }
+    renderObjects(); renderObjx(true); renderPanel(true);
+  }
   async function objxClick(e) {
-    const b = e.target.closest("[data-x], [data-xrm]"); if (!b) return;
+    const b = e.target.closest("[data-x], [data-xrm], [data-xlrm]"); if (!b) return;
     const c = Scene3D.current(), s = cur(); if (!c || !s) return;
     const o = c.sel >= 0 ? c.objs[c.sel] : null, x = b.dataset.x;
     if (x === "shot") { Scene3D.select(-1); return inspect("shot"); }
@@ -347,11 +375,16 @@ const V2 = (() => {
       const ins = document.querySelectorAll(".v2-objx [data-xl]"); ins[ins.length - 1]?.focus(); return; }
     if (x === "editlib") return objectEditor(st.objs.find(y => y.id === o.lib));
     if (x === "savelib") {
-      const e2 = { id: uid(), name: o.name, kind: o.prim ? "prim" : "model", prim: o.prim || null, model: o.prim ? null : o.model || null, becomes: o.becomes || "",
-        pictures: o.picture ? [o.picture] : [], loras: [], voice: null, notes: "" };
-      try { await api(`/api/v2/objects/${e2.id}`, { method: "PUT", body: JSON.stringify(e2) }); o.lib = e2.id; Scene3D.rename(c.sel, o.name); await loadObjects(); renderObjx(true);
-        Media.toast(`${o.name} is in the object library: drag it into other shots.`); } catch (err) { Media.toast(`Save: ${err.message}`); }
+      try { await saveToLib(c, o); renderObjx(true); Media.toast(`${o.name} is in the object library: drag it into other shots.`); } catch (err) { Media.toast(`Save: ${err.message}`); }
     }
+    if (x === "addlora" && st.loraList?.length) {
+      let lib = o.lib && st.objs.find(y => y.id === o.lib);
+      if (!lib) try { lib = await saveToLib(c, o); Media.toast(`${o.name} is in the object library now, with its LoRAs.`); } catch (err) { return Media.toast(`Save: ${err.message}`); }
+      const used = new Set((lib.loras || []).map(l => l.name));
+      if ((lib.loras || []).length < 4) await libLoras(lib, ls => ls.push({ name: (st.loraList.find(l => !used.has(l.name)) || st.loraList[0]).name, strength: 1 }));
+      const sels = document.querySelectorAll(".v2-objx [data-xlname]"); sels[sels.length - 1]?.focus();
+    }
+    if (b.dataset.xlrm != null) { const lib = o.lib && st.objs.find(y => y.id === o.lib); if (lib) await libLoras(lib, ls => ls.splice(+b.dataset.xlrm, 1)); }
   }
 
   /* ---- the model, from what's in the shot */
@@ -828,7 +861,8 @@ const V2 = (() => {
     $("v2-objgrid").innerHTML = list.map(e => `<div class="v2-obj" role="listitem" draggable="true" tabindex="0" data-oid="${esc(e.id)}" title="${esc(e.becomes || e.name)}: drag onto the scene, or ＋; double-click to edit">
         <div class="v2-objth">${e.pictures?.[0] ? `<img src="${esc(mediaUrl(e.pictures[0]))}" alt="" loading="lazy">` : `<span>${shapeIcon(e)}</span>`}</div>
         <b>${esc(e.name)}</b><span class="hint">${e.pictures?.length ? `${e.pictures.length} 🖼` : ""}${e.loras?.length ? ` ${e.loras.length} 🧩` : ""}${e.voice ? " 🗣" : ""}</span>
-        <button type="button" class="v2-objadd" data-add="${esc(e.id)}" title="Put ${esc(e.name)} in the scene, in front of the camera" aria-label="Add ${esc(e.name)} to the scene">＋</button></div>`).join("");
+        <button type="button" class="v2-objadd" data-add="${esc(e.id)}" title="Put ${esc(e.name)} in the scene, in front of the camera" aria-label="Add ${esc(e.name)} to the scene">＋</button>
+        <button type="button" class="v2-objedit" data-edit="${esc(e.id)}" title="Edit ${esc(e.name)}: what it is, pictures, LoRAs, voice" aria-label="Edit ${esc(e.name)}">✎</button></div>`).join("");
   }
   async function place(id, cx = null, cy = null) {
     const e = st.objs.find(x => x.id === id); if (!e) return;
@@ -1347,6 +1381,12 @@ const V2 = (() => {
       linesOf(s)[+k].text = e.target.value; save(); $("v2-lines").dataset.shot = ""; renderPanel(true);
     });
     host.addEventListener("change", e => {
+      const t = e.target, xl = t.dataset.xlname ?? t.dataset.xlstr;
+      if (xl != null && t.closest(".v2-objx")) {  // the selected object's LoRAs
+        const c = Scene3D.current(), o = c && c.sel >= 0 ? c.objs[c.sel] : null, lib = o?.lib && st.objs.find(y => y.id === o.lib);
+        if (lib) { t.blur(); libLoras(lib, ls => { const l = ls[+xl]; if (!l) return; if (t.dataset.xlname != null) l.name = t.value; else l.strength = Math.max(0, Math.min(2, +t.value || 1)); }); }
+        return;
+      }
       if (e.target.id !== "v2-oname") return;
       const c = Scene3D.current(); if (c && c.sel >= 0) Scene3D.rename(c.sel, e.target.value);
     });
@@ -1369,8 +1409,9 @@ const V2 = (() => {
     $("v2-objnew").onclick = () => objectEditor();
     $("v2-objq").addEventListener("input", renderObjects);
     const grid = $("v2-objgrid");
-    grid.addEventListener("click", e => { const a = e.target.closest("[data-add]"); if (a) place(a.dataset.add); });
-    grid.addEventListener("dblclick", e => { const c = e.target.closest(".v2-obj"); if (c && !e.target.closest("[data-add]")) objectEditor(st.objs.find(x => x.id === c.dataset.oid)); });
+    grid.addEventListener("click", e => { const a = e.target.closest("[data-add]"); if (a) return place(a.dataset.add);
+      const ed = e.target.closest("[data-edit]"); if (ed) objectEditor(st.objs.find(x => x.id === ed.dataset.edit)); });
+    grid.addEventListener("dblclick", e => { const c = e.target.closest(".v2-obj"); if (c && !e.target.closest("[data-add], [data-edit]")) objectEditor(st.objs.find(x => x.id === c.dataset.oid)); });
     grid.addEventListener("keydown", e => { const c = e.target.closest(".v2-obj"); if (c && e.key === "Enter") objectEditor(st.objs.find(x => x.id === c.dataset.oid)); });
     grid.addEventListener("dragstart", e => { const c = e.target.closest(".v2-obj"); if (!c) return; e.dataTransfer.setData("text/x-bob-obj", c.dataset.oid); e.dataTransfer.effectAllowed = "copy"; });
     const view = $("v2-view").parentElement;
