@@ -5,6 +5,16 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.150.0] - 2026-11-22
+
+### Added
+- **V2's top row shows what's generating and the machine's load.** Next to Classic, one line says what the running
+  job is doing (for example "Video · Shot 1: sampling, step 5 of 8 · 63%", or "loading the models and preparing",
+  "saving the video", how many more are waiting), and "Idle" when nothing is. Beside it, CPU, GPU and memory use in
+  percent, updated every few seconds and shown in red at 90% or more; hovering the GPU gives its name and its own
+  memory use. The readings come from a new `/api/system/usage` (the kernel for CPU and memory, `nvidia-smi` for the
+  GPU; no new packages).
+
 ## [0.149.1] - 2026-11-21
 
 ### Fixed

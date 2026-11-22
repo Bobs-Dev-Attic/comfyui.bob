@@ -1395,13 +1395,62 @@ const V2 = (() => {
     });
     tr.addEventListener("dragend", () => { drag = null; });
   }
+
+  /* The top row: what the generation is doing, in one line (Idle when nothing is), and the machine's load. */
+  const act = { doing: new Map(), step: new Map(), pos: new Map() };
+  const KINDS = { video: "Video", image: "Photo", audio: "Sound" };
+  // a job's log line -> what it's doing, in words (null: a line that doesn't say)
+  const outOf = it => it?.kind === "image" ? "photo" : it?.kind === "audio" ? "sound" : "video";
+  const fromLog = (msg, it) => /^Node \d+ · /.test(msg) ? Scene3D.doingOf(msg.replace(/^Node \d+ · /, ""), outOf(it))
+    : /^Sent to ComfyUI/.test(msg) ? "sent to ComfyUI" : /^Running on the GPU/.test(msg) ? "loading the models and preparing"
+    : /^Downloading the results/.test(msg) ? `saving the ${outOf(it)}` : /^Checking the words/.test(msg) ? "checking the spoken words" : null;
+  function activity() {
+    const el = $("v2-activity"); if (!el) return;
+    const busy = [...state.items.values()].filter(x => ["queued", "submitting", "running"].includes(x.status));
+    const run = busy.filter(x => x.status === "running").sort((a, b) => (a.started || a.created) - (b.started || b.created))[0];
+    const waiting = busy.length - (run ? 1 : 0);
+    let t = "Idle";
+    if (run) {
+      const shot = st.board?.shots?.find(s => run.params?.scene && s.scene === run.params.scene || s.results?.includes(run.id));
+      const what = `${KINDS[run.kind] || "Job"}${shot ? ` · ${shot.name || "a shot"}` : ""}`;
+      // what it's on: from the live events, or (a page opened mid-job) its log so far
+      const doing = act.doing.get(run.id) ?? [...(run.log || [])].reverse().map(e => fromLog(e.msg || "", run)).find(Boolean), stp = act.step.get(run.id);
+      const pct = stp ? ` · ${Math.round(100 * stp[0] / stp[1])}%` : run.progress ? ` · ${Math.round(100 * run.progress)}%` : "";
+      const words = stp ? `${Scene3D.stepVerb(doing)}, step ${stp[0]} of ${stp[1]}` : doing || "starting";
+      t = `${what}: ${words}${pct}${waiting ? ` · ${waiting} more waiting` : ""}`;
+    } else if (busy.length) {
+      const p = Math.min(...busy.map(x => act.pos.get(x.id) ?? Infinity));
+      t = `${busy.length} waiting${Number.isFinite(p) ? `, ComfyUI queue position ${p}` : ""}`;
+    }
+    el.textContent = t; el.title = t === "Idle" ? "Nothing is generating" : t; el.classList.toggle("busy", t !== "Idle");
+  }
+  function onActivity(ev) {
+    const said = ev.type === "log" && fromLog(ev.msg || "", state.items.get(ev.id));
+    if (said) { act.doing.set(ev.id, said); act.step.delete(ev.id); } else if (ev.type === "progress" && ev.steps > 1) act.step.set(ev.id, [ev.step, ev.steps]);
+    else if (ev.type === "queue") act.pos.set(ev.id, ev.position);
+    else if (ev.type === "item" && !["queued", "submitting", "running"].includes(ev.item.status)) {
+      act.doing.delete(ev.item.id); act.step.delete(ev.item.id); act.pos.delete(ev.item.id);
+    }
+    activity();
+  }
+  async function meters() {
+    const box = $("v2-meters"); if (!box || document.hidden) return;
+    let u; try { u = await api("/api/system/usage"); } catch { return; }
+    const set = (k, v, tip) => { const m = box.querySelector(`[data-m="${k}"]`); if (!m) return;
+      m.querySelector("b").textContent = v == null ? "–" : `${Math.round(v)}%`; m.classList.toggle("hot", v >= 90); if (tip) m.title = tip; };
+    const gb = b => (b / 1024 ** 3).toFixed(1);
+    set("cpu", u.cpu, "CPU use");
+    set("gpu", u.gpu?.pct, u.gpu ? `GPU use: ${u.gpu.name}${u.gpu.mem_total ? `; its memory ${gb(u.gpu.mem_used)} of ${gb(u.gpu.mem_total)} GB (${Math.round(u.gpu.mem_pct)}%)` : ""}` : "GPU use (no NVIDIA GPU found)");
+    set("memory", u.memory?.pct, u.memory ? `Memory (RAM): ${gb(u.memory.used)} of ${gb(u.memory.total)} GB` : "Memory (RAM) use");
+  }
   function events() {
     const es = new EventSource("/api/events");
     es.onmessage = e => {
       const ev = JSON.parse(e.data);
-      if (ev.type !== "item") return;
+      if (ev.type !== "item") { onActivity(ev); return; }
       const prev = state.items.get(ev.item.id);
       state.items.set(ev.item.id, ev.item);
+      onActivity(ev);
       Scene3D.onItem?.(ev.item);
       maybeAddLater(ev.item);
       if (ev.item.id === st.board.settings.lastExport) renderExport();
@@ -1419,6 +1468,7 @@ const V2 = (() => {
     try { state.caps = await api("/api/capabilities"); } catch (e) { status(`Capabilities: ${e.message}`); }
     try { for (const it of (await api("/api/items")).items || []) state.items.set(it.id, it); } catch {}
     events();
+    activity(); meters(); setInterval(meters, 3000);
     await loadObjects();
     await loadCameras();
     await loadProjects();

@@ -307,3 +307,17 @@ html[data-motion="reduce"] .v2-panel { transition: none !important; }
 /* a shot's progress while it's made (the Render window's stages) */
 #v2-stages:empty { display: none; }
 #v2-stages .v2-stages { margin: 8px 0 4px; }
+
+/* the top row's activity line and the machine's load */
+.v2-activity { min-width: 0; max-width: 48ch; flex: 0 1 auto; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  font-size: 12px; color: var(--muted); padding: 3px 8px; border: 1px solid var(--line); border-radius: 999px; }
+.v2-activity.busy { color: var(--text); border-color: var(--accent); }
+.v2-activity.busy::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%;
+  background: var(--accent); vertical-align: 1px; animation: v2-pulse 1.2s ease-in-out infinite; }
+@keyframes v2-pulse { 50% { opacity: .3; } }
+:root[data-motion="reduce"] .v2-activity.busy::before { animation: none; }
+.v2-meters { display: flex; gap: 10px; flex: none; font-size: 12px; color: var(--muted); }
+.v2-meter b { display: inline-block; min-width: 4ch; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); }
+.v2-meter.hot b { color: #e5484d; }
+@media (max-width: 1100px) { .v2-activity { max-width: 26ch; } }
+@media (max-width: 760px) { .v2-meters { display: none; } }

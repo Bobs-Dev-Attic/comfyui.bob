@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, appsettings, audiotools, config, heard, llm, media, model3d, modelpaths, models, projectmedia, projects, prompts, render, score, syscheck, tracking, updater, workflows
+from . import __version__, appsettings, audiotools, config, heard, llm, media, model3d, modelpaths, models, projectmedia, projects, prompts, render, score, syscheck, sysusage, tracking, updater, workflows
 from .comfy import ComfyService
 from .jobs import EnhanceOpts, GenerateRequest, JobManager, media_path
 
@@ -90,6 +90,12 @@ async def status():
         "gpu": gpu,
         "queue": queue,
     }
+
+
+@app.get("/api/system/usage")
+async def system_usage():
+    """CPU, memory and GPU use right now (V2's top row)."""
+    return await asyncio.to_thread(sysusage.usage)
 
 
 @app.get("/api/update")
