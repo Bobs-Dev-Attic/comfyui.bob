@@ -1534,6 +1534,7 @@ const V2 = (() => {
     // the soundtrack, and the project's LoRAs
     $("v2-music-btn").onclick = soundtrackDialog;
     $("v2-projloras").onclick = projectLorasDialog;
+    $("v2-settings").onclick = () => Settings.open("generation");
 
     for (const [id, k] of fields) $(id).addEventListener(id === "v2-quality" || id === "v2-trans" ? "change" : "input", e => {
       const s = cur(); if (!s) return;
@@ -1683,6 +1684,7 @@ const V2 = (() => {
     });
     await loadObjects();
     await loadLoras();
+    Settings.load();  // the app's settings (the look, the retake threshold the Render window shows)
     await loadCameras();
     await loadProjects();
     await loadBoard();

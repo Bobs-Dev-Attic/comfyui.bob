@@ -142,8 +142,9 @@ class GenerateRequest(BaseModel):
     # ...and then draw its picture again to that sound, so the lips move only for the lines (a scene render, when
     # ComfyUI-H3-NativeAudioLock is installed)
     resync_after_quiet: bool = True
-    # a scene render whose lines are heard under this score (%) gets its sound retaken once, its picture kept (0: never)
-    auto_retake_below: int = Field(80, ge=0, le=100)
+    # a scene render whose lines are heard under this score (%) gets its sound retaken once, its picture kept (0: never;
+    # None: Settings > Generation's)
+    auto_retake_below: int | None = Field(None, ge=0, le=100)
     retake_of: str | None = Field(None, max_length=40)  # a retake made by itself: the render whose sound it makes again
     lock_audio: str | None = Field(None, max_length=2000)  # a scene render: keep this sound exactly, sample the picture only
     relock_of: str | None = Field(None, max_length=40)  # that render's id: its picture is replaced by this one's when done
@@ -495,7 +496,10 @@ class JobManager:
         "retake", the picture kept frame for frame), tagged retake_of so the page puts it beside it as another take;
         the take with the best words is the one used. -> the new item, or None."""
         p, res = item.get("params") or {}, item.get("heard") or {}
-        below, score = int(p.get("auto_retake_below", 80) or 0), res.get("score")
+        from . import appsettings
+
+        b = p.get("auto_retake_below")
+        below, score = int(appsettings.get().generation.retake_below if b is None else b), res.get("score")
         if p.get("engine") != "motion" or not below or score is None or score >= below or item.get("auto_retake"):
             return None
         f = next((x for x in item.get("files", []) if (x.get("content_type") or "").startswith("video")), None)

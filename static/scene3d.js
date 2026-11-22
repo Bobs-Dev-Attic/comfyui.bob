@@ -1774,6 +1774,8 @@ const Scene3D = (() => {
   /* CPU, GPU (use and its memory) and memory use at the top of the Render window while it works (/api/system/usage,
      every 2 s). Returns stop(), which hides it; closing the window stops it too, or, given alive(), its saying no
      (V2's Generate: its progress list is out of the page while another shot is open, and keeps going). */
+  // Settings > Generation: a 3D render's words under this (%) get its sound retaken once (0: never)
+  const retakeBelow = () => { const v = +(typeof Settings !== "undefined" ? Settings.get("generation.retake_below", 80) : 80); return Number.isFinite(v) ? v : 80; };
   function usageStrip(el, alive = null) {
     if (!el) return () => {};
     let t = 0, live = true;
@@ -1838,7 +1840,7 @@ const Scene3D = (() => {
           <option value="close">Close to the recording</option><option value="weak">Loosely: more room to act</option></select></div>
         <p class="hint">${v2x.voices.map((v, i) => `${esc(v.name)} speaks with &lt;Audio ${i + 1}&gt;`).join(", ")}: their library voices, so H3 says the lines in them. Runs on H3 Reference's model with the same motion.</p>` : ""}
       ${v2x?.lines?.some(l => String(l.text || "").trim()) ? `<label class="check" title="H3 fills spare time with words of its own. After the render, Whisper hears it in pieces, between its pauses, and a piece that isn't the lines is turned down to silence. Then the picture is drawn again with that sound held, so the lips move only for the lines: one more render (needs ComfyUI-H3-NativeAudioLock). The versions before are kept beside it."><input type="checkbox" id="s3r-quiet" checked> Silence any words that aren't the lines, and redraw the lips to match</label>
-        <label class="check" title="Whisper scores the words against the lines. Under 80%, the sound is made again once (H3 Reference), the picture kept frame for frame; the new take goes beside it and the shot uses the one with the best words. One more render, only when it's needed."><input type="checkbox" id="s3r-retake" checked> Retake the sound once if the words come out under 80%</label>` : ""}
+        ${retakeBelow() ? `<label class="check" title="Whisper scores the words against the lines. Under ${retakeBelow()}%, the sound is made again once (H3 Reference), the picture kept frame for frame; the new take goes beside it and the shot uses the one with the best words. One more render, only when it's needed. The threshold is in Settings > Generation."><input type="checkbox" id="s3r-retake" checked> Retake the sound once if the words come out under ${retakeBelow()}%</label>` : ""}` : ""}
       ${refReady() ? `<div class="field"><label for="s3r-guide">How H3 follows the 3D scene</label><select id="s3r-guide">
         <option value="reference"${lastGuide() === "reference" ? " selected" : ""}>As a reference video: H3 Reference draws every frame, following the move closely</option>
         <option value="ttm"${lastGuide() === "ttm" ? " selected" : ""}>Time-to-Move: held exactly to the rough animation, its seams too</option></select></div>` : ""}

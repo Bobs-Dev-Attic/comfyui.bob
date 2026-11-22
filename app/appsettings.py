@@ -42,6 +42,7 @@ class Generation(_Section):
     confirm_delete: bool = True     # ask before deleting a result and its file
     sound_when_done: bool = False   # a short chime when a job finishes
     notify_when_done: bool = False  # a desktop notification when a job finishes while the tab is hidden
+    retake_below: int = Field(80, ge=0, le=100)  # a 3D render's words heard under this (%): its sound retaken once; 0 = never
 
 
 class Editor(_Section):
