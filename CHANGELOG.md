@@ -5,6 +5,18 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.149.1] - 2026-11-21
+
+### Fixed
+- **A person with a portrait picture is the mannequin's size in the photo of the first frame.** A picture without
+  feet (head and shoulders) wasn't pasted into the view; sent as a picture instead, the edit model drew the person as
+  the portrait framed them, two or three times the mannequin, so the render started much closer than its 3D
+  reference. Now the portrait is pasted on the mannequin's upper body, as wide as its shoulders, its head at the
+  mannequin's, with the mannequin left as the rest of the body, and the edit model is told to make the mannequin
+  their real body at its size and pose, whole in the frame, dressed as the object's description says.
+- **The camera narration says the person keeps facing the same way** when the camera arcs or orbits round them
+  ("only the camera moves around them"): H3 tended to turn them to the camera, against the 3D render.
+
 ## [0.149.0] - 2026-11-21
 
 ### Changed

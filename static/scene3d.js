@@ -2236,13 +2236,15 @@ const Scene3D = (() => {
         + `${over ? ` over ${Math.round(d * 10) / 10} seconds` : ""}${passing}${pause}` : "holds still";
     };
     const start = size(0), finish = size(T);
+    const facingNote = person && parts.some(p => p.k.some(x => x[0] === "orbit"))
+      ? ` ${name.charAt(0).toUpperCase() + name.slice(1)} keeps facing the same way throughout; only the camera moves around them.` : "";
     if (parts.length === 1 && parts[0].sig === "hold") return `The camera holds still on ${of(start, 0)}.`;
     if (parts.length === 1) {
       const p = parts[0];
       const same = start === finish && angle(0) === angle(T) && (!person || view(rel(0)) === view(rel(T)));
-      return `The camera starts on ${of(start, 0)}, then ${verbs(p, true)}, ${same && start ? `staying on ${start}` : `ending on ${of(finish, T)}`}.`;
+      return `The camera starts on ${of(start, 0)}, then ${verbs(p, true)}, ${same && start ? `staying on ${start}` : `ending on ${of(finish, T)}`}.${facingNote}`;
     }
-    return `The camera starts on ${of(start, 0)}. ` + parts.map((p, i) => `${i ? "Then, from" : "From"} ${sec(p.t0)} to ${sec(p.t1)}, it ${verbs(p)}${i === parts.length - 1 ? `, ending on ${of(finish, T)}` : p.sig !== "hold" && size(p.t1) ? `, to ${of(size(p.t1), p.t1)}` : ""}.`).join(" ");
+    return `The camera starts on ${of(start, 0)}. ` + parts.map((p, i) => `${i ? "Then, from" : "From"} ${sec(p.t0)} to ${sec(p.t1)}, it ${verbs(p)}${i === parts.length - 1 ? `, ending on ${of(finish, T)}` : p.sig !== "hold" && size(p.t1) ? `, to ${of(size(p.t1), p.t1)}` : ""}.`).join(" ") + facingNote;
   }
   function renderPrompt(whatText, refs, fromPhoto, extra = null, guide = "ttm") {
     const w = whatText || defaultWhat(), lines = linesText(extra, refs, w), voices = extra?.voices || [], byRef = guide === "reference";
@@ -3365,7 +3367,7 @@ const Scene3D = (() => {
   // One frame of the scene as a picture in data/uploads: [W, H], at time t, through `cam` (holes filled).
   // `paste`: people pasted over their mannequins (pastePeople), which are then left out of the drawing.
   async function uploadFrame(size, t, cam, name, paste = []) {
-    draw({ size, t, cam, skip: paste.map(p => p.o) });
+    draw({ size, t, cam, skip: paste.filter(p => !p.partial).map(p => p.o) });
     const c = fillHoles(s.cv, size[0], size[1]);
     if (paste.length) { const g = c.getContext("2d"); for (const p of paste) g.drawImage(p.layer, 0, 0); }
     const blob = await new Promise(res => c.toBlob(res, "image/png"));
@@ -3475,6 +3477,11 @@ const Scene3D = (() => {
       const k = pics.indexOf(x.o);
       // pasted in from its picture: there's no mannequin in the render any more, only that person, roughly cut out. Their
       // picture isn't sent as well: given it, the edit model drew the person a second time, as the picture shows them.
+      // a portrait: only their head and shoulders are pasted, on the mannequin, whose body is theirs (its size and pose)
+      if (pasted.includes(x.o) && portraitPasted.has(x.o)) return `the person ${x.where} is a real person whose head and shoulders are pasted in roughly from a portrait, `
+        + `on a grey mannequin that is the rest of their body: keep their face and hair, make the mannequin their real body at exactly its size, height and position, `
+        + `standing ${x.pose ? x.pose : "as the mannequin stands"}, with their whole figure in the frame as the mannequin is`
+        + `${x.o.becomes ? `; they are ${x.o.becomes.trim().replace(/[.\s]+$/, "")}, dressed as that says` : ""}; blend them into the photo with matching light, colour and shadows; they appear only there, once`;
       if (pasted.includes(x.o)) return `the person ${x.where} is a real person pasted in roughly from a photo: keep them exactly there, at that size, `
         + `${x.pose ? `pose them ${x.pose}` : "keep their pose"}, keep their face, hair and clothes, and blend them into the photo with matching light, colour and shadows; `
         + "they appear only there, once";
@@ -3772,6 +3779,7 @@ const Scene3D = (() => {
   // tall as it is standing, and left out wherever something in front of the mannequin covers it; the mannequin isn't
   // drawn. The edit model then poses them as the mannequin was and blends them in.
   const cutouts = new Map();  // picture ref -> the person in it, cropped, on a see-through canvas (null: none found)
+  const portraitPasted = new WeakSet();  // people pasted from a portrait (head and shoulders): the mannequin is their body
   async function cutoutOf(ref) {
     if (cutouts.has(ref)) return cutouts.get(ref);
     const load = async url => createImageBitmap(await (await fetch(url)).blob());
@@ -3815,13 +3823,18 @@ const Scene3D = (() => {
     for (const o of objs) {
       let cut;
       try { cut = await cutoutOf(o.picture); } catch { return out; }  // no SAM 3
-      if (!cut || cut.noFeet) continue;
+      if (!cut) continue;
       // its feet on the ground and its head as high as it stands (a Person's position is at its feet)
       const P = poseAt(o, t), pose = o.pose || "standing";
       const tall = (o.dims?.[1] || 1.74) * natDims("figure", "standing")[1] / natDims("figure", pose)[1] * (o.stretch?.[1] || 1) * (P.scale || 1);
       const feet = toPx(P.pos), head = toPx([P.pos[0], P.pos[1] + tall, P.pos[2]]);
       if (!feet || !head || feet[1] - head[1] < 8) continue;
-      const h = feet[1] - head[1], w = cut.width * h / cut.height;
+      // a portrait (no feet): it was sent as a picture, and the edit model sized her by the portrait, two or three times
+      // the mannequin (the first frame then didn't match the 3D render). Now it's pasted over the mannequin's upper
+      // body, as wide as its shoulders, its top at the mannequin's head; the mannequin's legs stay under it.
+      const full = feet[1] - head[1];
+      let w = cut.width * full / cut.height, h = full, top = head[1];
+      if (cut.noFeet) { w = full * 0.245 * 1.3; h = Math.min(full * 0.75, cut.height * w / cut.width); top = head[1] - full * 0.02; }
       // what covers each pixel (bottom row first): R this mannequin, G another object (1 + its index), B the background;
       // and where this mannequin is when nothing is in front of it
       const all = s.gpu.capture(W, H, d => {
@@ -3833,7 +3846,7 @@ const Scene3D = (() => {
       const near = depthOf(o), front = shown.map(x => x !== o && depthOf(x) < near);
       const layer = Object.assign(document.createElement("canvas"), { width: W, height: H }), g = layer.getContext("2d", { willReadFrequently: true });
       g.imageSmoothingQuality = "high";
-      g.drawImage(cut, feet[0] - w / 2, head[1], w, h);
+      g.drawImage(cut, feet[0] - w / 2, top, w, h);
       const px = g.getImageData(0, 0, W, H), d = px.data;
       for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
         const c = y * W + x; if (!d[c * 4 + 3]) continue;
@@ -3843,7 +3856,8 @@ const Scene3D = (() => {
         if (other) d[c * 4 + 3] = 0;
       }
       g.putImageData(px, 0, 0);
-      out.push({ o, layer });
+      if (cut.noFeet) portraitPasted.add(o); else portraitPasted.delete(o);
+      out.push({ o, layer, partial: !!cut.noFeet });
     }
     return out;
   }
