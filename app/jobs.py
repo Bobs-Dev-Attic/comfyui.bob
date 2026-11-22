@@ -142,6 +142,9 @@ class GenerateRequest(BaseModel):
     # ...and then draw its picture again to that sound, so the lips move only for the lines (a scene render, when
     # ComfyUI-H3-NativeAudioLock is installed)
     resync_after_quiet: bool = True
+    # a scene render whose lines are heard under this score (%) gets its sound retaken once, its picture kept (0: never)
+    auto_retake_below: int = Field(80, ge=0, le=100)
+    retake_of: str | None = Field(None, max_length=40)  # a retake made by itself: the render whose sound it makes again
     lock_audio: str | None = Field(None, max_length=2000)  # a scene render: keep this sound exactly, sample the picture only
     relock_of: str | None = Field(None, max_length=40)  # that render's id: its picture is replaced by this one's when done
     preview: Literal["off", "fast"] = "off"  # live preview while sampling (Settings > Advanced)
@@ -485,6 +488,34 @@ class JobManager:
         self.log(orig, f"Lips redrawn to the cleaned sound ({helper['id']}); the version before is {keep.name}")
         src.unlink(missing_ok=True)
         self.delete(helper["id"])
+        await self._maybe_retake(orig)
+
+    async def _maybe_retake(self, item: dict[str, Any]) -> dict[str, Any] | None:
+        """A scene render whose lines came out under its auto_retake_below score: its sound made again once (engine
+        "retake", the picture kept frame for frame), tagged retake_of so the page puts it beside it as another take;
+        the take with the best words is the one used. -> the new item, or None."""
+        p, res = item.get("params") or {}, item.get("heard") or {}
+        below, score = int(p.get("auto_retake_below", 80) or 0), res.get("score")
+        if p.get("engine") != "motion" or not below or score is None or score >= below or item.get("auto_retake"):
+            return None
+        f = next((x for x in item.get("files", []) if (x.get("content_type") or "").startswith("video")), None)
+        if not f:
+            return None
+        params = {k: v for k, v in p.items() if k in GenerateRequest.model_fields}
+        params.update(engine="retake", kind="video", source=f["path"], retake_ranges="", seed=-1, batch=1, retake_of=item["id"],
+                      retake_keep_bg=all(self.has_node(n) for n in workflows.ROFORMER_NODES), auto_retake_below=0,
+                      first_frame=None, last_frame=None, continue_from=None, enhance_after=None, motion_video=None,
+                      motion_video_mask=None, motion_layers=[], lock_audio=None, relock_of=None)
+        self._update(item, auto_retake={"status": "starting", "at": time.time()})
+        try:
+            new = (await self.generate(GenerateRequest(**params)))[0]
+        except Exception as exc:  # noqa: BLE001 - the render stands as it is
+            self._update(item, auto_retake={"status": "failed", "error": str(exc)[:300], "at": time.time()})
+            self.log(item, f"Words {score}% (under {below}%), but the sound couldn't be retaken: {exc}", "warn")
+            return None
+        self._update(item, auto_retake={"by": new["id"], "status": "queued", "at": time.time()})
+        self.log(item, f"Words {score}% (under {below}%): retaking the sound once, the picture kept ({new['id']})")
+        return new
 
     async def _hear_after(self, item: dict[str, Any]) -> None:
         """A video with spoken lines is heard once it's done, so its takes can be ranked by their words."""
@@ -492,6 +523,9 @@ class JobManager:
             await self.hear(item)
         except Exception as exc:  # noqa: BLE001 - a failed check mustn't touch the finished render
             self.log(item, f"Checking the words: {exc}", "warn")
+            return
+        if (item.get("resync") or {}).get("status") != "running":  # else once the lips are redrawn (_on_resynced)
+            await self._maybe_retake(item)
 
     async def _enhance_after(self, item: dict[str, Any]) -> None:
         """Settings > After generating (or Angles' "Enhance each"): the result asked to be enhanced
