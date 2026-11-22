@@ -5,6 +5,16 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.159.0] - 2026-11-22
+
+### Added
+- **An object's LoRAs where you see the object.** Selecting an object in V2's scene now shows a LoRAs field in its
+  panel (under its lines): pick MiniMax H3 LoRAs and their strengths right there. They're the library object's, so
+  every shot it's in uses them; an object that isn't in the library yet is saved there with its first LoRA. Until
+  now they could only be set in the library editor, opened by double-clicking a card.
+- **An ✎ Edit button on each object library card** (beside ＋), opening its editor: what it is, pictures, LoRAs,
+  voice. Double-click still works.
+
 ## [0.158.0] - 2026-11-22
 
 ### Added
