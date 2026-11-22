@@ -1623,6 +1623,8 @@ const Scene3D = (() => {
     // only once they're loaded
     : /Noise|Guider|Sigma|Scheduler|CFG/.test(c) ? "setting up the sampler and loading the models"
     : /Scale|Resize|Size|Crop|Pad|Image|Mask|Latent/.test(c) ? "preparing the inputs and loading the models" : `running ${c}`;
+  // what a step count is of: the sampler's, unless ComfyUI said it's decoding (a set-up step's words don't fit steps)
+  const stepVerb = doing => !doing || /loading|preparing|setting up|running /.test(doing) ? "sampling" : doing;
   /* While the photo of the first frame is made: its own progress in the photo stage's note (ComfyUI's queue, loading
      the models, sampling step by step, saving it), until it's done. Returns a stop function. */
   function followPhoto(id, sg) {
@@ -1639,40 +1641,71 @@ const Scene3D = (() => {
         return; }
       if (ev.id !== id) return;
       if (ev.type === "queue") say(`waiting in ComfyUI's queue${ev.position != null ? ` (position ${ev.position})` : ""}`);
-      else if (ev.type === "progress" && ev.steps > 1) say(`${doing || "sampling"}: step ${ev.step} of ${ev.steps} · ${Math.round(100 * ev.step / ev.steps)}%`);
+      else if (ev.type === "progress" && ev.steps > 1) say(`${stepVerb(doing)}: step ${ev.step} of ${ev.steps} · ${Math.round(100 * ev.step / ev.steps)}%`);
       else if (ev.type === "log" && /^Node \d+ · /.test(ev.msg)) { doing = doingOf(ev.msg.replace(/^Node \d+ · /, ""), "photo"); say(doing); }
       else if (ev.type === "log" && /^Downloading the results/.test(ev.msg)) say("saving the photo");
     };
     return end;
   }
-  function followRender(it, sg, words, onEnd = () => {}) {
+  /* After it's queued: follow the video, or each of its takes, through ComfyUI (the queue, the GPU's steps, saving,
+     and the word check when it has lines) on the live events, until every take is done or the list goes away. The
+     list only moves forward: a later take's queue or GPU doesn't take it back; the GPU stage says which take it's on,
+     saving starts with the last take, and the word check gives each take's score. Returns a stop function. */
+  function followRender(its, sg, words, onEnd = () => {}) {
+    const list = Array.isArray(its) ? its : [its], ids = list.map(x => x.id), N = ids.length;
+    const ORDER = ["queue", "gpu", "save", "words"], FIN = ["done", "failed", "cancelled"];
+    const last = new Map(list.map(x => [x.id, state.items.get(x.id) || x])), unheard = new Set();
     const es = new EventSource("/api/events");
-    let wordsT = 0, ended = false, doing = "";
+    let wordsT = 0, ended = false, doing = "", phase = -1;
     const end = () => { if (ended) return; ended = true; es.close(); clearTimeout(wordsT); onEnd(); };
+    const tk = id => N > 1 ? `take ${ids.indexOf(id) + 1} of ${N}: ` : "";
+    const go = (key, note = "", name) => {
+      const k = ORDER.indexOf(key);
+      if (k < phase) return;
+      if (k === phase) return sg.note(note, key);
+      phase = k; sg.at(key, note, name);
+    };
+    const fin = id => FIN.includes(last.get(id)?.status);
+    // every take final: their words, then done
+    const check = () => {
+      if (!ids.every(fin)) return;
+      const L = ids.map(id => last.get(id)), done = L.filter(x => x.status === "done");
+      if (!done.length) { sg.fail(L[0].error || L[0].status); return end(); }
+      const failed = N - done.length, lost = failed ? `${failed} of ${N} takes failed` : "";
+      if (!words) { go("save", lost); sg.finish(); return end(); }
+      const score = x => (N > 1 ? `take ${ids.indexOf(x.id) + 1}: ` : "") + (x.heard?.score != null ? `${x.heard.score}%` : "not checked");
+      const say = () => [done.map(score).join(" · ") + (done.some(x => x.heard?.score != null) ? " said as written" : ""), lost].filter(Boolean).join("; ");
+      if (done.every(x => x.heard?.score != null || unheard.has(x.id))) { sg.done("words", say()); sg.finish(); return end(); }
+      go("words", N > 1 ? `Whisper listens to ${done.length} takes…` : "Whisper listens to the lines…");
+      clearTimeout(wordsT);
+      wordsT = setTimeout(() => { sg.done("words", say()); sg.finish(); end(); }, 180000);
+    };
     const onItem = x => {
-      if (x.status === "queued") sg.at("queue", "", "Waiting in ComfyUI's queue");
-      else if (x.status === "running") sg.at("gpu");
-      else if (x.status === "failed" || x.status === "cancelled") { sg.fail(x.error || x.status); end(); }
-      else if (x.status === "done") {
-        if (words && x.heard?.score != null) { sg.done("words", `${x.heard.score}% said as written`); sg.finish(); end(); }
-        else if (words) { sg.at("words", "Whisper listens to the lines…"); clearTimeout(wordsT); wordsT = setTimeout(() => { sg.done("words", "no word check came back"); sg.finish(); end(); }, 180000); }
-        else { sg.finish(); end(); }
+      last.set(x.id, x);
+      if (x.status === "queued") go("queue", "", "Waiting in ComfyUI's queue");
+      else if (x.status === "running") go("gpu", tk(x.id).replace(/: $/, ""));
+      else if (FIN.includes(x.status)) {
+        if (N === 1 && x.status !== "done") { sg.fail(x.error || x.status); return end(); }
+        check();
       }
     };
     es.onmessage = e => {
       if (!sg.alive()) return end();
       let ev; try { ev = JSON.parse(e.data); } catch { return; }
-      if (ev.type === "item") { if (ev.item?.id === it.id) onItem(ev.item); return; }
-      if (ev.id !== it.id) return;
-      if (ev.type === "queue") sg.at("queue", ev.position != null ? `position ${ev.position}` : "", "Waiting in ComfyUI's queue");
-      else if (ev.type === "progress" && ev.steps > 1) sg.at("gpu", `${doing || "sampling"}: step ${ev.step} of ${ev.steps} · ${Math.round(100 * ev.step / ev.steps)}%`);
+      if (ev.type === "item") { if (ids.includes(ev.item?.id)) onItem(ev.item); return; }
+      if (!ids.includes(ev.id)) return;
+      if (ev.type === "queue") go("queue", ev.position != null ? `${tk(ev.id)}position ${ev.position}` : "", "Waiting in ComfyUI's queue");
+      else if (ev.type === "progress" && ev.steps > 1) go("gpu", `${tk(ev.id)}${stepVerb(doing)}: step ${ev.step} of ${ev.steps} · ${Math.round(100 * ev.step / ev.steps)}%`);
       else if (ev.type === "log" && /^Node \d+ · /.test(ev.msg)) {  // what ComfyUI is on, between the sampler's steps
-        doing = doingOf(ev.msg.replace(/^Node \d+ · /, "")); sg.at("gpu", doing);
+        doing = doingOf(ev.msg.replace(/^Node \d+ · /, "")); go("gpu", tk(ev.id) + doing);
       }
-      else if (ev.type === "log" && /^Downloading the results/.test(ev.msg)) sg.at("save");
-      else if (ev.type === "log" && /^Checking the words:/.test(ev.msg)) { sg.done("words", ev.msg.replace(/^Checking the words:\s*/, "didn't run: ")); sg.finish(); end(); }
+      else if (ev.type === "log" && /^Downloading the results/.test(ev.msg)) {
+        if (ids.every(id => id === ev.id || fin(id))) go("save", N > 1 ? tk(ev.id).replace(/: $/, "") : "");  // the last take
+        else go("gpu", `${tk(ev.id)}saving it`);
+      }
+      else if (ev.type === "log" && /^Checking the words:/.test(ev.msg)) { unheard.add(ev.id); check(); }
     };
-    onItem(state.items.get(it.id) || it);
+    for (const x of last.values()) onItem(x);
     return end;
   }
   function renderDialog(o = {}) {
@@ -1878,7 +1911,7 @@ const Scene3D = (() => {
         st.textContent = "Queued: closing this window doesn't stop it.";
         foot.querySelector('[data-a="cancel"]').textContent = "Close";
         e.target.textContent = "✓ Queued";
-        stop = followRender(items[0], sg, words, () => { if (sgEl.isConnected) { st.textContent = ""; e.target.disabled = false; e.target.textContent = "🎬 Render again"; } });
+        stop = followRender(items, sg, words, () => { if (sgEl.isConnected) { st.textContent = ""; e.target.disabled = false; e.target.textContent = "🎬 Render again"; } });
         Media.toast(`3D scene: queued. ${toTl ? "It goes on the timeline when it's done." : "The video shows up in the gallery when it's done."}`);
       } catch (err) { stop?.(); stop = null; stopPhoto?.(); stopPhoto = null; sg.fail(err.message); st.textContent = ""; e.target.disabled = false; Media.toast(`Render: ${err.message}`); }
     };

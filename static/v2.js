@@ -438,9 +438,9 @@ const V2 = (() => {
     st.ctx = entry;
     { // its stages: the 3D scene's (a photo and the fill come in if it makes them), then H3 and the word check
       const n = Math.min(4, Math.max(1, +s.takes || 1)), words = linesOf(s).some(l => String(l.text || "").trim());
-      const gpu = `Rendering on the GPU (${d.ref ? "H3 Reference" : "H3"}${n > 1 ? `, take 1 of ${n}` : ""})`;
+      const gpu = `Rendering on the GPU (${d.ref ? "H3 Reference" : "H3"}${n > 1 ? `, ${n} takes` : ""})`;
       sg.plan([...(d.engine === "h3" ? [] : [["anim", "Drawing the rough animation"], ["mask", "Drawing its mask"]]),
-        ["send", n > 1 ? `Sending ${n} takes to H3` : "Sending to H3"], ["queue", "Waiting in ComfyUI's queue"], ["gpu", gpu], ["save", "Saving the video"],
+        ["send", n > 1 ? `Sending ${n} takes to H3` : "Sending to H3"], ["queue", "Waiting in ComfyUI's queue"], ["gpu", gpu], ["save", n > 1 ? "Saving the videos" : "Saving the video"],
         ...(words ? [["words", "Checking the words (Whisper)"]] : [])]);
       g.words = words;
     }
@@ -473,7 +473,7 @@ const V2 = (() => {
       delete s.pick;  // the new takes: the shot uses the one whose words come out best
       save();
       say("Queued: it shows here when it's done.");
-      g.stop = Scene3D.followRender(items[0], sg, g.words);
+      g.stop = Scene3D.followRender(items, sg, g.words);
     } catch (e) { g.stopPhoto?.(); sg.fail(e.message); say(`⚠ ${e.message}`); Media.toast(`${s.name}: ${e.message}`); entry.failed = e.message; }
     finally { st.busy.delete(id); entry.prep = false; if (st.ctx === entry) st.ctx = null; renderAll(); renderLog(); }
   }
