@@ -1555,8 +1555,8 @@ const Scene3D = (() => {
      Final: a full photo (or the picture), Qwen's fill, Standard and the turbo's full steps. */
   const LEVELS = {
     sketch: { icon: "🧊", name: "Sketch", says: "from the 3D objects as drawn: tests the motion, fastest", quality: "draft", speed: "4", fill: false, hold: "normal" },
-    rough: { icon: "🟫", name: "Rough", says: "from a small, quick photo of the first frame: tests the look", quality: "draft", speed: "auto", fill: false, hold: "loose" },
-    final: { icon: "🎬", name: "Final", says: "from a full photo, with Qwen's fill: the real thing", quality: "standard", speed: "auto", fill: true, hold: "loose" },
+    rough: { icon: "🟫", name: "Rough", says: "from a small, quick photo of the first frame: tests the look", quality: "draft", speed: "auto", fill: true, hold: "loose" },
+    final: { icon: "🎬", name: "Final", says: "from a full photo, with the fill: the real thing", quality: "standard", speed: "auto", fill: true, hold: "loose" },
   };
   // Speed: the sampling steps H3 takes (the turbo LoRA's own count, fewer, more, or full sampling without it)
   const SPEEDS = { "4": { steps: 4, turbo: true }, auto: { steps: null, turbo: true }, "12": { steps: 12, turbo: true }, full: { steps: null, turbo: false } };
@@ -1568,8 +1568,8 @@ const Scene3D = (() => {
     [/photo of the first frame/i, "photo", m => /quick/i.test(m) ? "Making a quick photo of the first frame" : "Making the photo of the first frame"],
     [/^Painting the photo|^Finding .+ in the photo/, "paint", "Painting the photo onto the scene"],
     [/^Measuring the depth of the photo/, "depth", "Measuring the depth of the photo (Depth Anything 3)"],
-    [/can't see|^Qwen left|^Measuring the depth of view|^Filled \d+ view/, "fill", "Filling what the photo can't see (Qwen)"],
-    [/^The camera comes in .* closer|^Added a sharp detail view/, "detail", "A sharp view where the camera comes close (Qwen)"],
+    [/can't see|% of view \d+ unfilled|^Measuring the depth of view|^Filled \d+ view/, "fill", "Filling what the photo can't see"],
+    [/^The camera comes in .* closer|^Added a sharp detail view/, "detail", "A sharp view where the camera comes close"],
     [/^Drawing the rough animation/, "anim", "Drawing the rough animation"], [/^Drawing its mask/, "mask", "Drawing its mask"],
     [/^Sending (\d+ takes )?to H3/, "send", "Sending to H3"],
   ];
@@ -1657,7 +1657,7 @@ const Scene3D = (() => {
     const last = new Map(list.map(x => [x.id, state.items.get(x.id) || x])), unheard = new Set();
     const es = new EventSource("/api/events");
     let wordsT = 0, ended = false, doing = "", phase = -1;
-    const end = () => { if (ended) return; ended = true; es.close(); clearTimeout(wordsT); onEnd(); };
+    const end = () => { if (ended) return; ended = true; es.close(); clearTimeout(wordsT); onEnd([...last.values()]); };
     const tk = id => N > 1 ? `take ${ids.indexOf(id) + 1} of ${N}: ` : "";
     const go = (key, note = "", name) => {
       const k = ORDER.indexOf(key);
@@ -1708,6 +1708,26 @@ const Scene3D = (() => {
     for (const x of last.values()) onItem(x);
     return end;
   }
+  /* The finished render in the Render window: its video to play, the photo it started from, and buttons to show the
+     file in Explorer or put it on the timeline (the classic page's, or V2's shots). */
+  function showResult(el, it, photoRef, sceneId, project) {
+    if (!el || !it) return;
+    const f = it.files.find(x => /^video\//.test(x.content_type || "")) || it.files[0];
+    el.hidden = false;
+    el.innerHTML = `<h4>The render</h4>
+      <div class="s3r-media"><figure><video src="${esc(f.url)}" controls preload="metadata"></video><figcaption>The video${it.heard?.score != null ? ` · words ${it.heard.score}% as written` : ""}</figcaption></figure>
+        ${photoRef ? `<figure><a href="${esc(mediaUrl(photoRef))}" target="_blank" rel="noopener" title="Open the photo full size"><img src="${esc(mediaUrl(photoRef))}" alt="The photo of the first frame"></a><figcaption>The photo it started from</figcaption></figure>` : ""}</div>
+      <div class="s3r-acts"><button type="button" class="btn sm" data-r="folder" title="Open Explorer with the video selected">📂 Show the video in Explorer</button>
+        ${photoRef ? `<button type="button" class="btn sm" data-r="pfolder" title="Open Explorer with the photo selected">📂 Show the photo in Explorer</button>` : ""}
+        <button type="button" class="btn sm primary" data-r="tl" title="Put the video on the timeline">➕ Add to Timeline</button></div>`;
+    const reveal = async path => { try { const r = await fetch("/api/media/reveal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText); } catch (err) { Media.toast(`Show in Explorer: ${err.message}`); } };
+    el.querySelector('[data-r="folder"]').onclick = () => reveal(f.path);
+    el.querySelector('[data-r="pfolder"]')?.addEventListener("click", () => reveal(photoRef));
+    el.querySelector('[data-r="tl"]').onclick = async ev => { ev.target.disabled = true;
+      const ok = await Shots.placeNow?.(it, project, sceneId); ev.target.textContent = ok ? "✓ On the timeline" : "➕ Add to Timeline"; ev.target.disabled = !!ok; };
+    el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
   function renderDialog(o = {}) {
     if (!s?.bg) return;
     if (!s.objs.some(o => o.mesh && !o.hidden) && !cameraMoves()) return Media.toast("Nothing moves yet: key an object or the camera first.");
@@ -1755,7 +1775,9 @@ const Scene3D = (() => {
           <option value="quickphoto">A quick, small photo of the first frame (0.4 MP, about 20 s, then the video)</option>` : ""}
         ${photos.map(p => `<option value="photo:${p.id}">The photo from ${when(p.it)}${p.match ? " (the first frame)" : " (another view: the video may jump)"}</option>`).join("")}
         <option value="composite">The scene's first frame as drawn (plain)</option></select></div>
-      ${cameraMoves() ? `<label class="check s3r-fillf" title="Where the camera move shows what the photo never saw (the far side of a turn), Qwen paints the place in first, from up to ${MAX_GAPS} views along the move, so H3 follows the same surroundings all the way round"><input type="checkbox" id="s3r-fill"${lastFill() ? " checked" : ""}> Fill what the photo can't see with Qwen first <span class="opt">about half a minute per view</span></label>` : ""}
+      ${cameraMoves() ? `<label class="check s3r-fillf" title="Where the camera move shows what the photo never saw (the far side of a turn), the edit model paints the place in first, from up to ${MAX_GAPS} views along the move, so H3 follows the same surroundings all the way round"><input type="checkbox" id="s3r-fill" checked> Fill what the photo can't see first <span class="opt">about half a minute per view</span></label>
+        ${editModels().length > 1 ? `<div class="field s3r-fillm"><label for="s3r-fillm">Fill with</label><select id="s3r-fillm">${editModels().map(([k, n]) =>
+          `<option value="${k}"${k === fillModel() ? " selected" : ""}>${esc(n)}${k === "qwen" ? " (takes the photo along: the fill continues the same place)" : ""}</option>`).join("")}</select></div>` : ""}` : ""}
       <div class="field s3r-lookf"><label for="s3r-look">How the photo should look <span class="opt">optional</span></label>
         <textarea id="s3r-look" rows="2" placeholder="Soft daylight, shot on 35 mm film.">${esc(startLook())}</textarea></div>
       ${toShots().length ? `<div class="field"><label for="s3r-to">Goes to</label><select id="s3r-to">
@@ -1768,12 +1790,15 @@ const Scene3D = (() => {
       <div class="field"><div class="s3p-ph"><label for="s3r-prompt">The prompt <span class="opt">the whole of it, as H3 gets it; edit it if you like</span></label>
         <button type="button" class="link" data-a="rebuild" title="Build the prompt again from the settings above">↻ Rebuild</button></div>
         <textarea id="s3r-prompt" rows="8" spellcheck="false"></textarea><p class="hint s3r-pnote"></p></div>
-      <section class="s3p-set s3r-stages" aria-label="Progress" aria-live="polite" hidden><h4>Progress <span class="s3r-sgh"></span></h4><ol></ol></section>`;
+      <section class="s3p-set s3r-stages" aria-label="Progress" aria-live="polite" hidden><h4>Progress <span class="s3r-sgh"></span></h4><ol></ol></section>
+      <section class="s3p-set s3r-result" aria-label="The render" hidden></section>`;
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
     foot.innerHTML = `<span class="hint s3r-st"></span><button type="button" class="btn ghost" data-a="cancel">Cancel</button><button type="button" class="btn primary" data-a="go">🎬 Render</button>`;
     const win = WM.open({ id: "scene3d-render", title: `Render · ${s.sc.name}`, content: box, footer: foot, width: 600, height: 760, modal: true });
     const useRefs = () => !!box.querySelector("#s3r-refs")?.checked;
+    const fillWho = () => FILL_SHORT[box.querySelector("#s3r-fillm")?.value || fillModel()] || "the edit model";
+    box.querySelector("#s3r-fill")?.addEventListener("change", e => { const fm = box.querySelector(".s3r-fillm"); if (fm) fm.hidden = !e.target.checked; });
     const isPhoto = v => v === "newphoto" || v === "quickphoto" || v.startsWith("photo:");
     const fromPhoto = () => isPhoto(box.querySelector("#s3r-first").value);
     const useVoices = () => !!box.querySelector("#s3r-voices")?.checked;
@@ -1791,6 +1816,7 @@ const Scene3D = (() => {
       const v = firstSel.value, photo = isPhoto(v);
       box.querySelector(".s3r-lookf").hidden = v !== "newphoto" && v !== "quickphoto";
       const ff = box.querySelector(".s3r-fillf"); if (ff) ff.hidden = !photo;
+      const fm = box.querySelector(".s3r-fillm"); if (fm) fm.hidden = !photo || !box.querySelector("#s3r-fill")?.checked;
       if (photo && !holdSel.dataset.touched) holdSel.value = "loose";
       if (!photo && !holdSel.dataset.touched) holdSel.value = "normal";
       box.querySelector("#s3r-what").dispatchEvent(new Event("input"));  // what H3 reads follows the start
@@ -1816,8 +1842,8 @@ const Scene3D = (() => {
           : R ? "4 steps with H3 Reference's turbo LoRA (8 with an 8-step one)" : "8 steps with H3's turbo LoRA (4 with a 4-step one)"],
         ...((extraNow()?.loras || []).length ? [["LoRAs", extraNow().loras.map(l => `${l.name.split(/[\\/]/).pop().replace(/\.safetensors$/i, "")} (${l.strength})`).join(", ")]] : []),
         ["Seed", "a new one each time"],
-        ["Before it", v === "quickphoto" ? `a quick 0.4 MP photo of the first frame (${editModels().some(m => m[0] === "qwen") ? "Qwen" : "the edit model"})${fill ? ", then Qwen fills what the camera move reveals" : ""}`
-          : v === "newphoto" ? `a photo of the first frame (the edit model)${fill ? ", then Qwen fills what the camera move reveals and redraws a sharp view where it comes close" : ""}` : fill ? "Qwen fills what the camera move reveals, and redraws a sharp view where it comes close" : "nothing: it starts at once"],
+        ["Before it", v === "quickphoto" ? `a quick 0.4 MP photo of the first frame (${editModels().some(m => m[0] === "qwen") ? "Qwen" : "the edit model"})${fill ? `, then ${fillWho()} fills what the camera move reveals` : ""}`
+          : v === "newphoto" ? `a photo of the first frame (the edit model)${fill ? `, then ${fillWho()} fills what the camera move reveals and redraws a sharp view where it comes close` : ""}` : fill ? `${fillWho()} fills what the camera move reveals, and redraws a sharp view where it comes close` : "nothing: it starts at once"],
       ].map(([k, x]) => `<dt>${esc(k)}</dt><dd>${esc(x)}</dd>`).join("");
       const startName = v === "picture" ? "the scene's picture" : v === "newphoto" ? "the new photo of the first frame" : v === "quickphoto" ? "the quick photo of the first frame" : v.startsWith("photo:") ? "the chosen photo" : "the first frame as drawn";
       box.querySelector(".s3r-pics").innerHTML = `<span class="s3p-pic"><span class="s3p-pic0">🖼</span><b>${refs ? "&lt;Picture 1&gt;" : "First frame"}</b> ${esc(startName)}</span>`
@@ -1879,7 +1905,7 @@ const Scene3D = (() => {
           sg.plan([
             ...(start === "newphoto" ? [["photo", "Making the photo of the first frame"]] : start === "quickphoto" ? [["photo", "Making a quick photo of the first frame"]] : []),
             ...(ph ? [["paint", "Painting the photo onto the scene"]] : []),
-            ...(mv ? [["fill", "Filling what the photo can't see (Qwen)"]] : []),
+            ...(mv ? [["fill", `Filling what the photo can't see (${fillWho()})`]] : []),
             ["anim", "Drawing the rough animation"], ["mask", "Drawing its mask"],
             ...(to0 !== "now" ? [["send", "Putting it in the shot"]] : [["send", "Sending to H3"], ["queue", "Waiting in ComfyUI's queue"],
               ["gpu", `Rendering on the GPU (${R ? "H3 Reference" : "H3"})`], ["save", "Saving the video"], ...(words ? [["words", "Checking the words (Whisper)"]] : [])]),
@@ -1891,9 +1917,10 @@ const Scene3D = (() => {
         const to = toSel?.value ?? "now";
         const toTl = to === "now" && box.querySelector("#s3r-tl").checked;
         if (to === "now") try { localStorage.setItem("bob.sceneAutoTl", toTl ? "1" : "0"); } catch { /* not kept */ }
-        const fill = !!box.querySelector("#s3r-fill")?.checked;
+        const fill = !!box.querySelector("#s3r-fill")?.checked, fillM = box.querySelector("#s3r-fillm")?.value || null;
+        if (fillM) try { localStorage.setItem("bob.sceneFillModel", fillM); } catch { /* not kept */ }
         if (box.querySelector("#s3r-fill") && fromPhoto()) try { localStorage.setItem("bob.sceneGapFill", fill ? "1" : "0"); } catch { /* not kept */ }
-        const r = await buildRender({ start, look, fill, refs: useRefs(), hold: holdSel.value, quality: box.querySelector("#s3r-q").value, speed: spSel.value, extra: extraNow(), prompt: edited ? box.querySelector("#s3r-prompt").value : null,
+        const r = await buildRender({ start, look, fill, fillModel: fillM, refs: useRefs(), hold: holdSel.value, quality: box.querySelector("#s3r-q").value, speed: spSel.value, extra: extraNow(), prompt: edited ? box.querySelector("#s3r-prompt").value : null,
           what: box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder,
           onPhoto: id => { stopPhoto?.(); stopPhoto = followPhoto(id, sg); } }, m => { st.textContent = m; sg.say(m); });
         stopPhoto?.(); stopPhoto = null;
@@ -1906,12 +1933,14 @@ const Scene3D = (() => {
         }
         const items = await submit(r.req);
         if (!items?.length) throw new Error("H3 didn't take it (the reason is on the Generate step)");
-        if (toTl) Shots.placeWhenDone(items, s.sc.project);
+        if (toTl) Shots.placeWhenDone(items, s.sc.project, s.sc.id);
         // the window stays open on its progress; closing it doesn't stop the render
         st.textContent = "Queued: closing this window doesn't stop it.";
         foot.querySelector('[data-a="cancel"]').textContent = "Close";
         e.target.textContent = "✓ Queued";
-        stop = followRender(items, sg, words, () => { if (sgEl.isConnected) { st.textContent = ""; e.target.disabled = false; e.target.textContent = "🎬 Render again"; } });
+        const photoRef = fromPhoto() ? r.req.first_frame : null, sceneId = s.sc.id, project = s.sc.project;
+        stop = followRender(items, sg, words, its => { if (sgEl.isConnected) { st.textContent = ""; e.target.disabled = false; e.target.textContent = "🎬 Render again";
+          showResult(box.querySelector(".s3r-result"), (its || []).find(x => x?.status === "done" && x.files?.length), photoRef, sceneId, project); } });
         Media.toast(`3D scene: queued. ${toTl ? "It goes on the timeline when it's done." : "The video shows up in the gallery when it's done."}`);
       } catch (err) { stop?.(); stop = null; stopPhoto?.(); stopPhoto = null; sg.fail(err.message); st.textContent = ""; e.target.disabled = false; Media.toast(`Render: ${err.message}`); }
     };
@@ -1953,8 +1982,8 @@ const Scene3D = (() => {
       }
       if (proj && o.fill !== false && cameraMoves()) {
         try {
-          const k = await fillGaps(proj, o.look || lastLook(), say); if (k) say(`Filled ${k} view${k === 1 ? "" : "s"} the photo couldn't see.`);
-          if (await fillDetail(proj, o.look || lastLook(), say)) say("Added a sharp detail view for where the camera comes close.");
+          const k = await fillGaps(proj, o.look || lastLook(), say, o.fillModel); if (k) say(`Filled ${k} view${k === 1 ? "" : "s"} the photo couldn't see.`);
+          if (await fillDetail(proj, o.look || lastLook(), say, o.fillModel)) say("Added a sharp detail view for where the camera comes close.");
         }
         catch (err) { if (!s) throw err; Media.toast(`Filling the gaps: ${err.message}. Rendering without it.`); for (const g of proj.gaps || []) freeProjection(g.P); proj.gaps = []; }
       }
@@ -3523,6 +3552,12 @@ const Scene3D = (() => {
   }
   const lastLook = () => { try { return localStorage.getItem("bob.scenePhotoLook") || ""; } catch { return ""; } };
   const lastFill = () => { try { return localStorage.getItem("bob.sceneGapFill") !== "0"; } catch { return true; } };
+  // the model that fills what the photo can't see: Qwen (it takes the photo along, so the fill continues the same
+  // place) unless another installed edit model was picked last
+  const FILL_SHORT = { qwen: "Qwen", h3image: "H3 Image", mossedit: "MOSS-Image Edit" };
+  const fillModel = (want = null) => { const ms = editModels().map(m => m[0]);
+    let w = want; if (!w) try { w = localStorage.getItem("bob.sceneFillModel"); } catch { /* none kept */ }
+    return ms.includes(w) ? w : ms.includes("qwen") ? "qwen" : ms[0] || null; };
   const EDIT_NAMES = { qwen: "Qwen Image Edit 2511", h3image: "MiniMax H3 Image", mossedit: "MOSS-Image Edit" };
   const editModels = () => { const ed = state.caps?.editor || {}; return [ed.qwen !== false && ["qwen", "Qwen Image Edit 2511"], ed.h3image && ["h3image", "MiniMax H3 Image"], ed.mossedit && ["mossedit", "MOSS-Image Edit"]].filter(Boolean); };
   // A Person with a picture goes into the render in its mannequin's place before the edit model sees it: only told to
@@ -4052,9 +4087,9 @@ const Scene3D = (() => {
     + "detailed photograph: keep every shape, edge, colour, the light and the layout exactly where they are, and give the surfaces fine, real texture. "
     + "Fill the magenta areas with what belongs there, continuing the surroundings. " + (look ? `The place: ${look.replace(/[.\s]+$/, "")}. ` : "")
     + "Add no people, animals or objects. No magenta remains.";
-  async function fillDetail(P, look, say = () => {}) {
-    const models = editModels(); if (!models.length || !P?.cam) return 0;
-    const model = (models.find(m => m[0] === "qwen") || models[0])[0];
+  async function fillDetail(P, look, say = () => {}, want = null) {
+    const model = fillModel(want); if (!model || !P?.cam) return 0;
+    const who = FILL_SHORT[model] || model;
     let best = null;
     for (let f = 0, n = frameCount(); f < n; f += 6) { const t = f / FPS, c = camBase(t), m = magOf(P.cam, c); if (!best || m > best.m) best = { t, m, c }; }
     if (!best || best.m < DETAIL_MIN) return 0;
@@ -4068,19 +4103,19 @@ const Scene3D = (() => {
     magentaOver(vg, standInsAt(P, cam, t, W, H));
     const blob = await new Promise(r => view.toBlob(r, "image/png")), fd = new FormData(); fd.append("file", blob, "scene_detail.png");
     const up = await (await fetch("/api/upload", { method: "POST", body: fd })).json();
-    say(`The camera comes in ${best.m.toFixed(1)}× closer than the photo: Qwen redraws that view sharp (about half a minute)…`);
+    say(`The camera comes in ${best.m.toFixed(1)}× closer than the photo: ${who} redraws that view sharp (about half a minute)…`);
     const items = await submit({ kind: "image", engine: "imgedit", edit_op: "instruct", source: up.ref, prompt: DETAIL_TEXT(look), edit_model: model, seed: -1, batch: 1, project: s.sc.project });
-    if (!items?.length) throw new Error("Qwen didn't take the detail view");
+    if (!items?.length) throw new Error(`${who} didn't take the detail view`);
     const it = await waitItem(items[0].id);
     const path = (it.files || []).find(f => /^image\//.test(f.content_type || ""))?.path || it.files?.[0]?.path;
-    if (it.status !== "done" || !path) throw new Error("Qwen couldn't redraw the detail view");
+    if (it.status !== "done" || !path) throw new Error(`${who} couldn't redraw the detail view`);
     P.details = [{ t, cam, m: best.m, ref: path, P: await prepareBgProjection(path, t, cam, [P.relief, ...(P.gaps || []).map(g => g.P.relief)]) }];
     return 1;
   }
   // Fill the gaps of a camera move from the photo P (adds P.gaps); `look`: how the place looks, in words.
-  async function fillGaps(P, look, say = () => {}) {
-    const models = editModels(); if (!models.length) return 0;
-    const model = (models.find(m => m[0] === "qwen") || models[0])[0];
+  async function fillGaps(P, look, say = () => {}, want = null) {
+    const model = fillModel(want); if (!model) return 0;
+    const who = FILL_SHORT[model] || model;
     P.gaps = P.gaps || [];
     const n = frameCount(), step = Math.max(1, Math.round(FPS / 4)), ts = [];
     for (let f = 0; f < n; f += step) ts.push(f / FPS);
@@ -4103,7 +4138,7 @@ const Scene3D = (() => {
       magentaOver(vg, standInsAt(P, cam, t, W, H));
       const blob = await new Promise(r => view.toBlob(r, "image/png")), fd = new FormData(); fd.append("file", blob, "scene_gap.png");
       const up = await (await fetch("/api/upload", { method: "POST", body: fd })).json();
-      say(`Qwen is filling in what the photo can't see, ${Math.round((1 - worst.c) * 100)}% of the view at ${t.toFixed(1)} s (view ${k + 1}, about half a minute)…`);
+      say(`${who} is filling in what the photo can't see, ${Math.round((1 - worst.c) * 100)}% of the view at ${t.toFixed(1)} s (view ${k + 1}, about half a minute)…`);
       // the photo goes along (Qwen takes more pictures), so the fill continues the same place; what's left magenta is
       // filled again (twice at most), or it stays in the guide as pink squares H3 copies
       const withPhoto = model === "qwen" && !!P.photoRef;
@@ -4119,17 +4154,17 @@ const Scene3D = (() => {
       const fill = async src => {
         const items = await submit({ kind: "image", engine: "imgedit", edit_op: "instruct", source: src, prompt: GAP_TEXT(look, withPhoto), edit_model: model,
           ...(withPhoto && P.plateRef ? { references: [P.plateRef] } : {}), seed: -1, batch: 1, project: s.sc.project });
-        if (!items?.length) throw new Error("Qwen didn't take the view to fill");
+        if (!items?.length) throw new Error(`${who} didn't take the view to fill`);
         const it = await waitItem(items[0].id);
         const p = (it.files || []).find(f => /^image\//.test(f.content_type || ""))?.path || it.files?.[0]?.path;
-        if (it.status !== "done" || !p) throw new Error("Qwen couldn't fill a view");
+        if (it.status !== "done" || !p) throw new Error(`${who} couldn't fill a view`);
         return p;
       };
       let path = await fill(up.ref);
       for (let again = 0; again < 2; again++) {
         const left = await magentaShare(path).catch(() => 0);
         if (left < 0.002) break;
-        say(`Qwen left ${(left * 100).toFixed(1)}% of view ${k + 1} unfilled: filling it again…`);
+        say(`${who} left ${(left * 100).toFixed(1)}% of view ${k + 1} unfilled: filling it again…`);
         path = await fill(path);
       }
       say(`Measuring the depth of view ${k + 1}…`);

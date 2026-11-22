@@ -1605,6 +1605,26 @@ async def media_file(path: str):
     return FileResponse(f)
 
 
+class RevealReq(BaseModel):
+    path: str = Field(..., max_length=2000)  # a media ref: an output, an upload or a file in a bookmarked folder
+
+
+@app.post("/api/media/reveal")
+async def media_reveal(req: RevealReq):
+    """On this PC: open Explorer with the file selected (a render, its photo)."""
+    try:
+        f = media.resolve(req.path)
+    except media.MediaError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    if not f.is_file():
+        raise HTTPException(404, "The file isn't there anymore")
+    try:
+        subprocess.Popen(["explorer.exe", f"/select,{f}"], creationflags=media.NO_WINDOW)
+    except OSError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"ok": True}
+
+
 @app.get("/api/media/probe")
 async def media_probe(path: str):
     return await asyncio.to_thread(_project_call, media.probe, path)

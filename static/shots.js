@@ -1339,6 +1339,17 @@ const Shots = (() => {
     pending.set(items[0].id, { ids: items.map(x => x.id), project: project ?? "experiment", one: true });
     savePending();
   }
+  // A finished video onto the end of the timeline's first video track, now (the Render window's Add to Timeline).
+  async function placeNow(it, project) {
+    const f = it?.files?.find(f => /^video\//.test(f.content_type || "")) || it?.files?.[0];
+    if (!f) return false;
+    if ((state.project?.id ?? "experiment") !== (project ?? "experiment") || !TL.model) { Media.toast("Open the render's project to put it on its timeline."); return false; }
+    const v1 = TL.model.tracks.find(t => t.kind === "video");
+    const at = Math.max(0, ...TL.model.clips.filter(c => c.track === v1?.id).map(c => c.start + c.trim_out - c.trim_in));
+    const c = await TL.add({ ref: f.path, kind: "video", name: (promptLabel(it.params?.prompt) || "Shot").slice(0, 40), job: it.id }, { track: v1?.id, at });
+    if (c) Media.toast("The video is on the timeline.");
+    return !!c;
+  }
   // For the Generate step's summary.
   // Exactly what Generate sends: the multi-shot prompt, or each shot's own prompt.
   function previewText() {
@@ -1431,5 +1442,5 @@ const Shots = (() => {
   }
 
   const each = () => on() && modeOf() === "each";  // shots map to 3D scenes one by one
-  return { init, render, renderBanner, prompt, previewText, on, ready, each, isImage: isImg, generate, onItem, resume, ensure, describe, openModal, reuse, describeMissing, placeWhenDone, useScene, targets, shotOfScene, linkScene, unlinkScene, sceneFits };
+  return { init, render, renderBanner, prompt, previewText, on, ready, each, isImage: isImg, generate, onItem, resume, ensure, describe, openModal, reuse, describeMissing, placeWhenDone, placeNow, useScene, targets, shotOfScene, linkScene, unlinkScene, sceneFits };
 })();

@@ -5,6 +5,26 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.145.0] - 2026-11-21
+
+### Added
+- **The finished render in the Render window.** When it's done, the window shows the video to play and the photo it
+  started from (click it for full size), with **Show the video in Explorer**, **Show the photo in Explorer** and
+  **Add to Timeline**. On the classic page Add to Timeline puts the video at the end of the timeline's first video
+  track; in V2 it becomes the picked take of the shot that uses the scene (a new shot at the end when none does).
+  A new `POST /api/media/reveal` opens Explorer with the file selected (outputs, uploads and bookmarked folders only).
+- **A choice of fill model.** Under "Fill what the photo can't see first", **Fill with** offers each installed edit
+  model: Qwen Image Edit 2511 (the default: it takes the photo along, so the fill continues the same place), MiniMax
+  H3 Image and MOSS-Image Edit. The choice is remembered and used by V2's Generate too; the progress stages and the
+  review name the model that fills.
+
+### Changed
+- **The fill is on by default.** "Fill what the photo can't see first" starts checked, on the Rough level too.
+
+### Fixed
+- **"Add it to the timeline when it's done" works in V2.** It did nothing there; the first good take now becomes the
+  picked take of the shot that uses the scene.
+
 ## [0.144.3] - 2026-11-21
 
 ### Fixed
