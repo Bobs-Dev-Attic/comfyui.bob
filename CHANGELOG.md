@@ -5,6 +5,23 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.151.0] - 2026-11-22
+
+### Added
+- **Words a render adds to its lines are silenced, and the lips redrawn to match.** H3 fills spare time with speech
+  of its own, more so with a voice reference (Shot 1: "taking attention to these deep calls…" before "Good morning,
+  Bob"), and sometimes reads the prompt's opening line aloud ("for the target video, at zero seconds…"). After a
+  video with lines is heard, its sound is split where it pauses, each stretch heard on its own by Whisper, and a
+  stretch that isn't the lines is turned down to silence; the original is kept as `<name>_unsilenced.mp4`. A scene
+  render is then drawn again with that cleaned sound held exactly (MiniMaxH3NativeAudioLock, from
+  ComfyUI-H3-NativeAudioLock), the same request and seed, so the speaker's mouth and gestures move only for the lines;
+  the new picture replaces the video in the same result (the one before is kept as `<name>_unsynced.mp4`). On by
+  default; the Render window's "Silence any words that aren't the lines, and redraw the lips to match" turns it off.
+  `POST /api/items/{id}/quiet` does it for a render made earlier. Extra words that run into the lines without a pause
+  can't be told apart and stay.
+- **The prompt says when the lines are said:** from the start of the shot, over about as long as they take, then
+  nobody speaks until the end (when there's more than 0.8 s to spare).
+
 ## [0.150.0] - 2026-11-22
 
 ### Added

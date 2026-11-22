@@ -1765,6 +1765,7 @@ const Scene3D = (() => {
         <select id="s3r-vref" aria-label="How closely H3 keeps to the voices" title="Close: the voice as recorded. Loose: its timbre, with more room for H3 to act the line (weak_reference)">
           <option value="close">Close to the recording</option><option value="weak">Loosely: more room to act</option></select></div>
         <p class="hint">${v2x.voices.map((v, i) => `${esc(v.name)} speaks with &lt;Audio ${i + 1}&gt;`).join(", ")}: their library voices, so H3 says the lines in them. Runs on H3 Reference's model with the same motion.</p>` : ""}
+      ${v2x?.lines?.some(l => String(l.text || "").trim()) ? `<label class="check" title="H3 fills spare time with words of its own. After the render, Whisper hears it in pieces, between its pauses, and a piece that isn't the lines is turned down to silence. Then the picture is drawn again with that sound held, so the lips move only for the lines: one more render (needs ComfyUI-H3-NativeAudioLock). The versions before are kept beside it."><input type="checkbox" id="s3r-quiet" checked> Silence any words that aren't the lines, and redraw the lips to match</label>` : ""}
       ${refReady() ? `<div class="field"><label for="s3r-guide">How H3 follows the 3D scene</label><select id="s3r-guide">
         <option value="reference"${lastGuide() === "reference" ? " selected" : ""}>As a reference video: H3 Reference draws every frame, following the move closely</option>
         <option value="ttm"${lastGuide() === "ttm" ? " selected" : ""}>Time-to-Move: held exactly to the rough animation, its seams too</option></select></div>` : ""}
@@ -1808,7 +1809,7 @@ const Scene3D = (() => {
     const useVoices = () => !!box.querySelector("#s3r-voices")?.checked;
     const useLoras = () => !!box.querySelector("#s3r-loras")?.checked;
     const extraNow = () => v2x && { lines: v2x.lines || [], sound: v2x.sound, voices: useVoices() ? v2x.voices : [], loras: useLoras() ? v2x.loras : [],
-      voiceRef: box.querySelector("#s3r-vref")?.value || "close" };
+      voiceRef: box.querySelector("#s3r-vref")?.value || "close", quiet: box.querySelector("#s3r-quiet")?.checked !== false };
     box.querySelector("#s3r-voices")?.addEventListener("change", e => { const v = box.querySelector("#s3r-vref"); if (v) v.disabled = !e.target.checked; });
     const withLines = t => { const d = linesText(extraNow(), useRefs(), t).text; return [d ? endOf(t) : t, d].filter(Boolean).join(" "); };
     box.querySelector("#s3r-voices")?.addEventListener("change", () => box.querySelector("#s3r-what").dispatchEvent(new Event("input")));
@@ -2015,6 +2016,7 @@ const Scene3D = (() => {
       const sp = SPEEDS[o.speed]; if (sp) { req.turbo = sp.turbo; if (sp.steps) req.steps = sp.steps; }
       if (o.refs) req.references = picObjs().map(x => x.picture);
       if (o.extra?.voices?.length) { req.ref_audios = o.extra.voices.map(v => v.ref); req.clean_audio = true; }
+      if (o.extra?.quiet === false) req.quiet_extra = false;
       if (o.extra?.loras?.length) req.loras = o.extra.loras.map(l => ({ name: l.name, strength: l.strength }));  // the library objects' LoRAs
       if (photoPath) req.first_frame = photoPath;
       else if (start === "picture") req.first_frame = s.sc.picture;
@@ -2052,7 +2054,11 @@ const Scene3D = (() => {
       return `${who}${l.speaker ? ` (S${ids.get(l.speaker)})` : ""} says once${a >= 0 ? `, using the voice timbre referenced from <Audio ${a + 1}>` : ""}: <d>[English] ${t}</d>`;
     }).join(" ");
     // H3 fills time the lines leave over with speech of its own (more so with a voice reference): say there's none
-    return { text: `${text.charAt(0).toUpperCase() + text.slice(1)} Only the words inside the dialogue tags are spoken, each line once; before, between and after them the speakers stay silent with their lips closed.`, ids };
+    // ...and when: said from the start, over about as long as they take, then quiet to the end (H3 put its own words
+    // first and the lines last, when it had time to spare)
+    const T = s ? dur() : 0, talk = speechSeconds(L, extra.voices || []);
+    const when = T - talk > 0.8 ? ` The lines are said from the start of the shot and are over by about ${Math.min(T, talk + 0.3).toFixed(1)} s; from then until the end at ${T.toFixed(1)} s nobody speaks and only the scene's natural sound is heard.` : "";
+    return { text: `${text.charAt(0).toUpperCase() + text.slice(1)} Only the words inside the dialogue tags are spoken, each line once; before, between and after them the speakers stay silent with their lips closed.${when}`, ids };
   }
   /* About how long lines take to say: their syllables at the speaker's pace, and half a second each to start (as
      H3-AudioRetake-studio sizes a take). The pace is the speaker's voice's own, measured once from its recording

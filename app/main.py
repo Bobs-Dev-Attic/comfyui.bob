@@ -996,6 +996,25 @@ async def score_result(item_id: str, req: ScoreReq):
     return res
 
 
+@app.post("/api/items/{item_id}/quiet")
+async def quiet_result(item_id: str):
+    """Silence the words in a finished video that aren't its lines (app/heard.py), and hear it again."""
+    it = jobs.items.get(item_id)
+    if not it:
+        raise HTTPException(404, "No such result")
+    if item_id in _hearing:
+        raise HTTPException(409, "Its words are being checked already")
+    _hearing.add(item_id)
+    try:
+        if not it.get("heard"):
+            await jobs.hear(it)
+        return await jobs.quiet(it) or {"nothing": True, **(it.get("heard") or {})}
+    except heard.HeardError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    finally:
+        _hearing.discard(item_id)
+
+
 @app.post("/api/items/{item_id}/heard")
 async def hear_result(item_id: str):
     """Hear a finished video's words with Whisper and score them against its lines (app/heard.py)."""
