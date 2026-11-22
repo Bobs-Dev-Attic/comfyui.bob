@@ -5,6 +5,14 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.156.0] - 2026-11-22
+
+### Added
+- **The photo window shows the machine's load too, and stays open until the photo is done.** Generate photo and
+  Quick photo show the same CPU, GPU, VRAM and memory strip at the top while the photo is made. The window no longer
+  closes when the photo is sent: it says it's being made (closing the window doesn't stop it), then shows the photo,
+  which a click opens large, and offers to make another.
+
 ## [0.155.0] - 2026-11-22
 
 ### Added
