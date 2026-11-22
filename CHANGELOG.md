@@ -5,6 +5,17 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.147.1] - 2026-11-21
+
+### Added
+- **`scripts/move_to_project_folders.py`**: moves results made before v0.147.0 from `outputs/<date>/` into their
+  projects' folders (`bob/<Project>/...`): a scene's photos and takes into its scene's folder (known from the
+  scene's photos and V2's shots), the rest into `videos/`, `images/` or `audio/`, each with its `<id>.json` and a
+  scene render with its `<id>_3d.mp4` when the upload is still there. It rewrites every reference (the results
+  list, scenes, V2's boards and objects, the media library, every project file and saved version) after backing the
+  JSON up to `data/backup_before_project_folders/`. A dry run by default; `--apply` with the studio stopped. 3D
+  models (`outputs/3d`) stay where they are.
+
 ## [0.147.0] - 2026-11-21
 
 ### Added
