@@ -5,6 +5,24 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.147.0] - 2026-11-21
+
+### Added
+- **Each project has its own folder: ComfyUI's `output/bob/<Project>`.** The studio links ComfyUI's `output/bob` in
+  as `bob/` (a directory junction, made at startup from `BOB_COMFYUI_DIR`; a plain `bob/` without it), and a new
+  result goes into its project's folder:
+  - `scenes/<Scene>/`: a 3D scene's photos, every image the edit model makes for it (Qwen's fills and close-up
+    views), the 3D render H3 followed (`<id>_3d.mp4`, and `<id>_3d_mask.mp4` with Time-to-Move), and its takes;
+  - `videos/`, `images/`, `audio/`: the project's other results;
+  - beside each result, `<id>.json`: the request and what was sent (the prompt as ComfyUI got it, sizes, steps,
+    the seed);
+  - `project.json`, `board.json` (V2's shots) and each scene's `scene.json`, copied in whenever they're saved.
+
+  ComfyUI saves the result straight into that folder, so there's one copy, not two. Folder names are the project's
+  and the scene's names when first used (kept in `bob/.folders.json`, so renaming doesn't split a project); two of
+  the same name get the id after them; Experiment's are in `bob/Experiment`. Results made before this stay where
+  they are.
+
 ## [0.146.0] - 2026-11-21
 
 ### Added

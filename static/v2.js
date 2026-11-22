@@ -458,7 +458,7 @@ const V2 = (() => {
       if (d.engine === "h3") {
         if (!String(s.action || s.setting || "").trim()) throw new Error("Say what the shot is: the setting, or what happens");
         req = { kind: "video", engine: "h3", prompt: textPrompt(s), seconds: d.info.seconds, aspect: "16:9", quality: s.quality || "standard",
-          turbo: true, seed: -1, batch: 1, project: state.project?.id ?? null };
+          turbo: true, seed: -1, batch: 1, project: state.project?.id ?? null, scene: s.scene || null };
       } else {
         if (Scene3D._state()?.id !== s.scene) { await openShot(id); }
         const voices = d.ref ? voicesFor(s) : [];

@@ -348,6 +348,9 @@ def save_file(p: Path, pf: ProjectFile, touch: bool = True, keep_version: bool =
         except OSError:
             pass  # a failed backup must never block saving
     pfile.save(p / PROJECT_FILE, pf)
+    from . import projectmedia  # a copy in the project's media folder (ComfyUI's output/bob/<Project>)
+
+    projectmedia.mirror_project(pf.id, as_dict(p, pf))
 
 
 def as_dict(p: Path, pf: ProjectFile) -> dict[str, Any]:

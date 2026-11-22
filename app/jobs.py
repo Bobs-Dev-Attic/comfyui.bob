@@ -9,6 +9,7 @@ import logging
 import random
 import re
 import time
+import urllib.parse
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -167,6 +168,8 @@ class GenerateRequest(BaseModel):
     lyrics: str = Field("", max_length=20000)  # Music 3
     batch: int = Field(1, ge=1, le=4)  # number of takes (seeds seed, seed+1, ...)
     project: str | None = Field(None, max_length=64)  # project id; None = Experiment
+    # the 3D scene it's for (its photos, fills, renders): saved in its folder, bob/<Project>/scenes/<Scene>/
+    scene: str | None = Field(None, max_length=40, pattern=r"^[A-Za-z0-9_-]+$")
     # AI reshoot (camera moves): guide frames + masks of the uncovered areas, and where they sit
     guides: list[str] = Field(default_factory=list, max_length=8)
     guide_masks: list[str] = Field(default_factory=list, max_length=8)
@@ -726,7 +729,11 @@ class JobManager:
 
     def _build(self, item: dict[str, Any], req: GenerateRequest, files: dict[str, str | None]) -> workflows.Built:
         seed = item["seed"]
-        prefix = f"bob/{req.kind}/{item['id']}"
+        # ComfyUI saves it in its project's folder (output/bob/<Project>/..., app/projectmedia.py)
+        from . import projectmedia
+
+        rel = projectmedia.media_dir(req.project, req.scene, req.kind).relative_to(projectmedia.LINK).as_posix()
+        prefix = f"bob/{rel}/{item['id']}"
         aspect = workflows.ASPECTS[req.aspect]
         if req.engine == "h3":
             if req.kind == "audio":
@@ -886,6 +893,16 @@ class JobManager:
                     info = await asyncio.to_thread(
                         motion.conform, req.motion_video, req.motion_video_mask, int(built.info["width"]),
                         int(built.info["height"]), int(built.info["frames"]), vids["motion_ref"], vids["motion_mask"], first)
+                    # the 3D scene's render as H3 got it, in its scene's folder (<id>_3d.mp4; its mask with Time-to-Move)
+                    try:
+                        import shutil
+
+                        d = self._media_dir(item)
+                        shutil.copyfile(vids["motion_ref"], d / f"{item['id']}_3d.mp4")
+                        if req.motion_guide != "reference":
+                            shutil.copyfile(vids["motion_mask"], d / f"{item['id']}_3d_mask.mp4")
+                    except Exception as exc:  # noqa: BLE001 - a copy, never the render
+                        self.log(item, f"Couldn't keep the 3D render in the project's folder: {exc}", "warn")
                     self.log(item, f"Fitted the 3D scene's rough animation: {info['frames']} frames at {info['size']}"
                              + (", starting from its own first frame" if first else ""))
                 else:
@@ -1028,6 +1045,7 @@ class JobManager:
                 await self._whiten(item, saved)
             self.log(item, f"Done in {time.time() - t_start:.1f} s: " + ", ".join(f"{f['name']} ({f['size'] / 2**20:.1f} MB)" for f in saved))
             self._update(item, status="done", files=saved, progress=1.0, finished=time.time())
+            self._write_request(item, req, built.info)
             if req.enhance_after and req.engine != "enhance" and saved:
                 asyncio.create_task(self._enhance_after(item))
             from . import heard  # its spoken lines, as heard: ranks a set of takes
@@ -1127,21 +1145,44 @@ class JobManager:
             self.log(item, f"Background made pure white ({share:.0%} of the picture)" if share
                      else "No plain light background to whiten, left as it is")
 
+    def _media_dir(self, item: dict[str, Any]) -> Path:
+        """Its project's folder (its scene's, for a 3D scene's photo, fill or render): app/projectmedia.py."""
+        from . import projectmedia
+
+        p = item.get("params") or {}
+        return projectmedia.media_dir(item.get("project"), p.get("scene"), item.get("kind") or p.get("kind") or "video")
+
+    def _write_request(self, item: dict[str, Any], req: "GenerateRequest", info: dict[str, Any]) -> None:
+        """Beside the result: what was asked for and what was sent (the prompt as ComfyUI got it, sizes, steps)."""
+        from . import projectmedia
+
+        try:
+            projectmedia.write_json(self._media_dir(item) / f"{item['id']}.json", {
+                "id": item["id"], "engine": req.engine, "kind": req.kind, "seed": item.get("seed"), "created": item.get("created"),
+                "finished": item.get("finished"), "request": req.model_dump(), "sent": info, "files": item.get("files")})
+        except Exception as exc:  # noqa: BLE001 - never let this touch the finished result
+            self.log(item, f"Couldn't save its request beside it: {exc}", "warn")
+
     async def _download(self, item: dict[str, Any], job: Any, output_nodes: list[str]) -> list[dict[str, Any]]:
-        day = datetime.now().strftime("%Y-%m-%d")
-        out_dir = config.OUTPUT_DIR / day
+        try:
+            out_dir = self._media_dir(item)
+        except Exception as exc:  # noqa: BLE001 - the dated folder, as before
+            self.log(item, f"Saving to the dated outputs folder: its project's folder isn't there ({exc})", "warn")
+            out_dir = config.OUTPUT_DIR / datetime.now().strftime("%Y-%m-%d")
         out_dir.mkdir(parents=True, exist_ok=True)
         outputs = [o for n in output_nodes for o in job.get_outputs(n)] or list(job.outputs)
         saved = []
         for out in outputs:
             name = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(out.name).name)
             target = out_dir / (name if name.startswith(item["id"]) else f"{item['id']}_{name}")
-            await out.to_file(target)
+            # on this PC ComfyUI saved it right here already (its prefix is this folder): no second copy
+            if not (target.is_file() and target.stat().st_size > 0):
+                await out.to_file(target)
             rel = target.relative_to(config.ROOT).as_posix()
             saved.append({
                 "name": name,
                 "path": rel,
-                "url": "/" + rel,
+                "url": "/" + urllib.parse.quote(rel),
                 "content_type": out.content_type,
                 "size": target.stat().st_size,
             })

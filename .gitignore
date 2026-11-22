@@ -13,3 +13,6 @@ projects/
 *.p12
 *.pfx
 secrets/
+
+# each project's media folder: a junction to ComfyUI's output/bob (app/projectmedia.py)
+/bob/
