@@ -572,10 +572,11 @@ def _v2_file(project: str | None) -> Path:
 
 @app.get("/api/v2/board")
 async def v2_board_get(project: str | None = None):
+    f = _v2_file(project)
     try:
-        return json.loads(_v2_file(project).read_text("utf-8"))
+        return {**json.loads(f.read_text("utf-8")), "saved": f.stat().st_mtime}  # saved: when (V2's saved/unsaved sign)
     except (OSError, ValueError):
-        return {"shots": [], "settings": {}}
+        return {"shots": [], "settings": {}, "saved": None}
 
 
 @app.put("/api/v2/board")
@@ -586,7 +587,7 @@ async def v2_board_put(req: V2Board, project: str | None = None):
     tmp.write_text(json.dumps(req.model_dump(), ensure_ascii=False, indent=1), "utf-8")
     tmp.replace(f)
     projectmedia.mirror_board(project, req.model_dump())  # a copy in the project's folder
-    return {"ok": True}
+    return {"ok": True, "saved": time.time()}
 
 
 # V2's object library, shared by every project: things to drag into a shot's scene, each a shape or a 3D model with

@@ -83,25 +83,62 @@ const V2 = (() => {
   async function loadBoard() {
     const b = await api(`/api/v2/board?project=${encodeURIComponent(state.project?.id ?? "")}`);
     st.board = { shots: Array.isArray(b.shots) ? b.shots : [], settings: b.settings || {} };
+    saves.k.clear(); saves.at = b.saved ? b.saved * 1000 : 0; saves.err = ""; saveSign();
     st.sel = st.board.shots.some(x => x.id === st.board.settings.sel) ? st.board.settings.sel : st.board.shots[0]?.id || null;
     await refreshScenes();
     renderAll();
     if (st.sel) openShot(st.sel, true);
   }
+  /* Saved or not: what's waiting to be saved (board: the shots; words: the shot's words, with its scene; scene: the
+     3D scene, which scene3d.js tells with "bob:save"), and when the project was last saved. The sign next to the
+     project: ✓ saved, ● changes waiting, ⚠ a save failed; its tooltip says when it was last saved. */
+  const saves = { k: new Map(), at: 0, err: "" };  // k: what -> "pending" | "failed"
+  function saved(what, k, err = "") {
+    if (k === "saved") { saves.k.delete(what); saves.at = Date.now(); if (![...saves.k.values()].includes("failed")) saves.err = ""; }
+    else { saves.k.set(what, k); if (k === "failed") saves.err = err; }
+    saveSign();
+  }
+  function saveSign() {
+    const el = $("v2-save"); if (!el) return;
+    const v = [...saves.k.values()], k = v.includes("failed") ? "failed" : v.length ? "pending" : "saved";
+    const when = saves.at ? `last saved ${new Date(saves.at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "medium" })}` : "not saved yet";
+    const name = state.project?.name || "Experiment";
+    el.dataset.s = k;
+    el.textContent = k === "failed" ? "⚠" : k === "pending" ? "●" : "✓";
+    el.title = k === "failed" ? `${name}: a change couldn't be saved (${saves.err || "the studio didn't answer"}). It tries again with the next change · ${when}`
+      : k === "pending" ? `${name}: changes not saved yet (they save in a moment) · ${when}` : `${name}: saved · ${when}`;
+    el.setAttribute("aria-label", el.title);
+  }
+  document.addEventListener("bob:save", e => saved(e.detail?.what || "scene", e.detail?.state, e.detail?.err));
   function save() {
     clearTimeout(st.saveT);
     clearTimeout(st.wordsT);
-    st.wordsT = setTimeout(() => {  // the selected shot's words, kept with its scene
-      const s = cur(); if (!s) return;
-      const v2shot = { name: s.name, setting: s.setting || "", action: s.action || "", lines: linesOf(s), sound: s.sound || "", music: s.music || "",
-        quality: s.quality || "standard", transition: s.transition || "cut", tlen: s.tlen || "" };
-      api(`/api/scenes/${s.scene}`, { method: "PATCH", body: JSON.stringify({ v2shot }) }).catch(() => {});
-    }, 1200);
-    st.saveT = setTimeout(() => {
-      st.board.settings.sel = st.sel;
-      api(`/api/v2/board?project=${encodeURIComponent(state.project?.id ?? "")}`, { method: "PUT", body: JSON.stringify(st.board) })
-        .catch(e => Media.toast(`Couldn't save the shots: ${e.message}`));
-    }, 400);
+    const s = cur(), proj = state.project?.id ?? "";
+    if (s) {  // the selected shot's words, kept with its scene
+      saved("words", "pending");
+      const run = () => {
+        const v2shot = { name: s.name, setting: s.setting || "", action: s.action || "", lines: linesOf(s), sound: s.sound || "", music: s.music || "",
+          quality: s.quality || "standard", transition: s.transition || "cut", tlen: s.tlen || "" };
+        api(`/api/scenes/${s.scene}`, { method: "PATCH", body: JSON.stringify({ v2shot }) }).then(() => saved("words", "saved")).catch(e => saved("words", "failed", e.message));
+      };
+      st.wordsRun = run;
+      st.wordsT = setTimeout(() => { if (st.wordsRun === run) st.wordsRun = null; run(); }, 1200);
+    }
+    saved("board", "pending");
+    const board = st.board, run = () => {  // this project's shots, even when another is open by then
+      board.settings.sel = st.board === board ? st.sel : board.settings.sel;
+      api(`/api/v2/board?project=${encodeURIComponent(proj)}`, { method: "PUT", body: JSON.stringify(board) })
+        .then(() => { if (st.board === board) saved("board", "saved"); })
+        .catch(e => { if (st.board === board) saved("board", "failed", e.message); Media.toast(`Couldn't save the shots: ${e.message}`); });
+    };
+    st.boardRun = run;
+    st.saveT = setTimeout(() => { if (st.boardRun === run) st.boardRun = null; run(); }, 400);
+  }
+  // Send what's waiting now (before another project opens, or the page goes)
+  function flushSaves() {
+    clearTimeout(st.saveT); clearTimeout(st.wordsT);
+    const a = st.wordsRun, b = st.boardRun; st.wordsRun = st.boardRun = null;
+    a?.(); b?.();
   }
   async function refreshScenes() {
     try { for (const sc of (await api("/api/scenes")).scenes || []) st.scenes.set(sc.id, sc); } catch { /* keep what we have */ }
@@ -117,6 +154,7 @@ const V2 = (() => {
     sel.value = list.some(p => p.id === want) ? want : "";
     state.project = list.find(p => p.id === sel.value) || null;
     sel.onchange = async () => {
+      flushSaves();
       state.project = list.find(p => p.id === sel.value) || null;
       try { localStorage.setItem(PKEY, sel.value); } catch {}
       Scene3D._state()?.win?.close();
@@ -1469,6 +1507,11 @@ const V2 = (() => {
     try { for (const it of (await api("/api/items")).items || []) state.items.set(it.id, it); } catch {}
     events();
     activity(); meters(); setInterval(meters, 3000);
+    saveSign();
+    window.addEventListener("beforeunload", e => {  // changes still waiting: send them, and ask before leaving
+      if (![...saves.k.values()].includes("pending")) return;
+      flushSaves(); e.preventDefault(); e.returnValue = "";
+    });
     await loadObjects();
     await loadCameras();
     await loadProjects();

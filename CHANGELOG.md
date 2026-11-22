@@ -5,6 +5,19 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.153.0] - 2026-11-22
+
+### Added
+- **V2 shows whether the project is saved.** A sign next to the project picker: ✓ saved, ● changes waiting to be
+  saved (V2 saves a moment after each change), ⚠ a save failed. Hovering it shows when the project was last saved
+  (at first, when its shots were last written). The shots, a shot's words and the 3D scene all count. Leaving the
+  page while a change is still waiting sends it and asks first.
+
+### Fixed
+- **A 3D scene change made just before switching shots is no longer lost.** Closing the scene within half a second
+  of an edit dropped that edit's save; it's now sent at once. Switching projects likewise sends the shots' waiting
+  save to the project they belong to first.
+
 ## [0.152.0] - 2026-11-22
 
 ### Added

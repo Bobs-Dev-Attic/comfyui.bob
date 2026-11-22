@@ -1200,14 +1200,24 @@ const Scene3D = (() => {
     ...(o.prim === "figure" ? { pose: o.pose || "standing", gait: o.gait || null } : {}) }));
   const saveBody = () => JSON.stringify({ objects: objectsOut(), seconds: +s.seconds || 5, camera_keys: s.camKeys, photos: s.photos, dof: s.sc.dof || {}, fx: s.sc.fx || {},
     ...(s.sc.kind === "empty" ? { aspect: s.sc.aspect, lens: s.sc.lens, backdrop: s.sc.backdrop } : {}) });
+  // Saves are told to the page ("bob:save": pending, saved or failed), for V2's saved/unsaved sign.
+  const saidSave = (k, err = "") => document.dispatchEvent(new CustomEvent("bob:save", { detail: { what: "scene", state: k, err } }));
   function save() {
     clearTimeout(s.saveT);
     record();
     const id = s.id, body = saveBody();
-    s.saveT = setTimeout(() => api(`/api/scenes/${id}`, { method: "PATCH", body }).catch(e => Media.toast(`Couldn't save the scene: ${e.message}`)), 500);
+    saidSave("pending");
+    const run = () => api(`/api/scenes/${id}`, { method: "PATCH", body }).then(() => saidSave("saved"))
+      .catch(e => { saidSave("failed", e.message); Media.toast(`Couldn't save the scene: ${e.message}`); });
+    s.saveRun = run;  // closing the scene sends it at once (it was dropped)
+    s.saveT = setTimeout(() => { if (s?.saveRun === run) s.saveRun = null; run(); }, 500);
   }
   // Save now; the scene's revision (its saved time).
-  async function flushSave() { clearTimeout(s.saveT); const sc = await api(`/api/scenes/${s.id}`, { method: "PATCH", body: saveBody() }); return sc.updated || 0; }
+  async function flushSave() {
+    clearTimeout(s.saveT); s.saveRun = null;
+    try { const sc = await api(`/api/scenes/${s.id}`, { method: "PATCH", body: saveBody() }); saidSave("saved"); return sc.updated || 0; }
+    catch (e) { saidSave("failed", e.message); throw e; }
+  }
 
   /* ---------------------------------------------------------------- the window */
   /* V2 (static/v2.js): the builder draws in a page element instead of a window. */
@@ -1333,7 +1343,7 @@ const Scene3D = (() => {
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
     foot.innerHTML = `<span class="hint s3-foot">Drag: orbit · Right-drag: pan · Wheel: zoom (stops at what's ahead; Alt+wheel: through) · Right-click: menu · 🏞 Scene › Generate photo or Render video</span>`;
-    const onClose = () => { if (s) { cancelAnimationFrame(s.raf); clearTimeout(s.poll); clearTimeout(s.saveT); s.ro?.disconnect(); s.closed = true; } s = null; meshCache.clear(); };
+    const onClose = () => { if (s) { cancelAnimationFrame(s.raf); clearTimeout(s.poll); clearTimeout(s.saveT); s.saveRun?.(); s.saveRun = null; s.ro?.disconnect(); s.closed = true; } s = null; meshCache.clear(); };
     const win = host ? embed(host, root, foot, onClose)
       : WM.open({ id: "scene3d", title: `🏞 ${sc.name}`, content: root, footer: foot, width: 1100, height: 720, minWidth: 720, minHeight: 480, onClose });
     const cv = root.querySelector(".s3-canvas"), hud = root.querySelector(".s3-hud");
