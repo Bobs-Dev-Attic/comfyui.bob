@@ -5,6 +5,17 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.157.0] - 2026-11-22
+
+### Added
+- **V2's Generate shot progress shows the machine's load.** The same CPU, GPU, VRAM and memory meters sit at the top
+  of a shot's progress under Generate, from Generate shot until its video is done (or it fails). They keep going while
+  you look at another shot. The meters wrap to two a row where the space is narrow.
+
+### Changed
+- **Generate shot doesn't draw the depth map.** Only the Render window shows it, so V2's Generate no longer spends
+  the few seconds on it.
+
 ## [0.156.0] - 2026-11-22
 
 ### Added

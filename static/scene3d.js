@@ -1772,8 +1772,9 @@ const Scene3D = (() => {
     d.querySelector("[data-x]").focus();
   }
   /* CPU, GPU (use and its memory) and memory use at the top of the Render window while it works (/api/system/usage,
-     every 2 s). Returns stop(), which hides it; closing the window stops it too. */
-  function usageStrip(el) {
+     every 2 s). Returns stop(), which hides it; closing the window stops it too, or, given alive(), its saying no
+     (V2's Generate: its progress list is out of the page while another shot is open, and keeps going). */
+  function usageStrip(el, alive = null) {
     if (!el) return () => {};
     let t = 0, live = true;
     const gb = b => (b / 1024 ** 3).toFixed(1);
@@ -1782,7 +1783,8 @@ const Scene3D = (() => {
     const stop = () => { live = false; clearTimeout(t); el.hidden = true; };
     const tick = async () => {
       if (!live) return;
-      if (!el.isConnected) return stop();
+      if (alive ? !alive() : !el.isConnected) return stop();
+      if (!el.isConnected) { t = setTimeout(tick, 2000); return; }  // not shown just now
       try {
         const u = await (await fetch("/api/system/usage")).json(), g = u.gpu;
         if (!live) return;
@@ -2003,7 +2005,7 @@ const Scene3D = (() => {
         if (box.querySelector("#s3r-guide")) try { localStorage.setItem("bob.sceneGuide", guide); } catch { /* not kept */ }
         if (fillM) try { localStorage.setItem("bob.sceneFillModel", fillM); } catch { /* not kept */ }
         if (box.querySelector("#s3r-fill") && fromPhoto()) try { localStorage.setItem("bob.sceneGapFill", fill ? "1" : "0"); } catch { /* not kept */ }
-        const r = await buildRender({ start, look, fill, fillModel: fillM, guide, refs: useRefs(), hold: holdSel.value, quality: box.querySelector("#s3r-q").value, speed: spSel.value, extra: extraNow(), prompt: edited ? box.querySelector("#s3r-prompt").value : null,
+        const r = await buildRender({ start, look, fill, fillModel: fillM, guide, depth: true, refs: useRefs(), hold: holdSel.value, quality: box.querySelector("#s3r-q").value, speed: spSel.value, extra: extraNow(), prompt: edited ? box.querySelector("#s3r-prompt").value : null,
           what: box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder,
           onPhoto: id => { stopPhoto?.(); stopPhoto = followPhoto(id, sg); } }, m => { st.textContent = m; sg.say(m); });
         stopPhoto?.(); stopPhoto = null;
@@ -2080,9 +2082,9 @@ const Scene3D = (() => {
       talkers = s.objs.filter(x => x.prim === "figure" && said.has(x.name.trim().toLowerCase()));
       const ref = await renderVideo("ref", [W, H], n, (f, N) => say(`${o.guide === "reference" ? "Drawing the 3D scene's render" : "Drawing the rough animation"}: frame ${f + 1} of ${N}`), proj);
       const mask = await renderVideo("mask", [W, H], n, (f, N) => say(`Drawing its mask: frame ${f + 1} of ${N}`), proj);
-      // the clip's depth map, to look at in the Render window (near is white): not sent to H3
+      // the clip's depth map, to look at in the Render window (o.depth; near is white): not sent to H3
       let depth = null;
-      try { depth = await depthVideo([W, H], (f, N) => say(`Drawing its depth map: frame ${f + 1} of ${N}`)); }
+      if (o.depth) try { depth = await depthVideo([W, H], (f, N) => say(`Drawing its depth map: frame ${f + 1} of ${N}`)); }
       catch (err) { if (!s) throw err; console.warn("Depth map:", err); }
       say("Sending to H3…");
       const built = renderPrompt(o.what, o.refs, fromPhoto, o.extra, o.guide), what = built.what;
@@ -4794,7 +4796,7 @@ const Scene3D = (() => {
       save(); setTime(s.t); renderSide(); s.dirty = true; return true;
     },
   };
-  return { mount, autoRender, current, stages, followPhoto, followRender, lastGuide, doingOf, stepVerb, narrateCamera: (...a) => narrateCamera(...a), addFromLibrary, camEdit, objEdit, speechSeconds, loadRates, paceNote, SPARE_TALK, select: i => s?.bg && select(i), selectCam: () => s?.bg && selectCam(),
+  return { mount, autoRender, current, stages, usageStrip, followPhoto, followRender, lastGuide, doingOf, stepVerb, narrateCamera: (...a) => narrateCamera(...a), addFromLibrary, camEdit, objEdit, speechSeconds, loadRates, paceNote, SPARE_TALK, select: i => s?.bg && select(i), selectCam: () => s?.bg && selectCam(),
     rename: (i, name) => { const o = s?.objs[i]; if (!o || !String(name || "").trim()) return; o.name = String(name).trim().slice(0, 120); save(); renderSide(); }, CAM_MOVES, applyCameraMove, cameraOut, applySavedCamera, renderForShot, photoForShot, fromTemplate, setTemplate, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
     _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _fill: (P, look, say) => fillGaps(P, look, say), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
 })();

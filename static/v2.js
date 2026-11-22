@@ -456,13 +456,15 @@ const V2 = (() => {
   /* A shot's progress while it's made: the Render window's stages (Scene3D.stages), one list per shot, shown under
      Generate when that shot is open. */
   function stagesFor(id) {
-    const old = st.stg.get(id); old?.stop?.(); old?.stopPhoto?.();
+    const old = st.stg.get(id); old?.stop?.(); old?.stopPhoto?.(); old?.stopUse?.();
     const el = document.createElement("section");
     el.className = "s3p-set s3r-stages v2-stages";
     el.setAttribute("aria-label", "Progress"); el.setAttribute("aria-live", "polite");
-    el.innerHTML = `<h4>Progress <span class="s3r-sgh"></span></h4><ol></ol>`;
+    el.innerHTML = `<div class="s3r-use" role="status" aria-label="The machine's load" hidden></div><h4>Progress <span class="s3r-sgh"></span></h4><ol></ol>`;
     const g = { el, sg: Scene3D.stages(el, () => st.stg.get(id) === g) };
     st.stg.set(id, g); showStages();
+    // the machine's load while it's made (the Render window's), until the video's done or it fails
+    g.stopUse = Scene3D.usageStrip?.(el.querySelector(".s3r-use"), () => st.stg.get(id) === g);
     return g;
   }
   function showStages() {
@@ -514,8 +516,8 @@ const V2 = (() => {
       delete s.pick;  // the new takes: the shot uses the one whose words come out best
       save();
       say("Queued: it shows here when it's done.");
-      g.stop = Scene3D.followRender(items, sg, g.words);
-    } catch (e) { g.stopPhoto?.(); sg.fail(e.message); say(`⚠ ${e.message}`); Media.toast(`${s.name}: ${e.message}`); entry.failed = e.message; }
+      g.stop = Scene3D.followRender(items, sg, g.words, () => { g.stopUse?.(); g.stopUse = null; });
+    } catch (e) { g.stopPhoto?.(); g.stopUse?.(); g.stopUse = null; sg.fail(e.message); say(`⚠ ${e.message}`); Media.toast(`${s.name}: ${e.message}`); entry.failed = e.message; }
     finally { st.busy.delete(id); entry.prep = false; if (st.ctx === entry) st.ctx = null; renderAll(); renderLog(); }
   }
   /* 🗣 Words (app/heard.py): Whisper hears a take's lines and scores them; the shot then uses its best take. */
