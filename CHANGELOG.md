@@ -5,6 +5,15 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.145.1] - 2026-11-21
+
+### Fixed
+- **Zooming in with the wheel stops at the person instead of going through them.** The wheel moves the camera
+  towards the point it turns round, which is often behind the person (the empty scene's start and keys set from it
+  look past them at the floor), so a zoom in, keyed as the shot camera's end, carried the render's camera past them.
+  Now, when something is dead ahead between the camera and that point, the point moves onto its front, so the zoom
+  closes in on it and stops there. Alt+wheel still zooms on through.
+
 ## [0.145.0] - 2026-11-21
 
 ### Added
