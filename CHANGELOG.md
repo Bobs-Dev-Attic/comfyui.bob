@@ -5,6 +5,20 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.148.0] - 2026-11-21
+
+### Added
+- **The render prompt narrates the camera's move, measured from the 3D scene.** Instead of only "the camera moves
+  through the scene", it says what the camera does, read off its path frame by frame against the subject it ends on:
+  the shot size at the start and the end (extreme close-up to extreme wide, from how much of them fills the frame),
+  the angle (eye level, high, low, from above), and the move: pushes in or pulls back, arcs or orbits so many degrees
+  to the left or right around them (or circles all the way round), tracks, rises or comes down, pans, tilts, zooms,
+  a dolly zoom, or holds; slowly and smoothly when it's long and eased. A move that changes between camera keys is
+  told in timed parts ("From 0.0 s to 2.5 s, it smoothly pushes in, to a full shot … Then, from 3.0 s to 5.0 s, it
+  arcs 40° to the right around them…"). With a reference video it adds that the move is exactly `<Video 1>`'s; it's
+  in Time-to-Move's prompt too. The subject is named as the prompt names them (`<Subject N>` with their picture).
+  It shows in the Render window's prompt, where it can be edited, and V2's Generate sends it.
+
 ## [0.147.2] - 2026-11-21
 
 ### Fixed
