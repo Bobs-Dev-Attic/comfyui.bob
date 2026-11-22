@@ -848,37 +848,58 @@ const V2 = (() => {
   }
   const FIN = ["done", "failed", "cancelled"];
   // while anything runs, the log redraws every second (elapsed time, progress)
-  setInterval(() => { if (st.tlv === "log" && st.log.some(entryBusy)) renderLog(); }, 1000);
+  setInterval(() => { if ((st.tlv === "log" || st.logWin?.isConnected) && st.log.some(entryBusy)) renderLog(); }, 1000);
   const entryBusy = e => e.prep || e.items.some(x => !FIN.includes(state.items.get(x.id)?.status || "queued"));
   function renderLog() {
-    const box = $("v2-log"), busy = st.log.filter(entryBusy).length;
+    const busy = st.log.filter(entryBusy).length;
     $("v2-logn").textContent = busy ? `· ${busy}` : "";
-    if (box.hidden) return;
+    if (!$("v2-log").hidden) drawLog($("v2-log"), 40);
+    if (st.logWin?.isConnected) drawLog(st.logWin, 400);
+    // everything done: back to the timeline a moment later (if the log came up by itself)
+    clearTimeout(st.logBackT);
+    if (!busy && st.logAuto && st.tlv === "log") st.logBackT = setTimeout(() => { if (!st.log.some(entryBusy) && st.logAuto) showTlView("tl"); }, 6000);
+  }
+  /* The log into a box (the timeline's, or the big window's), its last n lines a job. Each job's lines stay on the
+     newest one as they come in, unless they were scrolled up to read (then they stay put). */
+  function drawLog(box, n) {
     if (!st.log.length) { box.innerHTML = `<p class="hint">Nothing made yet in this window. When a shot, photo, soundtrack or export is being made, every step shows here.</p>`; return; }
-    const keep = box.scrollTop;
+    const keep = box.scrollTop, was = new Map();
+    box.querySelectorAll(".v2-logjob[data-k] ol").forEach(ol => was.set(ol.parentElement.dataset.k, ol.scrollHeight - ol.scrollTop - ol.clientHeight < 6 ? null : ol.scrollTop));
     box.innerHTML = st.log.map(e => {
       const its = e.items.map(x => ({ ...x, it: state.items.get(x.id) }));
       const last = its.at(-1)?.it, status = e.failed ? "failed" : entryBusy(e) ? (e.prep && !last ? "preparing" : last?.status || "queued") : last?.status || "done";
       const pct = last && !FIN.includes(last.status) ? Math.round((last.progress || 0) * 100) : status === "done" ? 100 : 0;
       const lines = [...e.lines.map(l => ({ ...l, who: "" })), ...its.flatMap(x => (x.it?.log || []).map(l => ({ t: l.t, msg: l.msg, level: l.level, who: x.title })))]
-        .sort((a, b) => a.t - b.t).slice(-40);
+        .sort((a, b) => a.t - b.t).slice(-n);
       const dur = Math.max(0, ((FIN.includes(last?.status) ? (last.finished || Date.now() / 1000) : Date.now() / 1000) - e.t0));
-      return `<article class="v2-logjob ${esc(status)}"><header><b>${esc(e.title)}</b><span class="v2-logst">${esc(status)}${e.failed ? `: ${esc(e.failed)}` : ""}</span>
+      return `<article class="v2-logjob ${esc(status)}" data-k="${esc(e.key)}"><header><b>${esc(e.title)}</b><span class="v2-logst">${esc(status)}${e.failed ? `: ${esc(e.failed)}` : ""}</span>
           <span class="hint">${Math.floor(dur / 60) ? `${Math.floor(dur / 60)} m ` : ""}${Math.round(dur % 60)} s</span>
           ${its.length ? `<span class="hint">${its.map(x => esc(x.title)).join(" → ")}</span>` : ""}</header>
         <div class="v2-logbar"><i style="width:${pct}%"></i></div>
         <ol>${lines.map(l => `<li class="${l.level === "error" ? "err" : ""}"><time>${new Date(l.t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time>${l.who ? `<span class="v2-logwho">${esc(l.who.replace(/^\S+\s/, ""))}</span>` : ""} ${esc(l.msg)}</li>`).join("")}</ol></article>`;
     }).join("");
     box.scrollTop = keep;
-    // everything done: back to the timeline a moment later (if the log came up by itself)
-    clearTimeout(st.logBackT);
-    if (!busy && st.logAuto && st.tlv === "log") st.logBackT = setTimeout(() => { if (!st.log.some(entryBusy) && st.logAuto) showTlView("tl"); }, 6000);
+    box.querySelectorAll(".v2-logjob[data-k] ol").forEach(ol => { const t = was.get(ol.parentElement.dataset.k); ol.scrollTop = t == null ? ol.scrollHeight : t; });
+  }
+  // ⤢ The log in a big window (it keeps up while it's open; the timeline stays usable)
+  function logWindow() {
+    const box = document.createElement("div");
+    box.className = "v2-log v2-logbig";
+    box.setAttribute("aria-live", "polite");
+    st.logWin = box;
+    const foot = document.createElement("div");
+    foot.innerHTML = `<span class="wm-foot-gap"></span><button type="button" class="btn sm primary" data-a="close">Close</button>`;
+    const win = WM.open({ id: "v2-logwin", title: "Log", content: box, footer: foot, width: Math.min(1100, innerWidth - 60), height: Math.min(760, innerHeight - 80),
+      modal: false, onClose: () => { if (st.logWin === box) st.logWin = null; } });
+    foot.querySelector('[data-a="close"]').onclick = () => win.close();
+    drawLog(box, 400);
   }
   function showTlView(v) {
     st.tlv = v;
     document.querySelectorAll(".v2-tlview [data-tlv]").forEach(b => { const on = b.dataset.tlv === v; b.classList.toggle("on", on); b.setAttribute("aria-selected", String(on)); });
     $("v2-tlbody").hidden = v !== "tl"; $("v2-log").hidden = v !== "log";
     document.querySelector(".v2-tlzoom").hidden = v !== "tl";
+    $("v2-logbig").hidden = v !== "log";
     if (v === "log") renderLog(); else renderTimeline();
   }
 
@@ -1535,6 +1556,7 @@ const V2 = (() => {
     $("v2-tlfold").onclick = () => { tlUI.fold = !tlUI.fold; saveTlUI(); applyTlUI(); renderTimeline(); };
     $("v2-tlunits").onclick = () => { tlUI.units = tlUI.units === "f" ? "s" : "f"; saveTlUI(); renderTimeline(); };
     $("v2-tlmark").onclick = () => addMarker(playGlobal() ?? 0);
+    $("v2-logbig").onclick = () => { st.logAuto = false; logWindow(); };
     document.querySelectorAll(".v2-tlview [data-tlv]").forEach(b => b.onclick = () => { st.logAuto = false; if (tlUI.fold) { tlUI.fold = false; saveTlUI(); applyTlUI(); } showTlView(b.dataset.tlv); });
     document.querySelector(".v2-tlzoom").addEventListener("click", e => {
       const z = e.target.closest("[data-z]")?.dataset.z; if (!z) return;
