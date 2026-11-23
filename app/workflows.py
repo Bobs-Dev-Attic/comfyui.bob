@@ -1262,6 +1262,10 @@ DLSS_MODES = {"1x": "1x (DLAA / native)", "1.5x": "1.5x (Quality)", "1.724x": "1
 
 # ComfyUI-H3-FaceRefine-Plus (AnniCodex): the finish build_enhance uses after the H3 face re-render when it's installed.
 FACEREFINE_PLUS_NODES = ("H3FaceStitchPlus", "H3FaceFlowLock", "H3FaceToneMatch")
+# ...and its V2 (face only): SAM 3's mask, the mask on the latent, Differential Diffusion, the sound held, the stock stitch
+FACEREFINE_V2_NODES = ("H3FaceTrackCrop", "H3FaceStitch", "H3FaceMaskToLatent", "SAM3_Detect", "DifferentialDiffusion",
+                       "LTXVConcatAVLatent", "LTXVSeparateAVLatent", "VAEEncodeAudio", "SetLatentNoiseMask", "SolidMask",
+                       "ResizeImageMaskNode", "MiniMaxH3ReferenceToVideo")
 
 
 def build_enhance(
@@ -1279,6 +1283,9 @@ def build_enhance(
     loras: list[tuple[str, float]] | None = None,
     prefix: str = "bob/enhance",
     plus: bool = False,
+    v2: dict[str, str | None] | None = None,
+    sam: str | None = None,
+    sparse: bool = False,
 ) -> Built:
     """Improve a finished picture or video, in this order (each step optional):
 
@@ -1290,6 +1297,8 @@ def build_enhance(
        opts face_finish "plus", the finish is that pack's: Stitch Plus (antialiased paste, light and
        colour from the original frame, detail from the refined face), Flow Lock (pins the new features
        on the head, so the face doesn't wobble) and Tone Match (colour back to the source, lips too).
+       opts face_mode "v2_face" / "v2_hair" (with `v2`, the H3 model set, and `sam`, a SAM 3 checkpoint): the Plus
+       pack's V2 instead, which re-draws only the face (or face and hair) that SAM 3 masks.
     2. DLSS 5 (ComfyUI-DLSS5-Enhancer): NVIDIA neural rendering per frame, in playback order,
        at 1x (look only) or upscaling 1.5-3x.
     3. An upscaler: SeedVR2 (diffusion restoration to a target short side, 3B or 7B) or RelayVSR
@@ -1307,7 +1316,64 @@ def build_enhance(
         images, audio, fps = o(src, 0), None, None
     steps_done = []
 
-    if opts.get("facerefine") and video and h3:
+    if opts.get("facerefine") and video and v2 and sam and str(opts.get("face_mode") or "v1").startswith("v2"):
+        # FaceRefine Plus V2 (ComfyUI-H3-FaceRefine-Plus v0.2.0, its face_refine_plus_modes graph): SAM 3 masks the
+        # face (or face and hair) in each tracked 768 px crop, and only that is re-drawn (H3 Face Mask To Latent: a
+        # noise mask on the crops' own latent, Differential Diffusion), on H3 with its 8-step turbo LoRA, the sound
+        # held as it is, conditioned on an empty prompt and the source's first reference picture; the stock stitch
+        # pastes it back through the same masks. Faster than V1, and nothing outside the mask changes.
+        hair = opts.get("face_mode") == "v2_hair"
+        unet = g.add("UNETLoader", unet_name=v2["unet"], weight_dtype="default")
+        model = unet
+        use_turbo = bool(v2.get("turbo_lora"))
+        if use_turbo:
+            model = g.add("LoraLoaderModelOnly", model=o(unet), lora_name=v2["turbo_lora"], strength_model=1.0)
+        n_steps = (4 if "4step" in v2["turbo_lora"].lower() else 8) if use_turbo else int(opts.get("face_steps", 20))
+        clip = g.add("CLIPLoader", clip_name=v2["clip"], type="minimax", device="default")
+        vae = g.add("VAELoader", vae_name=v2["vae"])
+        avae = g.add("VAELoader", vae_name=v2["audio_vae"])
+        track = g.add("H3FaceTrackCrop", images=images, detector=opts.get("face_detector") or "bbox\\face_yolov8m.pt", confidence=0.35,
+                      crop_factor=2.5, canvas_width=768, canvas_height=768, canvas_mode="manual", smooth_window=21,
+                      size_smooth_window=51, smooth_method="gaussian", size_mode="per_frame", identity_track=True, identity_threshold=0.28,
+                      select="largest_face", fallback_detector="none", fallback_head_frac=0.5, select_index=0,
+                      identity_model="insightface", cut_detection="none", cut_threshold=3.0, absent_shots="off", X=0, Y=0, frame_index=0)
+        sam3 = g.add("CheckpointLoaderSimple", ckpt_name=sam)
+        said = g.add("CLIPTextEncode", clip=o(sam3, 1), text="face and hair" if hair else "face")
+        masks = g.add("SAM3_Detect", model=o(sam3, 0), image=o(track, 0), conditioning=o(said), threshold=0.5, refine_iterations=2,
+                      individual_masks=False)
+        vlat = g.add("H3FaceMaskToLatent", latent=o(g.add("VAEEncode", pixels=o(track, 0), vae=o(vae))), masks=o(masks, 0),
+                     threshold=0.3, shrink=12, edge_grow=16, fill_gap=4, grow_spatial=36, grow_temporal=1)
+        cond_inputs: dict[str, Any] = dict(clip=o(clip), vae=o(vae), audio_vae=o(avae), prompt="", width=o(track, 4), height=o(track, 5),
+                                           length=o(track, 6), ref_image_size="match")
+        if references:  # the source's first reference picture (the pack's character sheet), at 2 MP
+            load = g.add("LoadImage", image="")
+            image_inputs["ref_0"] = load
+            pic = g.add("ResizeImageMaskNode", input=o(load), resize_type="scale total pixels", **{"resize_type.megapixels": 2.0}, scale_method="area")
+            pic = g.add("ResizeImageMaskNode", input=o(pic), resize_type="scale to multiple", **{"resize_type.multiple": 32}, scale_method="area")
+            cond_inputs["ref_images.ref_image_0"] = o(pic)
+        cond = g.add("MiniMaxH3ReferenceToVideo", **cond_inputs)
+        if has_audio:  # the sound as it is, held (a noise mask of 0)
+            alat = o(g.add("VAEEncodeAudio", audio=audio, vae=o(avae)))
+        else:  # no sound: H3's empty one, held the same way
+            alat = o(g.add("LTXVSeparateAVLatent", av_latent=o(cond, 1)), 1)
+        alat = o(g.add("SetLatentNoiseMask", samples=alat, mask=o(g.add("SolidMask", value=0.0, width=32, height=32))))
+        start = g.add("LTXVConcatAVLatent", video_latent=o(vlat, 0), audio_latent=alat)
+        fast = model
+        if sparse:  # the pack's speed-up: block-sparse attention after the first fifth of the steps
+            fast = g.add("BlockSparseAttention", model=o(model), selection="sol-attn", **{"selection.tau": 1.3}, start_percent=0.2,
+                         end_percent=1.0, dense_blocks="", min_tokens=12288, extra_tokens=256, sink_conditioning="exact_kv_and_rows",
+                         verbose=False)
+        dd = g.add("DifferentialDiffusion", model=o(fast), strength=1.0)
+        sigmas = g.add("BasicScheduler", model=o(unet), scheduler="beta", steps=n_steps, denoise=float(opts.get("face_strength", 0.3)))
+        sampled = g.add("SamplerCustomAdvanced", noise=o(g.add("RandomNoise", noise_seed=int(seed))),
+                        guider=o(g.add("BasicGuider", model=o(dd), conditioning=o(cond, 0))),
+                        sampler=o(g.add("KSamplerSelect", sampler_name="euler")), sigmas=o(sigmas), latent_image=o(start))
+        faces = g.add("VAEDecode", samples=o(sampled), vae=o(vae))
+        images = o(g.add("H3FaceStitch", base_images=images, refined_crops=o(faces), transform=o(track, 1), masks=o(masks, 0),
+                         paste_region="face_only", mask_dilation=24, feather=24, colour_match=1.0, blend=1.0, undetected_frames="fade_out",
+                         feather_scales_with_crop=False))
+        steps_done.append("facerefine_v2_hair" if hair else "facerefine_v2")
+    elif opts.get("facerefine") and video and h3:
         # the Plus finish takes FaceRefine-Plus v0.2.0's tuning (its example graphs): a tighter crop (2.2 face heights)
         # and the same denoise on every face, small or large (Per-Frame Denoise 1.0 / 1.0); the stock finish keeps
         # large faces at 0.35 of it
@@ -1416,7 +1482,8 @@ def build_enhance(
     else:
         save = g.add("SaveImage", images=images, filename_prefix=prefix)
     return Built(graph=g.nodes, outputs=[save], image_inputs=image_inputs,
-                 info={"steps": " → ".join({"facerefine": "FaceRefine", "facerefine_plus": "FaceRefine Plus", "dlss": "DLSS 5", "seedvr2": "SeedVR2", "relayvsr": "RelayVSR x2"}[s]
+                 info={"steps": " → ".join({"facerefine": "FaceRefine", "facerefine_plus": "FaceRefine Plus", "facerefine_v2": "FaceRefine Plus V2 (face)",
+                                       "facerefine_v2_hair": "FaceRefine Plus V2 (face + hair)", "dlss": "DLSS 5", "seedvr2": "SeedVR2", "relayvsr": "RelayVSR x2"}[s]
                                           for s in steps_done), "video": video})
 
 

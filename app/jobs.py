@@ -43,6 +43,10 @@ class EnhanceOpts(BaseModel):
     # Flow Lock, Tone Match) when that pack is installed, else the stock H3 Face Stitch; "stock" = always the stock one.
     face_finish: Literal["plus", "stock"] = "plus"
     face_lipfix: bool = True  # Tone Match's lip pass (Plus finish only)
+    # "v1": the face crop re-sampled with the source's own prompt and pictures (H3 and H3 Reference videos only);
+    # "v2_face" / "v2_hair": FaceRefine Plus V2, only the face (and hair) SAM 3 masks re-drawn, on H3 with an empty prompt
+    # and the source's first picture, so it works on any video (workflows.build_enhance)
+    face_mode: Literal["v1", "v2_face", "v2_hair"] = "v1"
     dlss: bool = False
     dlss_mode: Literal["1x", "1.5x", "1.724x", "2x", "3x"] = "1x"
     dlss_style: Literal["Default", "Natural", "Cinematic"] = "Default"
@@ -268,7 +272,11 @@ class JobManager:
         """The enhance steps need their custom nodes and models; say which is missing."""
         e = req.enhance_opts
         need = []
-        if e.facerefine:
+        if e.facerefine and e.face_mode != "v1":
+            need += list(workflows.FACEREFINE_V2_NODES)
+            if not any("sam3" in n.lower() for n in installed.get("checkpoints", [])):
+                raise ValueError("FaceRefine Plus V2 masks the face with SAM 3: it needs a sam3*.safetensors in models/checkpoints")
+        elif e.facerefine:
             need += ["H3FaceTrackCrop", "H3FaceStitch", "H3PerFrameDenoise", "H3InjectVideoLatent", "MiniMaxH3NativeAudioLock"]
         if e.dlss:
             need += ["DLSS5EnhanceImages", "DLSS5Settings"]
@@ -363,8 +371,9 @@ class JobManager:
         kind = media.kind_of(ref)
         if kind not in ("image", "video"):
             raise ValueError("Enhance works on pictures and videos")
-        if opts.facerefine and params.get("engine") not in ("h3", "h3ref"):
-            raise ValueError("FaceRefine re-samples faces with H3, so it needs a video made with H3 or H3 Reference here")
+        if opts.facerefine and opts.face_mode == "v1" and params.get("engine") not in ("h3", "h3ref"):
+            raise ValueError("FaceRefine V1 re-samples faces with the video's own H3 prompt, so it needs a video made with H3 or "
+                             "H3 Reference here; FaceRefine Plus V2 (face only) works on any video")
         return await self.generate(GenerateRequest(
             kind=kind, engine="enhance", prompt=params.get("prompt") or "", seed=seed,
             references=params.get("references") or [], ref_audios=params.get("ref_audios") or [], clean_audio=params.get("clean_audio", True),
@@ -518,8 +527,8 @@ class JobManager:
             best = r
         try:
             opts = EnhanceOpts.model_validate(p["enhance_final"])
-            if best.get("engine") == "retake" or p.get("engine") not in ("h3", "h3ref"):
-                opts.facerefine = False  # FaceRefine re-samples with H3's own settings: H3 and H3 Reference only
+            if opts.face_mode == "v1" and (best.get("engine") == "retake" or p.get("engine") not in ("h3", "h3ref")):
+                opts.facerefine = False  # V1 re-samples with H3's own settings: H3 and H3 Reference only (V2: any video)
             if not (opts.facerefine or opts.dlss or opts.upscaler != "none"):
                 return
             self._update(item, final_enhance={"status": "starting", "of": best["id"], "at": time.time()})
@@ -597,7 +606,7 @@ class JobManager:
             opts.facerefine = False
             if opts.upscaler == "relayvsr":
                 opts.upscaler = "none"
-        if opts.facerefine and params.get("engine") not in ("h3", "h3ref"):
+        if opts.facerefine and opts.face_mode == "v1" and params.get("engine") not in ("h3", "h3ref"):
             opts.facerefine = False
         if not (opts.facerefine or opts.dlss or opts.upscaler != "none"):
             return
@@ -637,7 +646,9 @@ class JobManager:
     async def generate(self, req: GenerateRequest) -> list[dict[str, Any]]:
         installed = await self.comfy.installed_models()
         if req.engine == "enhance":
-            sets = [models.ALL_SETS["h3ref"]] if req.enhance_opts and req.enhance_opts.facerefine else []
+            e = req.enhance_opts
+            # FaceRefine V1 re-samples on H3 Reference's model; Plus V2 on H3's, with its 8-step turbo LoRA
+            sets = ([models.ALL_SETS["h3ref" if e.face_mode == "v1" else "h3"]] if e and e.facerefine and req.kind == "video" else [])
         elif req.engine == "imgedit":
             edit_set = {"h3image": models.H3_IMAGE, "mossedit": models.MOSS_EDIT_EDITOR}.get(req.edit_model, models.QWEN_EDIT)
             sets = ([] if req.edit_op == "remove_bg" else [edit_set] if req.edit_op in ("erase", "replace", "instruct")
@@ -665,6 +676,9 @@ class JobManager:
             files["h3ref"] = {**files["h3ref"], "melband": pick}
         if req.engine == "enhance":
             await self._enhance_check(req, installed)
+            if req.enhance_opts.facerefine and req.enhance_opts.face_mode != "v1":
+                files["sam"] = next((n for n in sorted(installed.get("checkpoints", []), reverse=True)
+                                     if "sam3" in n.lower().replace("\\", "/").rsplit("/", 1)[-1]), None)
             files["relay"] = {"unet": next((n for n in installed.get("diffusion_models", []) if "relayvsr" in n.lower()), ""),
                               "vae": next((n for n in installed.get("vae", []) if "relayvsr" in n.lower()), "")}
             resolved = {"files": files}
@@ -946,7 +960,8 @@ class JobManager:
             built = workflows.build_enhance(
                 video=kind == "video", has_audio=has_audio, opts=req.enhance_opts.model_dump(), seed=seed, prompt=req.prompt,
                 plus=all(self.has_node(n) for n in workflows.FACEREFINE_PLUS_NODES),
-                h3=files.get("h3ref"), references=len(req.references), audios=len(req.ref_audios),
+                h3=files.get("h3ref"), v2=files.get("h3"), sam=files.get("sam"), sparse=self.has_node("BlockSparseAttention"),
+                references=min(1, len(req.references)) if req.enhance_opts.face_mode != "v1" else len(req.references), audios=len(req.ref_audios),
                 clean_audio=req.clean_audio and self.has_node("H3RefAudioPrep"), relay=files.get("relay"),
                 loras=[(lu.name, lu.strength) for lu in req.loras], prefix=prefix,
             )

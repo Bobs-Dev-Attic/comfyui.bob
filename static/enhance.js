@@ -6,14 +6,16 @@
 
 const Enhance = (() => {
   const KEY = "bob.enhance";
-  const DEF = { facerefine: false, face_strength: 0.3, face_steps: 20, face_finish: "plus", face_lipfix: true, dlss: true, dlss_mode: "1x", dlss_style: "Default", dlss_intensity: 1,
+  const DEF = { facerefine: false, face_strength: 0.3, face_steps: 20, face_finish: "plus", face_lipfix: true, face_mode: "v1", dlss: true, dlss_mode: "1x", dlss_style: "Default", dlss_intensity: 1,
     upscaler: "seedvr2", seedvr2_model: "", seedvr2_res: 1080, relay_detail: 0.45 };
   let caps = null;
   const load = () => { try { return { ...DEF, ...(JSON.parse(localStorage.getItem(KEY) || "{}") || {}) }; } catch { return { ...DEF }; } };
   const store = o => { try { localStorage.setItem(KEY, JSON.stringify(o)); } catch {} };
   // The 3D Render window's "Enhance the final take": its own choices, starting from the window's last ones
   const FINAL_KEY = KEY + ".final";
-  const finalOpts = () => { try { const r = localStorage.getItem(FINAL_KEY); return r ? { ...DEF, ...(JSON.parse(r) || {}), facerefine: false } : { ...load(), facerefine: false }; } catch { return { ...DEF, facerefine: false }; } };
+  // a 3D render's final take: FaceRefine only as Plus V2 (V1 needs a video made with H3 or H3 Reference)
+  const v2Only = o => ({ ...o, facerefine: !!(o.facerefine && isV2(o)) });
+  const finalOpts = () => { try { const r = localStorage.getItem(FINAL_KEY); return v2Only(r ? { ...DEF, ...(JSON.parse(r) || {}) } : load()); } catch { return { ...DEF, facerefine: false }; } };
   const storeFinal = o => { try { localStorage.setItem(FINAL_KEY, JSON.stringify(o)); } catch {} };
   async function getCaps() {
     if (!caps) { try { caps = await api("/api/enhance/caps"); } catch { caps = {}; } }
@@ -23,9 +25,14 @@ const Enhance = (() => {
   // The Plus finish (Stitch Plus, Flow Lock, Tone Match) runs when it's chosen and ComfyUI-H3-FaceRefine-Plus is installed;
   // otherwise the server uses the stock H3 Face Stitch.
   const plusOn = o => (o.face_finish || "plus") === "plus" && !!caps?.facerefine_plus;
+  // FaceRefine Plus V2: only the face (and hair) SAM 3 masks is re-drawn, on H3, from an empty prompt: any video
+  const isV2 = o => String(o?.face_mode || "v1").startsWith("v2");
+  const MODES = [["v1", "V1 · the whole face crop, with the video's own prompt"], ["v2_face", "V2 · face only (SAM 3 mask)"], ["v2_hair", "V2 · face and hair (SAM 3 mask)"]];
+  const modeOpts = (c, cur, v1ok) => MODES.map(([v, l]) => `<option value="${v}"${v === cur ? " selected" : ""}${v === "v1" ? (v1ok ? "" : ` disabled title="V1 needs a video made with H3 or H3 Reference (and ComfyUI-H3-FaceRefine)"`)
+    : c.facerefine_v2 ? "" : ` disabled title="V2 needs ComfyUI-H3-FaceRefine-Plus 0.2+, SAM 3 (a sam3*.safetensors in models/checkpoints) and H3's model"`}>${esc(l)}</option>`).join("");
   function summary(o, kind) {
     const s = [];
-    if (o.facerefine && kind === "video") s.push(plusOn(o) ? "FaceRefine Plus" : "FaceRefine");
+    if (o.facerefine && kind === "video") s.push(isV2(o) ? `FaceRefine Plus V2 (${o.face_mode === "v2_hair" ? "face + hair" : "face"})` : plusOn(o) ? "FaceRefine Plus" : "FaceRefine");
     if (o.dlss) s.push(`DLSS 5 ${o.dlss_mode}`);
     if (o.upscaler === "seedvr2") s.push(`SeedVR2 → ${o.seedvr2_res}p`);
     if (o.upscaler === "relayvsr" && kind === "video") s.push("RelayVSR ×2");
@@ -44,7 +51,7 @@ const Enhance = (() => {
     if (!o || !src?.width || !src?.height) return null;
     const video = src.kind === "video", n = video ? Math.max(1, src.frames || 121) : 1;
     let t = 4, W = src.width, H = src.height;
-    if (o.facerefine && video) t += 20 + n * (0.33 + 0.02 * (o.face_steps || 20)) + (plusOn(o) ? 3 + 0.17 * MPX(W, H) * n : 0);
+    if (o.facerefine && video) t += isV2(o) ? 25 + n * (0.33 + 0.02 * 8) : 20 + n * (0.33 + 0.02 * (o.face_steps || 20)) + (plusOn(o) ? 3 + 0.17 * MPX(W, H) * n : 0);
     if (o.dlss) { const k = DLSS_K[o.dlss_mode] || 1; W *= k; H *= k; t += 3 + 0.2 * MPX(W, H) * n; }
     if (o.upscaler === "seedvr2") {
       const s = (o.seedvr2_res || 1080) / Math.min(W, H), big = /7b/i.test(o.seedvr2_model || "");
@@ -54,7 +61,7 @@ const Enhance = (() => {
     if (o.upscaler === "relayvsr" && video) { W *= 2; H *= 2; t += 5 + 0.24 * MPX(W, H) * n; }
     return t;
   }
-  const chainOf = (o, kind) => [kind, o.facerefine && kind === "video" && (plusOn(o) ? "face+" : "face"), o.dlss && "dlss", o.upscaler !== "none" && o.upscaler].filter(Boolean).join("+");
+  const chainOf = (o, kind) => [kind, o.facerefine && kind === "video" && (isV2(o) ? "face2" : plusOn(o) ? "face+" : "face"), o.dlss && "dlss", o.upscaler !== "none" && o.upscaler].filter(Boolean).join("+");
   // What an enhance result was made from (its info carries the source size since 0.20).
   const sourceOf = x => ({ kind: x.kind, width: x.info?.src_width, height: x.info?.src_height, frames: x.info?.frames });
   function factor(o, kind) {
@@ -78,7 +85,7 @@ const Enhance = (() => {
     if (!it?.params?.enhance_after || it.engine === "enhance" || !["video", "image"].includes(it.kind)) return null;
     const o = { ...it.params.enhance_after };
     if (it.kind !== "video") { o.facerefine = false; if (o.upscaler === "relayvsr") o.upscaler = "none"; }
-    if (o.facerefine && !["h3", "h3ref"].includes(it.params.engine)) o.facerefine = false;
+    if (o.facerefine && !isV2(o) && !["h3", "h3ref"].includes(it.params.engine)) o.facerefine = false;  // V2: any video
     return summary(o, it.kind) === "nothing" ? null : o;
   }
   // For the activity console: how long a running enhance takes in all (stages restart the
@@ -119,7 +126,8 @@ const Enhance = (() => {
     const c = await getCaps();
     const o = x.final ? finalOpts() : load(), kind = it?.kind || "video";
     const h3 = it ? ["h3", "h3ref"].includes(it.params?.engine) : !x.final;
-    const isVideo = kind === "video";
+    const isVideo = kind === "video", v1ok = h3 && !!c.facerefine, faceOk = isVideo && (v1ok || !!c.facerefine_v2);
+    if (!v1ok && !isV2(o) && c.facerefine_v2) o.face_mode = "v2_face";  // V1 doesn't fit this video: V2 does
     if (!o.seedvr2_model || !(c.seedvr2_models || []).includes(o.seedvr2_model))
       o.seedvr2_model = (c.seedvr2_models || []).find(m => /3b_fp8/.test(m)) || (c.seedvr2_models || [])[0] || "";
     const dis = (cond, why) => cond ? "" : ` disabled title="${esc(why)}"`;
@@ -127,14 +135,15 @@ const Enhance = (() => {
     form.className = "enh";
     form.innerHTML = `
       <p class="hint">${it ? `${esc(it.kind === "video" ? "Video" : "Picture")}: ${esc(((typeof promptLabel === "function" ? promptLabel(it.params?.prompt) : "") || it.files?.[0]?.name || "").slice(0, 90))}`
-        : x.final ? "Runs on the 3D render's final take: once its words are checked, its lips redrawn and any sound retake done, the take with the best words. FaceRefine isn't for 3D renders yet."
+        : x.final ? "Runs on the 3D render's final take: once its words are checked, its lips redrawn and any sound retake done, the take with the best words. FaceRefine runs on it as Plus V2 (face only)."
         : "Runs on every new picture or video (Settings › Post-Processing)."}
         The steps run in this order; each is optional.</p>
-      <div class="enh-step${isVideo && h3 && c.facerefine ? "" : " off"}">
-        <label class="check"><input type="checkbox" data-k="facerefine"${o.facerefine && isVideo && h3 ? " checked" : ""}${dis(isVideo && h3 && c.facerefine,
-          !c.facerefine ? "ComfyUI-H3-FaceRefine isn't installed" : !isVideo ? "FaceRefine is for videos" : "FaceRefine needs a video made with H3 or H3 Reference")}> 1 · FaceRefine</label>
-        <p class="hint">Tracks the main face, re-renders it with H3 Reference at a low denoise using the video's own prompt, references and LoRAs (more where faces are small), and stitches it back. The sound is kept.</p>
+      <div class="enh-step${faceOk ? "" : " off"}">
+        <label class="check"><input type="checkbox" data-k="facerefine"${o.facerefine && faceOk ? " checked" : ""}${dis(faceOk,
+          !c.facerefine ? "ComfyUI-H3-FaceRefine isn't installed" : !isVideo ? "FaceRefine is for videos" : "FaceRefine V1 needs a video made with H3 or H3 Reference; V2 needs ComfyUI-H3-FaceRefine-Plus 0.2+ and SAM 3")}> 1 · FaceRefine</label>
+        <p class="hint">Tracks the main face and re-renders it at a low denoise, then stitches it back; the sound is kept. <b>V1</b> re-renders the whole face crop with H3 Reference and the video's own prompt, references and LoRAs (videos made with H3 or H3 Reference). <b>V2</b> (FaceRefine Plus) re-draws only what SAM 3 masks as the face (or face and hair), on H3 from the video's first reference picture: faster, nothing else in the crop changes, and it works on any video. Try 0.30, or 0.50 for more change.</p>
         <div class="enh-opts">
+          <div class="field"><label>Mode</label><select data-k="face_mode">${modeOpts(c, isV2(o) || !v1ok ? (isV2(o) ? o.face_mode : "v2_face") : "v1", v1ok)}</select></div>
           <div class="field"><label>Strength <span data-out="face_strength"></span></label><input type="range" min="0.1" max="0.8" step="0.05" data-k="face_strength" value="${o.face_strength}"></div>
           <div class="field"><label>Steps</label><input type="number" min="4" max="50" data-k="face_steps" value="${o.face_steps}"></div>
           <div class="field"><label>Finish</label><select data-k="face_finish">${finishOpts(c, o.face_finish)}</select></div>
@@ -176,6 +185,7 @@ const Enhance = (() => {
       if (!c.facerefine_plus) v.face_finish = o.face_finish;  // shown as Stock only because Plus is missing: keep the choice
       v.upscaler = form.querySelector('input[name="enh-up"]:checked')?.value || "none";
       if (!isVideo) { v.facerefine = false; if (v.upscaler === "relayvsr") v.upscaler = "none"; }
+      if (v.facerefine && !isV2(v) && !v1ok) v.facerefine = false;  // V1 doesn't fit this video
       return v;
     };
     const show = () => {
@@ -251,7 +261,8 @@ const Enhance = (() => {
     if (!o.seedvr2_model || !(c.seedvr2_models || []).includes(o.seedvr2_model))
       o.seedvr2_model = (c.seedvr2_models || []).find(m => /3b_fp8/.test(m)) || (c.seedvr2_models || [])[0] || "";
     const video = state.kind === "video", h3 = ["h3", "h3ref"].includes(state.engine?.[state.kind]);
-    const faceWhy = !c.facerefine ? "ComfyUI-H3-FaceRefine isn't installed" : !video ? "FaceRefine is for videos" : !h3 ? "FaceRefine needs H3 or H3 Reference" : "";
+    const faceWhy = !c.facerefine ? "ComfyUI-H3-FaceRefine isn't installed" : !video ? "FaceRefine is for videos"
+      : !h3 && !(isV2(o) && c.facerefine_v2) ? (c.facerefine_v2 ? "FaceRefine V1 needs H3 or H3 Reference: pick V2 (face only) for this engine" : "FaceRefine needs H3 or H3 Reference") : "";
     const dlssWhy = c.dlss ? "" : "ComfyUI-DLSS5-Enhancer isn't installed";
     const face = o.facerefine ? "on" : "off", dlss = o.dlss ? o.dlss_mode : "off";
     const keep = document.activeElement && box.contains(document.activeElement) ? document.activeElement.dataset.pp : null;
@@ -259,7 +270,8 @@ const Enhance = (() => {
       <div class="pp-step${faceWhy ? " na" : ""}">
         <div class="pp-head"><label for="pp-face">1 · FaceRefine</label>
           <select id="pp-face" data-pp="face">${opt("off", "Off", face)}${opt("on", "On", face, faceWhy)}</select></div>
-        <p class="hint">${faceWhy ? esc(faceWhy) + "." : "Re-renders the main face with H3 Reference at a low denoise and stitches it back."}</p>
+        <p class="hint">${faceWhy ? esc(faceWhy) + "." : isV2(o) ? "FaceRefine Plus V2: re-draws only the face (or face and hair) SAM 3 masks, on H3, and stitches it back. Any video." : "Re-renders the main face with H3 Reference at a low denoise and stitches it back."}</p>
+        ${video && c.facerefine_v2 ? `<div class="enh-opts"><div class="field"><label>Mode</label><select data-pp="face_mode">${modeOpts(c, o.face_mode || "v1", h3 && !!c.facerefine)}</select></div></div>` : ""}
         ${o.facerefine && !faceWhy ? `<div class="enh-opts">
           <div class="field"><label>Strength <span>${(+o.face_strength).toFixed(2)}</span></label><input type="range" min="0.1" max="0.8" step="0.05" data-pp="face_strength" value="${o.face_strength}"></div>
           <div class="field"><label>Steps</label><input type="number" min="4" max="50" data-pp="face_steps" value="${o.face_steps}"></div>
