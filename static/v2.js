@@ -1414,7 +1414,9 @@ const V2 = (() => {
     $("v2-tags").innerHTML = names.map(n => `<button type="button" class="chip-btn" data-tag="${esc(n)}" title="Put {${esc(n)}} in">${esc(n)}</button>`).join("");
     renderLines(s, names);
     renderShotLoras(s);
-    $("v2-len").textContent = `${d.info.seconds.toFixed(1)} s${d.info.live ? " (the scene's length: set it under the scene's timeline)" : ""}`;
+    { // a scene render over H3's ~15 s window is made in parts that carry on each other (Scene3D.longPlan)
+      const parts = d.engine !== "h3" ? (Scene3D.longPlan?.(d.info.seconds * 24) || []).length : 1;
+      $("v2-len").textContent = `${d.info.seconds.toFixed(1)} s${parts > 1 ? ` · in ${parts} parts, each carrying on the one before without a cut (about ${parts}× the time)` : ""}${d.info.live ? " (the scene's length: set it under the scene's timeline)" : ""}`; }
     $("v2-model").innerHTML = `<div class="v2-mh"><span>Model</span><b>${esc(d.label)}</b><span class="v2-auto">auto</span></div><ul>${d.why.map(w => `<li>${esc(w)}</li>`).join("")}</ul>`;
     const busy = st.busy.has(s.id);
     $("v2-gen").disabled = busy;

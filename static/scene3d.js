@@ -44,7 +44,25 @@ const Scene3D = (() => {
 
   const uid = () => Math.random().toString(36).slice(2, 10);
   const FPS = 24;
-  const dur = () => ((window.H3Prompt?.h3Length?.(+s.seconds || 5) ?? Math.round((+s.seconds || 5) * FPS) + 1) - 1) / FPS;
+  const dur = () => WIN ? WIN.b - WIN.a : ((window.H3Prompt?.h3Length?.(+s.seconds || 5) ?? Math.round((+s.seconds || 5) * FPS) + 1) - 1) / FPS;
+  /* A render longer than H3's window (about 15 s) is made in parts, each carrying on the last 39 frames of the one
+     before without a cut (the server's workflows.long_plan, the same as this): [{ start, frames, wstart, window }] in
+     frames. While a part's prompt is worded, WIN is its window in seconds of the shot ({ a, b, lead: the overlap }):
+     dur(), the camera's story and the people's actions are of that stretch. */
+  const MAX_WIN = 362, LONG_OV = 39, LONG_MAX = 60;
+  let WIN = null;
+  function longPlan(frames) {
+    frames = Math.max(5, Math.round(frames)); frames += ((5 - frames % 17) % 17 + 17) % 17;  // on H3's 17k+5 grid, as the server's h3_length
+    if (frames <= MAX_WIN) return [{ start: 0, frames, wstart: 0, window: frames }];
+    const kAll = (frames - 5) / 17, kFirst = (MAX_WIN - 5) / 17, kMore = Math.floor((MAX_WIN - LONG_OV) / 17);
+    const n = 1 + Math.ceil((kAll - kFirst) / kMore);
+    const k1 = Math.min(kFirst, Math.max(pyRound(kAll / n), kAll - kMore * (n - 1))), rest = kAll - k1, ks = [k1];
+    for (let i = 0; i < n - 1; i++) ks.push(Math.floor(rest / (n - 1)) + (i < rest % (n - 1) ? 1 : 0));
+    let at = 0;
+    return ks.map((k, i) => { const add = i ? 17 * k : 5 + 17 * k, p = { start: at, frames: add, wstart: at - (i ? LONG_OV : 0), window: add + (i ? LONG_OV : 0) }; at += add; return p; });
+  }
+  // Python's round(): halves to the even number (so both plans agree)
+  const pyRound = x => { const f = Math.floor(x), d = x - f; return d > 0.5 ? f + 1 : d < 0.5 ? f : f % 2 ? f + 1 : f; };
   const near = (a, b) => Math.abs(a - b) < 0.5 / FPS;
 
   /* ---------------------------------------------------------------- keys */
@@ -239,7 +257,7 @@ const Scene3D = (() => {
     const asp = document.getElementById("aspect")?.value;
     try {
       const sc = await api("/api/scenes", { method: "POST", body: JSON.stringify({ picture, name, project: state.project?.id ?? null,
-        seconds: Math.max(1, Math.min(10, +seconds || 5)), aspect: ["16:9", "9:16", "1:1", "4:3", "21:9"].includes(asp) ? asp : null }) });
+        seconds: Math.max(1, Math.min(LONG_MAX, +seconds || 5)), aspect: ["16:9", "9:16", "1:1", "4:3", "21:9"].includes(asp) ? asp : null }) });
       refreshPanel(); open(sc.id);
       return sc;
     } catch (e) { Media.toast(`3D scene: ${e.message}`); return null; }
@@ -1474,7 +1492,7 @@ const Scene3D = (() => {
           <input type="range" class="mo-scrub s3-scrub" min="0" step="${1 / FPS}" value="0" aria-label="Time">
           <span class="mo-time s3-time"></span>
           <label class="s3-frame-in" title="The frame at the playhead (${FPS} a second): type one to go there">Frame <input type="number" class="s3-fr" min="0" step="1" aria-label="Frame"> <span class="s3-frn"></span></label>
-          <label class="s3-len">Length <input type="number" class="s3-sec" min="1" max="10" step="0.5" aria-label="Length in seconds"> s</label></div></div>
+          <label class="s3-len">Length <input type="number" class="s3-sec" min="1" max="60" step="0.5" aria-label="Length in seconds" title="Up to 60 s: over about 15 s H3 makes it in parts that carry on each other without a cut"> s</label></div></div>
       <aside class="mo-side s3-side">
         <section><h3>View</h3>
           <div class="mo-row"><button type="button" class="btn sm s3-shotbtn" data-act="shot" title="Look through the picture's own camera">🎥 Picture's camera</button></div>
@@ -2307,9 +2325,12 @@ const Scene3D = (() => {
       say("Sending to H3…");
       const built = renderPrompt(o.what, o.refs, fromPhoto, o.extra, o.guide), what = built.what;
       const cam = built.cam, prompt = String(o.prompt || "").trim() || built.prompt;
+      const plan = longPlan(n), longPrompts = plan.length > 1 && !String(o.prompt || "").trim() ? partPrompts(plan, o, fromPhoto) : [];
       const req = { kind: "video", engine: "motion", prompt, seconds: n / FPS, aspect: "16:9", quality: o.quality || "standard",
         seed: -1, batch: 1, turbo: true, first_frame: null, motion_video: ref, motion_video_mask: mask,
         motion_hold: o.hold || "normal", motion_first: "picture", motion_guide: o.guide === "reference" ? "reference" : "ttm", project: s.sc.project, scene: s.sc.id };
+      if (longPrompts.length) req.long_prompts = longPrompts;
+      if (plan.length > 1) say(`It's ${(n / FPS).toFixed(1)} s: H3 makes it in ${plan.length} parts, each carrying on the one before without a cut.`);
       const sp = SPEEDS[o.speed]; if (sp) { req.turbo = sp.turbo; if (sp.steps) req.steps = sp.steps; }
       if (o.refs) req.references = picObjs().map(x => x.picture);
       if (pose) { req.motion_pose_video = pose; req.motion_pose_strength = poseCn() ? (o.poseStrength ?? lastPoseStr()) : 1; }
@@ -2346,6 +2367,26 @@ const Scene3D = (() => {
       return { req, shot, media };
     } finally { talkers = []; freeProjection(proj); if (s) { s.cv.width = keep[0]; s.cv.height = keep[1]; s.dirty = true; } }
   }
+  /* A long render's part prompts (longPlan): each worded for its window, the overlap with the part before included
+     (its camera move, what the people do then), with the lines that fit in it after that overlap, in order (a line is
+     never split; the last part takes any left over). */
+  function partPrompts(plan, o, fromPhoto) {
+    const L = (o.extra?.lines || []).filter(l => String(l.text || "").trim()), voices = o.extra?.voices || [];
+    const left = [...L];
+    try {
+      return plan.map((p, i) => {
+        const a = p.wstart / FPS, b = (p.start + p.frames - 1) / FPS, lead = i ? LONG_OV / FPS : 0, room = b - a - lead - 0.6;
+        const mine = [], last = i === plan.length - 1;  // a part takes at least its next line, however long
+        while (left.length && (last || !mine.length || speechSeconds([...mine, left[0]], voices) <= room)) mine.push(left.shift());
+        WIN = { a, b, lead };
+        // a part with no lines gets no voice reference either (with one, H3 talks anyway): the server sends <Audio N>
+        // only to a part whose prompt names it
+        const said = renderPrompt(o.what, o.refs, fromPhoto || i > 0, o.extra ? { ...o.extra, lines: mine, ...(mine.length ? {} : { voices: [] }) } : o.extra, o.guide).prompt;
+        // a part of a talking shot with none of its lines: say nobody speaks (H3 tends to go on talking)
+        return L.length && !mine.length ? said.replace(/\n\noverall_soundscape:/, " Nobody speaks in it; only the scene's natural sound is heard.\n\noverall_soundscape:") : said;
+      });
+    } finally { WIN = null; }
+  }
   // The render's prompt: what happens (tags filled in), the camera, and the sound fields.
   // extra (V2's shot): { dialogue: its said lines, after what happens; sound: its soundscape and music fields }
   const endOf = t => { t = String(t || "").trim(); return !t || /[.!?"”]$/.test(t) ? t : `${t}.`; };  // a full stop before what's said
@@ -2369,8 +2410,8 @@ const Scene3D = (() => {
     // H3 fills time the lines leave over with speech of its own (more so with a voice reference): say there's none
     // ...and when: said from the start, over about as long as they take, then quiet to the end (H3 put its own words
     // first and the lines last, when it had time to spare)
-    const T = s ? dur() : 0, talk = speechSeconds(L, extra.voices || []);
-    const when = T - talk > 0.8 ? ` The lines are said from the start of the shot and are over by about ${Math.min(T, talk + 0.3).toFixed(1)} s; from then until the end at ${T.toFixed(1)} s nobody speaks and only the scene's natural sound is heard.` : "";
+    const T = s ? dur() : 0, talk = speechSeconds(L, extra.voices || []), L0 = WIN?.lead || 0;  // L0: a long render's part's carried-on start
+    const when = T - L0 - talk > 0.8 ? ` The lines are said ${L0 ? `from about ${L0.toFixed(1)} s` : "from the start of the shot"} and are over by about ${Math.min(T, L0 + talk + 0.3).toFixed(1)} s; from then until the end at ${T.toFixed(1)} s nobody speaks and only the scene's natural sound is heard.` : "";
     return { text: `${text.charAt(0).toUpperCase() + text.slice(1)} Only the words inside the dialogue tags are spoken, each line once; before, between and after them the speakers stay silent with their lips closed.${when}`, ids };
   }
   /* About how long lines take to say: their syllables at the speaker's pace, and half a second each to start (as
@@ -2416,10 +2457,10 @@ const Scene3D = (() => {
      names it. Returns "" when there's no camera to speak of. */
   function narrateCamera(who = o => `the ${shortName(o)}`) {
     if (!s?.bg) return "";
-    const T = dur(), shown = s.objs.filter(o => o.mesh && o.pos && !o.hidden);
-    const at = t => { const c = camBase(t), e = eyeOf(c); return { c, e, f: norm(sub(c.target, e)) }; };
+    const T = dur(), shown = s.objs.filter(o => o.mesh && o.pos && !o.hidden), W0 = WIN?.a || 0;  // W0: a long render's part starts there
+    const at = t => { const c = camBase(t + W0), e = eyeOf(c); return { c, e, f: norm(sub(c.target, e)) }; };
     // the subject: what the camera ends looking at most squarely (a person before a thing)
-    const end = at(T), mid = (o, t) => { const q = poseAt(o, t), h = Math.max(0.05, (o.mesh.hi[1] - o.mesh.lo[1]) * (o.stretch?.[1] || 1) * (q.scale ?? 1));
+    const end = at(T), mid = (o, t) => { const q = poseAt(o, t + W0), h = Math.max(0.05, (o.mesh.hi[1] - o.mesh.lo[1]) * (o.stretch?.[1] || 1) * (q.scale ?? 1));
       return { p: [q.pos[0], q.pos[1] + h * 0.55, q.pos[2]], base: q.pos, h }; };
     const off = o => { const m = mid(o, T), v = norm(sub(m.p, end.e)); return 1 - (v[0] * end.f[0] + v[1] * end.f[1] + v[2] * end.f[2]) + (o.prim === "figure" ? 0 : 0.3); };
     const o = shown.slice().sort((a, b) => off(a) - off(b))[0] || null;
@@ -2441,7 +2482,7 @@ const Scene3D = (() => {
     };
     const person = o?.prim === "figure", poss = `${name}'s`;
     // the camera's bearing round them: 0 in front, + on their left, ±180 behind
-    const rel = t => { const k = at(t), m = mid(o, t), v = xf(matOf(o, poseAt(o, t)), [0, 0, 1], 0), l = Math.hypot(v[0], v[2]) || 1, f = [v[0] / l, v[2] / l];
+    const rel = t => { const k = at(t), m = mid(o, t), v = xf(matOf(o, poseAt(o, t + W0)), [0, 0, 1], 0), l = Math.hypot(v[0], v[2]) || 1, f = [v[0] / l, v[2] / l];
       const d = [k.e[0] - m.p[0], k.e[2] - m.p[2]]; return Math.atan2(d[0] * f[1] - d[1] * f[0], d[0] * f[0] + d[1] * f[1]) / rad; };
     const sideOf = r => r > 0 ? "left" : "right";
     const view = r => { const a = Math.abs(r);
@@ -2453,7 +2494,7 @@ const Scene3D = (() => {
     // The path, measured between its keys (no judging yet: a move sampled in many small keys is small in each), then
     // grouped where it goes the same way (holding still, or each of its parts in the same direction), and each group
     // judged as a whole: an orbit's 16 steps are one orbit, a push that stops and pulls back is two moves.
-    const ts = [...new Set([0, ...s.camKeys.map(k => Math.max(0, Math.min(T, k.t))), T])].sort((a, b) => a - b);
+    const ts = [...new Set([0, ...s.camKeys.map(k => Math.max(0, Math.min(T, k.t - W0))), T])].sort((a, b) => a - b);
     const az = e => Math.atan2(e[0] - (o ? mid(o, 0).p[0] : 0), e[2] - (o ? mid(o, 0).p[2] : 0)) / rad;
     const dist = t => o ? Math.hypot(...sub(mid(o, t).p, at(t).e)) : 1;
     const steps = [];
@@ -2464,7 +2505,7 @@ const Scene3D = (() => {
       const nT = Math.max(1, Math.ceil((t1 - t0) / 0.1));
       for (let j = 1; j <= nT; j++) { const z = az(at(t0 + (t1 - t0) * j / nT).e); let dz = z - prev; dz -= Math.round(dz / 360) * 360; turn += dz; prev = z; }
       const r0 = norm(cross(a0.f, [0, 1, 0])), mv = sub(a1.e, a0.e);
-      const key = [...s.camKeys].reverse().find(x => x.t <= t0 + 1e-6);
+      const key = [...s.camKeys].reverse().find(x => x.t - W0 <= t0 + 1e-6);
       steps.push({ t0, t1, h, turn, lnd: Math.log(dist(t1) / dist(t0)), dy: mv[1] / h, side: (mv[0] * r0[0] + mv[2] * r0[2]) / h,
         look: Math.atan2(a1.f[0] * r0[0] + a1.f[2] * r0[2], a1.f[0] * a0.f[0] + a1.f[2] * a0.f[2]) / rad,
         tilt: (Math.asin(a1.f[1]) - Math.asin(a0.f[1])) / rad, lnl: Math.log((a1.c.lens || baseLens()) / (a0.c.lens || baseLens())),
@@ -3289,7 +3330,7 @@ const Scene3D = (() => {
     root.querySelector(".s3-fr").addEventListener("change", e => toFrame(+e.target.value || 0));
     root.querySelector(".s3-fr").addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Enter") { toFrame(+e.target.value || 0); e.target.blur(); } });
     root.querySelector(".s3-sec").addEventListener("change", e => {
-      s.seconds = Math.max(1, Math.min(10, +e.target.value || 5)); e.target.value = String(s.seconds);
+      s.seconds = Math.max(1, Math.min(LONG_MAX, +e.target.value || 5)); e.target.value = String(s.seconds);
       const D = dur();  // keys past the new end move to it
       for (const K of [s.camKeys, ...s.objs.map(o => o.keys || [])]) for (const k of K) if (k.t > D) k.t = D;
       save(); setTime(Math.min(s.t, D)); renderSide();
@@ -3752,10 +3793,12 @@ const Scene3D = (() => {
     for (const x of list) {
       let pose = "";
       if (x.o.prim === "figure") {
-        const seq = video ? (x.o.keys || []).filter(k => k.pose).map(k => k.pose).filter((p, i, a) => i === 0 || p !== a[i - 1]) : [];
+        const K = (x.o.keys || []).filter(k => k.pose);  // a long render's part: the poses from the one held at its start
+        const inWin = WIN ? K.filter((k, j) => k.t >= WIN.a - 1e-6 ? k.t <= WIN.b + 1e-6 : !(K[j + 1] && K[j + 1].t <= WIN.a + 1e-6)) : K;
+        const seq = video ? inWin.map(k => k.pose).filter((p, i, a) => i === 0 || p !== a[i - 1]) : [];
         pose = seq.length > 1 ? fewSteps(seq.map(p => poseSays(p) || "standing")).join(", then ") : poseSays(seq[0] || postureName(postureAt(x.o, t))) || "";
         // walking or running along its path (the video: if it moves at all; a photo: if it's moving then)
-        const g = GAITS[x.o.gait], moving = g && (video ? travelled(x.o, x.o.keys?.at(-1)?.t ?? 0) > 0.05 * figHeight(x.o) : !!gaitAt(x.o, t));
+        const g = GAITS[x.o.gait], moving = g && (video ? (WIN ? travelled(x.o, WIN.b) - travelled(x.o, WIN.a) : travelled(x.o, x.o.keys?.at(-1)?.t ?? 0)) > 0.05 * figHeight(x.o) : !!gaitAt(x.o, t));
         if (moving) pose = [g.says, ...(seq.length > 1 ? fewSteps(seq.filter(p => p !== "standing").map(p => poseSays(p)).filter(Boolean)) : pose ? [pose] : [])].join(", then ");
       }
       x.pose = pose;
@@ -3835,7 +3878,7 @@ const Scene3D = (() => {
   // a picture is just its <Picture N> and where it is ("<Picture 2> (the light grey figure in the middle)")
   function videoText(what, refs = false, photo = false, short = false) {
     const pics = refs ? picObjs() : [], picOf = x => { const i = pics.indexOf(x.o); return i < 0 ? 0 : i + 2; };
-    const list = cast(0, camForRender(0), true, photo), r = expandTags(what, list, picOf, short);
+    const t0 = WIN?.a || 0, list = cast(t0, camForRender(t0), true, photo), r = expandTags(what, list, picOf, short);
     // from a photo, what an object becomes is already in the first frame
     const rest = list.filter(x => !r.used.includes(x) && (picOf(x) || (x.becomes && !x.off && !x.photo)));
     const cap = t => t[0].toUpperCase() + t.slice(1);
@@ -5120,7 +5163,7 @@ const Scene3D = (() => {
     },
   };
   return { poseEditor: (i, tab) => s?.bg && poseEditor(i, tab), poseKit: { POSES, HANDS, completePose, mixPose, figureJoints, shapeOf, describePose, ARM, LEG, WAIST },
-    mount, autoRender, current, stages, usageStrip, followPhoto, followRender, lastGuide, doingOf, stepVerb, narrateCamera: (...a) => narrateCamera(...a), addFromLibrary, camEdit, objEdit, speechSeconds, loadRates, paceNote, SPARE_TALK, select: i => s?.bg && select(i), selectCam: () => s?.bg && selectCam(),
+    mount, autoRender, current, stages, usageStrip, followPhoto, followRender, lastGuide, doingOf, stepVerb, narrateCamera: (...a) => narrateCamera(...a), addFromLibrary, camEdit, objEdit, speechSeconds, longPlan, LONG_MAX, loadRates, paceNote, SPARE_TALK, select: i => s?.bg && select(i), selectCam: () => s?.bg && selectCam(),
     rename: (i, name) => { const o = s?.objs[i]; if (!o || !String(name || "").trim()) return; o.name = String(name).trim().slice(0, 120); save(); renderSide(); }, CAM_MOVES, applyCameraMove, cameraOut, applySavedCamera, renderForShot, photoForShot, fromTemplate, setTemplate, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
     _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _fill: (P, look, say) => fillGaps(P, look, say), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() }, _cast: (t, video) => cast(t, camForRender(t), video), _skeleton: (size, t) => skeletonCanvas(size, t, camForRender(t)) };
 })();

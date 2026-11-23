@@ -6,7 +6,7 @@
 
 const Enhance = (() => {
   const KEY = "bob.enhance";
-  const DEF = { facerefine: false, face_strength: 0.4, face_steps: 20, face_finish: "plus", face_lipfix: true, dlss: true, dlss_mode: "1x", dlss_style: "Default", dlss_intensity: 1,
+  const DEF = { facerefine: false, face_strength: 0.3, face_steps: 20, face_finish: "plus", face_lipfix: true, dlss: true, dlss_mode: "1x", dlss_style: "Default", dlss_intensity: 1,
     upscaler: "seedvr2", seedvr2_model: "", seedvr2_res: 1080, relay_detail: 0.45 };
   let caps = null;
   const load = () => { try { return { ...DEF, ...(JSON.parse(localStorage.getItem(KEY) || "{}") || {}) }; } catch { return { ...DEF }; } };
