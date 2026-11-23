@@ -1176,22 +1176,68 @@ const Scene3D = (() => {
     if (!s?.objs.includes(po)) return;
     const before = po.pose || "standing";
     editPose(po, { pose: name });
+    posed(po, before);
+  }
+  // After a Person's poses changed: if its base pose did, its own box did (sitting is shorter and deeper), so keep any
+  // stretch the user gave it; then its mesh, and the change kept.
+  function posed(po, before) {
     const after = po.pose || "standing";
     if (after !== before) {
-      // Its base pose changed its own box (sitting is shorter and deeper): keep any stretch the user gave it.
       const from = natDims("figure", before), to = natDims("figure", after), d = po.dims || from;
       po.dims = [0, 1, 2].map(c => +(to[c] * (from[c] > 1e-6 ? d[c] / from[c] : 1)).toFixed(3));
     }
     po._pmKey = null; po.mesh = primMesh(po); figureMesh(po, s.t); changed(po);
   }
+  /* 🎬 A movement (posepad.js: sit down, jump, wave…): steps [{ f (0 to 1 through it), pose (a preset's name or a
+     pose), lift (how far up, a share of the person's height), turn (degrees to its left from where it faced) }] keyed
+     on a Person from the playhead over `seconds`. Its path stays as it was (each key where it was going to be then);
+     keys already inside the movement lose their poses (the movement's are what it does there), and after it the
+     person stays turned the way the movement left it. Returns how long it took (it's cut short at the shot's end). */
+  function addMovement(po, mv, seconds) {
+    if (!s?.objs.includes(po) || !mv?.steps?.length) return 0;
+    const t0 = s.t, D = Math.min(+seconds || 1, dur() - t0);
+    if (D < 0.2) { Media.toast("There's no room left in the shot after the playhead: move it back first."); return 0; }
+    const before = po.pose || "standing", end = t0 + D, H = figHeight(po, poseAt(po, t0)), start = poseAt(po, t0);
+    const steps = mv.steps.map(st => ({ ...st, t: t0 + Math.max(0, Math.min(1, +st.f || 0)) * D })).sort((a, b) => a.t - b.t);
+    const at = steps.map(st => poseAt(po, st.t));  // where the path has it then (before anything changes)
+    if (!po.keys?.length) po.keys = [{ t: 0, ...baseOf(po) }];
+    const lastTurn = +steps.at(-1).turn || 0;
+    for (const k of po.keys) {
+      if (k.t > t0 + 1e-3 && k.t < end - 1e-3) delete k.pose;
+      if (k.t >= end - 1e-3 && lastTurn) k.yaw = (k.yaw || 0) + lastTurn;
+    }
+    steps.forEach((st, j) => {
+      const P = at[j], name = typeof st.pose === "string" ? (POSES[st.pose] || CUSTOM.has(st.pose) ? st.pose : "standing") : addPoseDef(st.pose || {});
+      let k = po.keys.find(q => near(q.t, st.t));
+      if (!k) { k = { t: st.t, pos: P.pos.slice(), yaw: P.yaw, pitch: P.pitch || 0, roll: P.roll || 0, scale: P.scale }; po.keys.push(k); }
+      k.pose = name;
+      if (st.lift != null) k.pos = [k.pos[0], P.pos[1] + (+st.lift || 0) * H, k.pos[2]];
+      if (st.turn != null) k.yaw = (start.yaw || 0) + (+st.turn || 0);
+    });
+    po.keys.sort((a, b) => a.t - b.t);
+    fromFirstKey(po);
+    posed(po, before);
+    return D;
+  }
+  // A Person's keyed poses as a movement (to keep in the library): its pose keys from the first to the last, with how
+  // far it rose and turned on each; null with fewer than two.
+  function movementOf(po) {
+    const K = (po.keys || []).filter(k => k.pose).sort((a, b) => a.t - b.t);
+    if (K.length < 2 || K.at(-1).t - K[0].t < 0.1) return null;
+    const D = K.at(-1).t - K[0].t, H = figHeight(po, poseAt(po, K[0].t)) || 1, r = x => Math.round(x * 1000) / 1000;
+    return { seconds: r(D), steps: K.map(k => ({ f: r((k.t - K[0].t) / D), pose: POSES[k.pose] ? k.pose : { ...completePose(poseDef(k.pose)), label: CUSTOM.get(k.pose)?.label || "", says: CUSTOM.get(k.pose)?.says || "" },
+      ...(Math.abs(k.pos[1] - K[0].pos[1]) > 1e-3 ? { lift: r((k.pos[1] - K[0].pos[1]) / H) } : {}), ...(Math.abs((k.yaw || 0) - (K[0].yaw || 0)) > 0.5 ? { turn: r((k.yaw || 0) - (K[0].yaw || 0)) } : {}) })) };
+  }
   /* 🤸 The pose editor (posepad.js) for a Person, on its pose at the playhead; what it applies is keyed there (a preset
      by its name, anything else as a custom pose). */
-  function poseEditor(i) {
+  function poseEditor(i, tab = "poses") {
     const o = s?.objs[i]; if (!o || o.prim !== "figure" || typeof PosePad === "undefined") return;
     select(i);
     const name = postureName(postureAt(o, s.t)), d = CUSTOM.get(name);
-    PosePad.open({ who: o.name, at: s.t, preset: POSES[name] ? name : null, def: { ...completePose(poseDef(name)), label: d?.label || "", says: d?.says || "" },
-      color: o.color || PRIM_COLOR, onApply: r => setPose(o, r.preset && POSES[r.preset] ? r.preset : addPoseDef(r.def)) });
+    PosePad.open({ who: o.name, at: s.t, room: Math.max(0, dur() - s.t), tab, keyed: movementOf(o),
+      preset: POSES[name] ? name : null, def: { ...completePose(poseDef(name)), label: d?.label || "", says: d?.says || "" },
+      color: o.color || PRIM_COLOR, onApply: r => setPose(o, r.preset && POSES[r.preset] ? r.preset : addPoseDef(r.def)),
+      onMove: (mv, sec) => { const D = addMovement(o, mv, sec); if (D) Media.toast(`${mv.name || "The movement"}: ${o.name} does it from ${s.t.toFixed(2)} to ${(s.t + D).toFixed(2)} s.`); return D; } });
   }
   function focusShape() { const el = s.root.querySelector(".s3-prim"); el?.scrollIntoView({ block: "nearest" }); el?.querySelector("input")?.focus(); }
   function objMenu(i, x, y, px, py) {
@@ -1209,6 +1255,7 @@ const Scene3D = (() => {
       ok && ["－ Smaller", () => nudge(o, { k: 0.8 })],
       ok && ["⬇ Set it down on the ground", () => dropDown(o)],
       o.prim === "figure" && ["🤸 Edit pose…", () => poseEditor(i)],
+      o.prim === "figure" && ["🎬 Add a movement…", () => poseEditor(i, "moves")],
       o.prim && ["📐 Size, tilt and colour…", () => focusShape()],
       ok && ["⧉ Duplicate  (Shift+D)", () => duplicate(o)],
       ["✎ Rename…", () => rename(o)],
@@ -1468,7 +1515,8 @@ const Scene3D = (() => {
             <div class="row2 s3-posef" hidden><div class="field"><label for="s3-pose">Pose</label><select id="s3-pose">${Object.entries(POSES).map(([k, p]) => `<option value="${k}">${p.label}</option>`).join("")}</select></div>
               <div class="field"><label for="s3-gait">Walk cycle</label><select id="s3-gait" title="While it moves along its path, it walks or runs, its steps matching how far it goes; stopped, it holds its pose. Tick Face where it's going (above) to have it turn the way it walks.">
                 <option value="">Off</option>${Object.entries(GAITS).map(([k, g]) => `<option value="${k}">${g.label}</option>`).join("")}</select></div></div>
-            <div class="mo-row s3-posebtn" hidden><button type="button" class="btn sm" data-act="pose-edit" title="Pose its arms, legs, body, head and hands, or pick one from the pose library (at the playhead)">🤸 Edit pose…</button></div>
+            <div class="mo-row s3-posebtn" hidden><button type="button" class="btn sm" data-act="pose-edit" title="Pose its arms, legs, body, head and hands, or pick one from the pose library (at the playhead)">🤸 Edit pose…</button>
+              <button type="button" class="btn sm" data-act="pose-moves" title="Sit down, jump, wave, bow…: keyed from the playhead">🎬 Movement…</button></div>
             <div class="field"><label for="s3-color">Colour</label><input type="color" id="s3-color"></div>
             <div class="field"><label>Size <span class="opt s3-unit"></span></label>
               <div class="s3-dims"><label>W <input type="number" id="s3-dw" min="0.01" max="500" step="0.1"></label><label>H <input type="number" id="s3-dh" min="0.01" max="500" step="0.1"></label><label>D <input type="number" id="s3-dd" min="0.01" max="500" step="0.1"></label></div></div></div>
@@ -3054,6 +3102,7 @@ const Scene3D = (() => {
       const a = b.dataset.act, o = s.objs[s.sel];
       if (b.dataset.menu) return openMenu(b.dataset.menu, b);
       if (a === "pose-edit") return poseEditor(s.sel);
+      if (a === "pose-moves") return poseEditor(s.sel, "moves");
       if (a === "t-loop") { try { localStorage.setItem("bob.s3loop", loopOn() ? "0" : "1"); } catch { /* not kept */ } return renderTime(); }
       if (a === "t-start") return toFrame(0);
       if (a === "t-end") return toFrame(frameCount() - 1);
@@ -4946,7 +4995,7 @@ const Scene3D = (() => {
       save(); setTime(s.t); renderSide(); s.dirty = true; return true;
     },
   };
-  return { poseEditor: i => s?.bg && poseEditor(i), poseKit: { POSES, HANDS, completePose, figureJoints, shapeOf, describePose, ARM, LEG, WAIST },
+  return { poseEditor: (i, tab) => s?.bg && poseEditor(i, tab), poseKit: { POSES, HANDS, completePose, mixPose, figureJoints, shapeOf, describePose, ARM, LEG, WAIST },
     mount, autoRender, current, stages, usageStrip, followPhoto, followRender, lastGuide, doingOf, stepVerb, narrateCamera: (...a) => narrateCamera(...a), addFromLibrary, camEdit, objEdit, speechSeconds, loadRates, paceNote, SPARE_TALK, select: i => s?.bg && select(i), selectCam: () => s?.bg && selectCam(),
     rename: (i, name) => { const o = s?.objs[i]; if (!o || !String(name || "").trim()) return; o.name = String(name).trim().slice(0, 120); save(); renderSide(); }, CAM_MOVES, applyCameraMove, cameraOut, applySavedCamera, renderForShot, photoForShot, fromTemplate, setTemplate, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
     _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _fill: (P, look, say) => fillGaps(P, look, say), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() }, _cast: (t, video) => cast(t, camForRender(t), video) };
