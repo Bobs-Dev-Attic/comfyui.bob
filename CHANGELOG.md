@@ -5,6 +5,30 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.167.0] - 2026-11-22
+
+### Added
+- **⬆ Import poses and movements into the pose window.** Everything is read in the page:
+  - **BVH motion capture** (`.bvh`).
+  - **glTF animations** (`.glb`, or `.gltf` chosen together with its `.bin`), such as a Mixamo character exported
+    from Blender. A file with several animations lets you pick one.
+  - **OpenPose / DWPose keypoints** (`.json`): COCO 18 or BODY_25, one frame per file or a list of frames (as
+    ComfyUI's pose nodes save them), including coordinates given as a share of the picture. They're 2D, so each
+    bone's depth is a guess (towards the camera) that you can fix in the editor.
+  - **FBX** isn't read: the message explains how to convert it in Blender (to `.glb` or `.bvh`).
+- **How it comes in:**
+  - One frame comes in as a pose, to adjust, apply or save.
+  - More frames come in as a movement (up to 40 steps, 8 a second, the first 60 s) that plays, adds at the playhead,
+    saves to the movement library, or gives you **🤸 This moment as a pose**.
+  - Joints are matched by name: Mixamo's (LeftArm, LeftForeArm, LeftUpLeg…), Unreal's (upperarm_l, calf_l…),
+    Blender's (upper_arm.L, shin.L…) and similar.
+  - A movement keeps how far the feet rise and how far the body turns. It doesn't travel: the Person's path does that.
+
+### Changed
+- An imported movement's steps blend straight from one to the next (no easing in and out of each), so captured motion
+  doesn't stutter.
+- The words a video model is told about a Person's poses are kept to at most six steps.
+
 ## [0.166.0] - 2026-11-22
 
 ### Added

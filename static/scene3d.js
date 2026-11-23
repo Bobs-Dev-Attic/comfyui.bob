@@ -660,6 +660,8 @@ const Scene3D = (() => {
     else for (const [sd, nm] of [["R", "right"], ["L", "left"]]) if (hd[sd] !== "relaxed") out.push(hd[sd] === "fist" ? `${nm} fist clenched` : `${nm} hand open`);
     return out.join(", ");
   }
+  const once = w => w.filter((x, i) => i === 0 || x !== w[i - 1]);
+  const fewSteps = (w, n = 6) => { const u = once(w); return u.length <= n ? u : once(Array.from({ length: n }, (_, i) => u[Math.round(i * (u.length - 1) / (n - 1))])); };
   const poseSays = name => POSES[name] ? POSES[name].says : CUSTOM.has(name) ? (CUSTOM.get(name).says || describePose(CUSTOM.get(name))) : "";
   // A shape's own size (its box before stretching), e.g. a Person sitting is shorter and deeper than standing.
   const NAT = new Map();
@@ -697,7 +699,7 @@ const Scene3D = (() => {
     const a = K[i], b = K[i + 1];
     if (a.pose === b.pose) return { name: a.pose };
     const u = (t - a.t) / Math.max(1e-6, b.t - a.t);
-    return { a: a.pose, b: b.pose, u: u * u * (3 - 2 * u) };
+    return { a: a.pose, b: b.pose, u: a.plin ? u : u * u * (3 - 2 * u) };  // plin: sampled motion (an import) goes straight on
   }
   const postureName = ps => ps.name || (ps.u < 0.5 ? ps.a : ps.b);
   /* Walk cycle: while a Person moves along its path, its legs and arms swing in a gait whose phase follows the distance
@@ -1203,7 +1205,7 @@ const Scene3D = (() => {
     if (!po.keys?.length) po.keys = [{ t: 0, ...baseOf(po) }];
     const lastTurn = +steps.at(-1).turn || 0;
     for (const k of po.keys) {
-      if (k.t > t0 + 1e-3 && k.t < end - 1e-3) delete k.pose;
+      if (k.t > t0 + 1e-3 && k.t < end - 1e-3) { delete k.pose; delete k.plin; }
       if (k.t >= end - 1e-3 && lastTurn) k.yaw = (k.yaw || 0) + lastTurn;
     }
     steps.forEach((st, j) => {
@@ -1211,6 +1213,7 @@ const Scene3D = (() => {
       let k = po.keys.find(q => near(q.t, st.t));
       if (!k) { k = { t: st.t, pos: P.pos.slice(), yaw: P.yaw, pitch: P.pitch || 0, roll: P.roll || 0, scale: P.scale }; po.keys.push(k); }
       k.pose = name;
+      if (st.lin) k.plin = true; else delete k.plin;
       if (st.lift != null) k.pos = [k.pos[0], P.pos[1] + (+st.lift || 0) * H, k.pos[2]];
       if (st.turn != null) k.yaw = (start.yaw || 0) + (+st.turn || 0);
     });
@@ -1226,7 +1229,7 @@ const Scene3D = (() => {
     if (K.length < 2 || K.at(-1).t - K[0].t < 0.1) return null;
     const D = K.at(-1).t - K[0].t, H = figHeight(po, poseAt(po, K[0].t)) || 1, r = x => Math.round(x * 1000) / 1000;
     return { seconds: r(D), steps: K.map(k => ({ f: r((k.t - K[0].t) / D), pose: POSES[k.pose] ? k.pose : { ...completePose(poseDef(k.pose)), label: CUSTOM.get(k.pose)?.label || "", says: CUSTOM.get(k.pose)?.says || "" },
-      ...(Math.abs(k.pos[1] - K[0].pos[1]) > 1e-3 ? { lift: r((k.pos[1] - K[0].pos[1]) / H) } : {}), ...(Math.abs((k.yaw || 0) - (K[0].yaw || 0)) > 0.5 ? { turn: r((k.yaw || 0) - (K[0].yaw || 0)) } : {}) })) };
+      ...(k.plin ? { lin: true } : {}), ...(Math.abs(k.pos[1] - K[0].pos[1]) > 1e-3 ? { lift: r((k.pos[1] - K[0].pos[1]) / H) } : {}), ...(Math.abs((k.yaw || 0) - (K[0].yaw || 0)) > 0.5 ? { turn: r((k.yaw || 0) - (K[0].yaw || 0)) } : {}) })) };
   }
   /* 🤸 The pose editor (posepad.js) for a Person, on its pose at the playhead; what it applies is keyed there (a preset
      by its name, anything else as a custom pose). */
@@ -3730,10 +3733,10 @@ const Scene3D = (() => {
       let pose = "";
       if (x.o.prim === "figure") {
         const seq = video ? (x.o.keys || []).filter(k => k.pose).map(k => k.pose).filter((p, i, a) => i === 0 || p !== a[i - 1]) : [];
-        pose = seq.length > 1 ? seq.map(p => poseSays(p) || "standing").join(", then ") : poseSays(seq[0] || postureName(postureAt(x.o, t))) || "";
+        pose = seq.length > 1 ? fewSteps(seq.map(p => poseSays(p) || "standing")).join(", then ") : poseSays(seq[0] || postureName(postureAt(x.o, t))) || "";
         // walking or running along its path (the video: if it moves at all; a photo: if it's moving then)
         const g = GAITS[x.o.gait], moving = g && (video ? travelled(x.o, x.o.keys?.at(-1)?.t ?? 0) > 0.05 * figHeight(x.o) : !!gaitAt(x.o, t));
-        if (moving) pose = [g.says, ...(seq.length > 1 ? seq.filter(p => p !== "standing").map(p => poseSays(p)).filter(Boolean) : pose ? [pose] : [])].join(", then ");
+        if (moving) pose = [g.says, ...(seq.length > 1 ? fewSteps(seq.filter(p => p !== "standing").map(p => poseSays(p)).filter(Boolean)) : pose ? [pose] : [])].join(", then ");
       }
       x.pose = pose;
       x.seen = `the ${x.looks}${x.off ? "" : ` ${x.where}`}${pose ? `, ${pose},` : ""}`;
