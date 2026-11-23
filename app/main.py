@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -418,7 +418,9 @@ class SceneObject(BaseModel):
     # a primitive shape made in the page instead of a 3D model: its kind, colour, size (width, height, depth before
     # scaling; metres in an empty scene) and tilt (degrees about X, then Z)
     prim: Literal["cube", "sphere", "cylinder", "cone", "plane", "torus", "figure"] | None = None
-    pose: str | None = Field(None, max_length=20)  # a Person's preset pose (scene3d.js POSES)
+    pose: str | None = Field(None, max_length=20)  # a Person's pose: a preset (scene3d.js POSES) or "c:<hash>" (poses)
+    # the custom poses (from the pose editor) its pose and keys name: {"c:<hash>": {label, says, arms, legs, spine, head, hands}}
+    poses: dict[str, dict[str, Any]] = Field(default_factory=dict)
     gait: Literal["walk", "run"] | None = None  # a Person's walk cycle while it moves (scene3d.js GAITS)
     color: str | None = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
     dims: list[float] | None = Field(None, min_length=3, max_length=3)
@@ -659,6 +661,67 @@ async def v2_objects_delete(obj_id: str):
     if len(keep) == len(items):
         raise HTTPException(404, "No such object")
     _v2_objects_write(keep)
+    return {"ok": True}
+
+
+# V2's pose library, shared by every project: poses made in the pose editor (static/posepad.js) for a Person
+# (data/v2/poses.json).
+V2_POSES = V2_DIR / "poses.json"
+
+
+class V2Pose(BaseModel):
+    id: str = Field(..., min_length=1, max_length=40, pattern=r"^[A-Za-z0-9_-]+$")
+    name: str = Field(..., min_length=1, max_length=60)
+    says: str = Field("", max_length=200)  # how the photo and video models are told about it
+    pose: dict[str, Any]  # {arms, legs, spine, head, hands} (scene3d.js completePose)
+
+    @field_validator("pose")
+    @classmethod
+    def _small(cls, v: dict[str, Any]) -> dict[str, Any]:
+        if len(json.dumps(v)) > 4000:
+            raise ValueError("The pose is too big")
+        return v
+
+
+def _v2_poses() -> list[dict[str, Any]]:
+    try:
+        return json.loads(V2_POSES.read_text("utf-8")).get("poses", [])
+    except (OSError, ValueError):
+        return []
+
+
+@app.get("/api/v2/poses")
+async def v2_poses_list():
+    return {"poses": _v2_poses()}
+
+
+@app.put("/api/v2/poses/{pose_id}")
+async def v2_poses_put(pose_id: str, req: V2Pose):
+    if req.id != pose_id:
+        raise HTTPException(400, "The id doesn't match")
+    items = _v2_poses()
+    old = next((p for p in items if p.get("id") == pose_id), None)
+    if not old and len(items) >= 500:
+        raise HTTPException(400, "The pose library is full (500)")
+    item = {**req.model_dump(), "updated": time.time()}
+    item["created"] = (old or {}).get("created", item["updated"])
+    items = [p for p in items if p.get("id") != pose_id] + [item]
+    V2_POSES.parent.mkdir(parents=True, exist_ok=True)
+    tmp = V2_POSES.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"poses": items}, ensure_ascii=False, indent=1), "utf-8")
+    tmp.replace(V2_POSES)
+    return item
+
+
+@app.delete("/api/v2/poses/{pose_id}")
+async def v2_poses_delete(pose_id: str):
+    items = _v2_poses()
+    keep = [p for p in items if p.get("id") != pose_id]
+    if len(keep) == len(items):
+        raise HTTPException(404, "No such pose")
+    tmp = V2_POSES.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"poses": keep}, ensure_ascii=False, indent=1), "utf-8")
+    tmp.replace(V2_POSES)
     return {"ok": True}
 
 

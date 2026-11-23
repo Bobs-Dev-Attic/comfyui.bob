@@ -5,6 +5,25 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.165.0] - 2026-11-22
+
+### Added
+- **🤸 Pose editor for the Person figure.** Open it from the Person's right-click menu, 🤸 Edit pose… in its panel
+  (V2's object panel and the scene's), or 🤸 Pose … here on its bar in V2's timeline. A large window shows the
+  mannequin in its own 3D view with a dot on each joint:
+  - drag a hand or a foot and the arm or leg follows it (the elbow or knee keeps bending the way it does),
+  - drag an elbow or a knee to swing the upper arm or thigh,
+  - drag the head to turn and nod it, the chest to bend and twist the body,
+  - drag anywhere else to turn the view; the wheel zooms.
+  Sliders for each part (head, body, each arm and leg, the hands) sit beside it, with Mirror and ↺ Standing.
+- **The figure bends at the spine, turns its head and makes fists or open hands.** These are new in custom poses; the
+  ten presets look as before.
+- **Pose library.** The presets and your saved poses, with pictures, shared by every project (`data/v2/poses.json`).
+- **Applying a pose keys it at the playhead,** so the existing blending animates between poses, presets and custom
+  ones alike. A custom pose is saved with the scene and shows in the Pose list by its name.
+- **What the photo and video models are told.** A custom pose comes with words: your own, or words made from the pose
+  (for example "bending forward, with the left arm raised, looking to their right").
+
 ## [0.164.1] - 2026-11-22
 
 ### Fixed
