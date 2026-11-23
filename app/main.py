@@ -725,6 +725,69 @@ async def v2_poses_delete(pose_id: str):
     return {"ok": True}
 
 
+# V2's movement library, shared by every project: a Person's keyed poses saved as a movement in the pose editor
+# (static/posepad.js), to add to another Person from its playhead (data/v2/moves.json).
+V2_MOVES = V2_DIR / "moves.json"
+
+
+class V2Move(BaseModel):
+    id: str = Field(..., min_length=1, max_length=40, pattern=r"^[A-Za-z0-9_-]+$")
+    name: str = Field(..., min_length=1, max_length=60)
+    seconds: float = Field(..., gt=0, le=60)
+    # [{f (0 to 1 through it), pose (a preset's name or a pose), lift (a share of its height), turn (degrees)}]
+    steps: list[dict[str, Any]] = Field(..., min_length=2, max_length=40)
+
+    @field_validator("steps")
+    @classmethod
+    def _small(cls, v: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if len(json.dumps(v)) > 60000:
+            raise ValueError("The movement is too big")
+        return v
+
+
+def _v2_moves() -> list[dict[str, Any]]:
+    try:
+        return json.loads(V2_MOVES.read_text("utf-8")).get("moves", [])
+    except (OSError, ValueError):
+        return []
+
+
+def _v2_moves_write(items: list[dict[str, Any]]) -> None:
+    V2_MOVES.parent.mkdir(parents=True, exist_ok=True)
+    tmp = V2_MOVES.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"moves": items}, ensure_ascii=False, indent=1), "utf-8")
+    tmp.replace(V2_MOVES)
+
+
+@app.get("/api/v2/moves")
+async def v2_moves_list():
+    return {"moves": _v2_moves()}
+
+
+@app.put("/api/v2/moves/{move_id}")
+async def v2_moves_put(move_id: str, req: V2Move):
+    if req.id != move_id:
+        raise HTTPException(400, "The id doesn't match")
+    items = _v2_moves()
+    old = next((m for m in items if m.get("id") == move_id), None)
+    if not old and len(items) >= 300:
+        raise HTTPException(400, "The movement library is full (300)")
+    item = {**req.model_dump(), "updated": time.time()}
+    item["created"] = (old or {}).get("created", item["updated"])
+    _v2_moves_write([m for m in items if m.get("id") != move_id] + [item])
+    return item
+
+
+@app.delete("/api/v2/moves/{move_id}")
+async def v2_moves_delete(move_id: str):
+    items = _v2_moves()
+    keep = [m for m in items if m.get("id") != move_id]
+    if len(keep) == len(items):
+        raise HTTPException(404, "No such movement")
+    _v2_moves_write(keep)
+    return {"ok": True}
+
+
 # V2's camera library: cameras saved from shots, relative to their subject (Scene3D.cameraOut), shared by every
 # project (data/v2/cameras.json). The ready-made moves live in the page (Scene3D.CAM_MOVES).
 V2_CAMERAS = V2_DIR / "cameras.json"

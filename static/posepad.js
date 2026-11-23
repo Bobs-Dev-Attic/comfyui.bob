@@ -8,6 +8,11 @@
    words the photo and video models are told (made from the pose when left empty). On the left the pose library: the
    presets and the poses you saved (data/v2/poses.json, every project). Apply keys it on the Person at the playhead.
 
+   🎬 Movements (the other tab): short runs of poses (sit down, jump, wave, bow, turn around…), each step with how far
+   the person rises (a share of their height) and turns. One plays in the view, looping; its length is a slider, and
+   🎬 Add keys it on the Person from the playhead (Scene3D addMovement). The Person's own keyed poses can be saved as a
+   movement (data/v2/moves.json, every project).
+
    The pose: arms and legs a direction for each bone, x pointing out from the body (scene3d.js POSES), the spine
    [bend, lean, twist] and head [turn, nod, tilt] in degrees (+ forward, to their left, down), hands relaxed, open or
    fist. Drawn with the scene's own mannequin (Scene3D.poseKit) and Model3D's WebGL helpers; no libraries. */
@@ -80,6 +85,51 @@ const PosePad = (() => {
     ["bend", "Bend", 0, 160, "0 straight"], ["dir", "Bend towards", -180, 180, "0 forward, 90 in, -90 out, 180 back"]];
   const PARTS = [["head", "🙂 Head"], ["body", "🧍 Body"], ["armR", "💪 Right arm"], ["armL", "💪 Left arm"], ["legR", "🦵 Right leg"], ["legL", "🦵 Left leg"], ["hands", "✋ Hands"]];
 
+  /* The movements: steps { f (0 to 1 through it), pose (a preset's name or a pose), lift, turn }. Their in-between
+     poses have names and words, as the photo and video models are told about them ("crouching, then sitting"). */
+  const same = a => ({ R: a, L: a });
+  const CROUCH = { label: "Crouching", says: "crouching", spine: [28, 0, 0], arms: same([[0.1, -0.75, 0.65], [0.05, -0.3, 0.95]]), legs: same([[0.05, -0.5, 0.86], [0, -0.88, -0.48]]) };
+  const TUCK = { label: "Jumping", says: "in the air, jumping", spine: [8, 0, 0], arms: same([[0.35, 0.9, 0.25], [0.15, 1, 0.1]]), legs: same([[0.05, -0.35, 0.94], [0, -0.95, -0.3]]) };
+  const WAVE2 = { label: "Waving", says: "waving with the right hand", arms: { R: [[1, 0.25, 0.1], [-0.45, 0.9, 0.15]] }, hands: { R: "open", L: "relaxed" } };
+  const WAVE1 = { label: "Waving", says: "waving with the right hand", arms: { R: [[1, 0.25, 0.1], [0.35, 1, 0.15]] }, hands: { R: "open", L: "relaxed" } };
+  const BOW = { label: "Bowing", says: "bowing", spine: [55, 0, 0], head: [0, 15, 0] };
+  const NOD_D = { label: "Nodding", says: "nodding", head: [0, 22, 0] }, NOD_U = { label: "Nodding", says: "nodding", head: [0, -6, 0] };
+  const SHAKE_L = { label: "Shaking their head", says: "shaking their head", head: [35, 0, 0] }, SHAKE_R = { label: "Shaking their head", says: "shaking their head", head: [-35, 0, 0] };
+  const LOOK_L = { label: "Looking left", says: "looking to their left", head: [60, 0, 0], spine: [0, 0, 15] }, LOOK_R = { label: "Looking right", says: "looking to their right", head: [-60, 0, 0], spine: [0, 0, -15] };
+  const CLAP_IN = { label: "Clapping", says: "clapping", arms: same([[0.15, -0.6, 0.8], [-0.8, 0.05, 0.6]]), hands: same("open") };
+  const CLAP_OUT = { label: "Clapping", says: "clapping", arms: same([[0.2, -0.6, 0.78], [0.25, 0.05, 0.97]]), hands: same("open") };
+  const STRETCH = { label: "Stretching", says: "stretching with both arms up", spine: [-10, 0, 0], head: [0, -15, 0], arms: same([[0.3, 1, 0.05], [0.1, 1, 0]]), hands: same("open") };
+  const st = (f, pose, x = {}) => ({ f, pose, ...x });
+  const MOVES = [
+    { id: "sit", name: "Sit down", seconds: 1.6, steps: [st(0, "standing"), st(0.5, CROUCH), st(1, "sitting")] },
+    { id: "stand", name: "Stand up", seconds: 1.6, steps: [st(0, "sitting"), st(0.5, CROUCH), st(1, "standing")] },
+    { id: "wave", name: "Wave hello", seconds: 2.4, steps: [st(0, "standing"), st(0.2, WAVE1), st(0.36, WAVE2), st(0.52, WAVE1), st(0.68, WAVE2), st(0.84, WAVE1), st(1, "standing")] },
+    { id: "jump", name: "Jump", seconds: 1.3, steps: [st(0, "standing", { lift: 0 }), st(0.28, CROUCH, { lift: 0 }), st(0.5, TUCK, { lift: 0.25 }), st(0.72, CROUCH, { lift: 0 }), st(1, "standing", { lift: 0 })] },
+    { id: "bow", name: "Bow", seconds: 2.2, steps: [st(0, "standing"), st(0.35, BOW), st(0.65, BOW), st(1, "standing")] },
+    { id: "turn", name: "Turn around", seconds: 1.6, steps: [st(0, "standing", { turn: 0 }), st(0.5, "walking", { turn: 90 }), st(1, "standing", { turn: 180 })] },
+    { id: "nod", name: "Nod yes", seconds: 1.2, steps: [st(0, "standing"), st(0.25, NOD_D), st(0.5, NOD_U), st(0.75, NOD_D), st(1, "standing")] },
+    { id: "shake", name: "Shake head no", seconds: 1.4, steps: [st(0, "standing"), st(0.25, SHAKE_L), st(0.5, SHAKE_R), st(0.75, SHAKE_L), st(1, "standing")] },
+    { id: "look", name: "Look around", seconds: 3, steps: [st(0, "standing"), st(0.25, LOOK_L), st(0.45, LOOK_L), st(0.7, LOOK_R), st(0.85, LOOK_R), st(1, "standing")] },
+    { id: "point", name: "Point", seconds: 1.6, steps: [st(0, "standing"), st(0.4, "pointing"), st(1, "pointing")] },
+    { id: "clap", name: "Clap", seconds: 1.8, steps: [st(0, "standing"), st(0.15, CLAP_OUT), st(0.3, CLAP_IN), st(0.45, CLAP_OUT), st(0.6, CLAP_IN), st(0.75, CLAP_OUT), st(1, "standing")] },
+    { id: "kneel", name: "Kneel down", seconds: 2, steps: [st(0, "standing"), st(0.45, CROUCH), st(1, "kneeling")] },
+    { id: "stretch", name: "Stretch", seconds: 2.4, steps: [st(0, "standing"), st(0.45, STRETCH), st(0.65, STRETCH), st(1, "standing")] },
+  ];
+  let moves = null;  // the saved movements [{ id, name, seconds, steps }]
+  async function loadMoves() {
+    try { moves = (await api("/api/v2/moves")).moves || []; } catch { moves = []; }
+    moves.sort((a, b) => (b.updated || 0) - (a.updated || 0));
+  }
+  // a movement's pose at f (0 to 1): its steps' poses blended as the scene does, and how far up and turned
+  function moveAt(kit, m, f) {
+    const S = m.steps, pose = x => kit.completePose(typeof x.pose === "string" ? kit.POSES[x.pose] || kit.POSES.standing : x.pose);
+    let i = 0; while (i < S.length - 1 && S[i + 1].f <= f) i++;
+    const a = S[i], b = S[Math.min(i + 1, S.length - 1)], u0 = b.f > a.f ? clamp((f - a.f) / (b.f - a.f), 0, 1) : 0, u = u0 * u0 * (3 - 2 * u0);
+    const lerp = (x, y) => (+x || 0) + ((+y || 0) - (+x || 0)) * u;
+    return { pose: kit.mixPose(pose(a), pose(b), u), lift: lerp(a.lift, b.lift), turn: lerp(a.turn, b.turn) };
+  }
+  const stepName = (kit, x) => typeof x.pose === "string" ? kit.POSES[x.pose]?.label || x.pose : x.pose?.label || "Custom pose";
+
   function open(o) {
     const kit = Scene3D.poseKit, G = Model3D.gl;
     css();
@@ -87,15 +137,28 @@ const PosePad = (() => {
     const cam = { yaw: 28, pitch: 8, dist: 3.7 };
     const box = document.createElement("div");
     box.className = "pp";
-    box.innerHTML = `<div class="pp-lib"><h4>Poses</h4><div class="pp-grid" data-g="pre"></div><h4>Saved <span class="opt">every project</span></h4><div class="pp-grid" data-g="mine"><p class="hint">Loading…</p></div></div>
+    const who = html(o.who || "Person"), keyed = o.keyed;
+    box.innerHTML = `<div class="pp-lib"><div class="pp-tabs" role="tablist"><button type="button" class="chip-btn" role="tab" data-tab="poses">🧍 Poses</button><button type="button" class="chip-btn" role="tab" data-tab="moves">🎬 Movements</button></div>
+        <div class="pp-libposes"><h4>Poses</h4><div class="pp-grid" data-g="pre"></div><h4>Saved <span class="opt">every project</span></h4><div class="pp-grid" data-g="mine"><p class="hint">Loading…</p></div></div>
+        <div class="pp-libmoves" hidden><h4>Movements</h4><div class="pp-grid" data-g="mvpre"></div><h4>Saved <span class="opt">every project</span></h4><div class="pp-grid" data-g="mvmine"><p class="hint">Loading…</p></div></div></div>
       <div class="pp-view"><canvas class="pp-gl"></canvas><canvas class="pp-ov" tabindex="0" aria-label="The pose: drag a joint's dot to move it, elsewhere to turn the view"></canvas>
         <p class="hint pp-tip">Drag a dot: hands and feet pull the arm or leg, elbows and knees swing it, the head turns, the chest bends. Drag elsewhere to turn the view; the wheel zooms.</p></div>
-      <div class="pp-side"><div class="pp-parts">${PARTS.map(([k, t]) => `<button type="button" class="chip-btn" data-part="${k}">${t}</button>`).join("")}</div>
+      <div class="pp-side"><div class="pp-moveside" hidden>
+        <h4 class="pp-mvname">Pick a movement on the left</h4><p class="hint pp-mvsteps"></p>
+        <label class="pp-sl"><span>Length</span><input type="range" data-len min="0.3" max="10" step="0.1" value="1.6"><output></output></label>
+        <p class="hint pp-room"></p>
+        <div class="pp-row"><button type="button" class="btn sm" data-a="play">⏸ Pause</button><span class="hint pp-mvt"></span></div>
+        <hr class="pp-hr">
+        <div class="field"><label for="pp-mvnew">${who}'s keyed poses as a movement</label><input id="pp-mvnew" maxlength="60" placeholder="My movement"${keyed ? "" : " disabled"}></div>
+        <button type="button" class="btn sm" data-a="savemove"${keyed ? "" : " disabled"}>💾 Save as a movement</button>
+        <p class="hint">${keyed ? `${keyed.steps.length} poses over ${keyed.seconds.toFixed(2)} s (with how far ${who} rises and turns), kept for every project.`
+          : `Key two or more poses on ${who} (🤸 Edit pose at different times) to keep them as a movement.`}</p></div>
+        <div class="pp-poseside"><div class="pp-parts">${PARTS.map(([k, t]) => `<button type="button" class="chip-btn" data-part="${k}">${t}</button>`).join("")}</div>
         <div class="pp-ctl"></div>
         <div class="pp-row"><button type="button" class="btn sm" data-a="mirror" title="Swap left and right">⇋ Mirror</button><button type="button" class="btn sm ghost" data-a="reset" title="Back to standing">↺ Standing</button></div>
         <div class="field"><label for="pp-name">Name</label><input id="pp-name" maxlength="60" placeholder="Custom pose"></div>
         <div class="field"><label for="pp-says">Described as <span class="opt">what the photo and video models are told</span></label><textarea id="pp-says" rows="3" maxlength="200"></textarea></div>
-        <button type="button" class="btn sm" data-a="save" title="Keep it in the pose library, for every project">💾 Save to the library</button></div>`;
+        <button type="button" class="btn sm" data-a="save" title="Keep it in the pose library, for every project">💾 Save to the library</button></div></div>`;
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
     foot.innerHTML = `<span class="hint">${html(o.who || "Person")} at ${(+o.at || 0).toFixed(2)} s: applying it keys the pose there.</span><span class="wm-foot-gap"></span>
@@ -112,9 +175,11 @@ const PosePad = (() => {
     if (!gl) view.insertAdjacentHTML("beforeend", `<p class="hint">This browser has no WebGL 2, so the pose can't be shown; the sliders still work.</p>`);
     const base = [...hexRgb(o.color), 1];
     let raf = 0;
+    let mode = "poses", mv = null, sec = 1.6, playing = true, t0 = performance.now(), pausedAt = 0;
+    const mvMeshes = new Map();  // the playing movement's mesh at each 60th of it
     const ro = new ResizeObserver(() => redraw());
     const win = WM.open({ id: "posepad", title: `🤸 Pose · ${o.who || "Person"}`, content: box, footer: foot, width: 1080, height: 700, minWidth: 760, minHeight: 520, modal: true,
-      onClose: () => { ro.disconnect(); cancelAnimationFrame(raf); if (mesh) gpu?.drop(mesh); gl?.getExtension("WEBGL_lose_context")?.loseContext(); } });
+      onClose: () => { ro.disconnect(); cancelAnimationFrame(raf); if (mesh) gpu?.drop(mesh); dropMoveMeshes(); gl?.getExtension("WEBGL_lose_context")?.loseContext(); } });
     ro.observe(view);
 
     /* ---- drawing */
@@ -128,27 +193,35 @@ const PosePad = (() => {
     const toScreen = (C, p) => { const M = C.VP, x = M[0] * p[0] + M[4] * p[1] + M[8] * p[2] + M[12], y = M[1] * p[0] + M[5] * p[1] + M[9] * p[2] + M[13], w = M[3] * p[0] + M[7] * p[1] + M[11] * p[2] + M[15];
       return [(x / w * 0.5 + 0.5) * C.W, (0.5 - y / w * 0.5) * C.H]; };
     const GRID = (() => { const g = []; for (let i = -6; i <= 6; i++) { const a = i * 0.25; g.push(a, 0, -1.5, a, 0, 1.5, -1.5, 0, a, 1.5, 0, a); } return g; })();
+    // a pose's mesh; dy stands it on the floor (its lowest point), as the scene does
     function meshOf(d) {
       const { P, N, I } = kit.shapeOf("figure", d);
-      return gpu.upload([{ pos: new Float32Array(P), nrm: new Float32Array(N), uv: null, col: null, idx: new Uint32Array(I), base, tex: null, ao: null }]);
+      let lo = Infinity; for (let i = 1; i < P.length; i += 3) lo = Math.min(lo, P[i]);
+      const m = gpu.upload([{ pos: new Float32Array(P), nrm: new Float32Array(N), uv: null, col: null, idx: new Uint32Array(I), base, tex: null, ao: null }]);
+      m.dy = -lo;
+      return m;
     }
+    const dy = () => mesh?.dy || 0, lifted = p => [p[0], p[1] + dy(), p[2]];
+    const MT = (y, turn = 0) => { const c = Math.cos(turn * rad), s = Math.sin(turn * rad); return [c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, y, 0, 1]; };
+    function dropMoveMeshes() { for (const m of mvMeshes.values()) gpu?.drop(m); mvMeshes.clear(); }
     function rebuild() { if (!gpu) return; if (mesh) gpu.drop(mesh); mesh = meshOf(def); redraw(); }
     function redraw() { cancelAnimationFrame(raf); raf = requestAnimationFrame(paint); }
-    function paint() {
+    function paint(now = performance.now()) {
       const dpr = Math.min(2, devicePixelRatio || 1), W = Math.round(view.clientWidth * dpr), H = Math.round(view.clientHeight * dpr);
       for (const c of [cv, ov]) if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
-      const C = camera();
+      const C = camera(), x = ov.getContext("2d");
+      x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, W, H);
+      if (mode === "moves") return paintMove(C, W, H, now);
       if (gpu && mesh) {
         gpu.begin(W, H, G.themeBg(view));
-        gpu.draw(mesh, { VP: C.VP, M: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], eye: C.eye, key: [0.45, 0.9, 0.7], look: 0 });
+        gpu.draw(mesh, { VP: C.VP, M: MT(dy()), eye: C.eye, key: [0.45, 0.9, 0.7], look: 0 });
         gpu.lines(GRID, C.VP, [0.5, 0.5, 0.5, 0.45]);
       }
       // the joints' dots and the bones between them
-      const x = ov.getContext("2d"), cs = getComputedStyle(box), acc = cs.getPropertyValue("--accent").trim() || "#4f8cff";
-      x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, W, H);
+      const cs = getComputedStyle(box), acc = cs.getPropertyValue("--accent").trim() || "#4f8cff";
       const hs = handles(C);
       x.lineWidth = 1.5; x.strokeStyle = "rgba(120,120,120,0.55)";
-      const J = kit.figureJoints(def), seg = (a, b) => { const p = toScreen(C, a), q = toScreen(C, b); x.beginPath(); x.moveTo(...p); x.lineTo(...q); x.stroke(); };
+      const J = kit.figureJoints(def), seg = (a, b) => { const p = toScreen(C, lifted(a)), q = toScreen(C, lifted(b)); x.beginPath(); x.moveTo(...p); x.lineTo(...q); x.stroke(); };
       seg(J.head, J.neck); seg(J.neck, J.chest); seg(J.chest, J.waist);
       for (const sd of ["R", "L"]) { const a = J.arms[sd], l = J.legs[sd]; seg(J.neck, a.sh); seg(a.sh, a.el); seg(a.el, a.wr); seg(J.waist, l.hp); seg(l.hp, l.kn); seg(l.kn, l.an); }
       for (const h of hs) {
@@ -157,14 +230,29 @@ const PosePad = (() => {
         x.fillStyle = on ? acc : "rgba(255,255,255,0.9)"; x.fill(); x.lineWidth = 2; x.strokeStyle = on ? "#fff" : "rgba(0,0,0,0.6)"; x.stroke();
       }
     }
-    // the dots: { part, kind, p (3D), s (on screen) }
+    // the movement playing, looping (a moment's hold at its end)
+    function paintMove(C, W, H, now) {
+      if (!gpu) return;
+      gpu.begin(W, H, G.themeBg(view));
+      if (mv) {
+        const ph = playing ? ((now - t0) / 1000) % (sec + 0.7) : pausedAt, f = clamp(ph / sec, 0, 1), q = Math.round(f * 60) / 60;
+        let m = mvMeshes.get(q);
+        if (!m) { const A = moveAt(kit, mv, q); m = meshOf(A.pose); m.lift = A.lift; m.turn = A.turn; mvMeshes.set(q, m); }
+        gpu.draw(m, { VP: C.VP, M: MT(m.dy + m.lift * 1.74, m.turn), eye: C.eye, key: [0.45, 0.9, 0.7], look: 0 });
+        $(".pp-mvt").textContent = `${Math.min(ph, sec).toFixed(2)} / ${sec.toFixed(2)} s`;
+        if (playing) raf = requestAnimationFrame(paint);
+      }
+      gpu.lines(GRID, C.VP, [0.5, 0.5, 0.5, 0.45]);
+    }
+    // the dots: { part, kind, p (3D), s (on screen) }; none while a movement plays
     function handles(C = camera()) {
+      if (mode === "moves") return [];
       const J = kit.figureJoints(def), out = [{ part: "head", kind: "head", p: J.head }, { part: "body", kind: "chest", p: J.chest }];
       for (const sd of ["R", "L"]) {
         out.push({ part: `arm${sd}`, kind: "elbow", sd, p: J.arms[sd].el }, { part: `arm${sd}`, kind: "hand", sd, p: J.arms[sd].wr },
           { part: `leg${sd}`, kind: "knee", sd, p: J.legs[sd].kn }, { part: `leg${sd}`, kind: "foot", sd, p: J.legs[sd].an });
       }
-      for (const h of out) h.s = toScreen(C, h.p);
+      for (const h of out) { h.p = lifted(h.p); h.s = toScreen(C, h.p); }
       return out;
     }
 
@@ -203,6 +291,7 @@ const PosePad = (() => {
     }
     box.addEventListener("input", e => {
       const t = e.target;
+      if (t.hasAttribute("data-len")) { sec = +t.value; t0 = performance.now(); return moveInfo(); }
       if (t.dataset.k == null) return;
       t.nextElementSibling.textContent = `${t.value}°`;
       if (SLIDERS[part]) { const [g, j] = t.dataset.k.split("."); def[g][+j] = +t.value; return changed(); }
@@ -224,7 +313,17 @@ const PosePad = (() => {
       if (b.dataset.pre) return loadPose(kit.POSES[b.dataset.pre], b.dataset.pre);
       if (b.dataset.mine) { const p = lib?.find(x => x.id === b.dataset.mine); if (p) loadPose(p.pose, null, p); return; }
       if (b.dataset.del) return delMine(b.dataset.del);
+      if (b.dataset.tab) return setMode(b.dataset.tab);
+      if (b.dataset.mv) return pickMove(MOVES.find(m => m.id === b.dataset.mv));
+      if (b.dataset.mvmine) return pickMove(moves?.find(m => m.id === b.dataset.mvmine));
+      if (b.dataset.delmv) return delMove(b.dataset.delmv);
       const a = b.dataset.a;
+      if (a === "play") {
+        const now = performance.now();
+        if (playing) pausedAt = ((now - t0) / 1000) % (sec + 0.7); else t0 = now - pausedAt * 1000;
+        playing = !playing; b.textContent = playing ? "⏸ Pause" : "▶ Play"; return redraw();
+      }
+      if (a === "savemove") return saveMove();
       if (a === "mirror") {
         const m = def;
         def = { arms: { R: m.arms.L, L: m.arms.R }, legs: { R: m.legs.L, L: m.legs.R }, spine: [m.spine[0], -m.spine[1], -m.spine[2]], head: [-m.head[0], m.head[1], -m.head[2]], hands: { R: m.hands.L, L: m.hands.R } };
@@ -236,6 +335,11 @@ const PosePad = (() => {
     });
     foot.querySelector('[data-a="cancel"]').onclick = () => win.close();
     foot.querySelector('[data-a="apply"]').onclick = () => {
+      if (mode === "moves") {
+        if (!mv) return;
+        if (o.onMove?.({ name: mv.name, steps: mv.steps }, sec)) win.close();
+        return;
+      }
       const label = nameEl.value.trim(), says = saysEl.value.trim();
       o.onApply?.({ preset, def: { ...def, label: label || "Custom pose", says } });
       win.close();
@@ -267,7 +371,7 @@ const PosePad = (() => {
       const J = kit.figureJoints(def), S = arm ? J.S : [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
       const local = q => add(kit.WAIST, app3(tr(S), sub(q, kit.WAIST)));  // the body's frame (the upper body unturned)
       const g = arm ? "arms" : "legs", L = def[g][sd], root = arm ? [sx * 0.2, 1.41, 0] : [sx * 0.09, 0.9, 0], lens = arm ? kit.ARM : kit.LEG;
-      const u0 = flipX(L[0], sx), l0 = flipX(L[1], sx), t = local(p);
+      const u0 = flipX(L[0], sx), l0 = flipX(L[1], sx), t = local([p[0], p[1] - dy(), p[2]]);
       let u, l;
       if (h.kind === "elbow" || h.kind === "knee") { u = norm(sub(t, root)); l = carry(l0, u0, u); }
       else {
@@ -300,7 +404,7 @@ const PosePad = (() => {
       if (!gpu) return "";
       const W = 72, H = 96, m = meshOf(p), eye = [1.15, 1.25, 2.9], T = [0, 0.86, 0];
       const VP = G.mul4(G.perspective(32 * rad, W / H, 0.05, 50), G.lookAt(eye, T, [0, 1, 0]));
-      const px = gpu.capture(W, H, draw => draw(m, { VP, M: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], eye, key: [0.45, 0.9, 0.7], look: 0 }));
+      const px = gpu.capture(W, H, draw => draw(m, { VP, M: MT(m.dy), eye, key: [0.45, 0.9, 0.7], look: 0 }));
       gpu.drop(m);
       const c = Object.assign(document.createElement("canvas"), { width: W, height: H }), x = c.getContext("2d"), img = x.createImageData(W, H);
       for (let r = 0; r < H; r++) img.data.set(px.subarray((H - 1 - r) * W * 4, (H - r) * W * 4), r * W * 4);
@@ -315,6 +419,60 @@ const PosePad = (() => {
       $('[data-g="pre"]').innerHTML = Object.entries(kit.POSES).map(([k, p]) => card(`data-pre="${k}"`, p.label, p)).join("");
       $('[data-g="mine"]').innerHTML = lib?.length ? lib.map(p => card(`data-mine="${html(p.id)}"`, p.name, p.pose, `<button type="button" class="pp-del" data-del="${html(p.id)}" aria-label="Delete ${html(p.name)}" title="Delete">✕</button>`)).join("")
         : `<p class="hint">${lib ? "None yet: pose the figure and 💾 Save to the library." : "Loading…"}</p>`;
+    }
+    // a movement's card shows it halfway through
+    const mvCard = (m, attr, del = "") => { const A = moveAt(kit, m, 0.5);
+      return card(attr, `${m.name} · ${(+m.seconds).toFixed(1)} s`, A.pose, del); };
+    function drawMoves() {
+      $('[data-g="mvpre"]').innerHTML = MOVES.map(m => mvCard(m, `data-mv="${m.id}"`)).join("");
+      $('[data-g="mvmine"]').innerHTML = moves?.length ? moves.map(m => mvCard(m, `data-mvmine="${html(m.id)}"`, `<button type="button" class="pp-del" data-delmv="${html(m.id)}" aria-label="Delete ${html(m.name)}" title="Delete">✕</button>`)).join("")
+        : `<p class="hint">${moves ? "None yet: key poses on a Person, then 💾 Save as a movement." : "Loading…"}</p>`;
+      box.querySelectorAll("[data-mv], [data-mvmine]").forEach(b => b.classList.toggle("on", !!mv && (b.dataset.mv || b.dataset.mvmine) === mv.id));
+    }
+    function setMode(m) {
+      mode = m;
+      box.querySelectorAll("[data-tab]").forEach(b => { b.classList.toggle("on", b.dataset.tab === m); b.setAttribute("aria-selected", String(b.dataset.tab === m)); });
+      $(".pp-libposes").hidden = $(".pp-poseside").hidden = m !== "poses";
+      $(".pp-libmoves").hidden = $(".pp-moveside").hidden = m !== "moves";
+      $(".pp-tip").textContent = m === "moves" ? "Drag to turn the view; the wheel zooms." : "Drag a dot: hands and feet pull the arm or leg, elbows and knees swing it, the head turns, the chest bends. Drag elsewhere to turn the view; the wheel zooms.";
+      if (m === "moves" && !moves) loadMoves().then(() => { if (box.isConnected) drawMoves(); });
+      if (m === "moves") drawMoves();
+      footInfo(); t0 = performance.now(); redraw();
+    }
+    function pickMove(m) {
+      if (!m) return;
+      mv = { ...m, steps: [...m.steps].sort((a, b) => a.f - b.f) };
+      sec = clamp(+m.seconds || 1.6, 0.3, 10); t0 = performance.now(); playing = true; $('[data-a="play"]').textContent = "⏸ Pause";
+      dropMoveMeshes();
+      $('[data-len]').value = String(sec);
+      $(".pp-mvname").textContent = m.name;
+      const names = mv.steps.map(x => stepName(kit, x)).filter((n, i, a) => i === 0 || n !== a[i - 1]);
+      $(".pp-mvsteps").textContent = names.join(" → ");
+      moveInfo(); drawMoves(); footInfo(); redraw();
+    }
+    function moveInfo() {
+      $('[data-len]').nextElementSibling.textContent = `${sec.toFixed(1)} s`;
+      const room = +o.room || 0;
+      $(".pp-room").textContent = !mv ? "" : sec > room + 1e-6 ? `Only ${room.toFixed(2)} s are left in the shot after the playhead: it's cut short there.` : `From ${(+o.at || 0).toFixed(2)} to ${((+o.at || 0) + sec).toFixed(2)} s.`;
+    }
+    function footInfo() {
+      const ap = foot.querySelector('[data-a="apply"]'), h = foot.querySelector(".hint"), t = (+o.at || 0).toFixed(2);
+      if (mode === "moves") { ap.textContent = `🎬 Add at ${t} s`; ap.disabled = !mv; h.textContent = `${o.who || "Person"} does it from ${t} s: its poses are keyed, and keys already inside it lose theirs.`; }
+      else { ap.textContent = "🤸 Apply"; ap.disabled = false; h.textContent = `${o.who || "Person"} at ${t} s: applying it keys the pose there.`; }
+    }
+    async function saveMove() {
+      if (!keyed) return;
+      const name = $("#pp-mvnew").value.trim() || "My movement", id = uid();
+      try {
+        await api(`/api/v2/moves/${id}`, { method: "PUT", body: JSON.stringify({ id, name, seconds: keyed.seconds, steps: keyed.steps }) });
+        await loadMoves(); drawMoves(); pickMove(moves.find(m => m.id === id));
+        Media.toast(`“${name}” is in the movement library.`);
+      } catch (err) { Media.toast(`Save: ${err.message}`); }
+    }
+    async function delMove(id) {
+      const m = moves?.find(x => x.id === id); if (!m || !confirm(`Delete the movement “${m.name}” from the library?`)) return;
+      try { await api(`/api/v2/moves/${id}`, { method: "DELETE" }); if (mv?.id === id) { mv = null; $(".pp-mvname").textContent = "Pick a movement on the left"; $(".pp-mvsteps").textContent = ""; moveInfo(); footInfo(); } await loadMoves(); drawMoves(); }
+      catch (err) { Media.toast(`Delete: ${err.message}`); }
     }
     async function saveMine() {
       const name = nameEl.value.trim() || "My pose", old = mineId && lib?.find(x => x.id === mineId);
@@ -338,6 +496,7 @@ const PosePad = (() => {
     rebuild();
     drawLib();
     loadLib().then(() => { if (box.isConnected) drawLib(); });
+    setMode(o.tab === "moves" ? "moves" : "poses");
     return win;
   }
 
@@ -371,6 +530,10 @@ const PosePad = (() => {
 .pp-sl output { text-align: right; font-variant-numeric: tabular-nums; }
 .pp-row { display: flex; gap: 6px; margin: 10px 0; }
 .pp-side textarea { width: 100%; resize: vertical; }
+.pp-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+.pp-tabs .chip-btn.on, .pp-card > button.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.pp-moveside h4 { margin: 2px 0 4px; }
+.pp-hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
 @media (max-width: 820px) { .pp { grid-template-columns: 1fr; grid-template-rows: auto minmax(280px, 50vh) auto; overflow: auto; } }
 `;
     document.head.appendChild(st);

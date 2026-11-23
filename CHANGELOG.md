@@ -5,6 +5,29 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.166.0] - 2026-11-22
+
+### Added
+- **🎬 Movements for the Person figure.** A Movements tab in the pose window holds short runs of poses:
+  - Sit down, Stand up, Wave hello, Jump, Bow, Turn around, Nod yes, Shake head no, Look around, Point, Clap,
+    Kneel down, Stretch.
+  - The selected one plays in the 3D view on a loop, and a slider sets how long it takes.
+  - **🎬 Add** keys it on the Person from the playhead. Its path stays as it was, it rises for a jump, and after a
+    Turn around it stays turned. Keys already inside the movement lose their poses, and a movement that would run
+    past the end of the shot is cut short there.
+- **Open it from:**
+  - 🎬 Add a movement… in the Person's right-click menu,
+  - 🎬 Movement… in V2's object panel and the scene's Person panel,
+  - 🎬 Add a movement here… on the Person's bar in V2's timeline.
+- **Your own movements.** The poses you've keyed on a Person (with how far it rises and turns) can be saved as a
+  movement, shared by every project (`data/v2/moves.json`).
+- **The photo and video models are told the movement:** each step has words, for example "standing, then crouching,
+  then in the air, jumping, then crouching, then standing".
+
+### Changed
+- The pose editor's figure, and its thumbnails, stand on the floor in every pose (sitting and crouching included),
+  as in the scene.
+
 ## [0.165.0] - 2026-11-22
 
 ### Added

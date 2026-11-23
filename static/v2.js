@@ -332,7 +332,8 @@ const V2 = (() => {
         ${mine.map(([l, k]) => `<div class="v2-xline"><input data-xl="${k}" maxlength="300" value="${esc(l.text || "")}" placeholder="What ${esc(o.name)} says" aria-label="Line ${k + 1}"><button type="button" class="v2-x" data-xrm="${k}" aria-label="Remove this line">✕</button></div>`).join("")}
         <button type="button" class="btn sm" data-x="addline">＋ Line for ${esc(o.name)}</button>
         <p class="hint">The shot's dialogue keeps every line in order${lib?.voice ? `; ${esc(o.name)} speaks with the voice from the library` : ""}.</p></div>
-      ${o.prim === "figure" ? `<div class="v2-xrow"><button type="button" class="btn sm" data-x="pose" title="Pose its arms, legs, body, head and hands, or pick one from the pose library (at the playhead)">🤸 Edit pose…</button></div>` : ""}
+      ${o.prim === "figure" ? `<div class="v2-xrow"><button type="button" class="btn sm" data-x="pose" title="Pose its arms, legs, body, head and hands, or pick one from the pose library (at the playhead)">🤸 Edit pose…</button>
+        <button type="button" class="btn sm" data-x="moves" title="Sit down, jump, wave, bow…: keyed from the playhead">🎬 Movement…</button></div>` : ""}
       ${objLoraField(lib)}
       <div class="v2-xrow">${lib ? `<span class="hint">From the library: <b>${esc(lib.name)}</b></span><button type="button" class="btn sm ghost" data-x="editlib">Edit…</button>`
         : `<button type="button" class="btn sm ghost" data-x="savelib" title="Keep it in the object library, with its shape, what it is and its picture">💾 Save to the library</button>`}</div>`;
@@ -376,6 +377,7 @@ const V2 = (() => {
       const ins = document.querySelectorAll(".v2-objx [data-xl]"); ins[ins.length - 1]?.focus(); return; }
     if (x === "editlib") return objectEditor(st.objs.find(y => y.id === o.lib));
     if (x === "pose") return Scene3D.poseEditor(c.sel);
+    if (x === "moves") return Scene3D.poseEditor(c.sel, "moves");
     if (x === "savelib") {
       try { await saveToLib(c, o); renderObjx(true); Media.toast(`${o.name} is in the object library: drag it into other shots.`); } catch (err) { Media.toast(`Save: ${err.message}`); }
     }
@@ -1285,6 +1287,7 @@ const V2 = (() => {
         [`◆ Key ${o.name} here (${at.t.toFixed(2)} s)`, () => { Scene3D.objEdit.add(i, at.t); renderTimeline(); }],
         [`🧱 ${o.name}'s details`, () => { Scene3D.select(i); Scene3D.camEdit.seek(at.t); }],
         o.prim === "figure" && [`🤸 Pose ${o.name} here…`, () => { Scene3D.camEdit.seek(at.t); Scene3D.poseEditor(i); }],
+        o.prim === "figure" && [`🎬 Add a movement here…`, () => { Scene3D.camEdit.seek(at.t); Scene3D.poseEditor(i, "moves"); }],
       ].filter(Boolean));
     });
     tr.addEventListener("click", e => {
