@@ -2018,29 +2018,58 @@ async def free():
 UPLOAD_LIMITS = {"image": 50, "video": 2048, "audio": 500}  # MB per kind
 
 
+FRAME_BATCH = 240  # frames in one form (a long clip comes in batches)
+FRAME_MAX = 1600  # a clip: a 60 s scene is 1441 frames
+
+
 @app.post("/api/frames/video")
 async def frames_to_video(request: Request):
-    """Frames drawn in the page (a 3D scene's rough animation or its mask), as numbered pictures in a form, become one
-    video in data/uploads at the given fps (form field "fps", default 24)."""
-    form = await request.form()
+    """Frames drawn in the page (a 3D scene's rough animation, its mask, depth or skeleton), as numbered pictures in a
+    form, become one video in data/uploads at the given fps (form field "fps", default 24).
+
+    A long clip comes in batches (a minute is 1441 frames; a form takes at most FRAME_BATCH): each with "session" (the
+    same for all of them) and "start" (its first frame's number); they're kept in a folder until the batch with
+    "final" = 1, which makes the video. Without "session", one form is the whole clip."""
+    form = await request.form(max_files=FRAME_BATCH + 10, max_fields=FRAME_BATCH + 50)
     files = [f for k, f in form.multi_items() if k == "frame" and hasattr(f, "read")]
-    if not files:
+    session = str(form.get("session") or "")
+    if session and not re.fullmatch(r"[a-f0-9]{8,32}", session):
+        raise HTTPException(400, "Bad session")
+    final = not session or str(form.get("final") or "") == "1"
+    start = int(form.get("start") or 0) if session else 0
+    if len(files) > FRAME_BATCH:
+        raise HTTPException(400, f"Too many frames in one form (at most {FRAME_BATCH}; send a long clip in batches)")
+    if not files and not (session and final):
         raise HTTPException(400, "No frames")
-    if len(files) > 600:
-        raise HTTPException(400, "Too many frames (at most 600)")
+    if not 0 <= start or start + len(files) > FRAME_MAX:
+        raise HTTPException(400, f"Too many frames (at most {FRAME_MAX})")
     fps = float(form.get("fps") or 24)
     exe = media.ffmpeg()
     if not exe:
         raise HTTPException(500, "ffmpeg isn't installed")
-    folder = config.UPLOAD_DIR / f"frames_{uuid.uuid4().hex[:12]}"
-    folder.mkdir(parents=True)
+    import shutil
+    import time as _time
+
+    for old in config.UPLOAD_DIR.glob("frames_*"):  # batches of a clip that never finished
+        try:
+            if old.is_dir() and _time.time() - old.stat().st_mtime > 3600:
+                shutil.rmtree(old, ignore_errors=True)
+        except OSError:
+            pass
+    folder = config.UPLOAD_DIR / f"frames_{session or uuid.uuid4().hex[:12]}"
+    folder.mkdir(parents=True, exist_ok=True)
     try:
-        ext = ".png"
         for i, f in enumerate(files):
             ext = Path(f.filename or "").suffix.lower() or ".png"
             if ext not in (".png", ".jpg", ".jpeg", ".webp"):
                 raise HTTPException(400, "Frames must be pictures")
-            (folder / f"{i:05d}{ext}").write_bytes(await f.read())
+            (folder / f"{start + i:05d}{ext}").write_bytes(await f.read())
+        if not final:
+            return {"session": session, "frames": start + len(files)}
+        got = sorted(folder.iterdir())
+        if not got:
+            raise HTTPException(400, "No frames")
+        ext = got[0].suffix
         target = config.UPLOAD_DIR / f"{uuid.uuid4().hex[:12]}.mp4"
         r = await asyncio.to_thread(subprocess.run, [exe, "-nostdin", "-v", "error", "-y", "-framerate", f"{fps:g}",
                                                      "-i", str(folder / f"%05d{ext}"), "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
@@ -2048,11 +2077,13 @@ async def frames_to_video(request: Request):
                                     capture_output=True, text=True, stdin=subprocess.DEVNULL, creationflags=media.NO_WINDOW)
         if r.returncode or not target.is_file():
             raise HTTPException(500, f"ffmpeg couldn't make the video: {r.stderr.strip()[-300:]}")
-    finally:
-        import shutil
+        n = len(got)
+    except BaseException:
         shutil.rmtree(folder, ignore_errors=True)
+        raise
+    shutil.rmtree(folder, ignore_errors=True)
     rel = target.relative_to(config.ROOT).as_posix()
-    return {"ref": rel, "url": "/" + rel, "frames": len(files)}
+    return {"ref": rel, "url": "/" + rel, "frames": n}
 
 
 @app.post("/api/upload")
