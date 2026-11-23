@@ -591,6 +591,76 @@ const Scene3D = (() => {
     hips: { label: "Hands on hips", says: "with hands on hips", arms: { R: [[0.75, -0.65, -0.15], [-0.75, -0.45, 0.25]], L: [[0.75, -0.65, -0.15], [-0.75, -0.45, 0.25]] } },
     tpose: { label: "T-pose", says: "with arms out to the sides", arms: { R: [[1, 0, 0], [1, 0, 0]], L: [[1, 0, 0], [1, 0, 0]] } },
   };
+  /* Poses made in the pose editor (posepad.js): besides the arms and legs, the spine (degrees: bend forward, lean to its
+     left, twist to its left), the head (turn to its left, nod down, tilt to its left shoulder) and the hands ("relaxed",
+     "open", "fist"). Each is named by what it is ("c:" and a hash), so a name always means the same pose; the poses a
+     scene's people use are saved with them (objectsOut: poses) and registered here when it's opened. */
+  const CUSTOM = new Map();
+  const HANDS = ["relaxed", "open", "fist"];
+  const poseDef = name => POSES[name] || CUSTOM.get(name) || POSES.standing;
+  // a pose with every part (a preset's missing ones are standing's)
+  function completePose(p) {
+    const st = POSES.standing, ang = a => Array.isArray(a) && a.length === 3 ? a.map(x => +x || 0) : [0, 0, 0];
+    const limb = (g, side) => (p?.[g]?.[side] || st[g][side]).map(x => Array.isArray(x) ? x.slice() : x);
+    return { arms: { R: limb("arms", "R"), L: limb("arms", "L") }, legs: { R: limb("legs", "R"), L: limb("legs", "L") },
+      spine: ang(p?.spine), head: ang(p?.head), hands: { R: HANDS.includes(p?.hands?.R) ? p.hands.R : "relaxed", L: HANDS.includes(p?.hands?.L) ? p.hands.L : "relaxed" } };
+  }
+  // A pose from the editor, kept: its name ("c:…"). Numbers are rounded so the same pose gets the same name.
+  function addPoseDef(def) {
+    const r = v => Array.isArray(v) ? v.map(r) : typeof v === "number" ? Math.round(v * 1000) / 1000 : v;
+    const c = completePose(def), d = { label: String(def.label || "Custom pose").trim().slice(0, 60) || "Custom pose", says: String(def.says || "").trim().slice(0, 200),
+      arms: r(c.arms), legs: r(c.legs), spine: r(c.spine), head: r(c.head), hands: c.hands };
+    const js = JSON.stringify(d);
+    let h = 0x811c9dc5; for (let i = 0; i < js.length; i++) { h ^= js.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    const id = `c:${h.toString(16).padStart(8, "0")}`;
+    CUSTOM.set(id, d);
+    return id;
+  }
+  // a scene's saved people's poses, registered (as the editor made them, under their names)
+  function regPoses(objs) {
+    for (const o of objs || []) for (const [id, d] of Object.entries(o.poses || {})) if (/^c:[0-9a-f]{8}$/.test(id) && d && typeof d === "object") CUSTOM.set(id, d);
+  }
+  // the custom poses a person uses (its base pose and its keys'), for saving with it
+  function posesOf(o) {
+    const out = {};
+    for (const n of [o.pose, ...(o.keys || []).map(k => k.pose)]) if (n && CUSTOM.has(n)) out[n] = CUSTOM.get(n);
+    return out;
+  }
+  const poseLabel = name => (POSES[name] || CUSTOM.get(name))?.label || "Custom pose";
+  /* How the photo and video models are told about a pose: a preset's words, or a custom one's own (typed in the editor),
+     else words made from it: how the body bends, where the head looks, where each arm and leg is. */
+  function describePose(def) {
+    const p = completePose(def), out = [];
+    const [bend, side, twist] = p.spine, [turn, nod, tilt] = p.head;
+    if (bend > 60) out.push("bent over"); else if (bend > 22) out.push("bending forward"); else if (bend < -12) out.push("leaning back");
+    if (Math.abs(side) > 12) out.push(`leaning to ${side > 0 ? "their left" : "their right"}`);
+    if (Math.abs(twist) > 20) out.push(`turned at the waist to ${twist > 0 ? "their left" : "their right"}`);
+    const T = p.legs, thigh = sd => norm(T[sd][0]), back = sd => T[sd][2] === "back";
+    const seated = sd => thigh(sd)[2] > 0.7 && thigh(sd)[1] > -0.45 && !back(sd);
+    if (back("R") && back("L")) out.unshift("kneeling");
+    else if (seated("R") && seated("L")) out.unshift("sitting");
+    else {
+      for (const [sd, nm] of [["R", "right"], ["L", "left"]]) {
+        if (back(sd)) out.push(`kneeling on the ${nm} knee`);
+        else if (thigh(sd)[2] > 0.5) out.push(`${nm} knee raised`);
+        else if (thigh(sd)[2] < -0.45) out.push(`${nm} leg stretched back`);
+      }
+      if (thigh("R")[0] > 0.35 && thigh("L")[0] > 0.35) out.push("legs apart");
+    }
+    const arm = sd => { const u = norm(p.arms[sd][0]), f = norm(p.arms[sd][1]);
+      return u[1] > 0.3 || f[1] > 0.6 ? "raised" : u[2] > 0.6 ? "reaching forward" : u[0] > 0.7 && u[1] > -0.45 ? "out to the side" : u[2] < -0.5 ? "behind the back" : ""; };
+    const aR = arm("R"), aL = arm("L");
+    if (aR && aR === aL) out.push(`with both arms ${aR}`);
+    else { if (aR) out.push(`with the right arm ${aR}`); if (aL) out.push(`with the left arm ${aL}`); }
+    if (turn > 20 || turn < -20) out.push(`looking to ${turn > 0 ? "their left" : "their right"}`);
+    if (nod > 20) out.push("looking down"); else if (nod < -15) out.push("looking up");
+    if (Math.abs(tilt) > 15) out.push("head tilted");
+    const hd = p.hands;
+    if (hd.R === hd.L && hd.R !== "relaxed") out.push(hd.R === "fist" ? "fists clenched" : "hands open");
+    else for (const [sd, nm] of [["R", "right"], ["L", "left"]]) if (hd[sd] !== "relaxed") out.push(hd[sd] === "fist" ? `${nm} fist clenched` : `${nm} hand open`);
+    return out.join(", ");
+  }
+  const poseSays = name => POSES[name] ? POSES[name].says : CUSTOM.has(name) ? (CUSTOM.get(name).says || describePose(CUSTOM.get(name))) : "";
   // A shape's own size (its box before stretching), e.g. a Person sitting is shorter and deeper than standing.
   const NAT = new Map();
   function natDims(kind, pose) {
@@ -604,10 +674,7 @@ const Scene3D = (() => {
   }
   /* Poses in motion: a Person's keys can carry a pose; between two of them the arms and legs blend (each bone's
      direction, eased in and out), and the person's mesh is rebuilt for the frame (kept in a small cache). */
-  function fullPose(name) {
-    const p = POSES[name] || POSES.standing, st = POSES.standing, a = p.arms || st.arms, l = p.legs || st.legs;
-    return { arms: { R: a.R, L: a.L }, legs: { R: l.R, L: l.L } };
-  }
+  function fullPose(name) { return completePose(poseDef(name)); }
   function blendPose(na, nb, u) { return mixPose(fullPose(na), fullPose(nb), u); }
   function mixPose(A, B, u) {
     const out = { arms: {}, legs: {} };
@@ -616,6 +683,8 @@ const Scene3D = (() => {
       out[g][side] = [0, 1].map(i => { const p = norm(x[i]), q = norm(y[i]); return norm([0, 1, 2].map(c => p[c] + (q[c] - p[c]) * u)); });
       const flag = u < 0.5 ? x[2] : y[2]; if (flag) out[g][side].push(flag);
     }
+    for (const g of ["spine", "head"]) { const x = A[g] || [0, 0, 0], y = B[g] || x; out[g] = x.map((v, j) => v + (y[j] - v) * u); }
+    out.hands = u < 0.5 || !B.hands ? A.hands : B.hands;
     return out;
   }
   // A Person's pose at time t: { name } on or past a key, or { a, b, u } between two keys with different poses.
@@ -687,6 +756,40 @@ const Scene3D = (() => {
     m.parts[0].base = [...hexRgb(o.color || PRIM_COLOR), 1];
     o.mesh = m; o._pmKey = id;
   }
+  /* A Person's joints in a pose (metres from the feet up, facing +Z): the upper body turned about the waist (S; the
+     waist itself half as much, Sh), the head about the neck (H, then S); for each side the shoulder, elbow and wrist
+     (ax: the hand's axes, along the forearm, across and through the palm) and the hip, knee and ankle. The mannequin
+     (shapeOf) and the pose editor both use it. */
+  const WAIST = [0, 1.0, 0], NECK = [0, 1.5, 0], ARM = [0.29, 0.27], LEG = [0.41, 0.41];
+  const HAND_SHAPE = { relaxed: [0.055, [0.055, 0.042, 0.042]], open: [0.075, [0.085, 0.05, 0.018]], fist: [0.045, [0.048, 0.046, 0.046]] };
+  const app3 = (M, p) => [0, 1, 2].map(i => M[i][0] * p[0] + M[i][1] * p[1] + M[i][2] * p[2]);
+  // degrees [about X (forward), about Z (to its left), about Y (to its left)] -> a turn: Y, then X, then Z
+  function bodyTurn([bx, sz, ty]) {
+    const a = bx * rad, b = -sz * rad, c = ty * rad, ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb = Math.sin(b), cc = Math.cos(c), sc = Math.sin(c);
+    const X = [[1, 0, 0], [0, ca, -sa], [0, sa, ca]], Z = [[cb, -sb, 0], [sb, cb, 0], [0, 0, 1]], Y = [[cc, 0, sc], [0, 1, 0], [-sc, 0, cc]];
+    const mul = (A, B) => A.map(row => [0, 1, 2].map(j => row[0] * B[0][j] + row[1] * B[1][j] + row[2] * B[2][j]));
+    return mul(Y, mul(X, Z));
+  }
+  function figureJoints(pose) {
+    const p = completePose(pose), S = bodyTurn(p.spine), Sh = bodyTurn(p.spine.map(x => x / 2)), H = bodyTurn(p.head);
+    const up = q => addv(WAIST, app3(S, sub(q, WAIST)));
+    const J = { S, Sh, H, hands: p.hands, head: up(addv(NECK, app3(H, [0, 0.12, 0]))), neck: up([0, 1.47, 0]), chest: up([0, 1.3, 0]), waist: [0, 1.1, 0], arms: {}, legs: {} };
+    for (const [side, sx] of [["R", -1], ["L", 1]]) {
+      const bone = d => norm([d[0] * sx, d[1], d[2]]);
+      const arm = p.arms[side], leg = p.legs[side];
+      const u = app3(S, bone(arm[0])), f = app3(S, bone(arm[1]));
+      const sh = up([sx * 0.2, 1.41, 0]), el = addv(sh, mulv(u, ARM[0])), wr = addv(el, mulv(f, ARM[1]));
+      // the palm faces the body (x) as far as the forearm lets it
+      const inw = app3(S, [-sx, 0, 0]), dd = inw[0] * f[0] + inw[1] * f[1] + inw[2] * f[2];
+      let pal = sub(inw, mulv(f, dd));
+      if (Math.hypot(...pal) < 0.2) { const fw = app3(S, [0, 0, 1]), d2 = fw[0] * f[0] + fw[1] * f[1] + fw[2] * f[2]; pal = sub(fw, mulv(f, d2)); }
+      pal = norm(pal);
+      J.arms[side] = { sh, el, wr, ax: [f, norm(cross(f, pal)), pal] };
+      const hp = [sx * 0.09, 0.9, 0], kn = addv(hp, mulv(bone(leg[0]), LEG[0])), an = addv(kn, mulv(bone(leg[1]), LEG[1]));
+      J.legs[side] = { hp, kn, an, back: leg[2] === "back" };
+    }
+    return J;
+  }
   // A shape's triangles about the origin: positions, normals, indices.
   function shapeOf(kind, pose = "standing") {
     const P = [], N = [], I = [], SEG = 40;
@@ -721,11 +824,13 @@ const Scene3D = (() => {
       cap(-0.5, 0.5, -1); if (rt) cap(0.5, rt, 1);
     } else if (kind === "figure") {
       // A mannequin of rounded parts, in metres from the feet up, facing +Z (the small nose shows which way).
-      const ell = (c, r, R = 12, S = 18) => {  // an ellipsoid: centre, radii
+      // an ellipsoid: centre, radii, along its own axes (x, y, z unless given)
+      const ell = (c, r, R = 12, S = 18, ax = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]) => {
         const b = P.length / 3;
         for (let i = 0; i <= R; i++) for (let j = 0; j <= S; j++) {
           const th = i / R * Math.PI, ph = j / S * 2 * Math.PI, u = [Math.sin(th) * Math.cos(ph), Math.cos(th), Math.sin(th) * Math.sin(ph)];
-          v([c[0] + u[0] * r[0], c[1] + u[1] * r[1], c[2] + u[2] * r[2]], norm([u[0] / r[0], u[1] / r[1], u[2] / r[2]]));
+          const at = [0, 1, 2].map(k => c[k] + ax[0][k] * u[0] * r[0] + ax[1][k] * u[1] * r[1] + ax[2][k] * u[2] * r[2]);
+          v(at, norm([0, 1, 2].map(k => ax[0][k] * u[0] / r[0] + ax[1][k] * u[1] / r[1] + ax[2][k] * u[2] / r[2])));
         }
         for (let i = 0; i < R; i++) for (let j = 0; j < S; j++) { const a = b + i * (S + 1) + j, d = a + S + 1; I.push(a, d, a + 1, a + 1, d, d + 1); }
       };
@@ -738,24 +843,31 @@ const Scene3D = (() => {
         for (let j = 0; j < S; j++) { const k = b0 + j * 2; I.push(k, k + 2, k + 1, k + 1, k + 2, k + 3); }
         ell(a, [r, r, r], 8, 16); ell(b, [rb, rb, rb], 8, 16);
       };
+      // The pose: arms and legs a direction for each bone (x pointing out from the body; the person faces +Z, so their
+      // right side is -X and their left +X), the upper body turned about the waist and the head about the neck.
+      const J = figureJoints(pose && typeof pose === "object" ? pose : fullPose(pose));
+      // what's made from `from` on is turned by M about piv (its normals too)
+      const turnFrom = (from, M, piv) => { for (let i = from; i < P.length / 3; i++) {
+        const q = addv(piv, app3(M, sub(P.slice(i * 3, i * 3 + 3), piv))), n = app3(M, N.slice(i * 3, i * 3 + 3));
+        for (let c = 0; c < 3; c++) { P[i * 3 + c] = q[c]; N[i * 3 + c] = n[c]; } } };
+      const up0 = P.length / 3;
       ell([0, 1.62, 0], [0.095, 0.12, 0.105]);                  // head
       ell([0, 1.605, 0.1], [0.022, 0.03, 0.03], 6, 10);          // nose
+      turnFrom(up0, J.H, NECK);
       limb([0, 1.44, 0], [0, 1.53, 0], 0.05);                    // neck
       ell([0, 1.3, 0], [0.2, 0.17, 0.12]);                       // chest
-      ell([0, 1.1, 0], [0.15, 0.14, 0.1]);                       // waist
+      turnFrom(up0, J.S, WAIST);
+      const w0 = P.length / 3;
+      ell([0, 1.1, 0], [0.15, 0.14, 0.1]);                       // waist (half the upper body's turn)
+      turnFrom(w0, J.Sh, WAIST);
       ell([0, 0.94, 0], [0.17, 0.1, 0.11]);                      // hips
-      // Arms and legs follow the pose: a direction for each bone, x pointing out from the body. The person faces +Z,
-      // so their right side is -X and their left +X.
-      const P0 = pose && typeof pose === "object" ? pose : POSES[pose] || POSES.standing;
-      for (const [side, sx] of [["R", -1], ["L", 1]]) {
-        const bone = d => norm([d[0] * sx, d[1], d[2]]);
-        const arm = P0.arms?.[side] || POSES.standing.arms.R, leg = P0.legs?.[side] || POSES.standing.legs.R;
-        const sh = [sx * 0.2, 1.41, 0], el = addv(sh, mulv(bone(arm[0]), 0.29)), wr = addv(el, mulv(bone(arm[1]), 0.27));
-        limb(sh, el, 0.052, 0.045); limb(el, wr, 0.043, 0.035);  // upper arm, forearm
-        ell(addv(wr, mulv(bone(arm[1]), 0.055)), [0.042, 0.055, 0.042], 8, 12);  // hand
-        const hp = [sx * 0.09, 0.9, 0], kn = addv(hp, mulv(bone(leg[0]), 0.41)), an = addv(kn, mulv(bone(leg[1]), 0.41));
-        limb(hp, kn, 0.078, 0.058); limb(kn, an, 0.056, 0.042);  // thigh, shin
-        ell(addv(an, leg[2] === "back" ? [0, -0.01, -0.07] : [0, -0.035, 0.06]), [0.05, 0.04, 0.11], 8, 12);  // foot
+      for (const side of ["R", "L"]) {
+        const a = J.arms[side], l = J.legs[side];
+        limb(a.sh, a.el, 0.052, 0.045); limb(a.el, a.wr, 0.043, 0.035);  // upper arm, forearm
+        const [c, r] = HAND_SHAPE[J.hands[side]] || HAND_SHAPE.relaxed;
+        ell(addv(a.wr, mulv(a.ax[0], c)), [r[1], r[0], r[2]], 8, 12, [a.ax[1], a.ax[0], a.ax[2]]);  // hand
+        limb(l.hp, l.kn, 0.078, 0.058); limb(l.kn, l.an, 0.056, 0.042);  // thigh, shin
+        ell(addv(l.an, l.back ? [0, -0.01, -0.07] : [0, -0.035, 0.06]), [0.05, 0.04, 0.11], 8, 12);  // foot
       }
     } else {  // torus (a ring lying flat)
       const R = 0.35, r = 0.15, M = 20;
@@ -1059,6 +1171,28 @@ const Scene3D = (() => {
     renderSide(); s.dirty = true;
   }
   // A shape's size, tilt and colour are in the side panel: show it.
+  // A Person's pose at the playhead, like moving it: a key there once it has keys (or the playhead isn't at the start).
+  function setPose(po, name) {
+    if (!s?.objs.includes(po)) return;
+    const before = po.pose || "standing";
+    editPose(po, { pose: name });
+    const after = po.pose || "standing";
+    if (after !== before) {
+      // Its base pose changed its own box (sitting is shorter and deeper): keep any stretch the user gave it.
+      const from = natDims("figure", before), to = natDims("figure", after), d = po.dims || from;
+      po.dims = [0, 1, 2].map(c => +(to[c] * (from[c] > 1e-6 ? d[c] / from[c] : 1)).toFixed(3));
+    }
+    po._pmKey = null; po.mesh = primMesh(po); figureMesh(po, s.t); changed(po);
+  }
+  /* 🤸 The pose editor (posepad.js) for a Person, on its pose at the playhead; what it applies is keyed there (a preset
+     by its name, anything else as a custom pose). */
+  function poseEditor(i) {
+    const o = s?.objs[i]; if (!o || o.prim !== "figure" || typeof PosePad === "undefined") return;
+    select(i);
+    const name = postureName(postureAt(o, s.t)), d = CUSTOM.get(name);
+    PosePad.open({ who: o.name, at: s.t, preset: POSES[name] ? name : null, def: { ...completePose(poseDef(name)), label: d?.label || "", says: d?.says || "" },
+      color: o.color || PRIM_COLOR, onApply: r => setPose(o, r.preset && POSES[r.preset] ? r.preset : addPoseDef(r.def)) });
+  }
   function focusShape() { const el = s.root.querySelector(".s3-prim"); el?.scrollIntoView({ block: "nearest" }); el?.querySelector("input")?.focus(); }
   function objMenu(i, x, y, px, py) {
     const o = s.objs[i]; if (!o) return;
@@ -1074,6 +1208,7 @@ const Scene3D = (() => {
       ok && ["＋ Bigger", () => nudge(o, { k: 1.25 })],
       ok && ["－ Smaller", () => nudge(o, { k: 0.8 })],
       ok && ["⬇ Set it down on the ground", () => dropDown(o)],
+      o.prim === "figure" && ["🤸 Edit pose…", () => poseEditor(i)],
       o.prim && ["📐 Size, tilt and colour…", () => focusShape()],
       ok && ["⧉ Duplicate  (Shift+D)", () => duplicate(o)],
       ["✎ Rename…", () => rename(o)],
@@ -1162,6 +1297,7 @@ const Scene3D = (() => {
   }
   async function restore(json) {
     const d = JSON.parse(json), old = s.objs, selId = s.objs[s.sel]?.id;
+    regPoses(d.objects);
     s.objs = d.objects.map(x => {
       const o = { ...x, keys: normKeys(x.keys) }, p = old.find(q => q.id === x.id);
       if (x.prim) {
@@ -1197,7 +1333,7 @@ const Scene3D = (() => {
   const objectsOut = () => s.objs.map(o => ({ id: o.id, name: o.name, becomes: (o.becomes || "").trim(), picture: o.picture || null, ...(o.lib ? { lib: o.lib } : {}), model: o.model, mask: o.mask, pos: o.pos, yaw: o.yaw || 0, pitch: o.pitch || 0, roll: o.roll || 0,
     stretch: o.stretch || null, scale: o.scale, auto_scale: o.auto_scale, hidden: !!o.hidden, face: !!o.face, keys: o.keys || [],
     ...(o.prim ? { prim: o.prim, color: o.color || PRIM_COLOR, dims: o.dims || PRIMS[o.prim].dims, tilt: o.tilt || [0, 0] } : {}),
-    ...(o.prim === "figure" ? { pose: o.pose || "standing", gait: o.gait || null } : {}) }));
+    ...(o.prim === "figure" ? { pose: o.pose || "standing", gait: o.gait || null, poses: posesOf(o) } : {}) }));
   const saveBody = () => JSON.stringify({ objects: objectsOut(), seconds: +s.seconds || 5, camera_keys: s.camKeys, photos: s.photos, dof: s.sc.dof || {}, fx: s.sc.fx || {},
     ...(s.sc.kind === "empty" ? { aspect: s.sc.aspect, lens: s.sc.lens, backdrop: s.sc.backdrop } : {}) });
   // Saves are told to the page ("bob:save": pending, saved or failed), for V2's saved/unsaved sign.
@@ -1332,6 +1468,7 @@ const Scene3D = (() => {
             <div class="row2 s3-posef" hidden><div class="field"><label for="s3-pose">Pose</label><select id="s3-pose">${Object.entries(POSES).map(([k, p]) => `<option value="${k}">${p.label}</option>`).join("")}</select></div>
               <div class="field"><label for="s3-gait">Walk cycle</label><select id="s3-gait" title="While it moves along its path, it walks or runs, its steps matching how far it goes; stopped, it holds its pose. Tick Face where it's going (above) to have it turn the way it walks.">
                 <option value="">Off</option>${Object.entries(GAITS).map(([k, g]) => `<option value="${k}">${g.label}</option>`).join("")}</select></div></div>
+            <div class="mo-row s3-posebtn" hidden><button type="button" class="btn sm" data-act="pose-edit" title="Pose its arms, legs, body, head and hands, or pick one from the pose library (at the playhead)">🤸 Edit pose…</button></div>
             <div class="field"><label for="s3-color">Colour</label><input type="color" id="s3-color"></div>
             <div class="field"><label>Size <span class="opt s3-unit"></span></label>
               <div class="s3-dims"><label>W <input type="number" id="s3-dw" min="0.01" max="500" step="0.1"></label><label>H <input type="number" id="s3-dh" min="0.01" max="500" step="0.1"></label><label>D <input type="number" id="s3-dd" min="0.01" max="500" step="0.1"></label></div></div></div>
@@ -1348,6 +1485,7 @@ const Scene3D = (() => {
       : WM.open({ id: "scene3d", title: `🏞 ${sc.name}`, content: root, footer: foot, width: 1100, height: 720, minWidth: 720, minHeight: 480, onClose });
     const cv = root.querySelector(".s3-canvas"), hud = root.querySelector(".s3-hud");
     const gl = cv.getContext("webgl2", { antialias: true, preserveDrawingBuffer: true });
+    regPoses(sc.objects);
     s = { id: sc.id, sc, win, root, cv, hud, gl, gpu: gl ? G().gpu(gl) : null, objs: (sc.objects || []).map(o => ({ ...o, keys: normKeys(o.keys) })), sel: -1, dirty: true, hist: null, hover: null,
       cam: { yaw: 0, pitch: 0, dist: 1, target: [0, 0, -1] }, showBg: true, clay: false, bg: null, tool: "move", modal: null, mouse: null,
       t: 0, seconds: +sc.seconds || 5, camKeys: (sc.camera_keys || []).slice().sort((a, b) => a.t - b.t), camFree: false, camObj: false, camSel: false,
@@ -2915,6 +3053,7 @@ const Scene3D = (() => {
       const b = e.target.closest("[data-act],[data-tool],[data-menu],[data-i]"); if (!b || !s) return;
       const a = b.dataset.act, o = s.objs[s.sel];
       if (b.dataset.menu) return openMenu(b.dataset.menu, b);
+      if (a === "pose-edit") return poseEditor(s.sel);
       if (a === "t-loop") { try { localStorage.setItem("bob.s3loop", loopOn() ? "0" : "1"); } catch { /* not kept */ } return renderTime(); }
       if (a === "t-start") return toFrame(0);
       if (a === "t-end") return toFrame(frameCount() - 1);
@@ -3017,18 +3156,7 @@ const Scene3D = (() => {
       if (po?.prim === "figure" && id === "s3-gait") {
         po.gait = e.target.value || null; po._pmKey = null; po.mesh = primMesh(po); figureMesh(po, s.t); return changed(po);
       }
-      if (po?.prim === "figure" && id === "s3-pose") {
-        // At the playhead, like moving it: a key there once it has keys (or the playhead isn't at the start).
-        const before = po.pose || "standing";
-        editPose(po, { pose: e.target.value });
-        const after = po.pose || "standing";
-        if (after !== before) {
-          // Its base pose changed its own box (sitting is shorter and deeper): keep any stretch the user gave it.
-          const from = natDims("figure", before), to = natDims("figure", after), d = po.dims || from;
-          po.dims = [0, 1, 2].map(c => +(to[c] * (from[c] > 1e-6 ? d[c] / from[c] : 1)).toFixed(3));
-        }
-        po._pmKey = null; po.mesh = primMesh(po); figureMesh(po, s.t); return changed(po);
-      }
+      if (po?.prim === "figure" && id === "s3-pose") return setPose(po, e.target.value);
       if (po?.prim && ["s3-dw", "s3-dh", "s3-dd"].includes(id)) {
         const R = s.root, dim = x => Math.max(0.01, Math.min(500, +R.querySelector(x).value || 0.01));
         po.dims = [dim("#s3-dw"), po.prim === "plane" ? 0 : dim("#s3-dh"), dim("#s3-dd")];
@@ -3400,8 +3528,16 @@ const Scene3D = (() => {
       root.querySelector('[data-act="hide"]').textContent = o.hidden ? "Show" : "Hide";
       root.querySelector('[data-act="replace"]').hidden = !!o.prim;
       const pf = root.querySelector(".s3-prim"); pf.hidden = !o.prim;
-      root.querySelector(".s3-posef").hidden = o.prim !== "figure";
-      if (o.prim === "figure") { root.querySelector("#s3-pose").value = postureName(postureAt(o, s.t)); root.querySelector("#s3-gait").value = o.gait || ""; }
+      root.querySelector(".s3-posef").hidden = root.querySelector(".s3-posebtn").hidden = o.prim !== "figure";
+      if (o.prim === "figure") {
+        const ps = root.querySelector("#s3-pose"), nm = postureName(postureAt(o, s.t));
+        if (ps.dataset.c !== (POSES[nm] ? "" : nm)) {
+          ps.dataset.c = POSES[nm] ? "" : nm;
+          ps.innerHTML = Object.entries(POSES).map(([k, p]) => `<option value="${k}">${p.label}</option>`).join("")
+            + (POSES[nm] ? "" : `<option value="${esc(nm)}">🤸 ${esc(poseLabel(nm))}</option>`);
+        }
+        ps.value = nm; root.querySelector("#s3-gait").value = o.gait || "";
+      }
       if (o.prim) {
         const d = o.dims || PRIMS[o.prim].dims, act = document.activeElement;
         if (act !== root.querySelector("#s3-color")) root.querySelector("#s3-color").value = o.color || PRIM_COLOR;
@@ -3545,10 +3681,10 @@ const Scene3D = (() => {
       let pose = "";
       if (x.o.prim === "figure") {
         const seq = video ? (x.o.keys || []).filter(k => k.pose).map(k => k.pose).filter((p, i, a) => i === 0 || p !== a[i - 1]) : [];
-        pose = seq.length > 1 ? seq.map(p => POSES[p]?.says || "standing").join(", then ") : POSES[seq[0] || postureName(postureAt(x.o, t))]?.says || "";
+        pose = seq.length > 1 ? seq.map(p => poseSays(p) || "standing").join(", then ") : poseSays(seq[0] || postureName(postureAt(x.o, t))) || "";
         // walking or running along its path (the video: if it moves at all; a photo: if it's moving then)
         const g = GAITS[x.o.gait], moving = g && (video ? travelled(x.o, x.o.keys?.at(-1)?.t ?? 0) > 0.05 * figHeight(x.o) : !!gaitAt(x.o, t));
-        if (moving) pose = [g.says, ...(seq.length > 1 ? seq.filter(p => p !== "standing").map(p => POSES[p]?.says).filter(Boolean) : pose ? [pose] : [])].join(", then ");
+        if (moving) pose = [g.says, ...(seq.length > 1 ? seq.filter(p => p !== "standing").map(p => poseSays(p)).filter(Boolean) : pose ? [pose] : [])].join(", then ");
       }
       x.pose = pose;
       x.seen = `the ${x.looks}${x.off ? "" : ` ${x.where}`}${pose ? `, ${pose},` : ""}`;
@@ -4810,7 +4946,8 @@ const Scene3D = (() => {
       save(); setTime(s.t); renderSide(); s.dirty = true; return true;
     },
   };
-  return { mount, autoRender, current, stages, usageStrip, followPhoto, followRender, lastGuide, doingOf, stepVerb, narrateCamera: (...a) => narrateCamera(...a), addFromLibrary, camEdit, objEdit, speechSeconds, loadRates, paceNote, SPARE_TALK, select: i => s?.bg && select(i), selectCam: () => s?.bg && selectCam(),
+  return { poseEditor: i => s?.bg && poseEditor(i), poseKit: { POSES, HANDS, completePose, figureJoints, shapeOf, describePose, ARM, LEG, WAIST },
+    mount, autoRender, current, stages, usageStrip, followPhoto, followRender, lastGuide, doingOf, stepVerb, narrateCamera: (...a) => narrateCamera(...a), addFromLibrary, camEdit, objEdit, speechSeconds, loadRates, paceNote, SPARE_TALK, select: i => s?.bg && select(i), selectCam: () => s?.bg && selectCam(),
     rename: (i, name) => { const o = s?.objs[i]; if (!o || !String(name || "").trim()) return; o.name = String(name).trim().slice(0, 120); save(); renderSide(); }, CAM_MOVES, applyCameraMove, cameraOut, applySavedCamera, renderForShot, photoForShot, fromTemplate, setTemplate, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
-    _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _fill: (P, look, say) => fillGaps(P, look, say), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() } };
+    _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _fill: (P, look, say) => fillGaps(P, look, say), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() }, _cast: (t, video) => cast(t, camForRender(t), video) };
 })();
