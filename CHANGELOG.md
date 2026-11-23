@@ -5,6 +5,22 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.169.0] - 2026-11-22
+
+### Added
+- **XYZ rings on every joint in the pose editor.** Click a joint's dot (shoulder, elbow, hip, knee, head or chest) for
+  its rings, in red X (across), green Y (up) and blue Z (forward), and drag one to turn the joint about that axis.
+  - A shoulder or hip turns its whole arm or leg; an elbow or knee turns the forearm or shin.
+  - The head turns, nods and tilts; the chest twists, bends and leans.
+  - The angle shows by the mouse while you drag, and the rings stay at least 48 px across however far you zoom out.
+  - The shoulders and hips have dots now too.
+- **↶ Undo and ↷ Redo in the pose editor** (Ctrl+Z, and Ctrl+Y or Ctrl+Shift+Z). They step through every change:
+  drags, rings, sliders once let go, hands, picking a pose from the library, Mirror and Standing.
+
+### Fixed
+- **Arms and legs couldn't be dragged in the pose editor** (since 0.166.0): dragging a hand, foot, elbow or knee threw
+  an error, so only the head and chest moved. The arm and leg drags work again.
+
 ## [0.168.0] - 2026-11-22
 
 ### Added

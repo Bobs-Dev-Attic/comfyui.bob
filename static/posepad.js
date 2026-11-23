@@ -3,7 +3,9 @@
      - drag a hand or a foot and the arm or leg follows it (the elbow or knee bends the way it already does),
      - drag an elbow or a knee to swing the upper arm or thigh (the forearm or shin keeps its bend),
      - drag the head to turn and nod it, the chest to bend and twist the body,
-     - drag anywhere else to turn the view; the wheel zooms.
+     - click a joint (shoulder, elbow, hip, knee, head, chest) for its X, Y and Z rings: drag a ring to turn it about
+       that axis (the figure's own: X across, Y up, Z forward),
+     - drag anywhere else to turn the view; the wheel zooms. ↶ Undo and ↷ Redo (Ctrl+Z, Ctrl+Y) step through changes.
    Beside it, sliders for the selected part (head, body, each arm and leg, the hands), Mirror and Reset, its name and the
    words the photo and video models are told (made from the pose when left empty). On the left the pose library: the
    presets and the poses you saved (data/v2/poses.json, every project). Apply keys it on the Person at the playhead.
@@ -147,7 +149,7 @@ const PosePad = (() => {
         <div class="pp-libposes"><h4>Poses</h4><div class="pp-grid" data-g="pre"></div><h4>Saved <span class="opt">every project</span></h4><div class="pp-grid" data-g="mine"><p class="hint">Loading…</p></div></div>
         <div class="pp-libmoves" hidden><h4>Movements</h4><div class="pp-grid" data-g="mvpre"></div><h4>Saved <span class="opt">every project</span></h4><div class="pp-grid" data-g="mvmine"><p class="hint">Loading…</p></div></div></div>
       <div class="pp-view"><canvas class="pp-gl"></canvas><canvas class="pp-ov" tabindex="0" aria-label="The pose: drag a joint's dot to move it, elsewhere to turn the view"></canvas>
-        <p class="hint pp-tip">Drag a dot: hands and feet pull the arm or leg, elbows and knees swing it, the head turns, the chest bends. Drag elsewhere to turn the view; the wheel zooms.</p></div>
+        <p class="hint pp-tip"></p></div>
       <div class="pp-side"><div class="pp-moveside" hidden>
         <h4 class="pp-mvname">Pick a movement on the left</h4><p class="hint pp-mvsteps"></p>
         <label class="pp-sl"><span>Length</span><input type="range" data-len min="0.3" max="10" step="0.1" value="1.6"><output></output></label>
@@ -165,7 +167,8 @@ const PosePad = (() => {
           : `Key two or more poses on ${who} (🤸 Edit pose at different times) to keep them as a movement.`}</p></div>
         <div class="pp-poseside"><div class="pp-parts">${PARTS.map(([k, t]) => `<button type="button" class="chip-btn" data-part="${k}">${t}</button>`).join("")}</div>
         <div class="pp-ctl"></div>
-        <div class="pp-row"><button type="button" class="btn sm" data-a="mirror" title="Swap left and right">⇋ Mirror</button><button type="button" class="btn sm ghost" data-a="reset" title="Back to standing">↺ Standing</button></div>
+        <div class="pp-row"><button type="button" class="btn sm ghost" data-a="undo" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button><button type="button" class="btn sm ghost" data-a="redo" title="Redo (Ctrl+Y)" aria-label="Redo">↷</button>
+          <button type="button" class="btn sm" data-a="mirror" title="Swap left and right">⇋ Mirror</button><button type="button" class="btn sm ghost" data-a="reset" title="Back to standing">↺ Standing</button></div>
         <div class="field"><label for="pp-name">Name</label><input id="pp-name" maxlength="60" placeholder="Custom pose"></div>
         <div class="field"><label for="pp-says">Described as <span class="opt">what the photo and video models are told</span></label><textarea id="pp-says" rows="3" maxlength="200"></textarea></div>
         <button type="button" class="btn sm" data-a="save" title="Keep it in the pose library, for every project">💾 Save to the library</button></div></div>`;
@@ -211,7 +214,7 @@ const PosePad = (() => {
       m.dy = -lo;
       return m;
     }
-    const dy = () => mesh?.dy || 0, lifted = p => [p[0], p[1] + dy(), p[2]];
+    const floorY = () => mesh?.dy || 0, lifted = p => [p[0], p[1] + floorY(), p[2]];
     const MT = (y, turn = 0) => { const c = Math.cos(turn * rad), s = Math.sin(turn * rad); return [c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, y, 0, 1]; };
     function dropMoveMeshes() { for (const m of mvMeshes.values()) gpu?.drop(m); mvMeshes.clear(); }
     function rebuild() { if (!gpu) return; if (mesh) gpu.drop(mesh); mesh = meshOf(def); redraw(); }
@@ -224,7 +227,7 @@ const PosePad = (() => {
       if (mode === "moves") return paintMove(C, W, H, now);
       if (gpu && mesh) {
         gpu.begin(W, H, G.themeBg(view));
-        gpu.draw(mesh, { VP: C.VP, M: MT(dy()), eye: C.eye, key: [0.45, 0.9, 0.7], look: 0 });
+        gpu.draw(mesh, { VP: C.VP, M: MT(floorY()), eye: C.eye, key: [0.45, 0.9, 0.7], look: 0 });
         gpu.lines(GRID, C.VP, [0.5, 0.5, 0.5, 0.45]);
       }
       // the joints' dots and the bones between them
@@ -235,10 +238,11 @@ const PosePad = (() => {
       seg(J.head, J.neck); seg(J.neck, J.chest); seg(J.chest, J.waist);
       for (const sd of ["R", "L"]) { const a = J.arms[sd], l = J.legs[sd]; seg(J.neck, a.sh); seg(a.sh, a.el); seg(a.el, a.wr); seg(J.waist, l.hp); seg(l.hp, l.kn); seg(l.kn, l.an); }
       for (const h of hs) {
-        const on = h.part === part || (part === "hands" && h.kind === "hand");
-        x.beginPath(); x.arc(h.s[0], h.s[1], on ? 7 : 5.5, 0, 2 * Math.PI);
-        x.fillStyle = on ? acc : "rgba(255,255,255,0.9)"; x.fill(); x.lineWidth = 2; x.strokeStyle = on ? "#fff" : "rgba(0,0,0,0.6)"; x.stroke();
+        const on = h.part === part || (part === "hands" && h.kind === "hand"), picked = sameJ(h, selJ);
+        x.beginPath(); x.arc(h.s[0], h.s[1], picked ? 8 : on ? 7 : 5.5, 0, 2 * Math.PI);
+        x.fillStyle = on || picked ? acc : "rgba(255,255,255,0.9)"; x.fill(); x.lineWidth = picked ? 3 : 2; x.strokeStyle = on || picked ? "#fff" : "rgba(0,0,0,0.6)"; x.stroke();
       }
+      drawRings(C, x);
     }
     // the movement playing, looping (a moment's hold at its end)
     function paintMove(C, W, H, now) {
@@ -259,8 +263,8 @@ const PosePad = (() => {
       if (mode === "moves") return [];
       const J = kit.figureJoints(def), out = [{ part: "head", kind: "head", p: J.head }, { part: "body", kind: "chest", p: J.chest }];
       for (const sd of ["R", "L"]) {
-        out.push({ part: `arm${sd}`, kind: "elbow", sd, p: J.arms[sd].el }, { part: `arm${sd}`, kind: "hand", sd, p: J.arms[sd].wr },
-          { part: `leg${sd}`, kind: "knee", sd, p: J.legs[sd].kn }, { part: `leg${sd}`, kind: "foot", sd, p: J.legs[sd].an });
+        out.push({ part: `arm${sd}`, kind: "sh", sd, p: J.arms[sd].sh }, { part: `arm${sd}`, kind: "elbow", sd, p: J.arms[sd].el }, { part: `arm${sd}`, kind: "hand", sd, p: J.arms[sd].wr },
+          { part: `leg${sd}`, kind: "hp", sd, p: J.legs[sd].hp }, { part: `leg${sd}`, kind: "knee", sd, p: J.legs[sd].kn }, { part: `leg${sd}`, kind: "foot", sd, p: J.legs[sd].an });
       }
       for (const h of out) { h.p = lifted(h.p); h.s = toScreen(C, h.p); }
       return out;
@@ -313,8 +317,9 @@ const PosePad = (() => {
     });
     box.addEventListener("change", e => {
       const t = e.target;
-      if (t.dataset.hand) { def.hands[t.dataset.hand] = t.value; changed(); }
-      else if (t.hasAttribute("data-kneel")) { const { g, sd } = limbOf(part), L = def[g][sd]; L.length = 2; if (t.checked) L.push("back"); changed(); }
+      if (t.dataset.k != null) remember();
+      else if (t.dataset.hand) { def.hands[t.dataset.hand] = t.value; changed(); remember(); }
+      else if (t.hasAttribute("data-kneel")) { const { g, sd } = limbOf(part), L = def[g][sd]; L.length = 2; if (t.checked) L.push("back"); changed(); remember(); }
       else if (t === nameEl || t === saysEl) { preset = null; if (t === nameEl) autoName = false; }
     });
     box.addEventListener("click", e => {
@@ -342,13 +347,15 @@ const PosePad = (() => {
         loadPose(moveAt(kit, mv, f).pose); nameEl.value = name; autoName = false; setMode("poses");
         return;
       }
+      if (a === "undo") return undo();
+      if (a === "redo") return redo();
       if (a === "mirror") {
         const m = def;
         def = { arms: { R: m.arms.L, L: m.arms.R }, legs: { R: m.legs.L, L: m.legs.R }, spine: [m.spine[0], -m.spine[1], -m.spine[2]], head: [-m.head[0], m.head[1], -m.head[2]], hands: { R: m.hands.L, L: m.hands.R } };
         if (/^(arm|leg)[RL]$/.test(part)) part = part.slice(0, 3) + (part[3] === "R" ? "L" : "R");
-        setPart(part); changed(true);
+        setPart(part); changed(true); remember();
       }
-      if (a === "reset") { def = kit.completePose(kit.POSES.standing); changed(true); }
+      if (a === "reset") { def = kit.completePose(kit.POSES.standing); changed(true); remember(); }
       if (a === "save") saveMine();
     });
     foot.querySelector('[data-a="cancel"]').onclick = () => win.close();
@@ -363,8 +370,11 @@ const PosePad = (() => {
       win.close();
     };
 
-    /* ---- dragging in the view */
-    let drag = null;
+    /* ---- dragging in the view: a joint's dot (move it), its rings (turn it), or the view (turn it) */
+    let drag = null, selJ = null, hoverRing = -1;  // selJ: the joint clicked { kind, sd }, whose rings show
+    const AXES = [[1, 0, 0], [0, 1, 0], [0, 0, 1]], AXIS_COL = ["#e5484d", "#46a758", "#3e63dd"], AXIS_NAME = ["X", "Y", "Z"];
+    const RING = { head: 0.16, chest: 0.24, sh: 0.13, elbow: 0.11, hp: 0.15, knee: 0.12 };  // the joints that turn: their rings' radius (m)
+    const sameJ = (a, b) => !!a && !!b && a.kind === b.kind && a.sd === b.sd;
     const at = e => { const r = ov.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
     function rayTo(C, m, Q) {  // the point under the mouse on the plane through Q facing the view
       const th = Math.tan(FOV / 2), nx = m[0] / C.W * 2 - 1, ny = 1 - m[1] / C.H * 2;
@@ -372,24 +382,102 @@ const PosePad = (() => {
       const k = dot(sub(Q, C.eye), C.f) / (dot(d, C.f) || 1e-6);
       return add(C.eye, mul(d, k));
     }
+    // the selected joint's rings on screen: [{ axis, pts, c (its centre) }]
+    function rings(C = camera()) {
+      if (!selJ || !RING[selJ.kind] || mode === "moves") return [];
+      const h = handles(C).find(x => sameJ(x, selJ)); if (!h) return [];
+      // its size on the figure, but never under 48 px on screen (zoomed out, or a small joint)
+      const ppm = Math.hypot(...sub(toScreen(C, add(h.p, mul(C.r, 0.1))), h.s).slice(0, 2)) / 0.1 || 1, r = Math.max(RING[selJ.kind], 48 / ppm);
+      return AXES.map((_, k) => {
+        const e1 = AXES[(k + 1) % 3], e2 = AXES[(k + 2) % 3], pts = [];
+        for (let i = 0; i <= 48; i++) { const t = i / 48 * 2 * Math.PI; pts.push(toScreen(C, add(h.p, add(mul(e1, r * Math.cos(t)), mul(e2, r * Math.sin(t)))))); }
+        return { axis: k, pts, c: h.s };
+      });
+    }
+    const segDist = (m, a, b) => { const vx = b[0] - a[0], vy = b[1] - a[1], u = clamp(((m[0] - a[0]) * vx + (m[1] - a[1]) * vy) / (vx * vx + vy * vy || 1), 0, 1); return Math.hypot(m[0] - a[0] - u * vx, m[1] - a[1] - u * vy); };
+    function ringAt(m, C) {
+      let best = -1, bd = 7;
+      for (const R of rings(C)) for (let i = 1; i < R.pts.length; i++) { const d = segDist(m, R.pts[i - 1], R.pts[i]); if (d < bd) { bd = d; best = R.axis; } }
+      return best;
+    }
+    function drawRings(C, x) {
+      for (const R of rings(C)) {
+        const on = (drag?.ring ? drag.axis : hoverRing) === R.axis;
+        x.beginPath(); R.pts.forEach((p, i) => (i ? x.lineTo(p[0], p[1]) : x.moveTo(p[0], p[1])));
+        x.lineWidth = on ? 4 : 2.5; x.strokeStyle = AXIS_COL[R.axis]; x.globalAlpha = on ? 1 : 0.8; x.stroke(); x.globalAlpha = 1;
+      }
+      if (drag?.ring) {  // how far it's turned, by the mouse
+        const t = `${AXIS_NAME[drag.axis]} ${drag.turn >= 0 ? "+" : ""}${Math.round(drag.turn)}°`;
+        x.font = "600 12px system-ui, sans-serif"; x.lineWidth = 3; x.strokeStyle = "rgba(0,0,0,0.75)"; x.fillStyle = "#fff";
+        x.strokeText(t, drag.now[0] + 14, drag.now[1] - 10); x.fillText(t, drag.now[0] + 14, drag.now[1] - 10);
+      }
+    }
+    // v turned by th (radians) about the unit axis a
+    const turnAbout = (v, a, th) => { const c = Math.cos(th), s2 = Math.sin(th); return norm(add(add(mul(v, c), mul(cross(a, v), s2)), mul(a, dot(a, v) * (1 - c)))); };
+    /* The pose d0 with joint j turned by deg about the figure's axis k (X across, Y up, Z forward). A shoulder or hip
+       turns its whole arm or leg, an elbow or knee the forearm or shin; the head and chest change their angles
+       (head [turn, nod, tilt], spine [bend, lean, twist]: X nods or bends, Y turns or twists, Z tilts or leans). */
+    const ANG = { head: { g: "head", map: [[1, 1], [0, 1], [2, -1]], lim: [[-80, 80], [-40, 60], [-40, 40]] },
+      chest: { g: "spine", map: [[0, 1], [2, 1], [1, -1]], lim: [[-30, 90], [-40, 40], [-60, 60]] } };
+    function turnJoint(d0, j, k, turn) {
+      const d = JSON.parse(JSON.stringify(d0));
+      if (ANG[j.kind]) {
+        const A = ANG[j.kind], [i, sg] = A.map[k];
+        d[A.g][i] = clamp(d0[A.g][i] + sg * turn, ...A.lim[i]);
+        return d;
+      }
+      const arm = j.kind === "sh" || j.kind === "elbow", g = arm ? "arms" : "legs", sx = sideX(j.sd), L = d[g][j.sd];
+      const S = arm ? kit.figureJoints(d0).S : [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+      const toBody = v => app3(S, flipX(v, sx)), fromBody = v => flipX(app3(tr(S), v), sx), R = v => turnAbout(v, AXES[k], turn * rad);
+      const whole = j.kind === "sh" || j.kind === "hp";
+      d[g][j.sd] = [whole ? fromBody(R(toBody(L[0]))) : L[0], fromBody(R(toBody(L[1]))), ...(L[2] ? [L[2]] : [])];
+      return d;
+    }
     ov.addEventListener("pointerdown", e => {
-      const m = at(e), C = camera(), h = handles(C).map(x => ({ ...x, d: Math.hypot(x.s[0] - m[0], x.s[1] - m[1]) })).filter(x => x.d < 14).sort((a, b) => a.d - b.d)[0];
+      const m = at(e), C = camera();
       ov.setPointerCapture(e.pointerId);
-      if (h) { if (h.part !== part && !(part === "hands" && h.kind === "hand")) setPart(h.part); drag = { h, Q: h.p, m, def0: JSON.parse(JSON.stringify(def)) }; }
-      else drag = { orbit: true, m, yaw: cam.yaw, pitch: cam.pitch };
+      const k = ringAt(m, C);
+      if (k >= 0) {
+        const c = rings(C)[0].c;
+        drag = { ring: true, axis: k, j: { ...selJ }, c, a0: Math.atan2(m[1] - c[1], m[0] - c[0]), acc: 0, m, now: m, turn: 0, facing: dot(AXES[k], C.f), def0: JSON.parse(JSON.stringify(def)) };
+        return;
+      }
+      const h = handles(C).map(x => ({ ...x, d: Math.hypot(x.s[0] - m[0], x.s[1] - m[1]) })).filter(x => x.d < 14).sort((a, b) => a.d - b.d)[0];
+      if (h) {
+        selJ = { kind: h.kind, sd: h.sd };
+        if (h.part !== part && !(part === "hands" && h.kind === "hand")) setPart(h.part);
+        drag = { h, Q: h.p, m, def0: JSON.parse(JSON.stringify(def)) };
+        redraw();
+      } else drag = { orbit: true, m, yaw: cam.yaw, pitch: cam.pitch };
     });
     ov.addEventListener("pointermove", e => {
-      if (!drag) { const m = at(e), near = handles().some(x => Math.hypot(x.s[0] - m[0], x.s[1] - m[1]) < 14); ov.style.cursor = near ? "grab" : "default"; return; }
-      const m = at(e), dx = m[0] - drag.m[0], dy = m[1] - drag.m[1];
-      if (drag.orbit) { cam.yaw = drag.yaw - dx * 0.4; cam.pitch = clamp(drag.pitch + dy * 0.3, -20, 80); return redraw(); }
+      const m = at(e);
+      if (!drag) {
+        const C = camera(), k = ringAt(m, C);
+        if (k !== hoverRing) { hoverRing = k; redraw(); }
+        ov.style.cursor = k >= 0 || handles(C).some(x => Math.hypot(x.s[0] - m[0], x.s[1] - m[1]) < 14) ? "grab" : "default";
+        return;
+      }
+      const mx = m[0] - drag.m[0], my = m[1] - drag.m[1];
+      if (drag.orbit) { cam.yaw = drag.yaw - mx * 0.4; cam.pitch = clamp(drag.pitch + my * 0.3, -20, 80); return redraw(); }
+      if (drag.ring) {
+        // round the joint on screen; a ring seen edge on turns with the mouse going sideways
+        const a = Math.atan2(m[1] - drag.c[1], m[0] - drag.c[0]);
+        let da = a - drag.a0; while (da > Math.PI) da -= 2 * Math.PI; while (da < -Math.PI) da += 2 * Math.PI;
+        drag.acc += da; drag.a0 = a; drag.now = m;
+        drag.turn = Math.abs(drag.facing) > 0.15 ? drag.acc * deg * Math.sign(drag.facing) : mx * 0.5;
+        def = turnJoint(drag.def0, drag.j, drag.axis, drag.turn);
+        return changed(true);
+      }
       const h = drag.h, C = camera(), face = Math.cos(cam.yaw * rad) >= 0 ? 1 : -1;
-      if (h.kind === "head") { def.head[0] = clamp(drag.def0.head[0] + dx * 0.4 * face, -80, 80); def.head[1] = clamp(drag.def0.head[1] + dy * 0.4, -40, 60); return changed(true); }
-      if (h.kind === "chest") { def.spine[2] = clamp(drag.def0.spine[2] + dx * 0.3 * face, -60, 60); def.spine[0] = clamp(drag.def0.spine[0] + dy * 0.3, -30, 90); return changed(true); }
+      if (h.kind === "sh" || h.kind === "hp") return;  // a shoulder or hip turns by its rings
+      if (h.kind === "head") { def.head[0] = clamp(drag.def0.head[0] + mx * 0.4 * face, -80, 80); def.head[1] = clamp(drag.def0.head[1] + my * 0.4, -40, 60); return changed(true); }
+      if (h.kind === "chest") { def.spine[2] = clamp(drag.def0.spine[2] + mx * 0.3 * face, -60, 60); def.spine[0] = clamp(drag.def0.spine[0] + my * 0.3, -30, 90); return changed(true); }
       const p = rayTo(C, m, drag.Q), sd = h.sd, sx = sideX(sd), arm = h.kind === "elbow" || h.kind === "hand";
       const J = kit.figureJoints(def), S = arm ? J.S : [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
       const local = q => add(kit.WAIST, app3(tr(S), sub(q, kit.WAIST)));  // the body's frame (the upper body unturned)
       const g = arm ? "arms" : "legs", L = def[g][sd], root = arm ? [sx * 0.2, 1.41, 0] : [sx * 0.09, 0.9, 0], lens = arm ? kit.ARM : kit.LEG;
-      const u0 = flipX(L[0], sx), l0 = flipX(L[1], sx), t = local([p[0], p[1] - dy(), p[2]]);
+      const u0 = flipX(L[0], sx), l0 = flipX(L[1], sx), t = local([p[0], p[1] - floorY(), p[2]]);
       let u, l;
       if (h.kind === "elbow" || h.kind === "knee") { u = norm(sub(t, root)); l = carry(l0, u0, u); }
       else {
@@ -401,10 +489,35 @@ const PosePad = (() => {
       def[g][sd] = [flipX(u, sx), flipX(l, sx), ...(L[2] ? [L[2]] : [])];
       changed(true);
     });
-    const end = () => { drag = null; };
+    const end = () => { const was = drag; drag = null; if (was && !was.orbit) remember(); redraw(); };
     ov.addEventListener("pointerup", end); ov.addEventListener("pointercancel", end);
     ov.addEventListener("wheel", e => { e.preventDefault(); cam.dist = clamp(cam.dist * (e.deltaY > 0 ? 1.1 : 1 / 1.1), 1.2, 8); redraw(); }, { passive: false });
     ov.addEventListener("contextmenu", e => e.preventDefault());
+
+    /* ---- undo and redo: the pose after each change (a drag, a slider let go, a preset, Mirror…) */
+    const hist = { past: [], future: [] };
+    let kept = JSON.stringify(def);
+    function remember() {
+      const now = JSON.stringify(def); if (now === kept) return;
+      hist.past.push(kept); if (hist.past.length > 100) hist.past.shift();
+      hist.future = []; kept = now; histBtns();
+    }
+    function stepTo(json) {
+      def = JSON.parse(json); kept = json; preset = null;
+      saysEl.placeholder = kit.describePose(def) || "standing";
+      rebuild(); fillCtl(); histBtns();
+    }
+    function undo() { if (!hist.past.length) return; hist.future.push(kept); stepTo(hist.past.pop()); }
+    function redo() { if (!hist.future.length) return; hist.past.push(kept); stepTo(hist.future.pop()); }
+    function histBtns() { box.querySelector('[data-a="undo"]').disabled = !hist.past.length; box.querySelector('[data-a="redo"]').disabled = !hist.future.length; }
+    // Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z, except while typing in the name or the words
+    box.closest(".wm-win")?.addEventListener("keydown", e => {
+      if (!(e.ctrlKey || e.metaKey) || mode !== "poses") return;
+      if (e.target.matches?.("input:not([type=range]):not([type=checkbox]), textarea")) return;
+      const k = e.key.toLowerCase();
+      if (k === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
+      else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); redo(); }
+    });
 
     /* ---- the library */
     function loadPose(p, presetName = null, mine = null) {
@@ -414,7 +527,7 @@ const PosePad = (() => {
       autoName = !!presetName;
       saysEl.value = mine ? mine.says || "" : "";
       saysEl.placeholder = kit.describePose(def) || "standing";
-      rebuild(); fillCtl();
+      rebuild(); fillCtl(); remember();
     }
     function thumb(p) {
       const key = JSON.stringify(kit.completePose(p));
@@ -452,7 +565,7 @@ const PosePad = (() => {
       box.querySelectorAll("[data-tab]").forEach(b => { b.classList.toggle("on", b.dataset.tab === m); b.setAttribute("aria-selected", String(b.dataset.tab === m)); });
       $(".pp-libposes").hidden = $(".pp-poseside").hidden = m !== "poses";
       $(".pp-libmoves").hidden = $(".pp-moveside").hidden = m !== "moves";
-      $(".pp-tip").textContent = m === "moves" ? "Drag to turn the view; the wheel zooms." : "Drag a dot: hands and feet pull the arm or leg, elbows and knees swing it, the head turns, the chest bends. Drag elsewhere to turn the view; the wheel zooms.";
+      $(".pp-tip").textContent = m === "moves" ? "Drag to turn the view; the wheel zooms." : "Drag a dot: hands and feet pull the arm or leg, elbows and knees swing it. Click a joint for its X, Y, Z rings and drag one to turn it. Drag elsewhere to turn the view.";
       if (m === "moves" && !moves) loadMoves().then(() => { if (box.isConnected) drawMoves(); });
       if (m === "moves") drawMoves();
       footInfo(); t0 = performance.now(); redraw();
@@ -545,6 +658,7 @@ const PosePad = (() => {
     drawLib();
     loadLib().then(() => { if (box.isConnected) drawLib(); });
     setMode(o.tab === "moves" ? "moves" : "poses");
+    histBtns();
     return win;
   }
 
