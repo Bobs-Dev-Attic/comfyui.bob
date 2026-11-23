@@ -176,6 +176,9 @@ class GenerateRequest(BaseModel):
     motion_video_mask: str | None = Field(None, max_length=2000)
     # how H3 follows a 3D scene's rough animation: held to it (Time-to-Move), or shown it as <Video 1> on H3 Reference
     motion_guide: Literal["ttm", "reference"] = "ttm"
+    # the 3D scene's people as an OpenPose skeleton video (drawn in the page, as the rough animation): with the
+    # reference guide it goes to H3 Reference as <Video 2>, which they're told to move as
+    motion_pose_video: str | None = Field(None, max_length=2000)
     enhance: bool = False  # Klein prompt upsampler / Krea 2 prompt expander
     layout: list[LayoutBox] | None = Field(None, max_length=60)  # MOSS-Image layout control
     clean_texture: bool = True  # H3 Image: EasyFix steering + re-noise, when ComfyUI-H3-Image-EasyFix is installed
@@ -735,6 +738,10 @@ class JobManager:
         if req.engine == "motion":
             if req.kind != "video":
                 raise ValueError("Motion layers make video")
+            if req.motion_pose_video:
+                if req.motion_guide != "reference" or not req.motion_video:
+                    raise ValueError("A pose skeleton video goes with a 3D scene's render as a reference video (H3 Reference)")
+                media_path(req.motion_pose_video)
             if req.motion_guide == "reference":
                 if not req.motion_video:
                     raise ValueError("A reference video is a 3D scene's render: it needs the scene's rough animation")
@@ -975,7 +982,7 @@ class JobManager:
                 hold=req.motion_hold, edge=edge, prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras],
                 references=len(req.references), audios=len(req.ref_audios),
                 clean_audio=req.clean_audio and self.has_node("H3RefAudioPrep"), guide=req.motion_guide,
-                lock_audio=bool(req.lock_audio),
+                lock_audio=bool(req.lock_audio), pose_video=bool(req.motion_pose_video and req.motion_guide == "reference"),
             )
         if req.engine == "imgedit":
             return workflows.build_imgedit(
@@ -1061,6 +1068,19 @@ class JobManager:
                         self.log(item, f"Couldn't keep the 3D render in the project's folder: {exc}", "warn")
                     self.log(item, f"Fitted the 3D scene's rough animation: {info['frames']} frames at {info['size']}"
                              + (", starting from its own first frame" if first else ""))
+                    if "motion_pose" in built.image_inputs:  # its people's skeleton (<Video 2>), fitted the same way
+                        pose_out = config.UPLOAD_DIR / f"{item['id']}_motion_pose.mp4"
+                        await asyncio.to_thread(
+                            motion.conform, req.motion_pose_video, req.motion_pose_video, int(built.info["width"]),
+                            int(built.info["height"]), int(built.info["frames"]), pose_out,
+                            config.UPLOAD_DIR / f"{item['id']}_motion_pose_gray.mp4")
+                        try:
+                            import shutil
+
+                            shutil.copyfile(pose_out, self._media_dir(item) / f"{item['id']}_3d_pose.mp4")
+                        except Exception as exc:  # noqa: BLE001 - a copy, never the render
+                            self.log(item, f"Couldn't keep the pose skeleton in the project's folder: {exc}", "warn")
+                        self.log(item, "Fitted the people's pose skeleton (<Video 2>)")
                 else:
                     info = await asyncio.to_thread(
                         motion.render, req.first_frame, req.motion_plate, req.motion_layers, int(built.info["width"]),
@@ -1076,9 +1096,10 @@ class JobManager:
                     await asyncio.to_thread(imaging.mask_rect, media_path(req.edit_mask), rect)
                     wf.set_input(node_id, field, client.assets.from_file(rect))
                     continue
-                if role in ("motion_ref", "motion_mask"):  # motion layers: the rough animation and its mask, drawn here
+                if role in ("motion_ref", "motion_mask", "motion_pose"):  # motion layers: the rough animation, its mask, the skeleton
                     vids = {"motion_ref": config.UPLOAD_DIR / f"{item['id']}_motion.mp4",
-                            "motion_mask": config.UPLOAD_DIR / f"{item['id']}_motion_mask.mp4"}
+                            "motion_mask": config.UPLOAD_DIR / f"{item['id']}_motion_mask.mp4",
+                            "motion_pose": config.UPLOAD_DIR / f"{item['id']}_motion_pose.mp4"}
                     wf.set_input(node_id, "file", client.assets.from_file(vids[role]))
                     sent = saved.get(str(node_id))
                     if sent:

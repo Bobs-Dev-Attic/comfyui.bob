@@ -901,7 +901,11 @@ const Scene3D = (() => {
     }
     const mesh = s.gpu.upload([{ pos, nrm, uv: null, col: null, idx: new Uint32Array(I), base: [...hexRgb(o.color || PRIM_COLOR), 1], tex: null, ao: null }]);
     mesh.anchor = [(mesh.lo[0] + mesh.hi[0]) / 2, mesh.lo[1], (mesh.lo[2] + mesh.hi[2]) / 2];
-    if (fig) { const pv = turn([0, 0, 0]); mesh.pivot = pv; mesh.anchor = [pv[0], mesh.lo[1], pv[2]]; }
+    if (fig) {
+      const pv = turn([0, 0, 0]); mesh.pivot = pv; mesh.anchor = [pv[0], mesh.lo[1], pv[2]];
+      // its pose, and a point of its shape (shapeOf, figureJoints) where it is in the mesh: the skeleton's joints
+      mesh.fit = { pose: posture || o.pose || "standing", map: q => turn([0, 1, 2].map(c => (q[c] - mid[c]) * k[c])) };
+    }
     return mesh;
   }
   // Add a shape: in an empty scene at its real size in front of the camera (or at `at`); in a picture, where the
@@ -1308,6 +1312,9 @@ const Scene3D = (() => {
       [`🌫 Depth map: this frame${at} (PNG)`, () => saveDepth("frame")],
       [`🌫 Depth map: the whole clip (${frameCount()} frames, video)`, () => saveDepth("video")],
       [`🌫 Depth map: the whole clip (full-size PNGs in a .zip)`, () => saveDepth("pngs")],
+      hasPeople() && [`🦴 Pose skeleton: this frame${at} (OpenPose PNG)`, () => saveSkeleton("frame")],
+      hasPeople() && [`🦴 Pose skeleton: this frame's points (OpenPose JSON)`, () => saveSkeleton("json")],
+      hasPeople() && [`🦴 Pose skeleton: the whole clip (${frameCount()} frames, video)`, () => saveSkeleton("video")],
     ] : which === "edit" ? [
       ["↶ Undo   Ctrl+Z", () => act("undo"), !s.hist?.past.length],
       ["↷ Redo   Ctrl+Y", () => act("redo"), !s.hist?.future.length],
@@ -2030,6 +2037,7 @@ const Scene3D = (() => {
         <p class="hint">${v2x.voices.map((v, i) => `${esc(v.name)} speaks with &lt;Audio ${i + 1}&gt;`).join(", ")}: their library voices, so H3 says the lines in them. Runs on H3 Reference's model with the same motion.</p>` : ""}
       ${v2x?.lines?.some(l => String(l.text || "").trim()) ? `<label class="check" title="H3 fills spare time with words of its own. After the render, Whisper hears it in pieces, between its pauses, and a piece that isn't the lines is turned down to silence. Then the picture is drawn again with that sound held, so the lips move only for the lines: one more render (needs ComfyUI-H3-NativeAudioLock). The versions before are kept beside it."><input type="checkbox" id="s3r-quiet" checked> Silence any words that aren't the lines, and redraw the lips to match</label>
         ${retakeBelow() ? `<label class="check" title="Whisper scores the words against the lines. Under ${retakeBelow()}%, the sound is made again once (H3 Reference), the picture kept frame for frame; the new take goes beside it and the shot uses the one with the best words. One more render, only when it's needed. The threshold is in Settings > Generation."><input type="checkbox" id="s3r-retake" checked> Retake the sound once if the words come out under ${retakeBelow()}%</label>` : ""}` : ""}
+      ${hasPeople() ? `<label class="check" title="The people's OpenPose skeleton, drawn from their mannequins: the photo of the first frame gets it as a picture (Qwen Image Edit, H3 Image), and H3 Reference gets it as <Video 2> to move the people as it (experimental: it isn't trained on skeletons)"><input type="checkbox" id="s3r-pose"${lastPose() ? " checked" : ""}> 🦴 Pose guide: the people's OpenPose skeleton <span class="opt">the photo, and &lt;Video 2&gt; on H3 Reference (experimental)</span></label>` : ""}
       ${typeof Enhance !== "undefined" ? `<div class="s3r-enh"><label class="check" title="Once the render has settled (its words checked, its lips redrawn, any sound retake done), the take with the best words is enhanced; the enhanced video becomes the shot's take"><input type="checkbox" id="s3r-enh"${(() => { try { return localStorage.getItem("bob.enhance.finalOn") === "1" ? " checked" : ""; } catch { return ""; } })()}> ✨ Enhance the final take: <span class="s3r-enhsum"></span></label>
         <button type="button" class="btn sm ghost" id="s3r-enhpick" title="Choose the steps: DLSS 5, SeedVR2 or RelayVSR">Choose…</button></div>` : ""}
       ${refReady() ? `<div class="field"><label for="s3r-guide">How H3 follows the 3D scene</label><select id="s3r-guide">
@@ -2206,7 +2214,9 @@ const Scene3D = (() => {
         if (box.querySelector("#s3r-guide")) try { localStorage.setItem("bob.sceneGuide", guide); } catch { /* not kept */ }
         if (fillM) try { localStorage.setItem("bob.sceneFillModel", fillM); } catch { /* not kept */ }
         if (box.querySelector("#s3r-fill") && fromPhoto()) try { localStorage.setItem("bob.sceneGapFill", fill ? "1" : "0"); } catch { /* not kept */ }
-        const r = await buildRender({ start, look, fill, fillModel: fillM, guide, depth: true, enhance: enhOn() ? Enhance.finalOpts() : null, refs: useRefs(), hold: holdSel.value, quality: box.querySelector("#s3r-q").value, speed: spSel.value, extra: extraNow(), prompt: edited ? box.querySelector("#s3r-prompt").value : null,
+        const poseOn = !!box.querySelector("#s3r-pose")?.checked;
+        if (box.querySelector("#s3r-pose")) try { localStorage.setItem("bob.scenePose", poseOn ? "1" : "0"); } catch { /* not kept */ }
+        const r = await buildRender({ start, look, fill, fillModel: fillM, guide, pose: poseOn, depth: true, enhance: enhOn() ? Enhance.finalOpts() : null, refs: useRefs(), hold: holdSel.value, quality: box.querySelector("#s3r-q").value, speed: spSel.value, extra: extraNow(), prompt: edited ? box.querySelector("#s3r-prompt").value : null,
           what: box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder,
           onPhoto: id => { stopPhoto?.(); stopPhoto = followPhoto(id, sg); } }, m => { st.textContent = m; sg.say(m); });
         stopPhoto?.(); stopPhoto = null;
@@ -2251,7 +2261,7 @@ const Scene3D = (() => {
         say(qk ? "Making a quick photo of the first frame (keep the scene open)…" : "Making the photo of the first frame (about a minute; keep the scene open)…");
         const A = s.bg.aspect, PW = Math.round((A >= 1 ? Lg : Lg * A) / 8) * 8, PH = Math.round(PW / A / 8) * 8;
         const model = qk && editModels().some(m => m[0] === "qwen") ? "qwen" : editModels()[0][0];
-        const photo = await makePhoto([PW, PH], 0, camForRender(0), o.look || "", model, o.refs, false, true, qk ? 0.4 : null, null, o.extra?.loras);
+        const photo = await makePhoto([PW, PH], 0, camForRender(0), o.look || "", model, o.refs, false, true, qk ? 0.4 : null, null, o.extra?.loras, !!o.pose);
         o.onPhoto?.(photo.id);  // the Render window follows its progress
         const it = await waitItem(photo.id);
         photoPath = (it.files || []).find(f => /^image\//.test(f.content_type || ""))?.path || it.files?.[0]?.path;
@@ -2283,6 +2293,9 @@ const Scene3D = (() => {
       talkers = s.objs.filter(x => x.prim === "figure" && said.has(x.name.trim().toLowerCase()));
       const ref = await renderVideo("ref", [W, H], n, (f, N) => say(`${o.guide === "reference" ? "Drawing the 3D scene's render" : "Drawing the rough animation"}: frame ${f + 1} of ${N}`), proj);
       const mask = await renderVideo("mask", [W, H], n, (f, N) => say(`Drawing its mask: frame ${f + 1} of ${N}`), proj);
+      // the people's skeleton (o.pose): H3 Reference's <Video 2>, which they're told to move as
+      let pose = null;
+      if (o.pose && o.guide === "reference" && hasPeople()) pose = await skeletonVideo([W, H], (f, N) => say(`Drawing the pose skeleton: frame ${f + 1} of ${N}`));
       // the clip's depth map, to look at in the Render window (o.depth; near is white): not sent to H3
       let depth = null;
       if (o.depth) try { depth = await depthVideo([W, H], (f, N) => say(`Drawing its depth map: frame ${f + 1} of ${N}`)); }
@@ -2295,6 +2308,7 @@ const Scene3D = (() => {
         motion_hold: o.hold || "normal", motion_first: "picture", motion_guide: o.guide === "reference" ? "reference" : "ttm", project: s.sc.project, scene: s.sc.id };
       const sp = SPEEDS[o.speed]; if (sp) { req.turbo = sp.turbo; if (sp.steps) req.steps = sp.steps; }
       if (o.refs) req.references = picObjs().map(x => x.picture);
+      if (pose) req.motion_pose_video = pose;
       if (o.extra?.voices?.length) { req.ref_audios = o.extra.voices.map(v => v.ref); req.clean_audio = true; }
       if (o.extra?.quiet === false) req.quiet_extra = false;
       if (o.extra?.retake === false) req.auto_retake_below = 0;
@@ -2315,6 +2329,7 @@ const Scene3D = (() => {
         req.motion_first === "composite" ? "the objects drawn on it" : o.guide === "reference" ? "<Picture 1>" : "first frame");
       add(ref, "video", o.guide === "reference" ? "The 3D scene's render" : "The 3D video", o.guide === "reference" ? "<Video 1>" : "the rough animation H3 follows");
       if (o.guide !== "reference") add(mask, "video", "Its mask", "white: where H3 may change it");  // H3 Reference's video doesn't use it
+      add(pose, "video", "Pose skeleton", "<Video 2>: the people move as it");
       add(depth, "video", "Depth map", "the whole clip: near is white");
       (proj?.gaps || []).forEach((g, i) => add(g.ref, "image", `Fill view ${i + 1}`, `what the photo can't see, at ${g.t.toFixed(1)} s`));
       (proj?.details || []).forEach(d => add(d.ref, "image", "Close-up view", `at ${d.t.toFixed(1)} s`));
@@ -2322,7 +2337,8 @@ const Scene3D = (() => {
       (o.extra?.voices || []).forEach((v, i) => add(v.ref, "audio", `${v.name}'s voice`, `<Audio ${i + 1}>`));
       const shot = { id: s.sc.id, name: s.sc.name, thumb, seconds: n / FPS, what, cam, rev,
         req: { motion_video: ref, motion_video_mask: mask, first_frame: req.first_frame, motion_first: req.motion_first,
-          motion_hold: req.motion_hold, motion_guide: req.motion_guide, quality: req.quality, references: req.references || [], turbo: req.turbo, ...(req.steps ? { steps: req.steps } : {}) } };
+          motion_hold: req.motion_hold, motion_guide: req.motion_guide, quality: req.quality, references: req.references || [], turbo: req.turbo, ...(req.steps ? { steps: req.steps } : {}),
+          ...(pose ? { motion_pose_video: pose } : {}) } };
       return { req, shot, media };
     } finally { talkers = []; freeProjection(proj); if (s) { s.cv.width = keep[0]; s.cv.height = keep[1]; s.dirty = true; } }
   }
@@ -2656,7 +2672,7 @@ const Scene3D = (() => {
     const best = photos.reverse().find(p => Math.abs(p.t) < 0.5 / FPS && camDiff(p.cam, cam0) < 0.02);
     const start = o.start || (s.sc.picture && startsAsPicture() ? "picture" : best ? `photo:${best.id}` : editModels().length ? "newphoto" : s.sc.picture ? "picture" : "composite");
     const refs = picObjs().length > 0 && refsReady();
-    const r = await buildRender({ start, look: o.look ?? lastLook(), fill: o.fill ?? lastFill(), guide: o.guide ?? lastGuide(), refs, extra: o.extra || null, onPhoto: o.onPhoto, hold: start === "newphoto" || start === "quickphoto" || start.startsWith("photo:") ? "loose" : "normal",
+    const r = await buildRender({ start, look: o.look ?? lastLook(), fill: o.fill ?? lastFill(), guide: o.guide ?? lastGuide(), pose: o.pose ?? lastPose(), refs, extra: o.extra || null, onPhoto: o.onPhoto, hold: start === "newphoto" || start === "quickphoto" || start.startsWith("photo:") ? "loose" : "normal",
       quality: ["draft", "standard", "full"].includes(o.quality) ? o.quality : "standard", what: fromShot(text) || defaultWhat() }, say);
     return { ...r, start, refs };
   }
@@ -3806,6 +3822,9 @@ const Scene3D = (() => {
   // clay look could otherwise stay or the layout wander. Qwen Image Edit reads depth maps as a picture of their own.
   const depthLine = (tag, model) => ` ${tag(2)} is a depth map of ${tag(1)} (near is white, far is black): keep the depth, layout and proportions it shows.`;
   const depthOk = model => model === "qwen";
+  // the skeleton goes along as a picture to the models that read pose maps (Qwen Image Edit, H3 Image)
+  const poseOk = model => model === "qwen" || model === "h3image";
+  const poseLine = (tag, k) => ` ${tag(k)} is an OpenPose skeleton of the people in ${tag(1)} (coloured lines on black): pose each person exactly as their skeleton shows. Draw no skeleton, lines or dots.`;
   const lastDepth = () => { try { return localStorage.getItem("bob.scenePhotoDepth") === "1"; } catch { return false; } };
   // The video's text: tags expanded, and what the other objects are (as the first frame shows them).
   // short: in H3 Reference's full form, where subject_definitions says what each picture's subject is, an object with
@@ -4054,6 +4073,92 @@ const Scene3D = (() => {
     finally { if (s) s.dirty = true; }
   }
 
+  /* ---------------------------------------------------------------- 🦴 The people's OpenPose skeleton
+     Each Person's joints, exactly where its mannequin has them at t (its pose, walk cycle and place), seen through a
+     camera: OpenPose's 18 points (COCO: nose, neck, then right and left shoulder, elbow, wrist, hip, knee, ankle, eyes,
+     ears), drawn the way OpenPose draws them (its colours, on black). For pose guidance: the photo's edit model gets it
+     as a picture, H3 Reference as <Video 2>, and the Scene menu saves it (a picture, a video, or the points as JSON). */
+  const OP_LIMBS = [[1, 2], [1, 5], [2, 3], [3, 4], [5, 6], [6, 7], [1, 8], [8, 9], [9, 10], [1, 11], [11, 12], [12, 13], [1, 0], [0, 14], [14, 16], [0, 15], [15, 17]];
+  const OP_COLORS = [[255, 0, 0], [255, 85, 0], [255, 170, 0], [255, 255, 0], [170, 255, 0], [85, 255, 0], [0, 255, 0], [0, 255, 85], [0, 255, 170],
+    [0, 255, 255], [0, 170, 255], [0, 85, 255], [0, 0, 255], [85, 0, 255], [170, 0, 255], [255, 0, 255], [255, 0, 170], [255, 0, 85]];
+  const mul33 = (A, B) => A.map(row => [0, 1, 2].map(j => row[0] * B[0][j] + row[1] * B[1][j] + row[2] * B[2][j]));
+  const hasPeople = () => !!s?.objs.some(o => o.prim === "figure" && !o.hidden && o.pos);
+  const lastPose = () => { try { return localStorage.getItem("bob.scenePose") === "1"; } catch { return false; } };
+  // every Person's 18 points at t through cam on a W x H picture: [[x, y, 1 | 0 (not in view)] x 18] each
+  function keypointsAt([W, H], t, cam) {
+    const { VP } = viewProj(W, H, cam), out = [];
+    for (const o of s.objs) {
+      if (o.prim !== "figure" || o.hidden || !o.pos) continue;
+      figureMesh(o, t);
+      const f = o.mesh?.fit; if (!f) continue;
+      const M = mul4(VP, matOf(o, poseAt(o, t)));
+      const J = figureJoints(f.pose && typeof f.pose === "object" ? f.pose : fullPose(f.pose)), R = mul33(J.S, J.H), face = d => addv(J.head, app3(R, d));
+      const P3 = [face([0, -0.015, 0.105]), J.neck, J.arms.R.sh, J.arms.R.el, J.arms.R.wr, J.arms.L.sh, J.arms.L.el, J.arms.L.wr,
+        J.legs.R.hp, J.legs.R.kn, J.legs.R.an, J.legs.L.hp, J.legs.L.kn, J.legs.L.an,
+        face([-0.035, 0.03, 0.09]), face([0.035, 0.03, 0.09]), face([-0.095, 0, 0]), face([0.095, 0, 0])];
+      out.push(P3.map(q => {
+        const m = f.map(q), x = M[0] * m[0] + M[4] * m[1] + M[8] * m[2] + M[12], y = M[1] * m[0] + M[5] * m[1] + M[9] * m[2] + M[13], w = M[3] * m[0] + M[7] * m[1] + M[11] * m[2] + M[15];
+        if (w <= 1e-6) return [0, 0, 0];
+        const px = (x / w * 0.5 + 0.5) * W, py = (0.5 - y / w * 0.5) * H;
+        return px < 0 || py < 0 || px > W || py > H ? [0, 0, 0] : [Math.round(px * 10) / 10, Math.round(py * 10) / 10, 1];
+      }));
+    }
+    return out;
+  }
+  // the skeleton picture: { canvas, people }
+  function skeletonCanvas(size, t, cam) {
+    const [W, H] = size, c = Object.assign(document.createElement("canvas"), { width: W, height: H }), g = c.getContext("2d");
+    g.fillStyle = "#000"; g.fillRect(0, 0, W, H);
+    const people = keypointsAt(size, t, cam), sw = Math.max(2, Math.round(4 * Math.min(W, H) / 512)), rgb = q => `rgb(${q[0]},${q[1]},${q[2]})`;
+    for (const kp of people) {
+      g.globalAlpha = 0.6;
+      OP_LIMBS.forEach(([a, b], i) => {
+        const A = kp[a], B = kp[b]; if (!A[2] || !B[2]) return;
+        g.fillStyle = rgb(OP_COLORS[i]); g.beginPath();
+        g.ellipse((A[0] + B[0]) / 2, (A[1] + B[1]) / 2, Math.hypot(B[0] - A[0], B[1] - A[1]) / 2, sw, Math.atan2(B[1] - A[1], B[0] - A[0]), 0, 2 * Math.PI); g.fill();
+      });
+      g.globalAlpha = 1;
+      kp.forEach((p, i) => { if (!p[2]) return; g.fillStyle = rgb(OP_COLORS[i]); g.beginPath(); g.arc(p[0], p[1], sw, 0, 2 * Math.PI); g.fill(); });
+    }
+    return { canvas: c, people };
+  }
+  const canvasPNG = c => new Promise(r => c.toBlob(r, "image/png"));
+  // the skeleton over the whole clip, as a video (uploaded, as the depth map's): its media ref
+  async function skeletonVideo(size, progress = () => {}) {
+    const n = frameCount(), tick = () => new Promise(r => { const c = new MessageChannel(); c.port1.onmessage = r; c.port2.postMessage(0); });
+    const fd = new FormData();
+    for (let f = 0; f < n; f++) {
+      if (!s) throw new Error("The scene was closed");
+      fd.append("frame", await canvasPNG(skeletonCanvas(size, f / FPS, camForRender(f / FPS)).canvas), `${String(f).padStart(5, "0")}.png`);
+      if (f % 8 === 0) { progress(f, n); await tick(); }
+    }
+    fd.append("fps", String(FPS));
+    const r = await fetch("/api/frames/video", { method: "POST", body: fd }), j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    return j.ref;
+  }
+  // 🦴 Scene menu: the skeleton of this frame (PNG), its points (OpenPose JSON), or the whole clip (video)
+  async function saveSkeleton(mode) {
+    if (!s?.bg) return;
+    if (!hasPeople()) return Media.toast("There's no Person in the scene to draw a skeleton of.");
+    const A = s.bg.aspect, W = Math.round((A >= 1 ? 1280 : 1280 * A) / 8) * 8, H = Math.round(W / A / 8) * 8, size = [W, H];
+    const base = (s.sc.name || "scene").replace(/[^\w-]+/g, "_").slice(0, 40) || "scene";
+    const keep = (blob, name) => { const u = URL.createObjectURL(blob), x = document.createElement("a"); x.href = u; x.download = name; x.click(); setTimeout(() => URL.revokeObjectURL(u), 4000); };
+    const cam = s.camObj || s.camKeys.length ? camForRender(s.t) : s.cam;
+    try {
+      if (mode === "frame") return keep(await canvasPNG(skeletonCanvas(size, s.t, cam).canvas), `${base}_pose.png`);
+      if (mode === "json") {
+        const people = keypointsAt(size, s.t, cam).map(kp => ({ pose_keypoints_2d: kp.flat() }));
+        return keep(new Blob([JSON.stringify({ version: 1.3, people, canvas_width: W, canvas_height: H }, null, 1)], { type: "application/json" }), `${base}_pose_keypoints.json`);
+      }
+      const sizeV = [Math.round(W * 0.75 / 2) * 2, Math.round(H * 0.75 / 2) * 2];
+      const ref = await skeletonVideo(sizeV, (f, n) => Media.toast(`Pose skeleton: frame ${f + 1} of ${n}…`));
+      const x = document.createElement("a"); x.href = mediaUrl(ref); x.download = `${base}_pose.mp4`; x.click();
+      Media.toast(`Pose skeleton saved: ${frameCount()} frames.`);
+    } catch (err) { Media.toast(`Pose skeleton: ${err.message}`); }
+    finally { if (s) s.dirty = true; }
+  }
+
   /* ---------------------------------------------------------------- 📷 Generate photo */
   // `free`: something says what the objects are (the look text, a Becomes or a picture), so they're stand-ins that keep
   // only where they are, their size and pose; with nothing said they keep their shape and colour too. `person`: a human
@@ -4067,13 +4172,14 @@ const Scene3D = (() => {
     + ". Add no people or large objects that the render doesn't have. Give the surfaces real materials, light and shadows." + (look ? ` ${look[0].toUpperCase()}${look.slice(1)}${/[.!?]$/.test(look) ? "" : "."}` : "");
   // The whole text for a photo at t through cam: `pics` are the objects' pictures, `d` 1 when the depth map goes along.
   // `pasted`: the people pasted into the render (pastePeople); by default every Person with a picture among `pics`.
-  function photoText(t, cam, look, model, pics = [], d = 0, pasted = null) {
+  function photoText(t, cam, look, model, pics = [], d = 0, pasted = null, p = 0) {
     const tag = PIC_TAG[model] || PIC_TAG.qwen, seen = cast(t, cam).filter(x => !x.off);
     const said = expandTags(look, cast(t, cam)).text.trim();
     const free = !!said || pics.length > 0 || seen.some(x => x.becomes);
     const person = seen.some(x => x.o.prim === "figure" && !x.becomes && !pics.includes(x.o));
     pasted ??= [];
-    return photoPrompt(said, pics.length || d ? tag(1) : "", free, person) + (d ? depthLine(tag, model) : "") + photoObjects(t, cam, pics, model, 2 + d, free, pasted);
+    return photoPrompt(said, pics.length || d || p ? tag(1) : "", free, person) + (d ? depthLine(tag, model) : "") + (p ? poseLine(tag, 2 + d) : "")
+      + photoObjects(t, cam, pics, model, 2 + d + p, free, pasted);
   }
   const lastLook = () => { try { return localStorage.getItem("bob.scenePhotoLook") || ""; } catch { return ""; } };
   // How H3 follows a 3D scene: shown its render as a reference video (H3 Reference; the default when it's there), or
@@ -4181,7 +4287,7 @@ const Scene3D = (() => {
   // A photo of the scene at time t through `cam` (queued with the edit model); it's remembered on the scene.
   // `megapixels`: the size the edit model makes it at (the render's shape); else its own, at the render's size.
   // `prompt0`: the prompt as reviewed (and maybe edited) in the photo window, used as it is.
-  async function makePhoto(size, t, cam, look, model, usePics = false, useDepth = false, dof = false, megapixels = null, prompt0 = null, loras = null) {
+  async function makePhoto(size, t, cam, look, model, usePics = false, useDepth = false, dof = false, megapixels = null, prompt0 = null, loras = null, usePose = false) {
     if (dof && fstop()) look = [look, dofLine(false, t)].filter(Boolean).join(" ");
     // the depth map, drawn through the same camera at the same size, so it lines up with the render
     let depthRef = null;
@@ -4189,13 +4295,16 @@ const Scene3D = (() => {
       const z = depthDistances(size, t, cam), r = depthRange(z);
       if (r) depthRef = await uploadBlob(new Blob([await grayPNG(depthGray(z, r), size[0], size[1])], { type: "image/png" }), "scene_depth.png");
     }
-    const off = depthRef ? 1 : 0;
+    // the people's skeleton, through the same camera at the same size
+    let poseRef = null;
+    if (usePose && poseOk(model) && keypointsAt(size, t, cam).length) poseRef = await uploadBlob(await canvasPNG(skeletonCanvas(size, t, cam).canvas), "scene_pose.png");
+    const d0 = depthRef ? 1 : 0, p0 = poseRef ? 1 : 0, off = d0 + p0;
     const plan = usePics ? photoPlan(t, cam, model, off) : { paste: [], sent: [] };
     const paste = await pastePeople(size, t, cam, plan.paste);
     const pics = usePics ? photoPlan(t, cam, model, off, paste.map(p => p.o)).sent : [];
     const ref = await uploadFrame(size, t, cam, "scene_view.png", paste);
-    const prompt = String(prompt0 || "").trim() || photoText(t, cam, look, model, pics, off, paste.map(p => p.o));
-    const refs = [depthRef, ...pics.map(o => o.picture)].filter(Boolean);
+    const prompt = String(prompt0 || "").trim() || photoText(t, cam, look, model, pics, d0, paste.map(p => p.o), p0);
+    const refs = [depthRef, poseRef, ...pics.map(o => o.picture)].filter(Boolean);
     const items = await submit({ kind: "image", engine: "imgedit", edit_op: "instruct", source: ref, prompt, edit_model: model,
       ...(refs.length ? { references: refs } : {}), ...(megapixels ? { edit_megapixels: megapixels } : {}),
       ...(loras?.length ? { loras: loras.map(l => ({ name: l.name, strength: l.strength })) } : {}),  // V2's shot: its own and its objects' LoRAs
@@ -4232,6 +4341,7 @@ const Scene3D = (() => {
           <input type="text" maxlength="200" data-oid="${esc(x.o.id)}" value="${esc(x.o.becomes || "")}" placeholder="${x.o.prim === "figure" ? "a real person (say who: a woman in a red coat…)" : x.o.prim ? `keeps its look (a ${SHAPE[x.o.prim]}); say what it is: a pile of trash…` : "keeps its look; say what it is…"}"></label>`).join("")}</div></div>` : ""}
       <div class="field"><label for="s3p-model">Model</label><select id="s3p-model">${models.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></div>
       <label class="check s3p-depthf" title="Sends a depth map of the view along (Qwen only): it holds the layout and shapes when the look changes a lot, e.g. a whole new setting or style"><input type="checkbox" id="s3p-depth"${lastDepth() ? " checked" : ""}> Use the depth map <span class="opt">keeps the layout in a big restyle</span></label>
+      ${hasPeople() ? `<label class="check s3p-posef" title="Sends the people's OpenPose skeleton along (Qwen Image Edit, H3 Image): each person is posed exactly as their mannequin is"><input type="checkbox" id="s3p-pose"${lastPose() ? " checked" : ""}> 🦴 Use the pose skeleton <span class="opt">poses the people as their mannequins</span></label>` : ""}
       ${cast(s.t, pc).some(x => !x.off && x.o.picture) ? `<label class="check"><input type="checkbox" id="s3p-pics" checked> Use the objects' pictures</label>` : ""}
       ${v2Loras.length ? `<label class="check"><input type="checkbox" id="s3p-loras" checked> Use the shot's LoRAs <span class="opt">${v2Loras.length}: its own and its library objects'</span></label>` : ""}
       <section class="s3p-set" aria-label="Model settings"><h4>Model settings</h4><dl class="s3p-dl"></dl><div class="s3p-pics"></div></section>
@@ -4251,16 +4361,18 @@ const Scene3D = (() => {
     let edited = false;
     const usePics = () => !!box.querySelector("#s3p-pics")?.checked, model = () => box.querySelector("#s3p-model").value;
     const useDepth = () => depthOk(model()) && !!box.querySelector("#s3p-depth")?.checked;
+    const usePose = () => poseOk(model()) && !!box.querySelector("#s3p-pose")?.checked && keypointsAt([W, H], s.t, pc).length > 0;
     // What the edit model is told, and which picture is which (it follows the model: Qwen takes 2 more pictures, H3 Image 8).
     const promptNow = () => {
-      const m = model(), d = useDepth() ? 1 : 0, plan = usePics() ? photoPlan(s.t, pc, m, d) : { paste: [], sent: [], all: 0 };
+      const m = model(), d = useDepth() ? 1 : 0, p = usePose() ? 1 : 0, plan = usePics() ? photoPlan(s.t, pc, m, d + p) : { paste: [], sent: [], all: 0 };
       let look = box.querySelector("#s3p-look").value;
       if (dof && fstop()) look = [look, dofLine(false, s.t)].filter(Boolean).join(" ");
-      return photoText(s.t, pc, look, m, plan.sent, d, plan.paste);
+      return photoText(s.t, pc, look, m, plan.sent, d, plan.paste, p);
     };
     const told = () => {
-      const m = model(), d = useDepth() ? 1 : 0, plan = usePics() ? photoPlan(s.t, pc, m, d) : { paste: [], sent: [], all: 0 }, pics = plan.sent, tag = PIC_TAG[m];
+      const m = model(), d = useDepth() ? 1 : 0, p = usePose() ? 1 : 0, plan = usePics() ? photoPlan(s.t, pc, m, d + p) : { paste: [], sent: [], all: 0 }, pics = plan.sent, tag = PIC_TAG[m];
       box.querySelector(".s3p-depthf").hidden = !depthOk(m);
+      const pf = box.querySelector(".s3p-posef"); if (pf) pf.hidden = !poseOk(m);
       const all = plan.all - plan.paste.length, R = EDIT_RUN[m] || {}, mp = quick ? 0.4 : null;
       // the settings
       const outMP = mp || null, out = outMP ? (() => { const k = Math.sqrt(outMP * 1048576 / (W * H)); return `${Math.round(W * k / 32) * 32}×${Math.round(H * k / 32) * 32}`; })() : `${W}×${H}`;
@@ -4272,11 +4384,12 @@ const Scene3D = (() => {
       ].map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
       box.querySelector(".s3p-pics").innerHTML = `<span class="s3p-pic"><span class="s3p-pic0">🖼</span><b>${esc(tag(1))}</b> the render${plan.paste.length ? `, with ${esc(plan.paste.map(o => o.name).join(" and "))} pasted in` : ""}</span>`
         + (d ? `<span class="s3p-pic"><span class="s3p-pic0">🌫</span><b>${esc(tag(2))}</b> its depth map</span>` : "")
-        + pics.map((o, i) => `<span class="s3p-pic"><img src="${esc(mediaUrl(o.picture))}" alt=""><b>${esc(tag(i + 2 + d))}</b> ${esc(o.name)}</span>`).join("");
+        + (p ? `<span class="s3p-pic"><span class="s3p-pic0">🦴</span><b>${esc(tag(2 + d))}</b> the pose skeleton</span>` : "")
+        + pics.map((o, i) => `<span class="s3p-pic"><img src="${esc(mediaUrl(o.picture))}" alt=""><b>${esc(tag(i + 2 + d + p))}</b> ${esc(o.name)}</span>`).join("");
       if (!edited) box.querySelector("#s3p-prompt").value = promptNow();
       box.querySelector(".s3-said").innerHTML = (edited ? `<span class="warn">Edited: Generate sends it as it is. ↻ Rebuild puts the built one back.</span> ` : "")
         + (plan.paste.length ? `${esc(plan.paste.map(o => o.name).join(" and "))} ${plan.paste.length === 1 ? "is" : "are"} pasted in from ${plan.paste.length === 1 ? "a picture" : "their pictures"}, so no picture of them is sent as well (if a picture has no whole person to cut out, it's sent instead and named in the prompt).` : "")
-        + (usePics() && all > pics.length ? ` <span class="warn">${EDIT_NAMES[m]} takes ${PHOTO_PICS[m]} picture${PHOTO_PICS[m] === 1 ? "" : "s"} besides the render${d ? ", one of them the depth map" : ""}: ${all - pics.length} object picture${all - pics.length === 1 ? "" : "s"} left out.</span>` : "");
+        + (usePics() && all > pics.length ? ` <span class="warn">${EDIT_NAMES[m]} takes ${PHOTO_PICS[m]} picture${PHOTO_PICS[m] === 1 ? "" : "s"} besides the render${d || p ? `, ${[d && "the depth map", p && "the pose skeleton"].filter(Boolean).join(" and ")} among them` : ""}: ${all - pics.length} object picture${all - pics.length === 1 ? "" : "s"} left out.</span>` : "");
     };
     box.querySelector("#s3p-prompt").addEventListener("input", () => { if (!edited) { edited = true; told(); } });
     box.querySelector('[data-a="rebuild"]').onclick = () => { edited = false; told(); };
@@ -4301,7 +4414,8 @@ const Scene3D = (() => {
       try {
         st.textContent = "Drawing the view and sending it to the edit model…";
         try { localStorage.setItem("bob.scenePhotoDepth", box.querySelector("#s3p-depth")?.checked ? "1" : "0"); } catch { /* not kept */ }
-        item = await makePhoto([W, H], s.t, pc, look, model(), usePics(), useDepth(), dof, quick ? 0.4 : null, edited ? box.querySelector("#s3p-prompt").value : null, useLoras() ? v2Loras : null);
+        if (box.querySelector("#s3p-pose")) try { localStorage.setItem("bob.scenePose", box.querySelector("#s3p-pose").checked ? "1" : "0"); } catch { /* not kept */ }
+        item = await makePhoto([W, H], s.t, pc, look, model(), usePics(), useDepth(), dof, quick ? 0.4 : null, edited ? box.querySelector("#s3p-prompt").value : null, useLoras() ? v2Loras : null, usePose());
       } catch (err) { stopUse?.(); stopUse = null; st.textContent = ""; e.target.disabled = false; Media.toast(`Photo: ${err.message}`); return; }
       finally { if (s) { s.cv.width = size0[0]; s.cv.height = size0[1]; s.dirty = true; } }
       // the window stays open while it's made (closing it doesn't stop it), then shows the photo
@@ -5001,5 +5115,5 @@ const Scene3D = (() => {
   return { poseEditor: (i, tab) => s?.bg && poseEditor(i, tab), poseKit: { POSES, HANDS, completePose, mixPose, figureJoints, shapeOf, describePose, ARM, LEG, WAIST },
     mount, autoRender, current, stages, usageStrip, followPhoto, followRender, lastGuide, doingOf, stepVerb, narrateCamera: (...a) => narrateCamera(...a), addFromLibrary, camEdit, objEdit, speechSeconds, loadRates, paceNote, SPARE_TALK, select: i => s?.bg && select(i), selectCam: () => s?.bg && selectCam(),
     rename: (i, name) => { const o = s?.objs[i]; if (!o || !String(name || "").trim()) return; o.name = String(name).trim().slice(0, 120); save(); renderSide(); }, CAM_MOVES, applyCameraMove, cameraOut, applySavedCamera, renderForShot, photoForShot, fromTemplate, setTemplate, create, createEmpty, createFor, projectScenes, inputPictures, open, openList, onItem, resume, refreshPanel, _state: () => s, _poseAt: (o, t) => poseAt(o, t), _addPrim: (k, at) => addPrim(k, at), _menu: (px, py) => { const r = s.cv.getBoundingClientRect(), h = pick(px, py); h >= 0 ? objMenu(h, r.left + px, r.top + py, px, py) : spaceMenu(r.left + px, r.top + py, px, py); }, _draw: (r = null) => s && s.bg && draw(r),
-    _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _fill: (P, look, say) => fillGaps(P, look, say), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() }, _cast: (t, video) => cast(t, camForRender(t), video) };
+    _render: (kind, size, n, proj = null) => renderVideo(kind, size, n, () => {}, proj), _project: (ref, t0, cam) => prepareProjection(ref, t0, cam), _fill: (P, look, say) => fillGaps(P, look, say), _info: () => s && s.bg && { moves: cameraMoves(), picture: startsAsPicture(), frames: frameCount() }, _cast: (t, video) => cast(t, camForRender(t), video), _skeleton: (size, t) => skeletonCanvas(size, t, camForRender(t)) };
 })();

@@ -81,6 +81,7 @@ def build_motion(
     clean_audio: bool = False,
     guide: str = "ttm",
     lock_audio: bool = False,
+    pose_video: bool = False,
 ) -> Built:
     """Motion layers (app/motion.py): H3 image-to-video from the original picture, with Time-to-Move
     (vloTimeToMove from ComfyUI-vlo) holding the moved objects to a rough cut-and-drag animation.
@@ -137,6 +138,9 @@ def build_motion(
     ref = g.add("LoadVideo", file="")
     ref_parts = g.add("GetVideoComponents", video=o(ref))
     if ref_model:
+        if pose_video and by_ref:  # the people's OpenPose skeleton (image_inputs motion_pose): <Video 2>
+            prompt += ("\n\n<Video 2> is an OpenPose skeleton of the people in <Video 1> (coloured lines on black), frame for frame: "
+                       "each person moves and poses exactly as their skeleton does. Draw no skeleton, lines or dots.")
         prompt = f"{h3_frame_alignment(True, False, length)}\n\n{prompt}"
         cond_inputs: dict[str, Any] = dict(clip=o(clip), vae=o(vae), audio_vae=o(audio_vae), prompt=prompt, width=width,
                                            height=height, length=length, ref_image_size="match")
@@ -155,6 +159,10 @@ def build_motion(
             cond_inputs[f"ref_audios.ref_audio_{i}"] = a
         if by_ref:  # the 3D scene's move: <Video 1>
             cond_inputs["ref_videos.ref_video_0"] = o(ref_parts, 0)
+            if pose_video:  # its people's skeleton: <Video 2>
+                pose = g.add("LoadVideo", file="")
+                image_inputs["motion_pose"] = pose
+                cond_inputs["ref_videos.ref_video_1"] = o(g.add("GetVideoComponents", video=o(pose)), 0)
         cond = g.add("MiniMaxH3ReferenceToVideo", **cond_inputs)
     else:
         cond = g.add("MiniMaxH3ImageToVideo", clip=o(clip), vae=o(vae), prompt=prompt, width=width, height=height,
@@ -198,7 +206,7 @@ def build_motion(
         image_inputs={**image_inputs, "motion_ref": ref, **({"motion_mask": msk} if msk else {})},
         info={"width": width, "height": height, "frames": length, "seconds": round(length / FPS, 2), "steps": n_steps,
               "turbo": use_turbo, "final_prompt": prompt, **({"audio": "held (lips drawn to it)"} if lock_audio else {}),
-              **({"guide": "reference video (<Video 1>)"} if by_ref else {"guide": "Time-to-Move", "hold_steps": f"1-{end}", "edge": edge}),
+              **({"guide": "reference video (<Video 1>)" + (", pose skeleton (<Video 2>)" if pose_video else "")} if by_ref else {"guide": "Time-to-Move", "hold_steps": f"1-{end}", "edge": edge}),
               **({"references": references, "model": "H3 Reference", "scheduler": scheduler} if ref_model else {})},
     )
 

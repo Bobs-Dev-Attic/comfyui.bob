@@ -5,6 +5,21 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.168.0] - 2026-11-22
+
+### Added
+- **🦴 The people's OpenPose skeleton, for pose guidance.** It's drawn exactly from each Person's mannequin at every
+  frame (its pose, movement, walk cycle and place), seen through the shot camera: OpenPose's 18 points in OpenPose's
+  colours, on black.
+  - **Photos:** "🦴 Use the pose skeleton" in the photo window sends it to Qwen Image Edit or H3 Image as a picture
+    (after the depth map when that goes too), and the prompt tells the model to pose each person as their skeleton.
+  - **Renders:** "🦴 Pose guide" in the Render window uses it for the photo of the first frame. With the reference
+    guide, it also goes to H3 Reference as **`<Video 2>`**, which the people are told to move as. That video use is
+    experimental: H3 isn't trained on skeletons. V2's Generate follows the same setting.
+  - **Exports:** the Scene menu saves this frame's skeleton (OpenPose PNG), its points (OpenPose JSON keypoints) or the
+    whole clip's (video), for ControlNets and other tools.
+- The skeleton video H3 got is kept in the scene's folder beside the 3D render (`<id>_3d_pose.mp4`).
+
 ## [0.167.0] - 2026-11-22
 
 ### Added
