@@ -82,6 +82,7 @@ def build_motion(
     guide: str = "ttm",
     lock_audio: bool = False,
     pose_video: bool = False,
+    pose_control: float = 0.0,
 ) -> Built:
     """Motion layers (app/motion.py): H3 image-to-video from the original picture, with Time-to-Move
     (vloTimeToMove from ComfyUI-vlo) holding the moved objects to a rough cut-and-drag animation.
@@ -108,7 +109,12 @@ def build_motion(
     lock_audio (image_inputs lock_audio: a sound, or a video's soundtrack): the video's sound is that, exactly, and only
     the picture is sampled, attending to it (MiniMaxH3NativeAudioLock, ComfyUI-H3-NativeAudioLock), so the lips
     follow it. A render whose extra words were silenced is drawn again this way: the mouth then moves only for the
-    lines."""
+    lines.
+
+    pose_video (image_inputs motion_pose: the people's OpenPose skeleton, drawn by the caller as the rough animation):
+    with pose_control > 0 and the H3 Fun ControlNet Union (files fun_controlnet), it steers the people's pose in every
+    frame at that strength (MiniMaxH3FunControlNetApply, a patch on the model, either guide); without it, on the
+    reference guide, it goes to H3 Reference as <Video 2>, which the prompt says to move as."""
     if not 0 <= references <= H3_MAX_REFS - 1:
         raise ValueError(f"A scene render takes at most {H3_MAX_REFS - 1} object pictures")
     g = Graph()
@@ -137,8 +143,20 @@ def build_motion(
     image_inputs: dict[str, str] = {"first_frame": first}
     ref = g.add("LoadVideo", file="")
     ref_parts = g.add("GetVideoComponents", video=o(ref))
+    pose_parts = None
+    if pose_video:  # the people's OpenPose skeleton (image_inputs motion_pose)
+        pose = g.add("LoadVideo", file="")
+        image_inputs["motion_pose"] = pose
+        pose_parts = g.add("GetVideoComponents", video=o(pose))
+    use_cn = bool(pose_parts and pose_control > 0 and files.get("fun_controlnet"))
+    if use_cn:  # H3 Fun ControlNet Union: the skeleton steers the people's pose in every frame
+        patch = g.add("ModelPatchLoader", name=files["fun_controlnet"])
+        model = g.add("MiniMaxH3FunControlNetApply", model=o(model), model_patch=o(patch), vae=o(vae), strength=float(pose_control),
+                      start_percent=0.0, end_percent=1.0, control_video=o(pose_parts, 0))
+    elif pose_parts and not by_ref:
+        raise ValueError("A pose skeleton without the H3 Fun ControlNet goes to H3 Reference: use the reference guide")
     if ref_model:
-        if pose_video and by_ref:  # the people's OpenPose skeleton (image_inputs motion_pose): <Video 2>
+        if pose_parts and by_ref and not use_cn:  # without the ControlNet: <Video 2>
             prompt += ("\n\n<Video 2> is an OpenPose skeleton of the people in <Video 1> (coloured lines on black), frame for frame: "
                        "each person moves and poses exactly as their skeleton does. Draw no skeleton, lines or dots.")
         prompt = f"{h3_frame_alignment(True, False, length)}\n\n{prompt}"
@@ -159,10 +177,8 @@ def build_motion(
             cond_inputs[f"ref_audios.ref_audio_{i}"] = a
         if by_ref:  # the 3D scene's move: <Video 1>
             cond_inputs["ref_videos.ref_video_0"] = o(ref_parts, 0)
-            if pose_video:  # its people's skeleton: <Video 2>
-                pose = g.add("LoadVideo", file="")
-                image_inputs["motion_pose"] = pose
-                cond_inputs["ref_videos.ref_video_1"] = o(g.add("GetVideoComponents", video=o(pose)), 0)
+            if pose_parts and not use_cn:  # its people's skeleton: <Video 2>
+                cond_inputs["ref_videos.ref_video_1"] = o(pose_parts, 0)
         cond = g.add("MiniMaxH3ReferenceToVideo", **cond_inputs)
     else:
         cond = g.add("MiniMaxH3ImageToVideo", clip=o(clip), vae=o(vae), prompt=prompt, width=width, height=height,
@@ -206,7 +222,8 @@ def build_motion(
         image_inputs={**image_inputs, "motion_ref": ref, **({"motion_mask": msk} if msk else {})},
         info={"width": width, "height": height, "frames": length, "seconds": round(length / FPS, 2), "steps": n_steps,
               "turbo": use_turbo, "final_prompt": prompt, **({"audio": "held (lips drawn to it)"} if lock_audio else {}),
-              **({"guide": "reference video (<Video 1>)" + (", pose skeleton (<Video 2>)" if pose_video else "")} if by_ref else {"guide": "Time-to-Move", "hold_steps": f"1-{end}", "edge": edge}),
+              **({"pose_guide": f"H3 Fun ControlNet (strength {pose_control:g})"} if use_cn else {}),
+              **({"guide": "reference video (<Video 1>)" + (", pose skeleton (<Video 2>)" if pose_parts and not use_cn else "")} if by_ref else {"guide": "Time-to-Move", "hold_steps": f"1-{end}", "edge": edge}),
               **({"references": references, "model": "H3 Reference", "scheduler": scheduler} if ref_model else {})},
     )
 

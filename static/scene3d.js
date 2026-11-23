@@ -2037,7 +2037,10 @@ const Scene3D = (() => {
         <p class="hint">${v2x.voices.map((v, i) => `${esc(v.name)} speaks with &lt;Audio ${i + 1}&gt;`).join(", ")}: their library voices, so H3 says the lines in them. Runs on H3 Reference's model with the same motion.</p>` : ""}
       ${v2x?.lines?.some(l => String(l.text || "").trim()) ? `<label class="check" title="H3 fills spare time with words of its own. After the render, Whisper hears it in pieces, between its pauses, and a piece that isn't the lines is turned down to silence. Then the picture is drawn again with that sound held, so the lips move only for the lines: one more render (needs ComfyUI-H3-NativeAudioLock). The versions before are kept beside it."><input type="checkbox" id="s3r-quiet" checked> Silence any words that aren't the lines, and redraw the lips to match</label>
         ${retakeBelow() ? `<label class="check" title="Whisper scores the words against the lines. Under ${retakeBelow()}%, the sound is made again once (H3 Reference), the picture kept frame for frame; the new take goes beside it and the shot uses the one with the best words. One more render, only when it's needed. The threshold is in Settings > Generation."><input type="checkbox" id="s3r-retake" checked> Retake the sound once if the words come out under ${retakeBelow()}%</label>` : ""}` : ""}
-      ${hasPeople() ? `<label class="check" title="The people's OpenPose skeleton, drawn from their mannequins: the photo of the first frame gets it as a picture (Qwen Image Edit, H3 Image), and H3 Reference gets it as <Video 2> to move the people as it (experimental: it isn't trained on skeletons)"><input type="checkbox" id="s3r-pose"${lastPose() ? " checked" : ""}> 🦴 Pose guide: the people's OpenPose skeleton <span class="opt">the photo, and &lt;Video 2&gt; on H3 Reference (experimental)</span></label>` : ""}
+      ${hasPeople() ? (poseCn()
+        ? `<div class="s3r-posecn"><label class="check" title="The people's OpenPose skeleton, drawn from their mannequins, steers their pose in every frame through H3's Fun ControlNet Union (either guide); the photo of the first frame gets it as a picture too (Qwen Image Edit, H3 Image)"><input type="checkbox" id="s3r-pose"${lastPose() ? " checked" : ""}> 🦴 Pose guide: the H3 Fun ControlNet poses the people as their mannequins</label>
+          <select id="s3r-posestr" aria-label="How hard the pose guide holds the people" title="How hard it holds the people to their skeletons: lower leaves H3 more room">${[[1, "Strong"], [0.7, "Medium"], [0.45, "Light"]].map(([v, n]) => `<option value="${v}"${Math.abs(v - lastPoseStr()) < 0.01 ? " selected" : ""}>${n}</option>`).join("")}</select></div>`
+        : `<label class="check" title="The people's OpenPose skeleton, drawn from their mannequins: the photo of the first frame gets it as a picture (Qwen Image Edit, H3 Image), and H3 Reference gets it as <Video 2> to move the people as it (experimental: it isn't trained on skeletons). With H3's Fun ControlNet Union in ComfyUI (models/model_patches), it steers them properly."><input type="checkbox" id="s3r-pose"${lastPose() ? " checked" : ""}> 🦴 Pose guide: the people's OpenPose skeleton <span class="opt">the photo, and &lt;Video 2&gt; on H3 Reference (experimental)</span></label>`) : ""}
       ${typeof Enhance !== "undefined" ? `<div class="s3r-enh"><label class="check" title="Once the render has settled (its words checked, its lips redrawn, any sound retake done), the take with the best words is enhanced; the enhanced video becomes the shot's take"><input type="checkbox" id="s3r-enh"${(() => { try { return localStorage.getItem("bob.enhance.finalOn") === "1" ? " checked" : ""; } catch { return ""; } })()}> ✨ Enhance the final take: <span class="s3r-enhsum"></span></label>
         <button type="button" class="btn sm ghost" id="s3r-enhpick" title="Choose the steps: DLSS 5, SeedVR2 or RelayVSR">Choose…</button></div>` : ""}
       ${refReady() ? `<div class="field"><label for="s3r-guide">How H3 follows the 3D scene</label><select id="s3r-guide">
@@ -2214,9 +2217,10 @@ const Scene3D = (() => {
         if (box.querySelector("#s3r-guide")) try { localStorage.setItem("bob.sceneGuide", guide); } catch { /* not kept */ }
         if (fillM) try { localStorage.setItem("bob.sceneFillModel", fillM); } catch { /* not kept */ }
         if (box.querySelector("#s3r-fill") && fromPhoto()) try { localStorage.setItem("bob.sceneGapFill", fill ? "1" : "0"); } catch { /* not kept */ }
-        const poseOn = !!box.querySelector("#s3r-pose")?.checked;
+        const poseOn = !!box.querySelector("#s3r-pose")?.checked, poseStrength = parseFloat(box.querySelector("#s3r-posestr")?.value || "") || lastPoseStr();
         if (box.querySelector("#s3r-pose")) try { localStorage.setItem("bob.scenePose", poseOn ? "1" : "0"); } catch { /* not kept */ }
-        const r = await buildRender({ start, look, fill, fillModel: fillM, guide, pose: poseOn, depth: true, enhance: enhOn() ? Enhance.finalOpts() : null, refs: useRefs(), hold: holdSel.value, quality: box.querySelector("#s3r-q").value, speed: spSel.value, extra: extraNow(), prompt: edited ? box.querySelector("#s3r-prompt").value : null,
+        if (box.querySelector("#s3r-posestr")) try { localStorage.setItem("bob.scenePoseStr", String(poseStrength)); } catch { /* not kept */ }
+        const r = await buildRender({ start, look, fill, fillModel: fillM, guide, pose: poseOn, poseStrength, depth: true, enhance: enhOn() ? Enhance.finalOpts() : null, refs: useRefs(), hold: holdSel.value, quality: box.querySelector("#s3r-q").value, speed: spSel.value, extra: extraNow(), prompt: edited ? box.querySelector("#s3r-prompt").value : null,
           what: box.querySelector("#s3r-what").value.trim() || box.querySelector("#s3r-what").placeholder,
           onPhoto: id => { stopPhoto?.(); stopPhoto = followPhoto(id, sg); } }, m => { st.textContent = m; sg.say(m); });
         stopPhoto?.(); stopPhoto = null;
@@ -2295,7 +2299,7 @@ const Scene3D = (() => {
       const mask = await renderVideo("mask", [W, H], n, (f, N) => say(`Drawing its mask: frame ${f + 1} of ${N}`), proj);
       // the people's skeleton (o.pose): H3 Reference's <Video 2>, which they're told to move as
       let pose = null;
-      if (o.pose && o.guide === "reference" && hasPeople()) pose = await skeletonVideo([W, H], (f, N) => say(`Drawing the pose skeleton: frame ${f + 1} of ${N}`));
+      if (o.pose && hasPeople() && (poseCn() || o.guide === "reference")) pose = await skeletonVideo([W, H], (f, N) => say(`Drawing the pose skeleton: frame ${f + 1} of ${N}`));
       // the clip's depth map, to look at in the Render window (o.depth; near is white): not sent to H3
       let depth = null;
       if (o.depth) try { depth = await depthVideo([W, H], (f, N) => say(`Drawing its depth map: frame ${f + 1} of ${N}`)); }
@@ -2308,7 +2312,7 @@ const Scene3D = (() => {
         motion_hold: o.hold || "normal", motion_first: "picture", motion_guide: o.guide === "reference" ? "reference" : "ttm", project: s.sc.project, scene: s.sc.id };
       const sp = SPEEDS[o.speed]; if (sp) { req.turbo = sp.turbo; if (sp.steps) req.steps = sp.steps; }
       if (o.refs) req.references = picObjs().map(x => x.picture);
-      if (pose) req.motion_pose_video = pose;
+      if (pose) { req.motion_pose_video = pose; req.motion_pose_strength = poseCn() ? (o.poseStrength ?? lastPoseStr()) : 1; }
       if (o.extra?.voices?.length) { req.ref_audios = o.extra.voices.map(v => v.ref); req.clean_audio = true; }
       if (o.extra?.quiet === false) req.quiet_extra = false;
       if (o.extra?.retake === false) req.auto_retake_below = 0;
@@ -2329,7 +2333,7 @@ const Scene3D = (() => {
         req.motion_first === "composite" ? "the objects drawn on it" : o.guide === "reference" ? "<Picture 1>" : "first frame");
       add(ref, "video", o.guide === "reference" ? "The 3D scene's render" : "The 3D video", o.guide === "reference" ? "<Video 1>" : "the rough animation H3 follows");
       if (o.guide !== "reference") add(mask, "video", "Its mask", "white: where H3 may change it");  // H3 Reference's video doesn't use it
-      add(pose, "video", "Pose skeleton", "<Video 2>: the people move as it");
+      add(pose, "video", "Pose skeleton", poseCn() ? `the H3 Fun ControlNet poses the people as it (strength ${req.motion_pose_strength})` : "<Video 2>: the people move as it");
       add(depth, "video", "Depth map", "the whole clip: near is white");
       (proj?.gaps || []).forEach((g, i) => add(g.ref, "image", `Fill view ${i + 1}`, `what the photo can't see, at ${g.t.toFixed(1)} s`));
       (proj?.details || []).forEach(d => add(d.ref, "image", "Close-up view", `at ${d.t.toFixed(1)} s`));
@@ -2338,7 +2342,7 @@ const Scene3D = (() => {
       const shot = { id: s.sc.id, name: s.sc.name, thumb, seconds: n / FPS, what, cam, rev,
         req: { motion_video: ref, motion_video_mask: mask, first_frame: req.first_frame, motion_first: req.motion_first,
           motion_hold: req.motion_hold, motion_guide: req.motion_guide, quality: req.quality, references: req.references || [], turbo: req.turbo, ...(req.steps ? { steps: req.steps } : {}),
-          ...(pose ? { motion_pose_video: pose } : {}) } };
+          ...(pose ? { motion_pose_video: pose, motion_pose_strength: req.motion_pose_strength } : {}) } };
       return { req, shot, media };
     } finally { talkers = []; freeProjection(proj); if (s) { s.cv.width = keep[0]; s.cv.height = keep[1]; s.dirty = true; } }
   }
@@ -4084,6 +4088,9 @@ const Scene3D = (() => {
   const mul33 = (A, B) => A.map(row => [0, 1, 2].map(j => row[0] * B[0][j] + row[1] * B[1][j] + row[2] * B[2][j]));
   const hasPeople = () => !!s?.objs.some(o => o.prim === "figure" && !o.hidden && o.pos);
   const lastPose = () => { try { return localStorage.getItem("bob.scenePose") === "1"; } catch { return false; } };
+  // the H3 Fun ControlNet Union is there: the skeleton steers the people in the video (either guide), at this strength
+  const poseCn = () => !!state.caps?.editor?.posecn;
+  const lastPoseStr = () => { let v = NaN; try { v = parseFloat(localStorage.getItem("bob.scenePoseStr")); } catch { /* none kept */ } return v > 0 && v <= 2 ? v : 1; };
   // every Person's 18 points at t through cam on a W x H picture: [[x, y, 1 | 0 (not in view)] x 18] each
   function keypointsAt([W, H], t, cam) {
     const { VP } = viewProj(W, H, cam), out = [];

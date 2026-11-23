@@ -925,6 +925,8 @@ details.post-proc > .hint { margin: 0 0 10px; }
 .s3r-um > i > i { display: block; height: 100%; background: var(--accent); transition: width .6s ease; }
 .s3r-um.hot b { color: #e5484d; }
 .s3r-um.hot > i > i { background: #e5484d; }
+.s3r-posecn { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.s3r-posecn select { width: auto; }
 .s3r-enh { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .s3r-enhsum { font-weight: 600; }
 .s3p-res { width: 100%; cursor: zoom-in; }
