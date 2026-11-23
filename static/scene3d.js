@@ -62,6 +62,21 @@ const Scene3D = (() => {
     return ks.map((k, i) => { const add = i ? 17 * k : 5 + 17 * k, p = { start: at, frames: add, wstart: at - (i ? LONG_OV : 0), window: add + (i ? LONG_OV : 0) }; at += add; return p; });
   }
   // Python's round(): halves to the even number (so both plans agree)
+  /* Frames drawn in the page, to the server in batches of 240 (/api/frames/video: a form takes at most that many, and a
+     minute is 1441 frames): add(blob, name) for each, in order, then done() -> the video's media ref. */
+  function frameSink(fps = FPS, batch = 240) {
+    const session = [...crypto.getRandomValues(new Uint8Array(8))].map(b => b.toString(16).padStart(2, "0")).join("");
+    let fd = new FormData(), k = 0, start = 0;
+    const send = async final => {
+      fd.append("session", session); fd.append("start", String(start));
+      if (final) { fd.append("final", "1"); fd.append("fps", String(fps)); }
+      const r = await fetch("/api/frames/video", { method: "POST", body: fd }), j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detail || r.statusText);
+      start += k; k = 0; fd = new FormData();
+      return j;
+    };
+    return { async add(blob, name) { fd.append("frame", blob, name); if (++k >= batch) await send(false); }, async done() { return (await send(true)).ref; } };
+  }
   const pyRound = x => { const f = Math.floor(x), d = x - f; return d > 0.5 ? f + 1 : d < 0.5 ? f : f % 2 ? f + 1 : f; };
   const near = (a, b) => Math.abs(a - b) < 0.5 / FPS;
 
@@ -1695,7 +1710,7 @@ const Scene3D = (() => {
     return out;
   }
   async function renderVideo(kind, size, n, progress, proj = null) {
-    const fd = new FormData();
+    const sink = frameSink();
     const mask = kind === "mask" ? (proj ? "proj" : cameraMoves() ? "all" : "objects") : null;
     for (let f = 0; f < n; f++) {
       if (!s) throw new Error("The scene was closed");
@@ -1744,13 +1759,10 @@ const Scene3D = (() => {
       // toDataURL is synchronous: toBlob's callback (and setTimeout) crawl when the tab is in the background
       const url = out.toDataURL(mask ? "image/png" : "image/jpeg", 0.92), bin = atob(url.slice(url.indexOf(",") + 1));
       const bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      fd.append("frame", new Blob([bytes], { type: mask ? "image/png" : "image/jpeg" }), `${String(f).padStart(5, "0")}.${mask ? "png" : "jpg"}`);
+      await sink.add(new Blob([bytes], { type: mask ? "image/png" : "image/jpeg" }), `${String(f).padStart(5, "0")}.${mask ? "png" : "jpg"}`);
       if (f % 8 === 0) { progress(f, n); await new Promise(r => { const c = new MessageChannel(); c.port1.onmessage = r; c.port2.postMessage(0); }); }
     }
-    fd.append("fps", String(FPS));
-    const r = await fetch("/api/frames/video", { method: "POST", body: fd });
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
-    return (await r.json()).ref;
+    return await sink.done();
   }
 
   // The shots the render can go to: this scene's project's shot list, while it's the one open.
@@ -2376,8 +2388,12 @@ const Scene3D = (() => {
     try {
       return plan.map((p, i) => {
         const a = p.wstart / FPS, b = (p.start + p.frames - 1) / FPS, lead = i ? LONG_OV / FPS : 0, room = b - a - lead - 0.6;
-        const mine = [], last = i === plan.length - 1;  // a part takes at least its next line, however long
-        while (left.length && (last || !mine.length || speechSeconds([...mine, left[0]], voices) <= room)) mine.push(left.shift());
+        // the lines spread over the parts: each takes about its share of the speech still to say (what's left over the
+        // parts left), never more than fits after its overlap, and at least its next line however long; the last takes
+        // the rest. (Packed from the start, a long talking shot went quiet for its last parts.)
+        const mine = [], last = i === plan.length - 1, share = speechSeconds(left, voices) / (plan.length - i);
+        while (left.length && (last || !mine.length || (speechSeconds([...mine, left[0]], voices) <= room
+          && speechSeconds(mine, voices) + speechSeconds([left[0]], voices) / 2 <= share))) mine.push(left.shift());
         WIN = { a, b, lead };
         // a part with no lines gets no voice reference either (with one, H3 talks anyway): the server sends <Audio N>
         // only to a part whose prompt names it
@@ -3967,19 +3983,16 @@ const Scene3D = (() => {
       if (!isFinite(near)) return null;
       range = [near, far];
     }
-    const fd = new FormData();
+    const sink = frameSink();
     for (let f = 0; f < n; f++) {
       live();
       const c = depthCanvas(depthDistances(size, f / FPS, camForRender(f / FPS)), size, range);
       const url = c.toDataURL("image/png"), bin = atob(url.slice(url.indexOf(",") + 1)), bytes = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      fd.append("frame", new Blob([bytes], { type: "image/png" }), `${String(f).padStart(5, "0")}.png`);
+      await sink.add(new Blob([bytes], { type: "image/png" }), `${String(f).padStart(5, "0")}.png`);
       if (f % 8 === 0) { progress(f, n); await tick(); }
     }
-    fd.append("fps", String(FPS));
-    const r = await fetch("/api/frames/video", { method: "POST", body: fd }), j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.detail || r.statusText);
-    return j.ref;
+    return await sink.done();
   }
   // What the camera frames as depth, the way depth ControlNets (MiDaS, Depth Anything) want it: near is white, far is
   // black, scaled as inverse depth between the nearest and farthest things in view; the open sky is black. It's drawn
@@ -4176,16 +4189,13 @@ const Scene3D = (() => {
   // the skeleton over the whole clip, as a video (uploaded, as the depth map's): its media ref
   async function skeletonVideo(size, progress = () => {}) {
     const n = frameCount(), tick = () => new Promise(r => { const c = new MessageChannel(); c.port1.onmessage = r; c.port2.postMessage(0); });
-    const fd = new FormData();
+    const sink = frameSink();
     for (let f = 0; f < n; f++) {
       if (!s) throw new Error("The scene was closed");
-      fd.append("frame", await canvasPNG(skeletonCanvas(size, f / FPS, camForRender(f / FPS)).canvas), `${String(f).padStart(5, "0")}.png`);
+      await sink.add(await canvasPNG(skeletonCanvas(size, f / FPS, camForRender(f / FPS)).canvas), `${String(f).padStart(5, "0")}.png`);
       if (f % 8 === 0) { progress(f, n); await tick(); }
     }
-    fd.append("fps", String(FPS));
-    const r = await fetch("/api/frames/video", { method: "POST", body: fd }), j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.detail || r.statusText);
-    return j.ref;
+    return await sink.done();
   }
   // 🦴 Scene menu: the skeleton of this frame (PNG), its points (OpenPose JSON), or the whole clip (video)
   async function saveSkeleton(mode) {

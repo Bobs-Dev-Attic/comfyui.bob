@@ -5,6 +5,17 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.172.1] - 2026-11-23
+
+### Fixed
+- **A 3D scene over about 41 s couldn't render**: its frames went to the server in one form, and a form takes at most 1000
+  files ("Too many files"; a minute is 1441 frames). The 3D render, its mask, the depth map and the pose skeleton now go
+  in batches of 240 frames (`/api/frames/video` with a `session`), so the page also holds far less in memory. Batches of a
+  clip that never finished are cleared after an hour.
+- **A long shot's lines are spread over its parts**: each part takes about its share of the speech still to say, in
+  order and never split, instead of the first parts taking all they could hold. A minute of talking to the camera went
+  quiet for its last 24 s; now every part speaks.
+
 ## [0.172.0] - 2026-11-23
 
 ### Added
