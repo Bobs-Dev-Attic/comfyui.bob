@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field, field_validator
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, appsettings, audiotools, config, heard, llm, media, model3d, modelpaths, models, projectmedia, projects, prompts, render, score, syscheck, sysusage, tracking, updater, workflows
+from . import __version__, appsettings, audiotools, config, figure3d, heard, llm, media, model3d, modelpaths, models, projectmedia, projects, prompts, render, score, syscheck, sysusage, tracking, updater, workflows
 from .comfy import ComfyService
 from .jobs import EnhanceOpts, GenerateRequest, JobManager, media_path
 
@@ -383,6 +383,54 @@ async def make3d(req: Make3DReq):
                          quality=req.quality, seed=req.seed, bg_model=bg[0] if bg else None)
 
 
+def _sam3d_body(installed: dict[str, list[str]]) -> str | None:
+    """SAM 3D Body's model in ComfyUI's models/detection (sam_3d_body_dinov3_bf16.safetensors, Comfy-Org/sam-3d-body)."""
+    names = [n for n in installed.get("detection", []) if "sam_3d_body" in n.lower().replace("\\", "/").rsplit("/", 1)[-1]
+             or "sam3d_body" in n.lower()]
+    return sorted(names)[0] if names else None
+
+
+def _figure3d_missing(installed: dict[str, list[str]], nodes: set[str]) -> list[str]:
+    """What Make 3D figure lacks: Make 3D's own, SAM 3D Body and its nodes, Qwen Image Edit, background removal."""
+    missing = _make3d_missing(installed, nodes) + sorted(set(workflows.SAM3D_BODY_NODES) - nodes)
+    if not _sam3d_body(installed):
+        missing.append("SAM 3D Body's model (sam_3d_body_dinov3_bf16.safetensors in models/detection)")
+    if not models.resolve(models.QWEN_EDIT, installed)["ready"]:
+        missing.append("Qwen Image Edit")
+    if not installed.get("background_removal"):
+        missing.append("a background-removal model (BiRefNet)")
+    return missing
+
+
+class Figure3DReq(BaseModel):
+    source: str = Field(..., max_length=2000)  # a picture of the person, best head to feet
+    name: str = Field("3D figure", max_length=120)
+    project: str | None = Field(None, max_length=200)
+    seed: int | None = None
+
+
+@app.post("/api/make3d/figure")
+async def make3d_figure(req: Figure3DReq):
+    """Start making a rigged 3D figure of the person in a picture (figure3d); it's made in the background."""
+    installed = await comfy.installed_models(refresh=True)
+    try:
+        nodes = await comfy.node_types()
+    except Exception:  # noqa: BLE001
+        nodes = set()
+    missing = _figure3d_missing(installed, nodes)
+    if missing:
+        raise HTTPException(409, "Make 3D figure needs these in ComfyUI: " + ", ".join(missing))
+    try:
+        if media.kind_of(req.source) != "image" or not media_path(req.source).is_file():
+            raise HTTPException(400, "Make 3D figure works from a picture")
+    except (media.MediaError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    files = {"trellis": {k: _installed_name(installed, _MAKE3D_FOLDER[k], n) for k, n in workflows.TRELLIS_FILES.items()},
+             "qwen": models.resolve(models.QWEN_EDIT, installed)["files"], "sam3d_body": _sam3d_body(installed),
+             "bg_model": sorted(installed["background_removal"], key=lambda n: ("birefnet" not in n.lower(), n.lower()))[0]}
+    return figure3d.start(jobs, source=req.source, name=req.name, project=req.project, seed=req.seed, files=files)
+
+
 @app.get("/api/models3d")
 async def models3d_list(project: str | None = None):
     return {"models": model3d.list_models(project)}
@@ -425,6 +473,8 @@ class SceneObject(BaseModel):
     # the custom poses (from the pose editor) its pose and keys name: {"c:<hash>": {label, says, arms, legs, spine, head, hands}}
     poses: dict[str, dict[str, Any]] = Field(default_factory=dict)
     gait: Literal["walk", "run"] | None = None  # a Person's walk cycle while it moves (scene3d.js GAITS)
+    # a Person shown as a rigged 3D figure of a real person (Make 3D figure: a 3D model's id) instead of the mannequin
+    figure: str | None = Field(None, max_length=40)
     color: str | None = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
     dims: list[float] | None = Field(None, min_length=3, max_length=3)
     tilt: list[float] | None = Field(None, min_length=2, max_length=2)
@@ -1045,6 +1095,8 @@ async def capabilities(refresh: bool = False):
     editor["motion"] = editor["select"] and editor["erase"] and engines["h3"]["ready"] and "vloTimeToMove" in nodes
     # Make 3D: TRELLIS.2 and ComfyUI's mesh nodes (and background removal for a whole picture).
     editor["make3d"] = _make3d_missing(installed, nodes) == []
+    # Make 3D figure: a rigged figure of a person (SAM 3D Body, Qwen Image Edit, TRELLIS.2)
+    editor["figure3d"] = _figure3d_missing(installed, nodes) == []
     editor["scene3d"] = {"LoadDA3Model", "DA3Inference", "DA3GeometryToMesh", "SaveGLB"} <= nodes and any(
         "depth_anything_3_base" in n for n in installed.get("geometry_estimation", []))
     return {

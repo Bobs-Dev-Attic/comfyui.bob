@@ -572,6 +572,14 @@ const Scene3D = (() => {
     await refreshModels();
     for (const o of s.objs) {
       if (o.prim) {
+        if (o.figure && !figOf(o)) {
+          const md = models.find(x => x.id === o.figure);
+          o.figState = !md ? "missing" : md.status;
+          if (md?.status === "done") {
+            try { await loadFigure(md); o.figState = "ok"; o._pm = new Map(); o._pmKey = null; o.mesh = primMesh(o); figureMesh(o, s.t); }
+            catch (e) { o.figState = "failed"; o.figErr = e.message; }
+          }
+        }
         if (!o.mesh) { o.mesh = primMesh(o); o.state = "ok"; }
         if (!o.pos || !o.scale) { await place(o); save(); }
         s.dirty = true; continue;
@@ -588,7 +596,7 @@ const Scene3D = (() => {
     }
     renderSide();
     clearTimeout(s.poll);
-    if (s.objs.some(o => o.state === "running")) s.poll = setTimeout(() => s && loadObjects(), 4000);
+    if (s.objs.some(o => o.state === "running" || o.figState === "running")) s.poll = setTimeout(() => s && loadObjects(), 4000);
   }
 
   /* ---------------------------------------------------------------- primitive shapes */
@@ -778,7 +786,7 @@ const Scene3D = (() => {
     if (o.prim !== "figure" || !((o.keys || []).some(k => k.pose) || (o.gait && o.keys?.length > 1))) return;
     const ps = postureAt(o, t), q = ps.name ? null : Math.round(ps.u * 48) / 48, ga = gaitAt(o, t);
     const gq = ga ? [Math.round(ga.phase * 40) / 40, Math.round(ga.w * 10) / 10] : null;
-    const id = `${o.pose}|${o.dims}|${o.tilt}|${ps.name || `${ps.a}>${ps.b}@${q}`}${gq ? `|${o.gait}@${gq}` : ""}`;
+    const id = `${o.figure && figOf(o) ? o.figure : ""}|${o.pose}|${o.dims}|${o.tilt}|${ps.name || `${ps.a}>${ps.b}@${q}`}${gq ? `|${o.gait}@${gq}` : ""}`;
     if (o._pmKey === id && o.mesh) return;
     o._pm ||= new Map();
     let m = o._pm.get(id);
@@ -788,7 +796,7 @@ const Scene3D = (() => {
       o._pm.set(id, m);
       for (const [k, old] of o._pm) { if (o._pm.size <= 64) break; if (old !== o.mesh) s.gpu.drop?.(old); o._pm.delete(k); }
     }
-    m.parts[0].base = [...hexRgb(o.color || PRIM_COLOR), 1];
+    m.parts[0].base = m.figure ? [1, 1, 1, 1] : [...hexRgb(o.color || PRIM_COLOR), 1];
     o.mesh = m; o._pmKey = id;
   }
   /* A Person's joints in a pose (metres from the feet up, facing +Z): the upper body turned about the waist (S; the
@@ -917,12 +925,14 @@ const Scene3D = (() => {
   // A primitive object's mesh: its shape stretched to its size (dims), tilted, in its colour; the anchor is the bottom
   // middle of its box, as for a model.
   function primMesh(o, posture = null) {
-    const fig = o.prim === "figure", { P, N, I } = shapeOf(o.prim, posture || o.pose), n = P.length / 3, dims = o.dims || PRIMS[o.prim].dims;
+    const fig = o.prim === "figure", F = fig ? figOf(o) : null;
+    const sk = F ? figSkin(F, posture && typeof posture === "object" ? posture : fullPose(posture || o.pose || "standing")) : null;
+    const { P, N, I } = sk ? { P: sk.P, N: sk.N, I: F.idx } : shapeOf(o.prim, posture || o.pose), n = P.length / 3, dims = o.dims || PRIMS[o.prim].dims;
     const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
     for (let i = 0; i < n; i++) for (let c = 0; c < 3; c++) { lo[c] = Math.min(lo[c], P[i * 3 + c]); hi[c] = Math.max(hi[c], P[i * 3 + c]); }
     // A Person: the size fields are its base pose's box, so a blended or keyed pose keeps the same scale (not stretched to
     // fill that box), and it's drawn about its own pelvis line (x = z = 0) rather than its box's middle.
-    if (fig) { const nd = natDims("figure", o.pose || "standing"); for (let c = 0; c < 3; c++) { if (c !== 1) { lo[c] = -nd[c] / 2; hi[c] = nd[c] / 2; } else hi[c] = lo[c] + nd[c]; } }
+    if (fig) { const nd = pDims(o, o.pose || "standing"); for (let c = 0; c < 3; c++) { if (c !== 1) { lo[c] = -nd[c] / 2; hi[c] = nd[c] / 2; } else hi[c] = lo[c] + nd[c]; } }
     const k = [0, 1, 2].map(c => hi[c] - lo[c] > 1e-9 ? Math.max(0.01, dims[c]) / (hi[c] - lo[c]) : 1);
     const [ax, az] = (o.tilt || [0, 0]).map(x => x * rad), cx = Math.cos(ax), sx = Math.sin(ax), cz = Math.cos(az), sz = Math.sin(az);
     const turn = q => { const y1 = q[1] * cx - q[2] * sx, z1 = q[1] * sx + q[2] * cx; return [q[0] * cz - y1 * sz, q[0] * sz + y1 * cz, z1]; };
@@ -932,14 +942,108 @@ const Scene3D = (() => {
       const q = turn(norm([0, 1, 2].map(c => N[i * 3 + c] / k[c])));
       pos.set(p, i * 3); nrm.set(q, i * 3);
     }
-    const mesh = s.gpu.upload([{ pos, nrm, uv: null, col: null, idx: new Uint32Array(I), base: [...hexRgb(o.color || PRIM_COLOR), 1], tex: null, ao: null }]);
+    const mesh = s.gpu.upload([{ pos, nrm, uv: F ? F.uv : null, col: null, idx: F ? I : new Uint32Array(I), base: F ? [1, 1, 1, 1] : [...hexRgb(o.color || PRIM_COLOR), 1], tex: null, ao: null }]);
+    if (F) { mesh.parts[0].gtex = F.tex; mesh.figure = true; }  // the figure's one texture, shared (not the mesh's own)
     mesh.anchor = [(mesh.lo[0] + mesh.hi[0]) / 2, mesh.lo[1], (mesh.lo[2] + mesh.hi[2]) / 2];
     if (fig) {
       const pv = turn([0, 0, 0]); mesh.pivot = pv; mesh.anchor = [pv[0], mesh.lo[1], pv[2]];
       // its pose, and a point of its shape (shapeOf, figureJoints) where it is in the mesh: the skeleton's joints
-      mesh.fit = { pose: posture || o.pose || "standing", map: q => turn([0, 1, 2].map(c => (q[c] - mid[c]) * k[c])) };
+      mesh.fit = { pose: posture || o.pose || "standing", map: q => turn([0, 1, 2].map(c => (q[c] - mid[c]) * k[c])), ...(sk ? { P3: figPoints(F, sk) } : {}) };
     }
     return mesh;
+  }
+  /* ---------------------------------------------------------------- 3D figures (Make 3D figure: figure3d.py)
+     A Person can show a rigged 3D figure of a real person instead of the mannequin. Its rig (figrig.py) is in the
+     mannequin's frame (facing +Z, its left +X, metres from the feet up): each bone's place in the figure's A-pose and its
+     parent. A pose turns the bones the mannequin's way: the waist half the spine's turn and the chest the rest, the neck
+     the head's, each arm and leg aimed along the pose's directions (the upper bone at the shoulder or hip, the lower at
+     the elbow or knee); every other bone follows its parent. The mesh is skinned on the CPU for each pose (kept as the
+     mannequin's poses are, figureMesh) and every pose's mesh shares the one texture. */
+  const FIGS = new Map();  // a figure's model id -> its data, once loaded (a promise while it loads)
+  const figOf = o => { const F = o?.prim === "figure" && o.figure ? FIGS.get(o.figure) : null; return F?.ready ? F : null; };
+  async function loadFigure(md) {
+    if (FIGS.has(md.id)) return FIGS.get(md.id);
+    const pr = (async () => {
+      const [prims, rig] = await Promise.all([fetch(md.glb_url).then(r => r.arrayBuffer()).then(b => G().parseGLB(b)),
+        fetch(md.rig_url).then(r => { if (!r.ok) throw new Error("The figure's rig is missing"); return r.json(); })]);
+      const p = prims.find(q => q.skinJ && q.skinW);
+      if (!p) throw new Error("The figure has no skin");
+      const n = rig.joints.length, kids = Array.from({ length: n }, () => []);
+      rig.parent.forEach((pa, j) => { if (pa >= 0) kids[pa].push(j); });
+      const order = [], todo = rig.parent.map((pa, j) => pa < 0 ? j : -1).filter(j => j >= 0);
+      while (todo.length) { const j = todo.shift(); order.push(j); todo.push(...kids[j]); }
+      const F = { ready: true, id: md.id, pos: p.pos, nrm: p.nrm, uv: p.uv, idx: p.idx || Uint32Array.from({ length: p.pos.length / 3 }, (_, i) => i),
+        J: p.skinJ, W: p.skinW, rig, order, tex: p.tex ? s.gpu.texture(p.tex) : null };
+      FIGS.set(md.id, F);
+      return F;
+    })();
+    FIGS.set(md.id, pr);
+    try { return await pr; } catch (e) { FIGS.delete(md.id); throw e; }
+  }
+  const mm3 = (A, B) => A.map(r => [0, 1, 2].map(j => r[0] * B[0][j] + r[1] * B[1][j] + r[2] * B[2][j]));
+  const tr3 = A => [0, 1, 2].map(i => [0, 1, 2].map(j => A[j][i]));
+  // the shortest turn (rows) taking direction a onto direction b
+  function turnOnto(a, b) {
+    a = norm(a); b = norm(b);
+    const c = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    if (c < -0.9999) { const x = norm(cross(a, Math.abs(a[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0])); return [0, 1, 2].map(i => [0, 1, 2].map(j => 2 * x[i] * x[j] - (i === j ? 1 : 0))); }
+    const v = cross(a, b), X = [[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]], X2 = mm3(X, X), k = 1 / (1 + c);
+    return [0, 1, 2].map(i => [0, 1, 2].map(j => (i === j ? 1 : 0) + X[i][j] + k * X2[i][j]));
+  }
+  // each bone's turn (Rw, rows) and where its joint is (pw) in a pose
+  function figBones(F, pose) {
+    const p = completePose(pose), S = bodyTurn(p.spine), Sh = bodyTurn(p.spine.map(x => x / 2)), H = bodyTurn(p.head);
+    const R = F.rig, B = R.bones, at = R.joints, n = at.length, Rw = new Array(n), pw = new Array(n), aim = new Map();
+    for (const [side, sx] of [["R", -1], ["L", 1]]) {
+      const bone = d => norm([d[0] * sx, d[1], d[2]]), [sh, el, wr] = B[`arm_${side}`], [hp, kn, an] = B[`leg_${side}`];
+      aim.set(sh, [el, app3(S, bone(p.arms[side][0]))]); aim.set(el, [wr, app3(S, bone(p.arms[side][1]))]);
+      aim.set(hp, [kn, bone(p.legs[side][0])]); aim.set(kn, [an, bone(p.legs[side][1])]);
+    }
+    const fixed = new Map([[B.waist, Sh], [B.chest, mm3(S, tr3(Sh))], [B.neck, mm3(mm3(S, H), tr3(S))]]), I3 = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+    for (const j of F.order) {
+      const pa = R.parent[j], Rp = pa >= 0 ? Rw[pa] : I3, a = aim.get(j);
+      pw[j] = pa >= 0 ? addv(pw[pa], app3(Rp, sub(at[j], at[pa]))) : at[j].slice();
+      const D = a ? turnOnto(app3(Rp, sub(at[a[0]], at[j])), a[1]) : fixed.get(j);
+      Rw[j] = D ? mm3(D, Rp) : Rp;
+    }
+    return { Rw, pw };
+  }
+  // the figure's vertices and normals in a pose (linear blend skinning, 4 bones a vertex), and its joints there
+  function figSkin(F, pose) {
+    const { Rw, pw } = figBones(F, pose), at = F.rig.joints, n = at.length, M = new Float32Array(n * 12);
+    for (let j = 0; j < n; j++) {
+      const r = Rw[j], q = at[j], o = j * 12;
+      for (let i = 0; i < 3; i++) { M[o + i * 4] = r[i][0]; M[o + i * 4 + 1] = r[i][1]; M[o + i * 4 + 2] = r[i][2]; M[o + i * 4 + 3] = pw[j][i] - (r[i][0] * q[0] + r[i][1] * q[1] + r[i][2] * q[2]); }
+    }
+    const nv = F.pos.length / 3, src = F.pos, sn = F.nrm, J = F.J, W = F.W, P = new Float32Array(nv * 3), N = new Float32Array(nv * 3);
+    for (let v = 0; v < nv; v++) {
+      const x = src[v * 3], y = src[v * 3 + 1], z = src[v * 3 + 2], a = sn ? sn[v * 3] : 0, b = sn ? sn[v * 3 + 1] : 0, c = sn ? sn[v * 3 + 2] : 0;
+      let px = 0, py = 0, pz = 0, nx = 0, ny = 0, nz = 0;
+      for (let k = 0; k < 4; k++) {
+        const w = W[v * 4 + k]; if (!w) continue;
+        const o = J[v * 4 + k] * 12;
+        px += w * (M[o] * x + M[o + 1] * y + M[o + 2] * z + M[o + 3]); py += w * (M[o + 4] * x + M[o + 5] * y + M[o + 6] * z + M[o + 7]); pz += w * (M[o + 8] * x + M[o + 9] * y + M[o + 10] * z + M[o + 11]);
+        nx += w * (M[o] * a + M[o + 1] * b + M[o + 2] * c); ny += w * (M[o + 4] * a + M[o + 5] * b + M[o + 6] * c); nz += w * (M[o + 8] * a + M[o + 9] * b + M[o + 10] * c);
+      }
+      P[v * 3] = px; P[v * 3 + 1] = py; P[v * 3 + 2] = pz; N[v * 3] = nx; N[v * 3 + 1] = ny; N[v * 3 + 2] = nz;
+    }
+    return { P, N, Rw, pw };
+  }
+  // A Person's box in a pose, which its size fields are a stretch of: the mannequin's, with a figure too (its figure
+  // stands at its own size, so a figure that's taller than the mannequin is taller in the scene)
+  const pDims = (o, pose) => natDims("figure", pose);
+  // OpenPose's 18 points (keypointsAt) on the figure in a pose, from its own joints and head
+  function figPoints(F, sk) {
+    const B = F.rig.bones, at = F.rig.joints, { Rw, pw } = sk, Rh = Rw[B.head], top = at[B.head].map((v, c) => v + 0.09 * (c === 1));
+    const mid = addv(pw[B.head], app3(Rh, mulv(sub(top, at[B.head]), 1))), face = d => addv(mid, app3(Rh, d));
+    const [rs, re, rw] = B.arm_R, [ls, le, lw] = B.arm_L, [rh, rk, ra] = B.leg_R, [lh, lk, la] = B.leg_L;
+    return [face([0, -0.015, 0.105]), pw[B.neck], pw[rs], pw[re], pw[rw], pw[ls], pw[le], pw[lw], pw[rh], pw[rk], pw[ra], pw[lh], pw[lk], pw[la],
+      face([-0.035, 0.03, 0.09]), face([0.035, 0.03, 0.09]), face([-0.095, 0, 0]), face([0.095, 0, 0])];
+  }
+  // A Person takes a figure (a 3D model's id) or goes back to the mannequin (null), and its mesh is remade.
+  function setFigure(po, id) {
+    po.figure = id || null;
+    po._pm = new Map(); po._pmKey = null; po.mesh = primMesh(po); figureMesh(po, s.t); changed(po);
   }
   // Add a shape: in an empty scene at its real size in front of the camera (or at `at`); in a picture, where the
   // background is in the middle of the view, a third of the picture tall.
@@ -1194,7 +1298,7 @@ const Scene3D = (() => {
     if (!o?.mesh || !o.pos) return;
     const P = poseAt(o, s.t), w = (o.mesh.hi[0] - o.mesh.lo[0]) * P.scale * 1.2 || 1, y = s.cam.yaw * rad;
     const off = [Math.cos(y) * w, 0, -Math.sin(y) * w], move = p => addv(p, off);
-    const c = { id: uid(), name: `${o.name} copy`, becomes: o.becomes || "", picture: o.picture || null, model: o.model, mask: o.mask, prim: o.prim, ...(o.pose ? { pose: o.pose } : {}), ...(o.gait ? { gait: o.gait } : {}), color: o.color, dims: o.dims?.slice(), tilt: o.tilt?.slice(),
+    const c = { id: uid(), name: `${o.name} copy`, becomes: o.becomes || "", picture: o.picture || null, model: o.model, mask: o.mask, prim: o.prim, ...(o.pose ? { pose: o.pose } : {}), ...(o.gait ? { gait: o.gait } : {}), ...(o.figure ? { figure: o.figure } : {}), color: o.color, dims: o.dims?.slice(), tilt: o.tilt?.slice(),
       pos: move(o.pos), yaw: o.yaw || 0, pitch: o.pitch || 0, roll: o.roll || 0, stretch: o.stretch?.slice(), scale: o.scale, auto_scale: o.auto_scale, hidden: false, face: !!o.face,
       keys: (o.keys || []).map(k => ({ ...k, pos: move(k.pos) })), state: "ok" };
     c.mesh = o.prim ? primMesh(c) : o.mesh;
@@ -1222,7 +1326,7 @@ const Scene3D = (() => {
   function posed(po, before) {
     const after = po.pose || "standing";
     if (after !== before) {
-      const from = natDims("figure", before), to = natDims("figure", after), d = po.dims || from;
+      const from = pDims(po, before), to = pDims(po, after), d = po.dims || from;
       po.dims = [0, 1, 2].map(c => +(to[c] * (from[c] > 1e-6 ? d[c] / from[c] : 1)).toFixed(3));
     }
     po._pmKey = null; po.mesh = primMesh(po); figureMesh(po, s.t); changed(po);
@@ -1391,8 +1495,8 @@ const Scene3D = (() => {
     s.objs = d.objects.map(x => {
       const o = { ...x, keys: normKeys(x.keys) }, p = old.find(q => q.id === x.id);
       if (x.prim) {
-        o.mesh = p?.mesh && p.prim === x.prim && (p.pose || "") === (x.pose || "") && sameArr(p.dims, x.dims) && sameArr(p.tilt, x.tilt) ? p.mesh : primMesh(o);
-        o.mesh.parts[0].base = [...hexRgb(o.color || PRIM_COLOR), 1]; o.state = "ok";
+        o.mesh = p?.mesh && p.prim === x.prim && (p.pose || "") === (x.pose || "") && (p.figure || "") === (x.figure || "") && sameArr(p.dims, x.dims) && sameArr(p.tilt, x.tilt) ? p.mesh : primMesh(o);
+        o.mesh.parts[0].base = o.mesh.figure ? [1, 1, 1, 1] : [...hexRgb(o.color || PRIM_COLOR), 1]; o.state = "ok";
       } else {
         const q = p?.mesh && p.model === x.model ? p : old.find(z => z.mesh && z.model && z.model === x.model);
         if (q) { o.mesh = q.mesh; o.state = q.state; }
@@ -1423,7 +1527,7 @@ const Scene3D = (() => {
   const objectsOut = () => s.objs.map(o => ({ id: o.id, name: o.name, becomes: (o.becomes || "").trim(), picture: o.picture || null, ...(o.lib ? { lib: o.lib } : {}), model: o.model, mask: o.mask, pos: o.pos, yaw: o.yaw || 0, pitch: o.pitch || 0, roll: o.roll || 0,
     stretch: o.stretch || null, scale: o.scale, auto_scale: o.auto_scale, hidden: !!o.hidden, face: !!o.face, keys: o.keys || [],
     ...(o.prim ? { prim: o.prim, color: o.color || PRIM_COLOR, dims: o.dims || PRIMS[o.prim].dims, tilt: o.tilt || [0, 0] } : {}),
-    ...(o.prim === "figure" ? { pose: o.pose || "standing", gait: o.gait || null, poses: posesOf(o) } : {}) }));
+    ...(o.prim === "figure" ? { pose: o.pose || "standing", gait: o.gait || null, poses: posesOf(o), figure: o.figure || null } : {}) }));
   const saveBody = () => JSON.stringify({ objects: objectsOut(), seconds: +s.seconds || 5, camera_keys: s.camKeys, photos: s.photos, dof: s.sc.dof || {}, fx: s.sc.fx || {},
     ...(s.sc.kind === "empty" ? { aspect: s.sc.aspect, lens: s.sc.lens, backdrop: s.sc.backdrop } : {}) });
   // Saves are told to the page ("bob:save": pending, saved or failed), for V2's saved/unsaved sign.
@@ -1558,6 +1662,11 @@ const Scene3D = (() => {
             <div class="row2 s3-posef" hidden><div class="field"><label for="s3-pose">Pose</label><select id="s3-pose">${Object.entries(POSES).map(([k, p]) => `<option value="${k}">${p.label}</option>`).join("")}</select></div>
               <div class="field"><label for="s3-gait">Walk cycle</label><select id="s3-gait" title="While it moves along its path, it walks or runs, its steps matching how far it goes; stopped, it holds its pose. Tick Face where it's going (above) to have it turn the way it walks.">
                 <option value="">Off</option>${Object.entries(GAITS).map(([k, g]) => `<option value="${k}">${g.label}</option>`).join("")}</select></div></div>
+            <div class="field s3-figf" hidden><label for="s3-fig">Looks like <span class="opt">3D figure</span></label>
+              <div class="mo-row"><select id="s3-fig" title="A rigged 3D figure of a real person, made from a picture of them: it takes the mannequin's place, posed the same way, so the render already shows who they are"></select>
+                <button type="button" class="btn sm" data-act="fig-make" title="Make a rigged 3D figure of the person in its picture (best a picture of them from head to feet): an A-pose picture of them, SAM 3D Body's skeleton fitted to it, and TRELLIS.2's textured model. A few minutes.">🧍 Make from its picture</button>
+                <button type="button" class="btn sm ghost" data-act="fig-pose" title="Pose it as the person stands in the picture the figure was made from">🤸 As in the picture</button></div>
+              <p class="hint s3-fighint"></p></div>
             <div class="mo-row s3-posebtn" hidden><button type="button" class="btn sm" data-act="pose-edit" title="Pose its arms, legs, body, head and hands, or pick one from the pose library (at the playhead)">🤸 Edit pose…</button>
               <button type="button" class="btn sm" data-act="pose-moves" title="Sit down, jump, wave, bow…: keyed from the playhead">🎬 Movement…</button></div>
             <div class="field"><label for="s3-color">Colour</label><input type="color" id="s3-color"></div>
@@ -1571,7 +1680,7 @@ const Scene3D = (() => {
     const foot = document.createElement("div");
     foot.className = "wm-foot-row";
     foot.innerHTML = `<span class="hint s3-foot">Drag: orbit · Right-drag: pan · Wheel: zoom (stops at what's ahead; Alt+wheel: through) · Right-click: menu · 🏞 Scene › Generate photo or Render video</span>`;
-    const onClose = () => { if (s) { cancelAnimationFrame(s.raf); clearTimeout(s.poll); clearTimeout(s.saveT); s.saveRun?.(); s.saveRun = null; s.ro?.disconnect(); s.closed = true; } s = null; meshCache.clear(); };
+    const onClose = () => { if (s) { cancelAnimationFrame(s.raf); clearTimeout(s.poll); clearTimeout(s.saveT); s.saveRun?.(); s.saveRun = null; s.ro?.disconnect(); s.closed = true; } s = null; meshCache.clear(); FIGS.clear(); };
     const win = host ? embed(host, root, foot, onClose)
       : WM.open({ id: "scene3d", title: `🏞 ${sc.name}`, content: root, footer: foot, width: 1100, height: 720, minWidth: 720, minHeight: 480, onClose });
     const cv = root.querySelector(".s3-canvas"), hud = root.querySelector(".s3-hud");
@@ -3251,6 +3360,8 @@ const Scene3D = (() => {
         save(); renderSide(); s.dirty = true; return;
       }
       if (a === "make3d") return make3d(+b.dataset.i);
+      if (a === "fig-make" && o) return makeFigure(o);
+      if (a === "fig-pose" && o) { const md = models.find(m => m.id === o.figure); if (md?.pose) setPose(o, addPoseDef({ ...md.pose, label: "As in the picture" })); return; }
       if (a === "replace" && o?.mesh) { placement(o).then(p => { o.auto_scale = p.scale; editPose(o, p); save(); renderSide(); s.dirty = true; }); return; }
       if (a === "hide" && o) { o.hidden = !o.hidden; save(); renderSide(); s.dirty = true; return; }
       if (a === "remove") return removeSel();
@@ -3286,6 +3397,15 @@ const Scene3D = (() => {
         po.gait = e.target.value || null; po._pmKey = null; po.mesh = primMesh(po); figureMesh(po, s.t); return changed(po);
       }
       if (po?.prim === "figure" && id === "s3-pose") return setPose(po, e.target.value);
+      if (po?.prim === "figure" && id === "s3-fig") {
+        const md = models.find(m => m.id === e.target.value);
+        if (!md) return setFigure(po, null);
+        po.figure = md.id; po.figState = md.status; renderSide();
+        if (md.status !== "done") { loadObjects(); return; }
+        try { await loadFigure(md); setFigure(po, md.id); po.figState = "ok"; }
+        catch (err) { po.figState = "failed"; po.figErr = err.message; Media.toast(`3D figure: ${err.message}`); }
+        renderSide(); return;
+      }
       if (po?.prim && ["s3-dw", "s3-dh", "s3-dd"].includes(id)) {
         const R = s.root, dim = x => Math.max(0.01, Math.min(500, +R.querySelector(x).value || 0.01));
         po.dims = [dim("#s3-dw"), po.prim === "plane" ? 0 : dim("#s3-dh"), dim("#s3-dd")];
@@ -3520,6 +3640,18 @@ const Scene3D = (() => {
     } catch (e) { Media.toast(`Make 3D: ${e.message}`); }
   }
 
+  // 🧍 A rigged 3D figure of the Person's picture (figure3d.py): it takes the mannequin's place once it's made.
+  async function makeFigure(o) {
+    if (!o.picture) return Media.toast("Give it a picture of the person first (best from head to feet)");
+    try {
+      const md = await api("/api/make3d/figure", { method: "POST", body: JSON.stringify({ source: o.picture, name: o.name, project: s.sc.project }) });
+      await refreshModels();
+      o.figure = md.id; o.figState = "running"; save(); renderSide();
+      Media.toast(`Making a 3D figure of ${o.name}: it takes the mannequin's place when it's ready (a few minutes).`);
+      loadObjects();
+    } catch (e) { Media.toast(`Make 3D figure: ${e.message}`); }
+  }
+
   // The shot this scene is for, on the Shots step (shots.js), while its project is open.
   const shotLinked = () => typeof Shots !== "undefined" && (state.project?.id ?? null) === (s.sc.project ?? null) && Shots.shotOfScene ? Shots.shotOfScene(s.sc.id) : null;
 
@@ -3632,7 +3764,7 @@ const Scene3D = (() => {
       : o.state === "missing" ? `<span class="hint">model deleted</span>` : !o.model ? `<button type="button" class="btn sm" data-act="make3d" data-i="${s.objs.indexOf(o)}">🧊 Make 3D</button>` : o.hidden ? `<span class="hint">hidden</span>` : "";
     root.querySelector(".s3-objs").innerHTML = s.objs.length ? s.objs.map((o, i) => `<li data-i="${i}" class="${i === s.sel ? "sel" : ""}" tabindex="0" title="Right-click for its menu"><b>${o.prim ? `<span aria-hidden="true">${PRIMS[o.prim].icon}</span> ` : ""}${esc(o.name)}</b>${o.becomes ? ` <span class="hint s3-becomes-l">→ ${esc(o.becomes)}</span>` : ""}${o.picture ? ` <span class="s3-hasPic" title="Has a picture for H3 Reference">🖼</span>` : ""} ${st(o)}</li>`).join("")
       : `<li class="hint">No objects yet: add a shape from the tool bar, or a 3D model below.</li>`;
-    const opts = models.filter(m => m.status === "done");
+    const opts = models.filter(m => m.status === "done" && m.kind !== "figure");  // a figure goes on a Person (Looks like)
     const mine = opts.filter(m => m.source === s.sc.picture), other = opts.filter(m => m.source !== s.sc.picture);
     root.querySelector(".s3-add").innerHTML = `<option value="">Add a 3D model…</option>` +
       (mine.length ? `<optgroup label="Made from this picture">${mine.map(m => `<option value="${m.id}">${esc(m.name)}</option>`).join("")}</optgroup>` : "") +
@@ -3666,6 +3798,21 @@ const Scene3D = (() => {
             + (POSES[nm] ? "" : `<option value="${esc(nm)}">🤸 ${esc(poseLabel(nm))}</option>`);
         }
         ps.value = nm; root.querySelector("#s3-gait").value = o.gait || "";
+      }
+      const ff = root.querySelector(".s3-figf"), canFig = !!state.caps?.editor?.figure3d;
+      ff.hidden = o.prim !== "figure" || (!canFig && !o.figure && !models.some(m => m.kind === "figure" && m.status === "done"));
+      if (!ff.hidden) {
+        const figs = models.filter(m => m.kind === "figure" && (m.status === "done" || m.id === o.figure));
+        const sel = root.querySelector("#s3-fig");
+        sel.innerHTML = `<option value="">The mannequin</option>` + figs.map(m => `<option value="${m.id}">🧍 ${esc(m.name)}${m.status === "running" ? " (making…)" : m.status === "failed" ? " (failed)" : ""}</option>`).join("");
+        sel.value = o.figure || "";
+        const md = models.find(m => m.id === o.figure);
+        root.querySelector('[data-act="fig-make"]').hidden = !canFig;
+        root.querySelector('[data-act="fig-make"]').disabled = !o.picture || md?.status === "running";
+        root.querySelector('[data-act="fig-pose"]').hidden = !(figOf(o) && md?.pose);
+        root.querySelector(".s3-fighint").textContent = md?.status === "running" ? `Making its 3D figure: ${md.step || "working"}… (a few minutes)`
+          : md?.status === "failed" ? `Its 3D figure failed: ${md.error || "unknown error"}` : o.figState === "missing" ? "Its 3D figure was deleted."
+          : o.figState === "failed" ? `Its 3D figure didn't load: ${o.figErr || ""}` : !o.figure && canFig && !o.picture ? "Give it a picture (above) to make a 3D figure of them from it." : "";
       }
       if (o.prim) {
         const d = o.dims || PRIMS[o.prim].dims, act = document.activeElement;
@@ -3859,6 +4006,10 @@ const Scene3D = (() => {
         + `on a grey mannequin that is the rest of their body: keep their face and hair, make the mannequin their real body at exactly its size, height and position, `
         + `standing ${x.pose ? x.pose : "as the mannequin stands"}, with their whole figure in the frame as the mannequin is`
         + `${x.o.becomes ? `; they are ${x.o.becomes.trim().replace(/[.\s]+$/, "")}, dressed as that says` : ""}; blend them into the photo with matching light, colour and shadows; they appear only there, once`;
+      // a 3D figure of a real person (Make 3D figure): the render shows who they are, only as a 3D model
+      if (figOf(x.o)) return `the person ${x.where} is a textured 3D scan of a real person: keep exactly their face, hair, body, clothes and shoes, `
+        + `at that place and size, ${x.pose ? `posed ${x.pose}` : "in that pose"}, and make them a real photographed person with natural skin, hair and fabric`
+        + `${x.becomes ? ` (${x.becomes.trim().replace(/[.\s]+$/, "")})` : ""}`;
       if (pasted.includes(x.o)) return `the person ${x.where} is a real person pasted in roughly from a photo: keep them exactly there, at that size, `
         + `${x.pose ? `pose them ${x.pose}` : "keep their pose"}, keep their face, hair and clothes, and blend them into the photo with matching light, colour and shadows; `
         + "they appear only there, once";
@@ -3877,7 +4028,8 @@ const Scene3D = (() => {
      picture slot; the other objects' pictures go along as the edit model's extra pictures, as many as it takes.
      `pasted`: the people actually pasted (a picture with no whole person in it isn't); by default every pictured Person. */
   function photoPlan(t, cam, model, taken = 0, pasted = null) {
-    const inView = cast(t, cam).filter(x => !x.off && x.o.picture).map(x => x.o);
+    // a Person shown as its 3D figure is already who they are in the render: nothing to paste or send
+    const inView = cast(t, cam).filter(x => !x.off && x.o.picture && !figOf(x.o)).map(x => x.o);
     const paste = pasted ?? inView.filter(o => o.prim === "figure");
     return { paste, sent: inView.filter(o => !paste.includes(o)).slice(0, Math.max(0, (PHOTO_PICS[model] ?? 2) - taken)), all: inView.length };
   }
@@ -4156,7 +4308,7 @@ const Scene3D = (() => {
       const f = o.mesh?.fit; if (!f) continue;
       const M = mul4(VP, matOf(o, poseAt(o, t)));
       const J = figureJoints(f.pose && typeof f.pose === "object" ? f.pose : fullPose(f.pose)), R = mul33(J.S, J.H), face = d => addv(J.head, app3(R, d));
-      const P3 = [face([0, -0.015, 0.105]), J.neck, J.arms.R.sh, J.arms.R.el, J.arms.R.wr, J.arms.L.sh, J.arms.L.el, J.arms.L.wr,
+      const P3 = f.P3 || [face([0, -0.015, 0.105]), J.neck, J.arms.R.sh, J.arms.R.el, J.arms.R.wr, J.arms.L.sh, J.arms.L.el, J.arms.L.wr,
         J.legs.R.hp, J.legs.R.kn, J.legs.R.an, J.legs.L.hp, J.legs.L.kn, J.legs.L.an,
         face([-0.035, 0.03, 0.09]), face([0.035, 0.03, 0.09]), face([-0.095, 0, 0]), face([0.095, 0, 0])];
       out.push(P3.map(q => {
@@ -4309,7 +4461,7 @@ const Scene3D = (() => {
       if (!cut) continue;
       // its feet on the ground and its head as high as it stands (a Person's position is at its feet)
       const P = poseAt(o, t), pose = o.pose || "standing";
-      const tall = (o.dims?.[1] || 1.74) * natDims("figure", "standing")[1] / natDims("figure", pose)[1] * (o.stretch?.[1] || 1) * (P.scale || 1);
+      const tall = (o.dims?.[1] || 1.74) * pDims(o, "standing")[1] / pDims(o, pose)[1] * (o.stretch?.[1] || 1) * (P.scale || 1);
       const feet = toPx(P.pos), head = toPx([P.pos[0], P.pos[1] + tall, P.pos[2]]);
       if (!feet || !head || feet[1] - head[1] < 8) continue;
       // a portrait (no feet): it was sent as a picture, and the edit model sized her by the portrait, two or three times
