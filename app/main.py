@@ -441,14 +441,14 @@ class SceneNew(BaseModel):
     project: str | None = Field(None, max_length=200)
     objects: list[SceneObject] = Field(default_factory=list, max_length=64)
     # made for a shot on the Shots step: its length, and (an empty scene) the project's picture shape
-    seconds: float | None = Field(None, ge=1, le=20)
+    seconds: float | None = Field(None, ge=1, le=60)
     aspect: Literal["16:9", "9:16", "1:1", "4:3", "21:9"] | None = None
 
 
 class ScenePatch(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=120)
     objects: list[SceneObject] | None = Field(None, max_length=64)
-    seconds: float | None = Field(None, ge=1, le=20)  # the scene's length
+    seconds: float | None = Field(None, ge=1, le=60)  # the scene's length (over ~15 s it renders in parts)
     # the camera's path: [{t, yaw, pitch, dist, target: [x, y, z]}] (an orbit about target); none = it stays put
     camera_keys: list[dict[str, Any]] | None = Field(None, max_length=500)
     # an empty scene's framing and backdrop: aspect "16:9" | "9:16" | "1:1" | "4:3" | "21:9"; lens in mm (full frame);

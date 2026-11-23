@@ -301,6 +301,105 @@ def tail_clip(ref: str, frames: int, width: int, height: int, out: Path) -> Path
     return out
 
 
+def cut_frames(src: Path, start: int, count: int, out: Path) -> Path:
+    """Frames start..start+count-1 of a 24 fps video (no sound), as a video of its own: a long render's part's stretch
+    of the rough animation, its mask or the skeleton (jobs._render_long)."""
+    exe = ffmpeg()
+    if not exe:
+        raise MediaError("ffmpeg isn't installed")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    r = subprocess.run([exe, "-nostdin", "-v", "error", "-y", "-i", str(src), "-an",
+                        "-vf", f"trim=start_frame={int(start)}:end_frame={int(start) + int(count)},setpts=PTS-STARTPTS",
+                        "-r", "24", "-c:v", "libx264", "-crf", "8", "-pix_fmt", "yuv420p", str(out)],
+                       capture_output=True, timeout=300, creationflags=NO_WINDOW)
+    if r.returncode or not out.is_file():
+        raise MediaError((r.stderr or b"").decode("utf-8", "replace").strip()[-300:] or f"Couldn't cut {src.name}")
+    return out
+
+
+def first_frame_of(src: Path, out: Path) -> Path:
+    """A video's first frame as a picture."""
+    exe = ffmpeg()
+    if not exe:
+        raise MediaError("ffmpeg isn't installed")
+    r = subprocess.run([exe, "-nostdin", "-v", "error", "-y", "-i", str(src), "-frames:v", "1", str(out)],
+                       capture_output=True, timeout=120, creationflags=NO_WINDOW)
+    if r.returncode or not out.is_file():
+        raise MediaError((r.stderr or b"").decode("utf-8", "replace").strip()[-300:] or f"Couldn't take the first frame of {src.name}")
+    return out
+
+
+def _frame_stats(exe: str, src: Path, index: int) -> list[tuple[float, float]] | None:
+    """A video frame's per-channel (mean, standard deviation), 0-255 RGB, from a small copy of it."""
+    from PIL import Image, ImageStat
+
+    r = subprocess.run([exe, "-nostdin", "-v", "error", "-i", str(src), "-vf", f"select=eq(n\\,{int(index)}),scale=192:-2",
+                        "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-"], capture_output=True, timeout=120, creationflags=NO_WINDOW)
+    if r.returncode or not r.stdout:
+        return None
+    import io
+
+    with Image.open(io.BytesIO(r.stdout)) as im:
+        st = ImageStat.Stat(im.convert("RGB"))
+    return list(zip(st.mean, st.stddev))
+
+
+def _tone_steps(exe: str, parts: list[Path]) -> list[tuple[list[float], list[float]] | None]:
+    """Each part's colour put back in step with the end of the part before (H3 drifts a little in brightness from one
+    window to the next): per channel, a gain and offset that make its first frame's mean and spread those of the part
+    before's last frame (as corrected itself), kept small. -> [(gains, offsets) or None] per part."""
+    steps: list[tuple[list[float], list[float]] | None] = [None]
+    prev_g, prev_o = [1.0] * 3, [0.0] * 3
+    for i in range(1, len(parts)):
+        frames = round(float(probe(str(parts[i - 1])).get("duration") or 0) * 24)
+        a, b = _frame_stats(exe, parts[i - 1], max(0, frames - 1)), _frame_stats(exe, parts[i], 0)
+        if not a or not b:
+            steps.append(None)
+            prev_g, prev_o = [1.0] * 3, [0.0] * 3
+            continue
+        g, o = [], []
+        for c in range(3):
+            m_a, s_a = a[c][0] * prev_g[c] + prev_o[c], a[c][1] * prev_g[c]  # the end of the part before, as it'll be seen
+            gain = max(0.85, min(1.15, s_a / b[c][1])) if b[c][1] > 1 else 1.0
+            g.append(gain)
+            o.append(max(-25.0, min(25.0, m_a - gain * b[c][0])))
+        steps.append((g, o))
+        prev_g, prev_o = g, o
+    return steps
+
+
+def join_videos(parts: list[Path], out: Path, match_tone: bool = True) -> Path:
+    """Videos of the same size, one after another, as one (silence for one without sound): a long render's parts,
+    each of which carries on the one before without a cut. match_tone: each part's colour is matched to the end of the
+    part before (_tone_steps), so the join doesn't show as a step in brightness."""
+    exe = ffmpeg()
+    if not exe:
+        raise MediaError("ffmpeg isn't installed")
+    tones = _tone_steps(exe, parts) if match_tone and len(parts) > 1 else [None] * len(parts)
+    cmd, fc, k = [exe, "-nostdin", "-v", "error", "-y"], [], len(parts)
+    for i, p in enumerate(parts):
+        cmd += ["-i", str(p)]
+        info = probe(str(p))
+        d = float(info.get("duration") or 0)
+        if info.get("has_audio"):  # each part's sound exactly as long as its picture, so they stay in step
+            fc.append(f"[{i}:a:0]aresample=48000,aformat=channel_layouts=stereo,apad,atrim=0:{d:.4f},asetpts=PTS-STARTPTS[a{i}]")
+        else:
+            fc.append(f"anullsrc=r=48000:cl=stereo,atrim=0:{d:.4f}[a{i}]")
+        tone = ""  # every part goes through the same RGB round trip, so they all come out converted alike
+        if tones[i]:
+            g, o = tones[i]
+            tone = ",lutrgb=" + ":".join(f"{ch}='clip(val*{g[c]:.4f}+{o[c]:.3f},0,255)'" for c, ch in enumerate("rgb"))
+        fc.append(f"[{i}:v:0]setsar=1,fps=24,format=rgb24{tone},format=yuv420p,setpts=PTS-STARTPTS[v{i}]")
+    fc.append("".join(f"[v{i}][a{i}]" for i in range(k)) + f"concat=n={k}:v=1:a=1[v][a]")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    cmd += ["-filter_complex", ";".join(fc), "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-crf", "14", "-preset", "medium",
+            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(out)]
+    r = subprocess.run(cmd, capture_output=True, timeout=1800, creationflags=NO_WINDOW)
+    if r.returncode or not out.is_file():
+        raise MediaError((r.stderr or b"").decode("utf-8", "replace").strip()[-400:] or "Couldn't join the parts")
+    return out
+
+
 def parse_ranges(text: str, duration: float) -> list[tuple[float, float]]:
     """ "1.2-3.4, 5-6" (or "1.2,3.4,5,6") -> [(1.2, 3.4), (5.0, 6.0)]: stretches of a clip in seconds, sorted, merged
     where they touch, inside 0..duration. "" -> []."""

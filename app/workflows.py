@@ -83,6 +83,9 @@ def build_motion(
     lock_audio: bool = False,
     pose_video: bool = False,
     pose_control: float = 0.0,
+    frames: int | None = None,
+    continue_overlap: int = 0,
+    on_ref: bool = False,
 ) -> Built:
     """Motion layers (app/motion.py): H3 image-to-video from the original picture, with Time-to-Move
     (vloTimeToMove from ComfyUI-vlo) holding the moved objects to a rough cut-and-drag animation.
@@ -114,7 +117,14 @@ def build_motion(
     pose_video (image_inputs motion_pose: the people's OpenPose skeleton, drawn by the caller as the rough animation):
     with pose_control > 0 and the H3 Fun ControlNet Union (files fun_controlnet), it steers the people's pose in every
     frame at that strength (MiniMaxH3FunControlNetApply, a patch on the model, either guide); without it, on the
-    reference guide, it goes to H3 Reference as <Video 2>, which the prompt says to move as."""
+    reference guide, it goes to H3 Reference as <Video 2>, which the prompt says to move as.
+
+    A part of a long render (long_plan): `frames` is its whole window, on H3's 17k+5 grid; with continue_overlap, the
+    window's first frames are the part before's last ones (image_inputs tail: its video and sound, at this size), planted
+    and kept as build_h3_ref does, so H3 carries on without a cut; the rough animation, mask and skeleton cover the
+    whole window, the first frame is the tail's first, and only what comes after the overlap is saved."""
+    if continue_overlap and continue_overlap not in H3_OVERLAPS:
+        raise ValueError(f"The overlap must be one of {', '.join(map(str, H3_OVERLAPS))} frames")
     if not 0 <= references <= H3_MAX_REFS - 1:
         raise ValueError(f"A scene render takes at most {H3_MAX_REFS - 1} object pictures")
     g = Graph()
@@ -122,7 +132,8 @@ def build_motion(
     unet = g.add("UNETLoader", unet_name=files["unet"], weight_dtype="default")
     model = unet
     by_ref = guide == "reference"
-    ref_model = bool(references or audios or by_ref)  # on H3 Reference's model (files are the ref2va set)
+    # on H3 Reference's model (files are the ref2va set); on_ref: a long render's parts, whose carried-on latent is H3 Reference's
+    ref_model = bool(references or audios or by_ref or on_ref)
     use_turbo = turbo and bool(files.get("turbo_lora"))
     if use_turbo:
         model = g.add("LoraLoaderModelOnly", model=o(unet), lora_name=files["turbo_lora"], strength_model=1.0)
@@ -136,7 +147,9 @@ def build_motion(
     clip = g.add("CLIPLoader", clip_name=files["clip"], type="minimax", device="default")
     vae = g.add("VAELoader", vae_name=files["vae"])
     audio_vae = g.add("VAELoader", vae_name=files["audio_vae"])
-    length = h3_length(seconds)
+    length = int(frames) if frames else h3_length(seconds)
+    if (length - 5) % 17 or not 5 <= length <= H3_MAX_FRAMES or length <= continue_overlap:
+        raise ValueError(f"A render's window is 5 + 17k frames, at most {H3_MAX_FRAMES}")
 
     first = g.add("LoadImage", image="")
     scaled = g.add("ImageScale", image=o(first), upscale_method="lanczos", width=width, height=height, crop="center")
@@ -204,6 +217,17 @@ def build_motion(
     scheduler = "beta" if ref_model and not use_turbo else "simple"
     sigmas = g.add("BasicScheduler", model=o(model), scheduler=scheduler, steps=n_steps, denoise=1.0)
     sample_model, start = o(ttm), o(cond, 1)
+    ext = None
+    if continue_overlap:  # carry on the part before without a cut (as build_h3_ref)
+        if lock_audio:
+            raise ValueError("A part of a long render can't hold its sound")
+        tail = g.add("LoadVideo", file="")  # the part before's last frames at this size, made by the caller
+        image_inputs["tail"] = tail
+        tparts = g.add("GetVideoComponents", video=o(tail))
+        prev = g.add("NKDAVLatent", images=o(tparts, 0), audio=o(tparts, 1), video_vae=o(vae), audio_vae=o(audio_vae),
+                     audio_mode="keep", fps=float(FPS), ramp_ticks=0, ramp_out_ticks=0, ramp_shape="cosine")
+        ext = g.add("NKDAVLatentExtend", previous=o(prev), new_latent=start, overlap_chunks=(continue_overlap - 5) // 17 + 1)
+        start = o(ext, 0)
     lock = None
     if lock_audio:  # the sound held as given; only the picture is sampled
         held = g.add("LoadAudio", audio="")
@@ -214,13 +238,18 @@ def build_motion(
     latent = g.add("SamplerCustomAdvanced", noise=o(noise), guider=o(guider), sampler=o(sampler), sigmas=o(sigmas),
                    latent_image=start)
     audio = o(lock, 2) if lock else o(g.add("VAEDecodeAudio", samples=o(latent), vae=o(audio_vae)))
-    frames = g.add("VAEDecode", samples=o(latent), vae=o(vae))
-    video = g.add("CreateVideo", images=o(frames), audio=audio, fps=float(FPS))
+    pics = o(g.add("VAEDecode", samples=o(latent), vae=o(vae)))
+    if ext:  # only what comes after the overlap: it follows the part before seamlessly
+        pics = o(g.add("ImageFromBatch", image=pics, batch_index=continue_overlap, length=4096))
+        audio = o(g.add("TrimAudioDuration", audio=audio, start_index=o(ext, 2), duration=3600.0))
+    video = g.add("CreateVideo", images=pics, audio=audio, fps=float(FPS))
     save = g.add("SaveVideo", video=o(video), filename_prefix=prefix, format="auto", codec="auto")
+    new = length - continue_overlap
     return Built(
         graph=g.nodes, outputs=[save],
         image_inputs={**image_inputs, "motion_ref": ref, **({"motion_mask": msk} if msk else {})},
-        info={"width": width, "height": height, "frames": length, "seconds": round(length / FPS, 2), "steps": n_steps,
+        info={"width": width, "height": height, "frames": length, "seconds": round(new / FPS, 2), "steps": n_steps,
+              **({"continues": True, "overlap": continue_overlap, "new_frames": new} if continue_overlap else {}),
               "turbo": use_turbo, "final_prompt": prompt, **({"audio": "held (lips drawn to it)"} if lock_audio else {}),
               **({"pose_guide": f"H3 Fun ControlNet (strength {pose_control:g})"} if use_cn else {}),
               **({"guide": "reference video (<Video 1>)" + (", pose skeleton (<Video 2>)" if pose_parts and not use_cn else "")} if by_ref else {"guide": "Time-to-Move", "hold_steps": f"1-{end}", "edge": edge}),
@@ -229,6 +258,32 @@ def build_motion(
 
 
 H3_OVERLAPS = (22, 39, 56)  # frames of the previous video a continuation sees (17j+5; 39 fits the audio grid exactly)
+H3_MAX_FRAMES = 362  # 17k+5, about 15 s: the longest window H3 renders at once
+LONG_OVERLAP = 39  # a long render's parts each carry on the last 39 frames (1.6 s) of the part before
+LONG_MAX_SECONDS = 60
+
+
+def long_plan(frames: int, overlap: int = LONG_OVERLAP) -> list[dict[str, int]]:
+    """A render longer than one window, in parts that each carry on the one before without a cut: [{start, frames,
+    window_start, window}] in frames of the whole render (start/frames: what the part adds; window_start/window: what
+    it renders, the overlap with the part before included). One part when it fits in a window. The parts are about as
+    long as each other; every window is on H3's 17k+5 grid. static/scene3d.js longPlan() is the same."""
+    if (frames - 5) % 17 or frames < 5:
+        raise ValueError("A render is 5 + 17k frames")
+    if frames <= H3_MAX_FRAMES:
+        return [{"start": 0, "frames": frames, "window_start": 0, "window": frames}]
+    k_all, k_first, k_more = (frames - 5) // 17, (H3_MAX_FRAMES - 5) // 17, (H3_MAX_FRAMES - overlap) // 17
+    n = 1 + -(-(k_all - k_first) // k_more)
+    k1 = min(k_first, max(round(k_all / n), k_all - k_more * (n - 1)))
+    rest, ks = k_all - k1, [k1]
+    for i in range(n - 1):  # the rest as evenly as it goes
+        ks.append(rest // (n - 1) + (1 if i < rest % (n - 1) else 0))
+    parts, at = [], 0
+    for i, k in enumerate(ks):
+        add = 5 + 17 * k if i == 0 else 17 * k
+        parts.append({"start": at, "frames": add, "window_start": at - (overlap if i else 0), "window": add + (overlap if i else 0)})
+        at += add
+    return parts
 
 
 def h3_length(seconds: float) -> int:
@@ -1253,13 +1308,17 @@ def build_enhance(
     steps_done = []
 
     if opts.get("facerefine") and video and h3:
+        # the Plus finish takes FaceRefine-Plus v0.2.0's tuning (its example graphs): a tighter crop (2.2 face heights)
+        # and the same denoise on every face, small or large (Per-Frame Denoise 1.0 / 1.0); the stock finish keeps
+        # large faces at 0.35 of it
+        use_plus = plus and opts.get("face_finish", "plus") == "plus"
         unet = g.add("UNETLoader", unet_name=h3["unet"], weight_dtype="default")
         model = chain_loras(g, unet, loras)
         clip = g.add("CLIPLoader", clip_name=h3["clip"], type="minimax", device="default")
         vae = g.add("VAELoader", vae_name=h3["vae"])
         avae = g.add("VAELoader", vae_name=h3["audio_vae"])
         track = g.add("H3FaceTrackCrop", images=images, detector=opts.get("face_detector") or "bbox\\face_yolov8m.pt", confidence=0.35,
-                      crop_factor=3.0, canvas_width=768, canvas_height=768, canvas_mode="auto_capped_768", smooth_window=21,
+                      crop_factor=2.2 if use_plus else 3.0, canvas_width=768, canvas_height=768, canvas_mode="auto_capped_768", smooth_window=21,
                       size_smooth_window=51, smooth_method="gaussian", size_mode="per_frame", identity_track=True, identity_threshold=0.28,
                       select="largest_face", fallback_detector="face_yolov8m.pt", fallback_head_frac=0.5, select_index=0,
                       identity_model="insightface", cut_detection="none", cut_threshold=3.0, absent_shots="off", X=0, Y=0, frame_index=0)
@@ -1290,15 +1349,15 @@ def build_enhance(
             lock = g.add("MiniMaxH3NativeAudioLock", model=mdl, av_latent=lat, audio_vae=o(avae), audio=audio)
             mdl, lat = o(lock, 0), o(lock, 1)
         pfd = g.add("H3PerFrameDenoise", model=mdl, av_latent=lat, transform=o(track, 1), denoise_multiplier_small_face=1.0,
-                    denoise_multiplier_large_face=0.35, scale_mode="absolute_px", face_px_small=30.0, face_px_large=120.0, gamma=1.0,
+                    denoise_multiplier_large_face=1.0 if use_plus else 0.35, scale_mode="absolute_px", face_px_small=30.0, face_px_large=120.0, gamma=1.0,
                     smooth_frames=9)
         sigmas = g.add("BasicScheduler", model=o(pfd, 2), scheduler="simple", steps=int(opts.get("face_steps", 20)),
-                       denoise=float(opts.get("face_strength", 0.4)))
+                       denoise=float(opts.get("face_strength", 0.3)))
         guider = g.add("BasicGuider", model=o(pfd, 2), conditioning=o(cond, 0))
         sampled = g.add("SamplerCustomAdvanced", noise=o(g.add("RandomNoise", noise_seed=int(seed))), guider=o(guider),
                         sampler=o(g.add("KSamplerSelect", sampler_name="res_multistep")), sigmas=o(sigmas), latent_image=o(pfd, 0))
         faces = g.add("VAEDecode", samples=o(sampled), vae=o(vae))
-        if plus and opts.get("face_finish", "plus") == "plus":
+        if use_plus:
             base = images
             stitched = g.add("H3FaceStitchPlus", base_images=base, refined_crops=o(faces), transform=o(track, 1), paste_region="face_only",
                              mask_dilation=24, feather=24, tone_mode="freq_sep", lowpass_face_frac=0.15, detail_gain=1.0, blend=1.0,

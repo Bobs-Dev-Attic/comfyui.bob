@@ -5,6 +5,34 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.171.0] - 2026-11-23
+
+### Added
+- **Long shots: a 3D scene can now run up to 60 s.** H3 makes about 15 s at once, so a longer scene render is made
+  automatically in parts that carry on each other without a cut (ComfyUI-NKD-Basic-Tools' NKD AV Latent Extend), then
+  joined into one video.
+  - Each part after the first starts from the last 1.6 s (39 frames) of the part before, its picture and sound, so the
+    motion and the voice run on.
+  - The parts are about as long as each other (20 s: 2 parts; 30 s: 3; 60 s: 5). Each is its own ComfyUI job, so the
+    GPU memory a part needs is the same as a short render's; it takes about as many times as long as there are parts.
+  - Each part gets its own prompt: the camera move and what the people do in its stretch of the shot, and the lines
+    that fit in it (a line is never split; a part with none of the shot's lines is told nobody speaks).
+  - Each part follows its stretch of the 3D render (<Video 1> or Time-to-Move), and the pose skeleton when it's on.
+  - V2 shows the length with how many parts it takes. The scene's Length goes up to 60 s (it was 10).
+- A long render runs on H3 Reference's model with either guide. It skips what only works on one window: redrawing the
+  lips to the cleaned sound and retaking the sound.
+- The parts are joined with their colour matched: each part's brightness and colour are set to those of the end of the
+  part before (H3 drifts a few levels from one window to the next), so the join doesn't show as a step.
+- A part with none of the shot's lines gets no voice reference (with one, H3 tends to talk anyway).
+
+### Changed
+- **FaceRefine with the Plus finish follows ComfyUI-H3-FaceRefine-Plus v0.2.0's tuning** (its example graphs): every
+  face gets the same denoise whatever its size (Per-Frame Denoise 1.0 / 1.0, was 1.0 / 0.35), the face crop is tighter
+  (2.2 face heights, was 3), and the default strength is 0.30 (was 0.40). The stock finish is as before. A strength
+  you set yourself in Enhance is kept.
+- `app/jobs.py`: a render's one-job path (`_render_one`) and the ComfyUI job loop (`_execute`) are split out of `_run`,
+  so a long render (`_render_long`) can run several jobs as one result.
+
 ## [0.170.0] - 2026-11-22
 
 ### Added

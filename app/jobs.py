@@ -37,7 +37,7 @@ class LoraUse(BaseModel):
 class EnhanceOpts(BaseModel):
     """The enhance chain (workflows.build_enhance): FaceRefine -> DLSS 5 -> an upscaler."""
     facerefine: bool = False
-    face_strength: float = Field(0.4, ge=0.05, le=1.0)
+    face_strength: float = Field(0.3, ge=0.05, le=1.0)  # 0.30: FaceRefine-Plus v0.2.0's default (0.15 changed too little on small faces)
     face_steps: int = Field(20, ge=4, le=50)
     # How the refined faces go back into the frame. "plus" = ComfyUI-H3-FaceRefine-Plus (Stitch Plus freq_sep,
     # Flow Lock, Tone Match) when that pack is installed, else the stock H3 Face Stitch; "stock" = always the stock one.
@@ -181,6 +181,9 @@ class GenerateRequest(BaseModel):
     motion_pose_video: str | None = Field(None, max_length=2000)
     # how hard the skeleton steers the people through the H3 Fun ControlNet, when it's installed (0 = not at all)
     motion_pose_strength: float = Field(1.0, ge=0, le=2)
+    # a render longer than H3's window (about 15 s) is made in parts (workflows.long_plan): each part's prompt, written
+    # by the page for its stretch of the shot (empty: every part gets `prompt`)
+    long_prompts: list[str] = Field(default_factory=list, max_length=8)
     enhance: bool = False  # Klein prompt upsampler / Krea 2 prompt expander
     layout: list[LayoutBox] | None = Field(None, max_length=60)  # MOSS-Image layout control
     clean_texture: bool = True  # H3 Image: EasyFix steering + re-noise, when ComfyUI-H3-Image-EasyFix is installed
@@ -449,7 +452,8 @@ class JobManager:
         res = await heard.check(item, media_path, say=lambda m: self.log(item, m))
         self._update(item, heard=res)
         p = item.get("params") or {}
-        if p.get("engine") == "motion" and p.get("resync_after_quiet", True) and self.has_node("MiniMaxH3NativeAudioLock"):
+        long = ((item.get("info") or {}).get("parts") or 1) > 1  # a long render: no one window holds all of it
+        if p.get("engine") == "motion" and p.get("resync_after_quiet", True) and not long and self.has_node("MiniMaxH3NativeAudioLock"):
             try:
                 await self.resync(item)
             except Exception as exc:  # noqa: BLE001 - the silenced video stands
@@ -536,6 +540,10 @@ class JobManager:
         b = p.get("auto_retake_below")
         below, score = int(appsettings.get().generation.retake_below if b is None else b), res.get("score")
         if p.get("engine") != "motion" or not below or score is None or score >= below or item.get("auto_retake"):
+            return None
+        if ((item.get("info") or {}).get("parts") or 1) > 1:
+            self.log(item, f"Words {score}% (under {below}%), but a retake makes up to {workflows.RETAKE_MAX_FRAMES / 24:.0f} s: "
+                     "this long render keeps its sound")
             return None
         f = next((x for x in item.get("files", []) if (x.get("content_type") or "").startswith("video")), None)
         if not f:
@@ -637,7 +645,7 @@ class JobManager:
         else:
             sets = ([models.ALL_SETS["h3"], models.ALL_SETS["klein"]] if req.engine == "reshoot"
                     # a 3D scene with object pictures renders on H3 Reference (workflows.build_motion)
-                    else [models.ALL_SETS["h3ref" if req.references or req.ref_audios or req.motion_guide == "reference" else "h3"]] if req.engine == "motion"
+                    else [models.ALL_SETS["h3ref" if req.references or req.ref_audios or req.motion_guide == "reference" or self.is_long(req) else "h3"]] if req.engine == "motion"
                     else [models.ALL_SETS["h3ref"]] if req.engine == "retake"
                     else [models.ALL_SETS[req.engine]])
         files: dict[str, Any] = {}
@@ -752,6 +760,19 @@ class JobManager:
             elif not self.has_node("vloTimeToMove"):
                 raise ValueError("Motion layers need ComfyUI-vlo (vloTimeToMove) in ComfyUI")
             n = workflows.h3_length(req.seconds)
+            if n > workflows.H3_MAX_FRAMES:  # a long render, in parts (_render_long)
+                win = f"{workflows.H3_MAX_FRAMES / workflows.FPS:.0f} s"
+                if req.seconds > workflows.LONG_MAX_SECONDS + 0.05:
+                    raise ValueError(f"A scene render is at most {workflows.LONG_MAX_SECONDS} s long")
+                if not req.motion_video:
+                    raise ValueError(f"Motion layers make up to {win}: longer is for a 3D scene's render")
+                if req.lock_audio:
+                    raise ValueError(f"Holding the sound works on renders up to {win}")
+                if not (self.has_node("NKDAVLatentExtend") and self.has_node("NKDAVLatent")):
+                    raise ValueError(f"A render longer than {win} is made in parts that carry on each other: "
+                                     "it needs ComfyUI-NKD-Basic-Tools (NKD AV Latent Extend) in ComfyUI")
+                if any(len(t) > 20000 for t in req.long_prompts):
+                    raise ValueError("A part's prompt is too long")
             if req.motion_video:
                 if not req.first_frame or not req.motion_video_mask:
                     raise ValueError("A rough animation needs the picture and its mask video")
@@ -1037,199 +1058,17 @@ class JobManager:
         )
 
     async def _run(self, item: dict[str, Any], req: GenerateRequest, files: dict[str, str | None]) -> None:
-        from comfy_sdk import JobFailed, OutputReady, Preview, Progress, StatusChange
+        from comfy_sdk import JobFailed
 
-        client = self.comfy.client
         try:
             t_start = time.time()
-            built = self._build(item, req, files)
-            if req.engine in workflows.SAMPLING_DEFAULTS and (req.sampler or req.scheduler or req.cfg is not None):
-                built.info = {**(built.info or {}), **workflows.apply_sampling(built.graph, req.sampler, req.scheduler, req.cfg)}
-            item["info"] = built.info
-            self.log(item, f"Built the {req.engine} workflow: {len(built.graph)} nodes"
-                     + "".join(f", {k} {v}" for k, v in (built.info or {}).items() if isinstance(v, (int, float, str)) and len(str(v)) < 40))
-            # The SDK works on the dict it's given (set_input puts the upload handle in it), so the copy saved
-            # for "View workflow" is a separate one: editing the shared dict sent ComfyUI a plain file name
-            # that was never uploaded ("Invalid image file").
-            saved = copy.deepcopy(built.graph)
-            wf = client.workflows.from_json(built.graph)
-            if req.engine == "motion":  # the rough animation, its mask and (when asked) its first frame, before the uploads
-                vids = {"motion_ref": config.UPLOAD_DIR / f"{item['id']}_motion.mp4",
-                        "motion_mask": config.UPLOAD_DIR / f"{item['id']}_motion_mask.mp4"}
-                first = config.UPLOAD_DIR / f"{item['id']}_motion_first.png" if req.motion_first == "composite" else None
-                if req.motion_video:  # drawn in the page (a 3D scene): fitted to this render's size and length
-                    info = await asyncio.to_thread(
-                        motion.conform, req.motion_video, req.motion_video_mask, int(built.info["width"]),
-                        int(built.info["height"]), int(built.info["frames"]), vids["motion_ref"], vids["motion_mask"], first)
-                    # the 3D scene's render as H3 got it, in its scene's folder (<id>_3d.mp4; its mask with Time-to-Move)
-                    try:
-                        import shutil
-
-                        d = self._media_dir(item)
-                        shutil.copyfile(vids["motion_ref"], d / f"{item['id']}_3d.mp4")
-                        if req.motion_guide != "reference":
-                            shutil.copyfile(vids["motion_mask"], d / f"{item['id']}_3d_mask.mp4")
-                    except Exception as exc:  # noqa: BLE001 - a copy, never the render
-                        self.log(item, f"Couldn't keep the 3D render in the project's folder: {exc}", "warn")
-                    self.log(item, f"Fitted the 3D scene's rough animation: {info['frames']} frames at {info['size']}"
-                             + (", starting from its own first frame" if first else ""))
-                    if "motion_pose" in built.image_inputs:  # its people's skeleton (<Video 2>), fitted the same way
-                        pose_out = config.UPLOAD_DIR / f"{item['id']}_motion_pose.mp4"
-                        await asyncio.to_thread(
-                            motion.conform, req.motion_pose_video, req.motion_pose_video, int(built.info["width"]),
-                            int(built.info["height"]), int(built.info["frames"]), pose_out,
-                            config.UPLOAD_DIR / f"{item['id']}_motion_pose_gray.mp4")
-                        try:
-                            import shutil
-
-                            shutil.copyfile(pose_out, self._media_dir(item) / f"{item['id']}_3d_pose.mp4")
-                        except Exception as exc:  # noqa: BLE001 - a copy, never the render
-                            self.log(item, f"Couldn't keep the pose skeleton in the project's folder: {exc}", "warn")
-                        self.log(item, "Fitted the people's pose skeleton (<Video 2>)")
-                else:
-                    info = await asyncio.to_thread(
-                        motion.render, req.first_frame, req.motion_plate, req.motion_layers, int(built.info["width"]),
-                        int(built.info["height"]), int(built.info["frames"]), vids["motion_ref"], vids["motion_mask"], first)
-                    self.log(item, f"Drew the rough animation: {info['layers']} object(s), {info['frames']} frames"
-                             + (", starting from its own first frame" if first else ""))
-                if first:
-                    req = req.model_copy(update={"first_frame": first.relative_to(config.ROOT).as_posix()})
-            for role, node_id in built.image_inputs.items():
-                field = "image"
-                if role == "edit_rect":  # the image editor's marked rectangle, made from the selection
-                    rect = config.UPLOAD_DIR / f"{item['id']}_rect.png"
-                    await asyncio.to_thread(imaging.mask_rect, media_path(req.edit_mask), rect)
-                    wf.set_input(node_id, field, client.assets.from_file(rect))
-                    continue
-                if role in ("motion_ref", "motion_mask", "motion_pose"):  # motion layers: the rough animation, its mask, the skeleton
-                    vids = {"motion_ref": config.UPLOAD_DIR / f"{item['id']}_motion.mp4",
-                            "motion_mask": config.UPLOAD_DIR / f"{item['id']}_motion_mask.mp4",
-                            "motion_pose": config.UPLOAD_DIR / f"{item['id']}_motion_pose.mp4"}
-                    wf.set_input(node_id, "file", client.assets.from_file(vids[role]))
-                    sent = saved.get(str(node_id))
-                    if sent:
-                        sent["inputs"]["file"] = vids[role].name
-                        sent.setdefault("_meta", {})["title"] = role
-                    continue
-                if role == "tail":  # continuing without a cut: the previous video's last frames at this size
-                    tail = config.UPLOAD_DIR / f"{item['id']}_tail.mp4"
-                    await asyncio.to_thread(media.tail_clip, req.continue_from, req.overlap,
-                                            int(built.info["width"]), int(built.info["height"]), tail)
-                    self.log(item, f"Continues {req.continue_from} without a cut ({req.overlap} frames of overlap)")
-                    wf.set_input(node_id, "file", client.assets.from_file(tail))
-                    sent = saved.get(str(node_id))
-                    if sent:
-                        sent["inputs"]["file"] = tail.name
-                        sent.setdefault("_meta", {})["title"] = f"tail: {req.continue_from}"
-                    continue
-                if role == "retake_src":  # retaking the sound: the video at the size and length H3 samples it
-                    prep = config.UPLOAD_DIR / f"{item['id']}_retake_src.mp4"
-                    await asyncio.to_thread(media.retake_source, req.source, int(built.info["sample_width"]),
-                                            int(built.info["sample_height"]), int(built.info["frames"]), prep)
-                    self.log(item, f"Retakes the sound of {req.source}"
-                             + (f" from {', '.join(f'{a:g}-{b:g} s' for a, b in built.info['ranges'])}" if built.info["ranges"] else ", all of it"))
-                    wf.set_input(node_id, "file", client.assets.from_file(prep))
-                    sent = saved.get(str(node_id))
-                    if sent:
-                        sent["inputs"]["file"] = prep.name
-                        sent.setdefault("_meta", {})["title"] = f"retake: {req.source}"
-                    continue
-                if role == "source":
-                    ref, field = req.source, ("file" if media.kind_of(req.source or "") == "video" else "image")
-                elif role.startswith("aref_"):
-                    ref, field = req.ref_audios[int(role[5:])], "audio"
-                elif role == "lock_audio":
-                    ref, field = req.lock_audio, "audio"
-                elif role.startswith("ref_"):
-                    ref = req.references[int(role[4:])]
-                elif role.startswith("guide_"):
-                    ref = req.guides[int(role[6:])]
-                elif role.startswith("mask_"):
-                    ref = req.guide_masks[int(role[5:])]
-                else:
-                    ref = getattr(req, role)
-                self.log(item, f"Input {role}: {ref}")
-                wf.set_input(node_id, field, client.assets.from_file(media_path(ref)))
-                sent = saved.get(str(node_id))
-                if sent:  # the saved copy names the file (ComfyUI needs it in its input folder to load it)
-                    sent["inputs"][field] = Path(ref).name
-                    sent.setdefault("_meta", {})["title"] = f"{role}: {ref}"
-            save_workflow(item["id"], saved)
-
-            # No `metadata=`: comfy-api-proxy 0.1.6 rejects the SDK's mapping form.
-            job = await submit_job(client, wf, PREVIEW_METHODS.get(req.preview))
-            self._handles[item["id"]] = job
-            self.log(item, f"Sent to ComfyUI (job {job.id})")
-            self._update(item, status="queued", comfy_job=job.id, started=None)
-
-            async def pump_events() -> None:
-                last_preview = 0.0
-                last_node, last_quarter = None, -1
-                async for ev in job.events():
-                    if isinstance(ev, Progress):
-                        if item["status"] != "running":
-                            self.log(item, "Running on the GPU")
-                            self._update(item, status="running", started=time.time())
-                        node = getattr(ev, "current_node", None)
-                        if node and node != last_node:
-                            last_node = node
-                            ctype = (built.graph.get(str(node)) or {}).get("class_type", "")
-                            self.log(item, f"Node {node}{f' · {ctype}' if ctype else ''}")
-                        if ev.steps:
-                            quarter = int(4 * ev.step / ev.steps)
-                            if quarter != last_quarter:
-                                last_quarter = quarter
-                                self.log(item, f"Step {ev.step} of {ev.steps}")
-                        # ev.value is the share of graph nodes done (loaders count), so
-                        # during sampling report step progress, which is what users expect.
-                        value = ev.step / ev.steps if ev.steps else ev.value
-                        item["progress"] = value
-                        self._publish({"type": "progress", "id": item["id"], "value": value,
-                                       "step": ev.step, "steps": ev.steps, "node": ev.current_node,
-                                       "message": ev.message})
-                    elif isinstance(ev, Preview):
-                        now = time.monotonic()
-                        if now - last_preview > 0.75:
-                            last_preview = now
-                            b64 = base64.b64encode(ev.data).decode()
-                            self._publish({"type": "preview", "id": item["id"],
-                                           "src": f"data:{ev.content_type};base64,{b64}"})
-                    elif isinstance(ev, StatusChange):
-                        if ev.status == "running" and item["status"] != "running":
-                            self.log(item, "Running on the GPU")
-                            self._update(item, status="running", started=time.time())
-                        elif ev.status in ("queued", "pending"):
-                            if ev.queue_position is not None:
-                                self.log(item, f"Waiting in ComfyUI's queue (position {ev.queue_position})")
-                            self._publish({"type": "queue", "id": item["id"], "position": ev.queue_position})
-                    elif isinstance(ev, OutputReady):
-                        pass  # we download everything once the job is final
-
-            events_task = asyncio.create_task(pump_events())
-            try:
-                # The SDK's wait() backs off up to ~15 s between polls; poll at a
-                # steady 1 s so results show up promptly, then let result() raise
-                # JobFailed with the server's error details if it didn't succeed.
-                from comfy_sdk import _core
-
-                while True:
-                    await job.refresh()
-                    if _core.is_terminal(job.status):
-                        break
-                    await asyncio.sleep(1.0)
-                done = await job.result()
-            finally:
-                events_task.cancel()
-
-            self.log(item, "Downloading the results")
-            saved = await self._download(item, done, built.outputs)
-            if req.engine == "retake" and saved:
-                saved = await self._retake_mux(item, req, saved, built.info)
-            if req.white_bg and req.engine == "angles":
-                await self._whiten(item, saved)
+            if self.is_long(req):  # longer than H3's window: in parts, each carrying on the one before
+                saved, info, req = await self._render_long(item, req, files)
+            else:
+                saved, info, req = await self._render_one(item, req, files)
             self.log(item, f"Done in {time.time() - t_start:.1f} s: " + ", ".join(f"{f['name']} ({f['size'] / 2**20:.1f} MB)" for f in saved))
             self._update(item, status="done", files=saved, progress=1.0, finished=time.time())
-            self._write_request(item, req, built.info)
+            self._write_request(item, req, info)
             if req.enhance_after and req.engine != "enhance" and saved:
                 asyncio.create_task(self._enhance_after(item))
             from . import heard  # its spoken lines, as heard: ranks a set of takes
@@ -1266,6 +1105,346 @@ class JobManager:
             of = (item.get("params") or {}).get("retake_of")
             if of and item.get("status") in ("failed", "cancelled") and self.items.get(of):  # the render's final take: itself
                 asyncio.create_task(self._enhance_final(self.items[of]))
+
+    def is_long(self, req: GenerateRequest) -> bool:
+        """A 3D scene's render longer than H3's window (about 15 s): made in parts (_render_long)."""
+        return req.engine == "motion" and workflows.h3_length(req.seconds) > workflows.H3_MAX_FRAMES
+
+    async def _render_long(self, item: dict[str, Any], req: GenerateRequest,
+                           files: dict[str, str | None]) -> tuple[list[dict[str, Any]], dict[str, Any], GenerateRequest]:
+        """A 3D scene's render longer than H3's window, in parts (workflows.long_plan): the rough animation, its mask
+        and the skeleton fitted to the whole length once, then each part rendered in turn from its stretch of them,
+        every part after the first carrying on the last 1.6 s (picture and sound) of the one before without a cut
+        (NKD AV Latent Extend, workflows.build_motion continue_overlap). Each part has its own prompt when the page
+        wrote them (long_prompts: its stretch of the camera move, the lines said in it); the parts are joined into one
+        video at the end. Each part is its own ComfyUI job, so the GPU holds one window at a time, as for a short
+        render. -> (files, info, req)"""
+        import shutil
+
+        from . import projectmedia
+
+        client = self.comfy.client
+        total = workflows.h3_length(req.seconds)
+        plan = workflows.long_plan(total)
+        n, ov = len(plan), workflows.LONG_OVERLAP
+        prompts = list(req.long_prompts) if len(req.long_prompts) == n else [req.prompt] * n
+        if req.long_prompts and len(req.long_prompts) != n:
+            self.log(item, f"The page wrote {len(req.long_prompts)} part prompts for {n} parts: each part gets the whole shot's", "warn")
+        mp = workflows.H3_QUALITY.get(req.quality, workflows.H3_QUALITY["draft"])
+        with Image.open(media_path(req.first_frame)) as im:
+            w, h = workflows.dims_for(im.size, mp)
+        edge = req.motion_edge if req.motion_edge >= 0 else 2
+        use_cn = bool(files.get("fun_controlnet") and req.motion_pose_strength > 0)
+        use_pose = bool(req.motion_pose_video and (use_cn or req.motion_guide == "reference"))
+        up, iid = config.UPLOAD_DIR, item["id"]
+        full = {"motion_ref": up / f"{iid}_motion.mp4", "motion_mask": up / f"{iid}_motion_mask.mp4"}
+        first = up / f"{iid}_motion_first.png" if req.motion_first == "composite" else None
+        info = await asyncio.to_thread(motion.conform, req.motion_video, req.motion_video_mask, w, h, total,
+                                       full["motion_ref"], full["motion_mask"], first)
+        d = self._media_dir(item)
+        try:
+            shutil.copyfile(full["motion_ref"], d / f"{iid}_3d.mp4")
+            if req.motion_guide != "reference":
+                shutil.copyfile(full["motion_mask"], d / f"{iid}_3d_mask.mp4")
+        except Exception as exc:  # noqa: BLE001 - a copy, never the render
+            self.log(item, f"Couldn't keep the 3D render in the project's folder: {exc}", "warn")
+        self.log(item, f"Fitted the 3D scene's rough animation: {info['frames']} frames at {info['size']}"
+                 + (", starting from its own first frame" if first else ""))
+        if use_pose:
+            full["motion_pose"] = up / f"{iid}_motion_pose.mp4"
+            await asyncio.to_thread(motion.conform, req.motion_pose_video, req.motion_pose_video, w, h, total,
+                                    full["motion_pose"], up / f"{iid}_motion_pose_gray.mp4")
+            try:
+                shutil.copyfile(full["motion_pose"], d / f"{iid}_3d_pose.mp4")
+            except Exception as exc:  # noqa: BLE001
+                self.log(item, f"Couldn't keep the pose skeleton in the project's folder: {exc}", "warn")
+            self.log(item, "Fitted the people's pose skeleton" + (" (the H3 Fun ControlNet)" if use_cn else " (<Video 2>)"))
+        if first:
+            req = req.model_copy(update={"first_frame": first.relative_to(config.ROOT).as_posix()})
+        sec = lambda f: f"{f / workflows.FPS:.1f} s"  # noqa: E731
+        item["info"] = {"width": w, "height": h, "frames": total, "seconds": round(total / workflows.FPS, 2), "parts": n,
+                        "plan": [{"from": round(p["start"] / workflows.FPS, 2), "to": round((p["start"] + p["frames"]) / workflows.FPS, 2)}
+                                 for p in plan],
+                        "overlap": ov}
+        self._update(item)
+        self.log(item, f"A long render: {sec(total)} in {n} parts ("
+                 + ", ".join(f"{sec(p['start'])}-{sec(p['start'] + p['frames'])}" for p in plan)
+                 + f"), each after the first carrying on the last {sec(ov)} of the one before without a cut")
+        rel = projectmedia.media_dir(req.project, req.scene, req.kind).relative_to(projectmedia.LINK).as_posix()
+        outs: list[dict[str, Any]] = []
+        last_info: dict[str, Any] = {}
+        for i, part in enumerate(plan):
+            say = f"Part {i + 1} of {n}: "
+            # the voices go to a part whose prompt speaks with them (the page leaves them out of a part with no lines)
+            voices = len(req.ref_audios) if "<Audio" in prompts[i] or prompts[i] == req.prompt else 0
+            built = workflows.build_motion(
+                files, prompt=prompts[i], width=w, height=h, seconds=part["window"] / workflows.FPS, seed=item["seed"],
+                turbo=req.turbo, steps=req.steps, hold=req.motion_hold, edge=edge, prefix=f"bob/{rel}/{iid}_part{i + 1}",
+                loras=[(lu.name, lu.strength) for lu in req.loras], references=len(req.references), audios=voices,
+                clean_audio=req.clean_audio and self.has_node("H3RefAudioPrep"), guide=req.motion_guide, pose_video=use_pose,
+                pose_control=req.motion_pose_strength if files.get("fun_controlnet") else 0.0,
+                frames=part["window"], continue_overlap=ov if i else 0, on_ref=True)
+            if req.sampler or req.scheduler or req.cfg is not None:
+                built.info = {**built.info, **workflows.apply_sampling(built.graph, req.sampler, req.scheduler, req.cfg)}
+            last_info = built.info
+            sent = copy.deepcopy(built.graph)
+            wf = client.workflows.from_json(built.graph)
+            files_in: dict[str, Path] = {}
+            for role in ("motion_ref", "motion_mask", "motion_pose"):  # its stretch of the whole length
+                if role in built.image_inputs:
+                    files_in[role] = up / f"{iid}_p{i + 1}_{role}.mp4"
+                    await asyncio.to_thread(media.cut_frames, full[role], part["window_start"], part["window"], files_in[role])
+            if i:  # the part before's last frames, and the first of them as <Picture 1>
+                files_in["tail"] = up / f"{iid}_p{i + 1}_tail.mp4"
+                await asyncio.to_thread(media.tail_clip, outs[-1]["path"], ov, w, h, files_in["tail"])
+                files_in["first_frame"] = up / f"{iid}_p{i + 1}_first.png"
+                await asyncio.to_thread(media.first_frame_of, files_in["tail"], files_in["first_frame"])
+            for role, node_id in built.image_inputs.items():
+                if role in files_in:
+                    path, field = files_in[role], "image" if role == "first_frame" else "file"
+                elif role == "first_frame":
+                    path, field = media_path(req.first_frame), "image"
+                elif role.startswith("aref_"):
+                    path, field = media_path(req.ref_audios[int(role[5:])]), "audio"
+                elif role.startswith("ref_"):
+                    path, field = media_path(req.references[int(role[4:])]), "image"
+                else:
+                    raise ValueError(f"A long render has no input {role}")
+                wf.set_input(node_id, field, client.assets.from_file(path))
+                if str(node_id) in sent:
+                    sent[str(node_id)]["inputs"][field] = path.name
+                    sent[str(node_id)].setdefault("_meta", {})["title"] = role
+            save_workflow(iid if i == 0 else f"{iid}_part{i + 1}", sent)
+            self.log(item, f"{say}{sec(part['start'])} to {sec(part['start'] + part['frames'])}"
+                     + (f", carrying on from {sec(part['window_start'])}" if i else "") + f": {len(built.graph)} nodes, {part['window']} frames")
+            done = await self._execute(item, built, wf, req, span=(i / n, (i + 1) / n), say=say)
+            got = await self._download(item, done, built.outputs)
+            vid = next((x for x in got if (x.get("content_type") or "").startswith("video")), None)
+            if not vid:
+                raise ValueError(f"Part {i + 1} came back without a video")
+            outs.append(vid)
+            self.log(item, f"{say}done")
+        target = d / f"{iid}_long.mp4"
+        self.log(item, f"Joining the {n} parts")
+        await asyncio.to_thread(media.join_videos, [config.ROOT / x["path"] for x in outs], target)
+        for x in outs:  # the parts are in the joined video
+            (config.ROOT / x["path"]).unlink(missing_ok=True)
+        for f in up.glob(f"{iid}_p*_*"):
+            f.unlink(missing_ok=True)
+        rel_t = target.relative_to(config.ROOT).as_posix()
+        saved = [{"name": target.name, "path": rel_t, "url": "/" + urllib.parse.quote(rel_t), "content_type": "video/mp4",
+                  "size": target.stat().st_size}]
+        info = {**last_info, **item["info"], "final_prompt": prompts[0]}
+        if len(set(prompts)) > 1:
+            info["part_prompts"] = prompts
+        for k in ("new_frames", "continues"):
+            info.pop(k, None)
+        return saved, info, req
+
+    async def _render_one(self, item: dict[str, Any], req: GenerateRequest,
+                          files: dict[str, str | None]) -> tuple[list[dict[str, Any]], dict[str, Any], GenerateRequest]:
+        """One graph, one ComfyUI job: built, its inputs uploaded, run, its results downloaded. -> (files, info, req)"""
+        client = self.comfy.client
+        built = self._build(item, req, files)
+        if req.engine in workflows.SAMPLING_DEFAULTS and (req.sampler or req.scheduler or req.cfg is not None):
+            built.info = {**(built.info or {}), **workflows.apply_sampling(built.graph, req.sampler, req.scheduler, req.cfg)}
+        item["info"] = built.info
+        self.log(item, f"Built the {req.engine} workflow: {len(built.graph)} nodes"
+                 + "".join(f", {k} {v}" for k, v in (built.info or {}).items() if isinstance(v, (int, float, str)) and len(str(v)) < 40))
+        # The SDK works on the dict it's given (set_input puts the upload handle in it), so the copy saved
+        # for "View workflow" is a separate one: editing the shared dict sent ComfyUI a plain file name
+        # that was never uploaded ("Invalid image file").
+        saved = copy.deepcopy(built.graph)
+        wf = client.workflows.from_json(built.graph)
+        if req.engine == "motion":  # the rough animation, its mask and (when asked) its first frame, before the uploads
+            vids = {"motion_ref": config.UPLOAD_DIR / f"{item['id']}_motion.mp4",
+                    "motion_mask": config.UPLOAD_DIR / f"{item['id']}_motion_mask.mp4"}
+            first = config.UPLOAD_DIR / f"{item['id']}_motion_first.png" if req.motion_first == "composite" else None
+            if req.motion_video:  # drawn in the page (a 3D scene): fitted to this render's size and length
+                info = await asyncio.to_thread(
+                    motion.conform, req.motion_video, req.motion_video_mask, int(built.info["width"]),
+                    int(built.info["height"]), int(built.info["frames"]), vids["motion_ref"], vids["motion_mask"], first)
+                # the 3D scene's render as H3 got it, in its scene's folder (<id>_3d.mp4; its mask with Time-to-Move)
+                try:
+                    import shutil
+
+                    d = self._media_dir(item)
+                    shutil.copyfile(vids["motion_ref"], d / f"{item['id']}_3d.mp4")
+                    if req.motion_guide != "reference":
+                        shutil.copyfile(vids["motion_mask"], d / f"{item['id']}_3d_mask.mp4")
+                except Exception as exc:  # noqa: BLE001 - a copy, never the render
+                    self.log(item, f"Couldn't keep the 3D render in the project's folder: {exc}", "warn")
+                self.log(item, f"Fitted the 3D scene's rough animation: {info['frames']} frames at {info['size']}"
+                         + (", starting from its own first frame" if first else ""))
+                if "motion_pose" in built.image_inputs:  # its people's skeleton (<Video 2>), fitted the same way
+                    pose_out = config.UPLOAD_DIR / f"{item['id']}_motion_pose.mp4"
+                    await asyncio.to_thread(
+                        motion.conform, req.motion_pose_video, req.motion_pose_video, int(built.info["width"]),
+                        int(built.info["height"]), int(built.info["frames"]), pose_out,
+                        config.UPLOAD_DIR / f"{item['id']}_motion_pose_gray.mp4")
+                    try:
+                        import shutil
+
+                        shutil.copyfile(pose_out, self._media_dir(item) / f"{item['id']}_3d_pose.mp4")
+                    except Exception as exc:  # noqa: BLE001 - a copy, never the render
+                        self.log(item, f"Couldn't keep the pose skeleton in the project's folder: {exc}", "warn")
+                    self.log(item, "Fitted the people's pose skeleton (<Video 2>)")
+            else:
+                info = await asyncio.to_thread(
+                    motion.render, req.first_frame, req.motion_plate, req.motion_layers, int(built.info["width"]),
+                    int(built.info["height"]), int(built.info["frames"]), vids["motion_ref"], vids["motion_mask"], first)
+                self.log(item, f"Drew the rough animation: {info['layers']} object(s), {info['frames']} frames"
+                         + (", starting from its own first frame" if first else ""))
+            if first:
+                req = req.model_copy(update={"first_frame": first.relative_to(config.ROOT).as_posix()})
+        for role, node_id in built.image_inputs.items():
+            field = "image"
+            if role == "edit_rect":  # the image editor's marked rectangle, made from the selection
+                rect = config.UPLOAD_DIR / f"{item['id']}_rect.png"
+                await asyncio.to_thread(imaging.mask_rect, media_path(req.edit_mask), rect)
+                wf.set_input(node_id, field, client.assets.from_file(rect))
+                continue
+            if role in ("motion_ref", "motion_mask", "motion_pose"):  # motion layers: the rough animation, its mask, the skeleton
+                vids = {"motion_ref": config.UPLOAD_DIR / f"{item['id']}_motion.mp4",
+                        "motion_mask": config.UPLOAD_DIR / f"{item['id']}_motion_mask.mp4",
+                        "motion_pose": config.UPLOAD_DIR / f"{item['id']}_motion_pose.mp4"}
+                wf.set_input(node_id, "file", client.assets.from_file(vids[role]))
+                sent = saved.get(str(node_id))
+                if sent:
+                    sent["inputs"]["file"] = vids[role].name
+                    sent.setdefault("_meta", {})["title"] = role
+                continue
+            if role == "tail":  # continuing without a cut: the previous video's last frames at this size
+                tail = config.UPLOAD_DIR / f"{item['id']}_tail.mp4"
+                await asyncio.to_thread(media.tail_clip, req.continue_from, req.overlap,
+                                        int(built.info["width"]), int(built.info["height"]), tail)
+                self.log(item, f"Continues {req.continue_from} without a cut ({req.overlap} frames of overlap)")
+                wf.set_input(node_id, "file", client.assets.from_file(tail))
+                sent = saved.get(str(node_id))
+                if sent:
+                    sent["inputs"]["file"] = tail.name
+                    sent.setdefault("_meta", {})["title"] = f"tail: {req.continue_from}"
+                continue
+            if role == "retake_src":  # retaking the sound: the video at the size and length H3 samples it
+                prep = config.UPLOAD_DIR / f"{item['id']}_retake_src.mp4"
+                await asyncio.to_thread(media.retake_source, req.source, int(built.info["sample_width"]),
+                                        int(built.info["sample_height"]), int(built.info["frames"]), prep)
+                self.log(item, f"Retakes the sound of {req.source}"
+                         + (f" from {', '.join(f'{a:g}-{b:g} s' for a, b in built.info['ranges'])}" if built.info["ranges"] else ", all of it"))
+                wf.set_input(node_id, "file", client.assets.from_file(prep))
+                sent = saved.get(str(node_id))
+                if sent:
+                    sent["inputs"]["file"] = prep.name
+                    sent.setdefault("_meta", {})["title"] = f"retake: {req.source}"
+                continue
+            if role == "source":
+                ref, field = req.source, ("file" if media.kind_of(req.source or "") == "video" else "image")
+            elif role.startswith("aref_"):
+                ref, field = req.ref_audios[int(role[5:])], "audio"
+            elif role == "lock_audio":
+                ref, field = req.lock_audio, "audio"
+            elif role.startswith("ref_"):
+                ref = req.references[int(role[4:])]
+            elif role.startswith("guide_"):
+                ref = req.guides[int(role[6:])]
+            elif role.startswith("mask_"):
+                ref = req.guide_masks[int(role[5:])]
+            else:
+                ref = getattr(req, role)
+            self.log(item, f"Input {role}: {ref}")
+            wf.set_input(node_id, field, client.assets.from_file(media_path(ref)))
+            sent = saved.get(str(node_id))
+            if sent:  # the saved copy names the file (ComfyUI needs it in its input folder to load it)
+                sent["inputs"][field] = Path(ref).name
+                sent.setdefault("_meta", {})["title"] = f"{role}: {ref}"
+        save_workflow(item["id"], saved)
+
+        done = await self._execute(item, built, wf, req)
+        self.log(item, "Downloading the results")
+        saved = await self._download(item, done, built.outputs)
+        if req.engine == "retake" and saved:
+            saved = await self._retake_mux(item, req, saved, built.info)
+        if req.white_bg and req.engine == "angles":
+            await self._whiten(item, saved)
+        return saved, built.info, req
+
+    async def _execute(self, item: dict[str, Any], built: workflows.Built, wf: Any, req: GenerateRequest,
+                       span: tuple[float, float] = (0.0, 1.0), say: str = "") -> Any:
+        """Send a graph to ComfyUI and follow it to the end: its progress (within `span` of the item's, for a part
+        of a long render), previews and queue place. -> the finished job (raises JobFailed when it failed)."""
+        from comfy_sdk import OutputReady, Preview, Progress, StatusChange
+
+        client = self.comfy.client
+        lo, hi = span
+        # No `metadata=`: comfy-api-proxy 0.1.6 rejects the SDK's mapping form.
+        job = await submit_job(client, wf, PREVIEW_METHODS.get(req.preview))
+        self._handles[item["id"]] = job
+        self.log(item, f"{say}Sent to ComfyUI (job {job.id})")
+        if item["status"] != "running":
+            self._update(item, status="queued", comfy_job=job.id, started=None)
+        else:
+            self._update(item, comfy_job=job.id)
+
+        async def pump_events() -> None:
+            last_preview = 0.0
+            last_node, last_quarter = None, -1
+            async for ev in job.events():
+                if isinstance(ev, Progress):
+                    if item["status"] != "running":
+                        self.log(item, "Running on the GPU")
+                        self._update(item, status="running", started=time.time())
+                    node = getattr(ev, "current_node", None)
+                    if node and node != last_node:
+                        last_node = node
+                        ctype = (built.graph.get(str(node)) or {}).get("class_type", "")
+                        self.log(item, f"Node {node}{f' · {ctype}' if ctype else ''}")
+                    if ev.steps:
+                        quarter = int(4 * ev.step / ev.steps)
+                        if quarter != last_quarter:
+                            last_quarter = quarter
+                            self.log(item, f"{say}Step {ev.step} of {ev.steps}")
+                    # ev.value is the share of graph nodes done (loaders count), so
+                    # during sampling report step progress, which is what users expect.
+                    value = lo + (hi - lo) * (ev.step / ev.steps if ev.steps else ev.value)
+                    item["progress"] = value
+                    self._publish({"type": "progress", "id": item["id"], "value": value,
+                                   "step": ev.step, "steps": ev.steps, "node": ev.current_node,
+                                   "message": ev.message})
+                elif isinstance(ev, Preview):
+                    now = time.monotonic()
+                    if now - last_preview > 0.75:
+                        last_preview = now
+                        b64 = base64.b64encode(ev.data).decode()
+                        self._publish({"type": "preview", "id": item["id"],
+                                       "src": f"data:{ev.content_type};base64,{b64}"})
+                elif isinstance(ev, StatusChange):
+                    if ev.status == "running" and item["status"] != "running":
+                        self.log(item, "Running on the GPU")
+                        self._update(item, status="running", started=time.time())
+                    elif ev.status in ("queued", "pending"):
+                        if ev.queue_position is not None:
+                            self.log(item, f"Waiting in ComfyUI's queue (position {ev.queue_position})")
+                        self._publish({"type": "queue", "id": item["id"], "position": ev.queue_position})
+                elif isinstance(ev, OutputReady):
+                    pass  # we download everything once the job is final
+
+        events_task = asyncio.create_task(pump_events())
+        try:
+            # The SDK's wait() backs off up to ~15 s between polls; poll at a
+            # steady 1 s so results show up promptly, then let result() raise
+            # JobFailed with the server's error details if it didn't succeed.
+            from comfy_sdk import _core
+
+            while True:
+                await job.refresh()
+                if _core.is_terminal(job.status):
+                    break
+                await asyncio.sleep(1.0)
+            done = await job.result()
+        finally:
+            events_task.cancel()
+        return done
+
 
     async def run_quick(self, built: workflows.Built, refs: dict[str, str], timeout: float = 300) -> list[Path]:
         """Run a small helper graph (not a studio item, e.g. the editor's AI select) and save its
