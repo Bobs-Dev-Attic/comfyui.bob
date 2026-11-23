@@ -56,7 +56,7 @@ def _url(rel: str | None) -> str | None:
 
 
 def _public(m: dict[str, Any]) -> dict[str, Any]:
-    return {**m, "glb_url": _url(m.get("glb")), "thumb_url": _url(m.get("thumb"))}
+    return {**m, "glb_url": _url(m.get("glb")), "thumb_url": _url(m.get("thumb")), "rig_url": _url(m.get("rig"))}
 
 
 def list_models(project: str | None = None) -> list[dict[str, Any]]:
@@ -127,7 +127,8 @@ def start(jobs: Any, files: dict[str, str], *, source: str, mask: str | None, na
 
 async def _fetch_glb(http: Any, model_id: str, target: Path) -> bool:
     """The comfy-sdk proxy hands back pictures, videos and sounds but not SaveGLB's "3d" output, so the model is
-    found in ComfyUI's own history (by its file name, which starts with the model's id) and downloaded."""
+    found in ComfyUI's own history (by its file name, which starts with the model's id, or any other stem given as
+    model_id) and downloaded."""
     r = await http.get(f"{config.COMFYUI_URL}/history", params={"max_items": 64}, timeout=30.0)
     r.raise_for_status()
     for entry in reversed(list(r.json().values())):

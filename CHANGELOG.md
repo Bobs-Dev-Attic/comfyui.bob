@@ -5,6 +5,24 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.173.0] - 2026-11-23
+
+### Added
+- **🧍 Make 3D figure**: a 3D scene's Person can look like a real person. Give it a picture of them (best from head to
+  feet) and press **Make from its picture** under **Looks like**. A few minutes later, a rigged, textured 3D figure of
+  them takes the mannequin's place. It's posed, keyed, blended and walked exactly as the mannequin is (presets, the pose
+  editor, movements and walk cycles), so the 3D render, its photo and the video already show who they are.
+  **🤸 As in the picture** poses them as they stand in their picture. The figure is made in four steps:
+  - Qwen Image Edit draws them in an A-pose, with the arms and legs clear of the body, so each has a surface of its own.
+  - SAM 3D Body fits its rigged body (127 bones) to that picture, and to their own picture for their pose there.
+  - TRELLIS.2 makes the textured model of the A-pose picture.
+  - The model takes the body's skeleton and skin weights.
+
+  The figure is a GLB with its skeleton, so it opens in Blender too. Needs Make 3D's models, Qwen Image Edit and SAM 3D
+  Body's model (`sam_3d_body_dinov3_bf16.safetensors` in `models/detection`). Loose, long clothes only follow the hips.
+- **Generate photo with a figure**: a Person shown as their figure isn't pasted in from their picture any more. The edit
+  model is told it's a 3D scan of a real person, to keep exactly as they are and make photographic.
+
 ## [0.172.1] - 2026-11-23
 
 ### Fixed

@@ -1847,7 +1847,19 @@ TRELLIS_FILES = {
     "shape_vae": "trellis_2_shape_vae_bf16.safetensors",
     "texture_vae": "trellis_2_texture_vae_bf16.safetensors",
 }
-MAKE3D_QUALITY = {"standard": (200_000, 2048), "high": (700_000, 4096)}  # faces, texture size
+MAKE3D_QUALITY = {"standard": (200_000, 2048), "high": (700_000, 4096),
+                  # Make 3D figure: light enough for the page to re-pose (skin) it every frame
+                  "figure": (60_000, 2048)}  # faces, texture size
+# Make 3D figure: SAM 3D Body's model (ComfyUI's models/detection) and the nodes that fit it and write its rigged body
+SAM3D_BODY_NODES = ("SAM3DBody_Loader", "SAM3DBody_Predict", "BuildPoseFile")
+# ...and the A-pose picture it starts from: arms well away from the body and the legs apart, so the textured model has
+# a surface of its own under each arm and between the legs, and comes apart cleanly when it's posed
+FIGURE_APOSE_PROMPT = (
+    "Show the same person, with exactly the same face, hair, body, clothes and shoes, standing in an A-pose for a 3D "
+    "scan: facing the camera straight on, arms held straight out and down at 45 degrees away from the body so there is "
+    "clear space between the arms and the body and clothes, palms facing forward, feet apart at shoulder width with a "
+    "clear gap between the legs. Their whole body from head to feet is in the frame, centred, on a plain light grey "
+    "backdrop with soft even light.")
 
 
 def build_make3d(files: dict[str, str], *, seed: int, quality: str = "standard", masked: bool = False,
@@ -1919,6 +1931,22 @@ def build_make3d(files: dict[str, str], *, seed: int, quality: str = "standard",
     preview = g.add("SaveImage", images=o(crop), filename_prefix=prefix + "_input")
     return Built(graph=g.nodes, outputs=[save, preview], image_inputs=inputs,
                  info={"model": "TRELLIS.2", "faces": faces, "texture": tex, "quality": quality})
+
+
+def build_sam3d_body(model_file: str, *, prefix: str = "bob/3d/body") -> Built:
+    """SAM 3D Body (ComfyUI's own nodes) fitted to the person in a picture, written as its rigged body: a GLB of the
+    MHR body mesh with its 127-bone skeleton and skin weights, the bones as they stand in the picture (figrig.Body).
+    image_inputs: source."""
+    g = Graph()
+    o = Graph.out
+    src = g.add("LoadImage", image="")
+    model = g.add("SAM3DBody_Loader", model_file=model_file)
+    fit = g.add("SAM3DBody_Predict", sam3d_body_model=o(model), image=o(src), run_hand_refinement=True, fov=0.0, batch_size=8)
+    body = g.add("BuildPoseFile", pose_data=o(fit), format="glb", **{"format.mesh_style": "body_mesh",
+                 "format.mesh_style.bone_vis": "off", "format.mesh_style.shader": "default", "format.bone_smooth_window": 0},
+                 fps=24.0, camera_translation="off", track_index=0, sam3d_body_model=o(model))
+    save = g.add("SaveGLB", mesh=o(body), filename_prefix=prefix)
+    return Built(graph=g.nodes, outputs=[save], image_inputs={"source": src}, info={"model": "SAM 3D Body"})
 
 
 def build_scene_background(*, largest: int = 1280, decimation: int = 2, prefix: str = "bob/scene") -> Built:

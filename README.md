@@ -98,6 +98,14 @@ The side panel walks through a generation in steps: **1 Project → 2 Model → 
   `trellis_2_texture_vae_bf16` (vae), `dino_v3_L_naf_fp32` (clip_vision), from
   [Comfy-Org/TRELLIS.2](https://huggingface.co/Comfy-Org/TRELLIS.2) and [Comfy-Org/Pixal3D](https://huggingface.co/Comfy-Org/Pixal3D),
   plus BiRefNet (background_removal) for a whole picture. Models live in `data/models3d.json`, files in `outputs/3d/`.
+- **🧍 Make 3D figure** (a 3D scene's Person, Looks like › Make from its picture): a rigged, textured 3D figure of the
+  person in the Person's picture (best one of them from head to feet), which takes the mannequin's place and is posed,
+  keyed and walked the same way, so the render already shows who they are. Qwen Image Edit draws them in an A-pose (arms
+  and legs clear of the body), SAM 3D Body fits its rigged body (127 bones) to that picture and to the person's own
+  (🤸 As in the picture: their pose there), TRELLIS.2 makes the textured model of the A-pose, and the model takes the
+  body's skeleton and skin weights (`app/figrig.py`). A few minutes. Needs Make 3D's models, Qwen Image Edit and
+  `sam_3d_body_dinov3_bf16.safetensors` in `models/detection` ([Comfy-Org/sam-3d-body](https://huggingface.co/Comfy-Org/sam-3d-body)).
+  Loose, long clothes only follow the hips.
 - **🏞 3D scene** (a picture's button in the gallery, its menu in the results, the Media page or the Inputs step, or
   🏞 Open as a 3D scene in Animate objects): the picture in depth with 3D models
   standing in it. Depth Anything 3 (`depth_anything_3_base`, already used for camera moves) turns the background (the
@@ -408,6 +416,7 @@ Other features:
 - `app/projectfile.py`: the `project.json` schema (pydantic), migration, and JSON Schema export.
 - `app/media.py`: media sources, bookmarks, the thumbnail cache, the folder picker, probing and frame grabs.
 - `app/render.py`: renders a timeline to MP4 with ffmpeg.
+- `app/figure3d.py` and `app/figrig.py`: Make 3D figure (an A-pose picture, SAM 3D Body, TRELLIS.2, and the rigging).
 - `app/model3d.py`: Make 3D (TRELLIS.2 picture to GLB), the list of 3D models, and 3D scenes (Depth Anything 3
   backgrounds); `static/model3d.js` is the models window and the GLB viewer (WebGL 2, no libraries), `static/scene3d.js`
   the scene window.

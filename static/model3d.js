@@ -175,7 +175,10 @@ const Model3D = (() => {
         prims.push({ pos: P, nrm, uv: at.TEXCOORD_0 != null ? accessor(at.TEXCOORD_0).data : null,
           col: at.COLOR_0 != null ? accessor(at.COLOR_0) : null, idx: idx ? Uint32Array.from(idx) : null,
           base: pbr.baseColorFactor || [1, 1, 1, 1], tex: texImage(pbr.baseColorTexture), ao: texImage(mat.occlusionTexture),
-          doubleSided: !!mat.doubleSided });
+          doubleSided: !!mat.doubleSided,
+          // a skinned mesh's bones and weights (a 3D figure: scene3d.js poses it), 4 per vertex
+          skinJ: at.JOINTS_0 != null ? Uint16Array.from(accessor(at.JOINTS_0).raw) : null,
+          skinW: at.WEIGHTS_0 != null ? accessor(at.WEIGHTS_0).data : null });
       }
       for (const c of nd.children || []) visit(c, M);
     };
