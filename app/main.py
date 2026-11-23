@@ -144,6 +144,9 @@ async def enhance_caps():
     return {
         "facerefine": has("H3FaceTrackCrop", "H3FaceStitch", "H3PerFrameDenoise", "H3InjectVideoLatent", "MiniMaxH3NativeAudioLock"),
         "facerefine_plus": has(*workflows.FACEREFINE_PLUS_NODES),
+        # FaceRefine Plus V2 (face only, any video): its nodes, a SAM 3 checkpoint and H3's model
+        "facerefine_v2": has(*workflows.FACEREFINE_V2_NODES) and bool(_sam_ckpt(installed))
+                         and models.resolve(models.ALL_SETS["h3"], installed)["ready"],
         "dlss": has("DLSS5EnhanceImages", "DLSS5Settings"),
         "seedvr2": has("SeedVR2VideoUpscaler", "SeedVR2LoadDiTModel", "SeedVR2LoadVAEModel") and bool(dits),
         "seedvr2_models": dits,

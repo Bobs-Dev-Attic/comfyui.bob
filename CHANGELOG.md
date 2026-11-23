@@ -5,6 +5,21 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.172.0] - 2026-11-23
+
+### Added
+- **FaceRefine Plus V2: re-draws only the face, on any video.** Enhance's FaceRefine gets a Mode: V1 (as before), V2 face
+  only, or V2 face and hair. This is ComfyUI-H3-FaceRefine-Plus v0.2.0's V2 graph.
+  - SAM 3 masks the face (or face and hair) in each tracked 768 px crop, and only that is re-drawn (H3 Face Mask To
+    Latent, Differential Diffusion). Everything else in the crop stays as it was, and the sound is held exactly.
+  - It runs on H3's model with its 8-step turbo LoRA (block-sparse attention when ComfyUI has it), from an empty prompt
+    and the video's first reference picture, so it doesn't need the video's own H3 prompt. It works on 3D scene renders,
+    imported videos and every engine's videos; V1 still needs a video made with H3 or H3 Reference.
+  - It can run on a 3D render's final take (Enhance the final take) and after generating (Settings > Post-Processing).
+  - Strength is the same slider: the pack uses 0.30, or 0.50 for more change.
+  - It needs ComfyUI-H3-FaceRefine-Plus 0.2+, a SAM 3 checkpoint (sam3*.safetensors in models/checkpoints) and H3's model;
+    `/api/enhance/caps` reports `facerefine_v2`. The pack's VOSR2 modes aren't included.
+
 ## [0.171.0] - 2026-11-23
 
 ### Added
