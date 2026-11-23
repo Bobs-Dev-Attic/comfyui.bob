@@ -5,6 +5,21 @@ All notable changes to Bob Studio are recorded here. The format follows
 [Semantic Versioning](https://semver.org/). The current version lives in
 `app/__init__.py` and is shown in the app's top bar and in `/api/status`.
 
+## [0.170.0] - 2026-11-22
+
+### Added
+- **The pose guide steers the video through H3's Fun ControlNet Union.** When the ControlNet is in ComfyUI's
+  `models/model_patches` (`minimax_h3_fun_controlnet_union_2.0…` preferred), a 3D scene render with 🦴 Pose guide ticked
+  sends the people's OpenPose skeleton as the ControlNet's control video, so H3 holds each person to their mannequin's
+  pose in every frame.
+  - It works with either guide (Time-to-Move or H3 Reference) and replaces the experimental `<Video 2>`.
+  - A Strong, Medium or Light choice sits beside the checkbox (strength 1, 0.7 or 0.45).
+  - The photo of the first frame still gets the skeleton as a picture.
+- Without the ControlNet, the pose guide works as before: `<Video 2>` on H3 Reference. Time-to-Move then says it needs
+  the reference guide.
+- The Model step lists the ControlNet as an optional file of H3 and H3 Reference, and `/api/capabilities` reports
+  `editor.posecn`.
+
 ## [0.169.0] - 2026-11-22
 
 ### Added

@@ -179,6 +179,8 @@ class GenerateRequest(BaseModel):
     # the 3D scene's people as an OpenPose skeleton video (drawn in the page, as the rough animation): with the
     # reference guide it goes to H3 Reference as <Video 2>, which they're told to move as
     motion_pose_video: str | None = Field(None, max_length=2000)
+    # how hard the skeleton steers the people through the H3 Fun ControlNet, when it's installed (0 = not at all)
+    motion_pose_strength: float = Field(1.0, ge=0, le=2)
     enhance: bool = False  # Klein prompt upsampler / Krea 2 prompt expander
     layout: list[LayoutBox] | None = Field(None, max_length=60)  # MOSS-Image layout control
     clean_texture: bool = True  # H3 Image: EasyFix steering + re-noise, when ComfyUI-H3-Image-EasyFix is installed
@@ -739,8 +741,8 @@ class JobManager:
             if req.kind != "video":
                 raise ValueError("Motion layers make video")
             if req.motion_pose_video:
-                if req.motion_guide != "reference" or not req.motion_video:
-                    raise ValueError("A pose skeleton video goes with a 3D scene's render as a reference video (H3 Reference)")
+                if not req.motion_video:
+                    raise ValueError("A pose skeleton video goes with a 3D scene's render")
                 media_path(req.motion_pose_video)
             if req.motion_guide == "reference":
                 if not req.motion_video:
@@ -982,7 +984,10 @@ class JobManager:
                 hold=req.motion_hold, edge=edge, prefix=prefix, loras=[(lu.name, lu.strength) for lu in req.loras],
                 references=len(req.references), audios=len(req.ref_audios),
                 clean_audio=req.clean_audio and self.has_node("H3RefAudioPrep"), guide=req.motion_guide,
-                lock_audio=bool(req.lock_audio), pose_video=bool(req.motion_pose_video and req.motion_guide == "reference"),
+                lock_audio=bool(req.lock_audio),
+                # the skeleton: through the H3 Fun ControlNet when it's there (either guide), else H3 Reference's <Video 2>
+                pose_video=bool(req.motion_pose_video and ((files.get("fun_controlnet") and req.motion_pose_strength > 0) or req.motion_guide == "reference")),
+                pose_control=req.motion_pose_strength if files.get("fun_controlnet") else 0.0,
             )
         if req.engine == "imgedit":
             return workflows.build_imgedit(

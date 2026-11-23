@@ -56,6 +56,8 @@ H3 = ModelSet(
             optional=True,
             label="Turbo LoRA (8/4-step)",
         ),
+        Slot("fun_controlnet", "model_patches", ("minimax_h3_fun_controlnet_union_2.0*", "minimax_h3_fun_controlnet*"), optional=True,
+             label="Fun ControlNet Union (the pose guide)"),
     ),
 )
 
@@ -69,6 +71,8 @@ H3REF = ModelSet(
         Slot("vae", "vae", ("minimax_h3_video_vae*",), label="H3 video VAE"),
         Slot("audio_vae", "vae", ("minimax_h3_audio_vae*",), label="H3 audio VAE"),
         Slot("turbo_lora", "loras", ("minimax_h3_ref2v_*turbo*",), optional=True, label="Ref2v turbo LoRA (4-step)"),
+        Slot("fun_controlnet", "model_patches", ("minimax_h3_fun_controlnet_union_2.0*", "minimax_h3_fun_controlnet*"), optional=True,
+             label="Fun ControlNet Union (the pose guide)"),
     ),
 )
 

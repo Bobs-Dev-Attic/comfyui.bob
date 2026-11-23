@@ -1036,6 +1036,8 @@ async def capabilities(refresh: bool = False):
         "remover": "BiRefNet" if installed.get("background_removal") else "u2net",
     }
     editor["erase"] = editor["crop"] and (editor["qwen"] or editor["h3image"] or editor["mossedit"])
+    # the pose guide through H3's Fun ControlNet Union (renders from a 3D scene)
+    editor["posecn"] = bool(engines["h3"]["files"].get("fun_controlnet")) and {"ModelPatchLoader", "MiniMaxH3FunControlNetApply"} <= nodes
     # Animate objects (motion layers): AI select, Erase, H3 and ComfyUI-vlo's Time-to-Move.
     editor["motion"] = editor["select"] and editor["erase"] and engines["h3"]["ready"] and "vloTimeToMove" in nodes
     # Make 3D: TRELLIS.2 and ComfyUI's mesh nodes (and background removal for a whole picture).
