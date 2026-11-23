@@ -13,6 +13,9 @@
    🎬 Add keys it on the Person from the playhead (Scene3D addMovement). The Person's own keyed poses can be saved as a
    movement (data/v2/moves.json, every project).
 
+   ⬆ Import (poseimport.js): a BVH, a glTF animation or OpenPose keypoints, as a pose (one frame) or a movement to play,
+   add, save, or take a moment of as a pose.
+
    The pose: arms and legs a direction for each bone, x pointing out from the body (scene3d.js POSES), the spine
    [bend, lean, twist] and head [turn, nod, tilt] in degrees (+ forward, to their left, down), hands relaxed, open or
    fist. Drawn with the scene's own mannequin (Scene3D.poseKit) and Model3D's WebGL helpers; no libraries. */
@@ -124,7 +127,7 @@ const PosePad = (() => {
   function moveAt(kit, m, f) {
     const S = m.steps, pose = x => kit.completePose(typeof x.pose === "string" ? kit.POSES[x.pose] || kit.POSES.standing : x.pose);
     let i = 0; while (i < S.length - 1 && S[i + 1].f <= f) i++;
-    const a = S[i], b = S[Math.min(i + 1, S.length - 1)], u0 = b.f > a.f ? clamp((f - a.f) / (b.f - a.f), 0, 1) : 0, u = u0 * u0 * (3 - 2 * u0);
+    const a = S[i], b = S[Math.min(i + 1, S.length - 1)], u0 = b.f > a.f ? clamp((f - a.f) / (b.f - a.f), 0, 1) : 0, u = a.lin ? u0 : u0 * u0 * (3 - 2 * u0);
     const lerp = (x, y) => (+x || 0) + ((+y || 0) - (+x || 0)) * u;
     return { pose: kit.mixPose(pose(a), pose(b), u), lift: lerp(a.lift, b.lift), turn: lerp(a.turn, b.turn) };
   }
@@ -139,6 +142,8 @@ const PosePad = (() => {
     box.className = "pp";
     const who = html(o.who || "Person"), keyed = o.keyed;
     box.innerHTML = `<div class="pp-lib"><div class="pp-tabs" role="tablist"><button type="button" class="chip-btn" role="tab" data-tab="poses">🧍 Poses</button><button type="button" class="chip-btn" role="tab" data-tab="moves">🎬 Movements</button></div>
+        <button type="button" class="btn sm pp-imp" data-a="import" title="A BVH (motion capture), a glTF animation (.glb) or OpenPose keypoints (.json): one frame comes in as a pose, more as a movement">⬆ Import…</button>
+        <input type="file" class="pp-file" accept=".bvh,.glb,.gltf,.bin,.json,.fbx" multiple hidden>
         <div class="pp-libposes"><h4>Poses</h4><div class="pp-grid" data-g="pre"></div><h4>Saved <span class="opt">every project</span></h4><div class="pp-grid" data-g="mine"><p class="hint">Loading…</p></div></div>
         <div class="pp-libmoves" hidden><h4>Movements</h4><div class="pp-grid" data-g="mvpre"></div><h4>Saved <span class="opt">every project</span></h4><div class="pp-grid" data-g="mvmine"><p class="hint">Loading…</p></div></div></div>
       <div class="pp-view"><canvas class="pp-gl"></canvas><canvas class="pp-ov" tabindex="0" aria-label="The pose: drag a joint's dot to move it, elsewhere to turn the view"></canvas>
@@ -148,6 +153,11 @@ const PosePad = (() => {
         <label class="pp-sl"><span>Length</span><input type="range" data-len min="0.3" max="10" step="0.1" value="1.6"><output></output></label>
         <p class="hint pp-room"></p>
         <div class="pp-row"><button type="button" class="btn sm" data-a="play">⏸ Pause</button><span class="hint pp-mvt"></span></div>
+        <div class="pp-row"><button type="button" class="btn sm ghost" data-a="moment" title="Pause where you want it, then take that moment into the pose editor">🤸 This moment as a pose</button></div>
+        <div class="pp-imported" hidden><div class="field pp-anim" hidden><label for="pp-anim">Animation</label><select id="pp-anim"></select></div>
+          <p class="hint pp-impnote"></p>
+          <div class="field"><label for="pp-impname">Name</label><input id="pp-impname" maxlength="60"></div>
+          <button type="button" class="btn sm" data-a="saveimp" title="Keep it in the movement library, for every project">💾 Save to the library</button></div>
         <hr class="pp-hr">
         <div class="field"><label for="pp-mvnew">${who}'s keyed poses as a movement</label><input id="pp-mvnew" maxlength="60" placeholder="My movement"${keyed ? "" : " disabled"}></div>
         <button type="button" class="btn sm" data-a="savemove"${keyed ? "" : " disabled"}>💾 Save as a movement</button>
@@ -324,6 +334,14 @@ const PosePad = (() => {
         playing = !playing; b.textContent = playing ? "⏸ Pause" : "▶ Play"; return redraw();
       }
       if (a === "savemove") return saveMove();
+      if (a === "import") return $(".pp-file").click();
+      if (a === "saveimp") return saveImported();
+      if (a === "moment") {
+        if (!mv) return;
+        const ph = playing ? ((performance.now() - t0) / 1000) % (sec + 0.7) : pausedAt, f = clamp(ph / sec, 0, 1), name = `${mv.name} at ${(f * sec).toFixed(2)} s`;
+        loadPose(moveAt(kit, mv, f).pose); nameEl.value = name; autoName = false; setMode("poses");
+        return;
+      }
       if (a === "mirror") {
         const m = def;
         def = { arms: { R: m.arms.L, L: m.arms.R }, legs: { R: m.legs.L, L: m.legs.R }, spine: [m.spine[0], -m.spine[1], -m.spine[2]], head: [-m.head[0], m.head[1], -m.head[2]], hands: { R: m.hands.L, L: m.hands.R } };
@@ -446,6 +464,7 @@ const PosePad = (() => {
       dropMoveMeshes();
       $('[data-len]').value = String(sec);
       $(".pp-mvname").textContent = m.name;
+      $(".pp-imported").hidden = !m.imported;
       const names = mv.steps.map(x => stepName(kit, x)).filter((n, i, a) => i === 0 || n !== a[i - 1]);
       $(".pp-mvsteps").textContent = names.join(" → ");
       moveInfo(); drawMoves(); footInfo(); redraw();
@@ -473,6 +492,35 @@ const PosePad = (() => {
       const m = moves?.find(x => x.id === id); if (!m || !confirm(`Delete the movement “${m.name}” from the library?`)) return;
       try { await api(`/api/v2/moves/${id}`, { method: "DELETE" }); if (mv?.id === id) { mv = null; $(".pp-mvname").textContent = "Pick a movement on the left"; $(".pp-mvsteps").textContent = ""; moveInfo(); footInfo(); } await loadMoves(); drawMoves(); }
       catch (err) { Media.toast(`Delete: ${err.message}`); }
+    }
+    $(".pp-file").addEventListener("change", async e => {
+      const files = [...e.target.files]; e.target.value = "";
+      if (!files.length) return;
+      try { took(await PoseImport.read(files)); } catch (err) { Media.toast(`Import: ${err.message}`, 9000); }
+    });
+    $("#pp-anim").addEventListener("change", e => { if (mv?.take) { try { took({ ...mv.take(+e.target.value), anims: mv.anims, take: mv.take }, +e.target.value); } catch (err) { Media.toast(`Import: ${err.message}`); } } });
+    // an import: a pose goes into the editor, a movement plays (to add, save, or take a moment of)
+    function took(r, animIdx = 0) {
+      if (r.kind === "pose") {
+        loadPose(r.def); nameEl.value = r.name; autoName = false; setMode("poses");
+        return Media.toast(`${r.name}: imported as a pose. Adjust it if it needs it, then Apply or Save.`);
+      }
+      setMode("moves");
+      pickMove({ ...r, id: "import", imported: true });
+      $("#pp-impname").value = r.name;
+      const sel = $("#pp-anim");
+      $(".pp-anim").hidden = !(r.anims?.length > 1);
+      if (r.anims?.length > 1) { sel.innerHTML = r.anims.map((n, k) => `<option value="${k}">${html(n)}</option>`).join(""); sel.value = String(animIdx); }
+      $(".pp-impnote").textContent = `Imported: ${r.steps.length} steps over ${r.seconds.toFixed(2)} s${r.cut ? ` (the first 60 s of ${r.cut.toFixed(1)} s)` : ""}. It doesn't travel: give ${o.who || "the Person"} a path for that.`;
+    }
+    async function saveImported() {
+      if (!mv?.imported) return;
+      const name = $("#pp-impname").value.trim() || mv.name || "Imported movement", id = uid();
+      try {
+        await api(`/api/v2/moves/${id}`, { method: "PUT", body: JSON.stringify({ id, name, seconds: mv.seconds, steps: mv.steps }) });
+        await loadMoves(); pickMove(moves.find(m => m.id === id));
+        Media.toast(`“${name}” is in the movement library.`);
+      } catch (err) { Media.toast(`Save: ${err.message}`); }
     }
     async function saveMine() {
       const name = nameEl.value.trim() || "My pose", old = mineId && lib?.find(x => x.id === mineId);
@@ -531,6 +579,7 @@ const PosePad = (() => {
 .pp-row { display: flex; gap: 6px; margin: 10px 0; }
 .pp-side textarea { width: 100%; resize: vertical; }
 .pp-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+.pp-imp { width: 100%; margin-bottom: 8px; }
 .pp-tabs .chip-btn.on, .pp-card > button.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .pp-moveside h4 { margin: 2px 0 4px; }
 .pp-hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
